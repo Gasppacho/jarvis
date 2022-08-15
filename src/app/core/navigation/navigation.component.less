@@ -1,0 +1,34 @@
+.navigation {
+  &__container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 100vh;
+    width: 70px;
+    background-color: lightblue;
+  }
+
+  &__module_container {
+    margin: 0;
+    padding: 0;
+    text-indent: 0;
+    list-style-type: 0;
+  }
+
+  &__module {
+    width: 70px;
+    height: 70px;
+    background-color: gray;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    color: white;
+
+    &.active-link {
+      background-color: lightgray;
+      color: black;
+    }
+  }
+}

@@ -1,0 +1,20 @@
+<nav class="navigation__container">
+  <ul class="navigation__module_container">
+    <li
+      class="navigation__module"
+      [routerLink]="['/accueil']"
+      routerLinkActive="active-link"
+    >
+      <mat-icon fontIcon="home"></mat-icon>
+      <span class="navigation__module_text">Accueil</span>
+    </li>
+    <li
+      class="navigation__module"
+      [routerLink]="['/todo']"
+      routerLinkActive="active-link"
+    >
+      <mat-icon fontIcon="check_circle"></mat-icon>
+      <span class="navigation__module_text">Todo</span>
+    </li>
+  </ul>
+</nav>

@@ -1,0 +1,37 @@
+<div class="add-task__container">
+  <form [formGroup]="form" (ngSubmit)="onSubmit()">
+    <div class="add-task__input-container">
+      <input
+        type="text"
+        class="add-task__input"
+        formControlName="task"
+        placeholder="Add task"
+      />
+    </div>
+    <div class="add-task__input-container">
+      <input
+        type="datetime"
+        class="add-task__input"
+        formControlName="dueDate"
+        placeholder="Add date"
+      />
+    </div>
+    <div class="add-task__input-container">
+      <input
+        type="text"
+        class="add-task__input"
+        formControlName="priority"
+        placeholder="Add priority"
+      />
+    </div>
+    <div class="add-task__input-container">
+      <input
+        type="text"
+        class="add-task__input"
+        formControlName="type"
+        placeholder="Add type"
+      />
+    </div>
+  </form>
+  <button type="submit"></button>
+</div>
