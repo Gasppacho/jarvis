@@ -1,3 +1,18 @@
 <div class="quick-action__container">
-  <button>Add task</button>
+  <div class="quick-action__button">
+    <mat-icon
+      fontIcon="add_task"
+      (click)="showAddTask()"
+      *ngIf="!isPrintAddTask"
+    ></mat-icon>
+    <mat-icon
+      fontIcon="cancel"
+      *ngIf="isPrintAddTask"
+      (click)="closeAddTask()"
+    ></mat-icon>
+  </div>
+</div>
+
+<div class="quick-action__content">
+  <jarvis-add-task *ngIf="isPrintAddTask"></jarvis-add-task>
 </div>

@@ -1,10 +1,30 @@
 .quick-action {
   &__container {
     display: flex;
-    justify-content: space-around;
+    justify-content: flex-start;
     align-items: center;
     width: calc(100vw - 70px);
     height: 70px;
+    background-color: coral;
+  }
+  &__button {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 70px;
+    height: 70px;
     background-color: lightcoral;
+    cursor: pointer;
+  }
+  &__content {
+    position: absolute;
+    top: 70px;
+    left: 70px;
+    display: flex;
+    justify-content: flex-start;
+    align-items: center;
+    width: calc(100vw - 70px);
+    background-color: lightgray;
+    padding: 15px;
   }
 }

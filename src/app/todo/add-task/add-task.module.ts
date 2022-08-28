@@ -4,11 +4,8 @@ import { AddTaskComponent } from './add-task.component';
 import { ReactiveFormsModule } from '@angular/forms';
 
 @NgModule({
-	imports: [
-		CommonModule,
-		ReactiveFormsModule
-	],
-	declarations: [AddTaskComponent],
-	exports: [AddTaskComponent]
+  imports: [CommonModule, ReactiveFormsModule],
+  declarations: [AddTaskComponent],
+  exports: [AddTaskComponent]
 })
-export class AddTaskModule { }
+export class AddTaskModule {}
