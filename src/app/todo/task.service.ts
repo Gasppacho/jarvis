@@ -4,48 +4,45 @@ import { Observable } from 'rxjs';
 import { Task } from './../common/task';
 
 @Injectable({
-  providedIn: 'root'
+	providedIn: 'root',
 })
 export class TaskService {
-  constructor(private _taskApiService: TaskApiService) {}
+	constructor(private _taskApiService: TaskApiService) {}
 
-  // CRUD operations for tasks (create, read, update, delete) using TaskApiService
-  public getTasks(): Observable<Task[]> {
-    return this._taskApiService.getTasks();
-  }
+	// CRUD operations for tasks (create, read, update, delete) using TaskApiService
+	public getTasks(): Observable<Task[]> {
+		return this._taskApiService.getTasks();
+	}
 
-  public createTask(task: Task): Observable<Task> {
-    return this._taskApiService.createTask(task);
-  }
+	public createTask(task: Task): Observable<string> {
+		return this._taskApiService.createTask(task);
+	}
 
-  public updateTask(task: Task): Observable<Task> {
-    return this._taskApiService.updateTask(task);
-  }
+	public updateTask(task: Task): Observable<void> {
+		return this._taskApiService.updateTask(task);
+	}
 
-  public deleteTask(task: Task): Observable<Task> {
-    return this._taskApiService.deleteTask(task);
-  }
+	public deleteTask(task: Task): Observable<void> {
+		return this._taskApiService.deleteTask(task);
+	}
 
-  public getTask(id: number): Observable<Task | undefined> {
-    return this._taskApiService.getTask(id);
-  }
+	public getTask(id: string): Observable<Task | undefined> {
+		return this._taskApiService.getTask(id);
+	}
 
-  public getTasksByType(type: string): Observable<Task[]> {
-    return this._taskApiService.getTasksByType(type);
-  }
+	public getTasksByType(type: string): Observable<Task[]> {
+		return this._taskApiService.getTasksByType(type);
+	}
 
-  public getTasksByPriority(priority: number): Observable<Task[]> {
-    return this._taskApiService.getTasksByPriority(priority);
-  }
+	public getTasksByPriority(priority: number): Observable<Task[]> {
+		return this._taskApiService.getTasksByPriority(priority);
+	}
 
-  public getTasksByDueDate(dueDate: Date): Observable<Task[]> {
-    return this._taskApiService.getTasksByDueDate(dueDate);
-  }
+	public getTasksByDueDate(dueDate: Date): Observable<Task[]> {
+		return this._taskApiService.getTasksByDueDate(dueDate);
+	}
 
-  public getTasksByDueDateRange(
-    startDate: Date,
-    endDate: Date
-  ): Observable<Task[]> {
-    return this._taskApiService.getTasksByDueDateRange(startDate, endDate);
-  }
+	public getTasksByDueDateRange(startDate: Date, endDate: Date): Observable<Task[]> {
+		return this._taskApiService.getTasksByDueDateRange(startDate, endDate);
+	}
 }

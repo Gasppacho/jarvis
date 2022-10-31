@@ -1,0 +1,6 @@
+<div class="journal__container">
+	<ng-container *ngIf="currentPage">
+		<p>DATE : {{ currentPage.date.toDate() | date: 'dd/MM/yyyy' }}</p>
+		<quill-editor [(ngModel)]="currentPage.content" (input)="contentHasChanged = true"></quill-editor>
+	</ng-container>
+</div>

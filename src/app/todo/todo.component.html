@@ -1,8 +1,8 @@
 <h1>Ecran des todos</h1>
 
-<ul *ngFor="let type of taskByType | keyvalue">
+<ul *ngFor="let type of taskByCategory | keyvalue">
   <li>{{ type.key }}</li>
   <li *ngFor="let task of type.value">
-    <span>{{ task.task }}</span>
+    <span>{{ task.description }}</span>
   </li>
 </ul>

@@ -4,31 +4,28 @@ import { FormBuilder, FormGroup } from '@angular/forms';
 import { Task } from './../../common/task';
 
 @Component({
-  selector: 'jarvis-add-task',
-  templateUrl: './add-task.component.html',
-  styleUrls: ['./add-task.component.less']
+	selector: 'jarvis-add-task',
+	templateUrl: './add-task.component.html',
+	styleUrls: ['./add-task.component.less'],
 })
 export class AddTaskComponent implements OnInit {
-  public form: FormGroup = this._formBuilder.group({
-    task: '',
-    priority: '',
-    type: '',
-    dueDate: ''
-  });
+	public form: FormGroup = this._formBuilder.group({
+		description: '',
+		priority: '',
+		type: '',
+		dueDate: '',
+		category: '',
+		title: '',
+	});
 
-  constructor(
-    private _formBuilder: FormBuilder,
-    private _taskService: TaskService
-  ) {}
+	constructor(private _formBuilder: FormBuilder, private _taskService: TaskService) {}
 
-  ngOnInit() {}
+	ngOnInit() {}
 
-  public onSubmit(): void {
-    console.log('submit');
-    // create task using TaskService and pass form value to createTask()
-    this._taskService.createTask(this.form.value).subscribe((task: Task) => {
-      this.form.reset();
-      console.log('create task : ', task);
-    });
-  }
+	public onSubmit(): void {
+		this._taskService.createTask(this.form.value).subscribe((id: string) => {
+			this.form.reset();
+			console.log('create task : ', id);
+		});
+	}
 }
