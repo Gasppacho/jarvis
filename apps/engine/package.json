@@ -1,0 +1,20 @@
+{
+  "name": "@jarvis/engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/main.ts",
+  "scripts": {
+    "generate": "openapi-typescript ../../contracts/openapi/local-api.v1.yaml -o src/api/generated/local-api.ts",
+    "build": "tsup && node scripts/bundle-runtime.mjs"
+  },
+  "dependencies": {
+    "better-sqlite3": "13.0.3",
+    "fastify": "5.12.1",
+    "pino": "10.3.1"
+  },
+  "devDependencies": {
+    "openapi-typescript": "7.13.0",
+    "tsup": "8.5.1"
+  }
+}

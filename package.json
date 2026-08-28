@@ -1,0 +1,34 @@
+{
+  "name": "jarvis",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.5.2",
+  "engines": {
+    "node": ">=24.16.0 <25"
+  },
+  "scripts": {
+    "generate": "pnpm --filter @jarvis/engine run generate",
+    "generate:check": "pnpm generate && git diff --exit-code -- apps/engine/src/api/generated",
+    "contracts:check": "node scripts/contracts-check.mjs",
+    "lint": "prettier --check .",
+    "format": "prettier --write .",
+    "typecheck": "tsc --noEmit",
+    "arch:check": "depcruise apps --config .dependency-cruiser.cjs",
+    "test": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "build:engine": "pnpm --filter @jarvis/engine run build",
+    "verify": "pnpm generate:check && pnpm contracts:check && pnpm lint && pnpm typecheck && pnpm arch:check && pnpm build:engine && pnpm test && pnpm test:integration"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "24.13.3",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "dependency-cruiser": "18.2.0",
+    "prettier": "3.9.6",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11",
+    "yaml": "2.9.0"
+  }
+}

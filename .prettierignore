@@ -2,6 +2,11 @@ node_modules
 dist
 contracts
 examples
+pnpm-lock.yaml
+
+# The documentation pack is hand-authored: tables, ASCII diagrams and wrapping
+# are deliberate. Reformatting it would churn every doc without improving one.
+*.md
 
 # Generated from the OpenAPI contract; formatting it would fight `pnpm generate`.
 apps/engine/src/api/generated

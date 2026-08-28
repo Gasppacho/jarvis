@@ -29,6 +29,10 @@ pnpm build:engine
 pnpm verify             # all non-release gates
 ```
 
+`pnpm verify` also runs three helpers directly: `generate:check` (regeneration
+leaves no diff), `arch:check` (dependency-cruiser import graph) and `format`
+(`prettier --write`, the writing counterpart of `lint`).
+
 macOS commands:
 
 ```bash

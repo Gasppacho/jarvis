@@ -9,6 +9,7 @@ Errors crossing the Local API or stored as terminal Execution errors use stable 
 | `system.engine-start-failed` | No | Embedded Engine did not complete handshake |
 | `system.api-version-incompatible` | No | Shell and Engine API versions cannot communicate |
 | `api.unauthorized` | No | Missing or invalid session token |
+| `api.host-not-allowed` | No | Request did not address the loopback interface |
 | `api.invalid-request` | No | OpenAPI/JSON Schema validation failed |
 | `system.storage-unavailable` | Maybe | SQLite or Application Support unavailable |
 

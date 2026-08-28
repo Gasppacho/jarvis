@@ -1,0 +1,11 @@
+packages:
+  - apps/*
+  - packages/*
+  - packages/modules/*
+
+# pnpm 11: `allowBuilds` replaces `onlyBuiltDependencies`. The SQLite driver is a
+# native addon (ADR 0007) and esbuild ships a platform binary; nothing else may
+# run install scripts.
+allowBuilds:
+  better-sqlite3: true
+  esbuild: true
