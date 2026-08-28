@@ -4,7 +4,7 @@ import Testing
 @testable import JarvisCore
 
 /// Locates the repository checkout from the test bundle location.
-private func repositoryRoot() -> URL {
+func repositoryRoot() -> URL {
     var url = URL(filePath: #filePath)
     while url.path != "/" {
         url.deleteLastPathComponent()
@@ -56,7 +56,7 @@ struct EngineSupervisorTests {
         #expect(health.isReady)
 
         // The engine writes its database inside the data root it was given.
-        let databasePath = dataRoot.appending(path: "jarvis.db").path(percentEncoded: false)
+        let databasePath = dataRoot.appending(path: "jarvis.sqlite").path(percentEncoded: false)
         #expect(FileManager.default.fileExists(atPath: databasePath))
 
         await supervisor.stop()

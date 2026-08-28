@@ -13,7 +13,8 @@ const BUNDLED_ADDON = fileURLToPath(
   new URL("./native/better_sqlite3.node", import.meta.url),
 );
 
-export const DATABASE_FILENAME = "jarvis.db";
+/** docs/architecture/PERSISTENCE.md fixes this name. */
+export const DATABASE_FILENAME = "jarvis.sqlite";
 
 /** Mirrors HealthResponse.database in contracts/openapi/local-api.v1.yaml. */
 export type DatabaseStatus = "ready" | "migrating" | "failed";

@@ -82,4 +82,66 @@ public struct EngineClient: Sendable {
             throw EngineClientError.requestRejected(code: failure.code, message: failure.message)
         }
     }
+
+    /// Read-only inspection of a folder the user picked.
+    public func inspectRepository(at path: String) async throws -> RepositoryInspection {
+        let response = try await client.discoverRepository(body: .json(.init(path: path)))
+        switch response {
+        case .ok(let ok):
+            let payload = try ok.body.json
+            return RepositoryInspection(
+                isGitRepository: payload.isGitRepository,
+                remoteUrl: payload.remoteUrl,
+                provider: payload.provider,
+                defaultBranch: payload.defaultBranch,
+                packageManager: payload.packageManager
+            )
+        case let .`default`(statusCode, response):
+            throw Self.failure(statusCode: statusCode, response: response)
+        }
+    }
+
+    public func importProject(repositoryPath: String) async throws -> Project {
+        let response = try await client.importProject(
+            body: .json(.init(repositoryPath: repositoryPath)))
+        switch response {
+        case .created(let created):
+            let payload = try created.body.json
+            return Project(
+                id: payload.value1.id,
+                name: payload.value1.name,
+                status: payload.value1.status.rawValue,
+                moduleCount: payload.value1.moduleCount
+            )
+        case let .`default`(statusCode, response):
+            throw Self.failure(statusCode: statusCode, response: response)
+        }
+    }
+
+    public func listProjects() async throws -> [Project] {
+        let response = try await client.listProjects()
+        switch response {
+        case .ok(let ok):
+            return try ok.body.json.items.map { summary in
+                Project(
+                    id: summary.id,
+                    name: summary.name,
+                    status: summary.status.rawValue,
+                    moduleCount: summary.moduleCount
+                )
+            }
+        case let .`default`(statusCode, response):
+            throw Self.failure(statusCode: statusCode, response: response)
+        }
+    }
+
+    private static func failure(
+        statusCode: Int, response: Components.Responses._Error
+    ) -> EngineClientError {
+        if statusCode == 401 || statusCode == 403 { return .unauthorized }
+        guard let failure = try? response.body.json.error else {
+            return .unexpectedStatus(statusCode)
+        }
+        return .requestRejected(code: failure.code, message: failure.message)
+    }
 }

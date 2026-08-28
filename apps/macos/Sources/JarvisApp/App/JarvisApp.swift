@@ -7,8 +7,8 @@ struct JarvisApp: App {
 
     var body: some Scene {
         WindowGroup("Jarvis") {
-            EngineHealthView(session: session)
-                .frame(minWidth: 460, minHeight: 300)
+            RootView(session: session)
+                .frame(minWidth: 720, minHeight: 420)
                 .task { await session.start() }
         }
         .windowResizability(.contentSize)

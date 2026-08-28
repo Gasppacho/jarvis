@@ -7,7 +7,10 @@
     ".": "./src/main.ts"
   },
   "dependencies": {
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
     "better-sqlite3": "13.0.3",
-    "fastify": "5.12.1"
+    "fastify": "5.12.1",
+    "yaml": "2.9.0"
   }
 }

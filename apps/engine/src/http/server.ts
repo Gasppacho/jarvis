@@ -1,5 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
+import { JarvisError } from "../errors.ts";
+import type { ProjectService } from "../projects/service.ts";
 import type { components } from "../api/generated/local-api.ts";
 import { errorResponse } from "./errors.ts";
 
@@ -14,6 +16,12 @@ const ALLOWED_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 export interface ServerDependencies {
   readonly token: string;
   readonly health: () => HealthResponse;
+  /**
+   * Absent when the database failed to open. The engine still serves a
+   * degraded health document rather than dying (docs/product/MVP_SPEC.md
+   * user story 3), so project routes answer 503 instead of 404.
+   */
+  readonly projects: ProjectService | null;
   /** Invoked once the 202 has actually been flushed to the shell. */
   readonly onShutdownRequested: () => void;
   readonly logLevel?: string;
@@ -40,6 +48,16 @@ function bearerOf(authorization: string | undefined): string | undefined {
   const [scheme, ...rest] = authorization.split(" ");
   if (scheme?.toLowerCase() !== "bearer" || rest.length !== 1) return undefined;
   return rest[0];
+}
+
+function requireProjects(deps: ServerDependencies): ProjectService {
+  if (deps.projects === null) {
+    throw JarvisError.unavailable(
+      "engine.database-unavailable",
+      "Jarvis cannot read its local database, so projects are unavailable. Check the health screen for details.",
+    );
+  }
+  return deps.projects;
 }
 
 export function createServer(deps: ServerDependencies): FastifyInstance {
@@ -81,6 +99,34 @@ export function createServer(deps: ServerDependencies): FastifyInstance {
 
   app.get("/v1/health", async () => deps.health());
 
+  app.post("/v1/discovery/repository", async (request) => {
+    const body = (request.body ?? {}) as { path?: unknown };
+    return requireProjects(deps).discover(body.path);
+  });
+
+  app.post("/v1/projects", async (request, reply) => {
+    const body = (request.body ?? {}) as {
+      repositoryPath?: unknown;
+      portableConfig?: unknown;
+    };
+    const detail = requireProjects(deps).import({
+      repositoryPath: body.repositoryPath,
+      ...(body.portableConfig === undefined
+        ? {}
+        : { portableConfig: body.portableConfig }),
+    });
+    return reply.code(201).send(detail);
+  });
+
+  app.get("/v1/projects", async () => ({
+    items: requireProjects(deps).list(),
+  }));
+
+  app.get("/v1/projects/:projectId", async (request) => {
+    const { projectId } = request.params as { projectId: string };
+    return requireProjects(deps).get(projectId);
+  });
+
   app.post("/v1/system/shutdown", (_request, reply) => {
     // "finish" means the 202 flushed; "close" also covers a client that
     // aborted the connection. Either way the shutdown must proceed exactly once.
@@ -107,6 +153,13 @@ export function createServer(deps: ServerDependencies): FastifyInstance {
   );
 
   app.setErrorHandler((error: FastifyError, _request, reply) => {
+    // A typed domain failure is expected traffic: it carries a stable code and
+    // a message written to be shown to the user.
+    if (error instanceof JarvisError) {
+      return reply
+        .code(error.statusCode)
+        .send(errorResponse(error.code, error.message));
+    }
     app.log.error({ err: error }, "unhandled Local API error");
     return reply
       .code(error.statusCode ?? 500)
