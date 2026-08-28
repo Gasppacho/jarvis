@@ -23,6 +23,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/discovery/repository:
     post:
       operationId: discoverRepository
@@ -46,6 +50,10 @@ paths:
                 $ref: "#/components/schemas/RepositoryDiscovery"
         default:
           $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/projects:
     get:
       operationId: listProjects
@@ -62,6 +70,10 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ProjectSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       operationId: importProject
       requestBody:
@@ -86,6 +98,10 @@ paths:
                 $ref: "#/components/schemas/ProjectDetail"
         default:
           $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/projects/{projectId}:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -100,6 +116,10 @@ paths:
                 $ref: "#/components/schemas/ProjectDetail"
         default:
           $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/projects/{projectId}/validate:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -114,6 +134,10 @@ paths:
                 $ref: "#/components/schemas/ValidationReport"
         default:
           $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/projects/{projectId}/activate:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -128,6 +152,10 @@ paths:
                 $ref: "#/components/schemas/ProjectSummary"
         default:
           $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/projects/{projectId}/pause:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -142,6 +170,10 @@ paths:
                 $ref: "#/components/schemas/ProjectSummary"
         default:
           $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/projects/{projectId}/modules:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -160,6 +192,10 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ModuleInstance"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/projects/{projectId}/events:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -190,6 +226,10 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/EventSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/projects/{projectId}/executions:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -208,6 +248,10 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ExecutionSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/executions/{executionId}/cancel:
     post:
       operationId: cancelExecution
@@ -226,6 +270,10 @@ paths:
                 $ref: "#/components/schemas/ExecutionSummary"
         default:
           $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/connections:
     get:
       operationId: listConnections
@@ -242,6 +290,10 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ResourceDescriptor"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       operationId: upsertConnection
       requestBody:
@@ -272,6 +324,10 @@ paths:
                 $ref: "#/components/schemas/ResourceDescriptor"
         default:
           $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/runtimes:
     get:
       operationId: listRuntimes
@@ -288,6 +344,10 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ResourceDescriptor"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/stream:
     get:
       operationId: streamUpdates
@@ -298,12 +358,20 @@ paths:
             text/event-stream:
               schema:
                 type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/system/shutdown:
     post:
       operationId: shutdownEngine
       responses:
         "202":
           description: Graceful shutdown started.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/module-catalog:
     get:
       operationId: listModuleCatalog
@@ -320,6 +388,10 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ModulePackage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/projects/{projectId}/configuration:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -347,6 +419,10 @@ paths:
                 $ref: "#/components/schemas/ProjectDetail"
         default:
           $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/projects/{projectId}/bindings:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -361,6 +437,10 @@ paths:
                 $ref: "#/components/schemas/ProjectBindings"
         default:
           $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     put:
       operationId: replaceProjectBindings
       requestBody:
@@ -378,6 +458,10 @@ paths:
                 $ref: "#/components/schemas/ProjectBindings"
         default:
           $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/projects/{projectId}/graph:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -392,6 +476,10 @@ paths:
                 $ref: "#/components/schemas/ProjectGraph"
         default:
           $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/projects/{projectId}/dead-letters:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -410,6 +498,10 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/DeadLetter"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/dead-letters/{deliveryId}/replay:
     post:
       operationId: replayDeadLetter
@@ -428,6 +520,10 @@ paths:
                 $ref: "#/components/schemas/ExecutionSummary"
         default:
           $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/connections/{connectionId}/validate:
     post:
       operationId: validateConnection
@@ -446,6 +542,10 @@ paths:
                 $ref: "#/components/schemas/ResourceDescriptor"
         default:
           $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/runtimes/discover:
     post:
       operationId: discoverRuntimes
@@ -462,6 +562,10 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ResourceDescriptor"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/diagnostics:
     post:
       operationId: createDiagnosticBundle
@@ -491,6 +595,10 @@ paths:
                 properties:
                   artifactRef:
                     type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 components:
   securitySchemes:
     bearerAuth:
@@ -507,6 +615,20 @@ components:
   responses:
     Error:
       description: Error response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Missing or invalid session bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: >-
+        The request did not address the loopback interface. The engine binds
+        127.0.0.1 only and rejects any other Host, per SYSTEM.md.
       content:
         application/json:
           schema:

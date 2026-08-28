@@ -12,6 +12,11 @@
 - SSE pour les notifications temps réel.
 - Pas de CORS, pas d'accès réseau externe.
 
+Chaque opération protégée documente deux refus : `401` (`api.unauthorized`) quand le
+bearer token manque ou ne correspond pas, et `403` (`api.host-not-allowed`) quand la
+requête n'adresse pas l'interface loopback. `pnpm contracts:check` échoue si une
+opération protégée omet l'un des deux.
+
 ## Resource groups
 
 ### System

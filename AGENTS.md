@@ -11,6 +11,18 @@
 - Use `research` for current external APIs, SDKs, platform rules, packaging or security facts.
 - Use `diagnosing-bugs` for observed failures; do not guess from symptoms alone.
 
+### Issue tracker
+
+GitHub Issues on `Gasppacho/jarvis` via `gh`; local `.scratch/<plan>/issues/` fallback. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical roles, default label names. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Multi-context: root `CONTEXT-MAP.md` plus per-package `CONTEXT.md`. See `docs/agents/domain.md`.
+
 ## Read on demand
 
 - Product scope or user-visible behavior: `docs/product/MVP_SPEC.md` and `docs/product/UX.md`.
