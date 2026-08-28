@@ -17,6 +17,7 @@ export interface ServerDependencies {
 }
 
 const CORRELATION_HEADER = "x-jarvis-correlation-id";
+const SHUTDOWN_PATH = "/v1/system/shutdown";
 
 export function buildServer(deps: ServerDependencies): FastifyInstance {
   const app = Fastify({
@@ -32,9 +33,15 @@ export function buildServer(deps: ServerDependencies): FastifyInstance {
   // set `Content-Type: application/json` on a POST. Fastify's default parser
   // rejects the resulting empty body with 400, which would leave the engine
   // running after the shell asked it to quit (SYSTEM.md shutdown protocol).
-  app.addContentTypeParser("application/json", { parseAs: "string" }, (_request, body, done) => {
+  // The tolerance is confined to that route: everywhere else an empty JSON body
+  // stays a client error rather than becoming an undefined `request.body`.
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (request, body, done) => {
     if (typeof body !== "string" || body.trim() === "") {
-      done(null, undefined);
+      if (routePath(request.url) === SHUTDOWN_PATH) {
+        done(null, undefined);
+        return;
+      }
+      done(new EngineError("api.invalid-request", 400, "Request body cannot be empty."), undefined);
       return;
     }
     try {
@@ -88,7 +95,7 @@ export function buildServer(deps: ServerDependencies): FastifyInstance {
     };
   });
 
-  app.post("/v1/system/shutdown", async (_request, reply) => {
+  app.post(SHUTDOWN_PATH, async (_request, reply) => {
     // SYSTEM.md: acknowledge first, drain afterwards.
     void reply.code(202).send();
     await reply;
@@ -119,6 +126,11 @@ function toEngineError(error: unknown): EngineError {
 }
 
 const CORRELATION_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
+
+function routePath(url: string): string {
+  const query = url.indexOf("?");
+  return query === -1 ? url : url.slice(0, query);
+}
 
 function readCorrelationId(header: string | string[] | undefined): string {
   // Caller-supplied, and it ends up in a response header and an error envelope.

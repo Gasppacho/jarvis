@@ -57,6 +57,14 @@ async function main(): Promise<void> {
     }
   }
 
+  // Installed before listen: a signal arriving during startup must still close
+  // the database. It exits non-zero until the handshake is out, so the shell
+  // never reads a clean exit from an engine that never became ready.
+  let announced = false;
+  const onSignal = (): void => void shutdown(announced ? 0 : 1);
+  process.on("SIGTERM", onSignal);
+  process.on("SIGINT", onSignal);
+
   await app.listen({ host: config.host, port: config.port });
   const address = app.server.address() as AddressInfo;
 
@@ -69,12 +77,7 @@ async function main(): Promise<void> {
       sessionId: config.sessionId,
     })}\n`,
   );
-
-  // Registered only once the handshake is out. A signal before this point kills
-  // the process with a non-zero status, which is what an engine that never
-  // became ready should report to the shell.
-  process.on("SIGTERM", () => void shutdown(0));
-  process.on("SIGINT", () => void shutdown(0));
+  announced = true;
 }
 
 main().catch((error: unknown) => {

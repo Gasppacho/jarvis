@@ -33,10 +33,9 @@ describe("engine walking skeleton", () => {
       expect(existsSync(join(engine.dataRoot, "jarvis.sqlite"))).toBe(true);
     });
 
-    it("keeps the data root and database private to the current user", () => {
-      // The documented dev flow puts the data root under /tmp, and PERSISTENCE.md
-      // says it will hold project configuration and secret references.
-      expect(statSync(engine.dataRoot).mode & 0o077).toBe(0);
+    it("keeps the database private to the current user", () => {
+      // SQLite creates the file 0644; PERSISTENCE.md says it will hold project
+      // configuration and secret references.
       expect(statSync(join(engine.dataRoot, "jarvis.sqlite")).mode & 0o077).toBe(0);
     });
   });

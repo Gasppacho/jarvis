@@ -49,12 +49,14 @@ export interface Harness {
 export interface StartEngineOptions {
   /** Extra environment for the child, e.g. to point at a poisoned data root. */
   readonly env?: Readonly<Record<string, string>>;
+  /** Use a data root the test already created, instead of a fresh mkdtemp one. */
+  readonly dataRoot?: string;
 }
 
 class ReadyTimeout extends Error {}
 
 export async function startEngine(options: StartEngineOptions = {}): Promise<Harness> {
-  const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-harness-"));
+  const dataRoot = options.dataRoot ?? (await mkdtemp(join(tmpdir(), "jarvis-harness-")));
   const token = randomBytes(32).toString("base64url");
 
   const child = spawn(process.execPath, [enginePath], {
