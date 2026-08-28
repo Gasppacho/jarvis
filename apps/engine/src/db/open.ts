@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
-import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import { dirname, join, parse as parsePath, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export type DatabaseState = "ready" | "migrating" | "failed";
@@ -53,32 +53,69 @@ export function openDatabase(databasePath: string): OpenedDatabase {
  * engine refuses a data root it does not own rather than adopting it.
  */
 function prepareDataRoot(dataRoot: string): void {
+  const absolute = resolve(dataRoot);
+
   // `recursive: true` succeeds on an existing path and ignores `mode` there, so
   // this mode only guarantees a root that this call actually creates.
-  mkdirSync(dataRoot, { recursive: true, mode: 0o700 });
+  mkdirSync(absolute, { recursive: true, mode: 0o700 });
 
   // lstat, not stat: a symlink planted at the expected path would otherwise
   // send every check below — and the chmod — to a directory someone else chose.
-  const stats = lstatSync(dataRoot);
+  const stats = lstatSync(absolute);
   if (stats.isSymbolicLink()) {
     throw new Error(
-      `The data root ${dataRoot} is a symbolic link. Point JARVIS_DATA_ROOT at a real directory you own.`,
+      `The data root ${absolute} is a symbolic link. Point JARVIS_DATA_ROOT at a real directory you own.`,
     );
   }
   if (!stats.isDirectory()) {
-    throw new Error(`The data root ${dataRoot} exists but is not a directory.`);
+    throw new Error(`The data root ${absolute} exists but is not a directory.`);
   }
 
-  const uid = process.getuid?.();
-  if (uid !== undefined && stats.uid !== uid) {
-    throw new Error(
-      `The data root ${dataRoot} belongs to another user. Refusing to store project data there.`,
-    );
-  }
+  // mkdirSync(recursive) traverses every intermediate component, so checking the
+  // leaf alone would miss a symlink planted higher up the chain. Canonicalise
+  // before walking the ancestors — and canonicalise rather than demand an
+  // already-canonical path, because on macOS /tmp and /var are themselves links.
+  assertOwnedChain(realpathSync(absolute));
 
   // Only now, with ownership established, is tightening the mode both safe and
   // permitted.
-  if ((stats.mode & 0o077) !== 0) chmodSync(dataRoot, 0o700);
+  if ((stats.mode & 0o077) !== 0) chmodSync(absolute, 0o700);
+}
+
+/**
+ * A directory is only as safe as the directories above it: whoever can write an
+ * ancestor can rename or replace the leaf between this check and the open. Each
+ * ancestor must therefore belong to this user or to root, and must not be
+ * writable by anyone else unless the sticky bit forbids touching our entries —
+ * which is exactly what makes `/tmp` (root-owned, 1777) usable.
+ */
+function assertOwnedChain(path: string): void {
+  const uid = process.getuid?.();
+  if (uid === undefined) return;
+
+  const { root } = parsePath(path);
+  for (let current = path; ; current = dirname(current)) {
+    const stats = lstatSync(current);
+
+    if (stats.uid !== uid && stats.uid !== 0) {
+      throw new Error(
+        `${current} belongs to another user, so ${path} is not a safe place for project data.`,
+      );
+    }
+    // The leaf is exempt: we own it, and the caller tightens it to 0700 next.
+    // An ancestor we cannot fix is the one that lets someone swap the leaf.
+    if (current !== path) {
+      const writableByOthers = (stats.mode & 0o022) !== 0;
+      const sticky = (stats.mode & 0o1000) !== 0;
+      if (writableByOthers && !sticky) {
+        throw new Error(
+          `${current} is writable by other users, so ${path} is not a safe place for project data.`,
+        );
+      }
+    }
+
+    if (current === root) return;
+  }
 }
 
 function migrate(db: Database.Database): readonly string[] {

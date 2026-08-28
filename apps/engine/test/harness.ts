@@ -56,6 +56,9 @@ export interface StartEngineOptions {
 class ReadyTimeout extends Error {}
 
 export async function startEngine(options: StartEngineOptions = {}): Promise<Harness> {
+  // Only a root the harness allocated may be removed on dispose: a caller that
+  // supplies one may keep other fixtures beside it.
+  const ownsDataRoot = options.dataRoot === undefined;
   const dataRoot = options.dataRoot ?? (await mkdtemp(join(tmpdir(), "jarvis-harness-")));
   const token = randomBytes(32).toString("base64url");
 
@@ -98,7 +101,7 @@ export async function startEngine(options: StartEngineOptions = {}): Promise<Har
     rejectAfter(READY_TIMEOUT_MS, stderrChunks),
   ]).catch(async (error: unknown) => {
     child.kill("SIGKILL");
-    await rm(dataRoot, { recursive: true, force: true });
+    if (ownsDataRoot) await rm(dataRoot, { recursive: true, force: true });
     throw error;
   });
 
@@ -134,7 +137,7 @@ export async function startEngine(options: StartEngineOptions = {}): Promise<Har
         child.kill("SIGKILL");
         await exited;
       }
-      await rm(dataRoot, { recursive: true, force: true });
+      if (ownsDataRoot) await rm(dataRoot, { recursive: true, force: true });
     },
   };
 }

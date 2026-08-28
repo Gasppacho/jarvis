@@ -37,12 +37,15 @@ async function main(): Promise<void> {
 
     // If closing hangs past the grace period the shutdown did not complete, so
     // the shell must not read it as a clean exit.
-    const forceExit = setTimeout(() => {
+    // Deliberately not unref'd: if app.close() hangs and the remaining handles
+    // drain, an unref'd timer would let Node exit 0 without closing the
+    // database. The `finally` below always calls process.exit, so this timer
+    // can never delay a shutdown that does complete.
+    setTimeout(() => {
       process.stderr.write("jarvis-engine: shutdown timed out; forcing exit.\n");
       closeDatabase();
       process.exit(exitCode === 0 ? 1 : exitCode);
     }, SHUTDOWN_GRACE_MS);
-    forceExit.unref();
 
     let code = exitCode;
     try {
