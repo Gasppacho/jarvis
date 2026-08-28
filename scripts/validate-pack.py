@@ -19,13 +19,6 @@ except ImportError as exc:
 ROOT = Path(__file__).resolve().parents[1]
 ERRORS: list[str] = []
 
-# Build outputs and dependencies are not part of the documentation pack.
-IGNORED_DIRS = {".git", "node_modules", "dist", ".build", ".swiftpm", ".venv"}
-
-
-def in_pack(path: Path) -> bool:
-    return IGNORED_DIRS.isdisjoint(path.relative_to(ROOT).parts)
-
 
 def load_json(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
@@ -128,8 +121,6 @@ def validate_links() -> None:
     pattern = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
     root = ROOT.resolve()
     for path in ROOT.rglob("*.md"):
-        if not in_pack(path):
-            continue
         for raw in pattern.findall(path.read_text(encoding="utf-8")):
             target = raw.strip().split()[0]
             if target.startswith(("http://", "https://", "mailto:", "#")):
@@ -150,7 +141,7 @@ def validate_links() -> None:
 def validate_content_guards() -> None:
     forbidden = "".join(chr(code) for code in (104, 101, 114, 109, 101, 115))
     for path in ROOT.rglob("*"):
-        if not path.is_file() or path == Path(__file__) or not in_pack(path):
+        if not path.is_file() or path == Path(__file__):
             continue
         try:
             text = path.read_text(encoding="utf-8")

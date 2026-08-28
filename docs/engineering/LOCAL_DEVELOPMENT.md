@@ -29,20 +29,14 @@ pnpm build:engine
 pnpm verify             # all non-release gates
 ```
 
-macOS commands (the shell is a SwiftPM package, see ADR 0013):
+macOS commands:
 
 ```bash
-swift build --package-path apps/macos
-swift test  --package-path apps/macos
-./scripts/make-app-bundle.sh          # assembles dist/Jarvis.app
-
-# Xcode works too, but the OpenAPI generator plugin needs explicit approval:
-xcodebuild -scheme Jarvis -destination 'platform=macOS,arch=arm64' \
-  -skipPackagePluginValidation build
+xcodebuild -scheme Jarvis -configuration Debug build
+xcodebuild -scheme Jarvis test
 ```
 
-The Swift tests drive the real engine bundle, so run `pnpm build:engine` first.
-`scripts/make-app-bundle.sh` copies the Engine resources into the app bundle. It must not become a production runtime prerequisite.
+A helper such as `scripts/run-dev-app.sh` may build/copy the Engine resources and launch the Xcode app. It must not become a production runtime prerequisite.
 
 ## Recommended development loop
 

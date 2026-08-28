@@ -24,7 +24,7 @@ No third-party state-management framework is required for the MVP. Feature-scope
 |---|---|
 | Runtime | Bundled Node.js 24 LTS |
 | Package manager | pnpm workspace with committed lockfile |
-| Language | TypeScript strict, ESM — pinned to the 5.x line: `openapi-typescript` requires the `ts.factory` API that TypeScript 7's native compiler removed |
+| Language | TypeScript strict, ESM |
 | HTTP | Fastify 5, loopback only |
 | Contract validation | Ajv 8 configured for JSON Schema 2020-12 |
 | OpenAPI types | `openapi-typescript` or equivalent generated types; YAML remains source of truth |

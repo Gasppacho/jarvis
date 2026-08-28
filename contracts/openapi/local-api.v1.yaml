@@ -23,8 +23,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
-        default:
-          $ref: "#/components/responses/Error"
   /v1/discovery/repository:
     post:
       operationId: discoverRepository
@@ -64,8 +62,6 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ProjectSummary"
-        default:
-          $ref: "#/components/responses/Error"
     post:
       operationId: importProject
       requestBody:
@@ -81,7 +77,6 @@ paths:
                   type: string
                 portableConfig:
                   type: object
-                  additionalProperties: true
       responses:
         "201":
           description: Imported draft project.
@@ -165,8 +160,6 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ModuleInstance"
-        default:
-          $ref: "#/components/responses/Error"
   /v1/projects/{projectId}/events:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -197,8 +190,6 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/EventSummary"
-        default:
-          $ref: "#/components/responses/Error"
   /v1/projects/{projectId}/executions:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -217,8 +208,6 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ExecutionSummary"
-        default:
-          $ref: "#/components/responses/Error"
   /v1/executions/{executionId}/cancel:
     post:
       operationId: cancelExecution
@@ -253,8 +242,6 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ResourceDescriptor"
-        default:
-          $ref: "#/components/responses/Error"
     post:
       operationId: upsertConnection
       requestBody:
@@ -301,8 +288,6 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ResourceDescriptor"
-        default:
-          $ref: "#/components/responses/Error"
   /v1/stream:
     get:
       operationId: streamUpdates
@@ -313,16 +298,12 @@ paths:
             text/event-stream:
               schema:
                 type: string
-        default:
-          $ref: "#/components/responses/Error"
   /v1/system/shutdown:
     post:
       operationId: shutdownEngine
       responses:
         "202":
           description: Graceful shutdown started.
-        default:
-          $ref: "#/components/responses/Error"
   /v1/module-catalog:
     get:
       operationId: listModuleCatalog
@@ -339,8 +320,6 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ModulePackage"
-        default:
-          $ref: "#/components/responses/Error"
   /v1/projects/{projectId}/configuration:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -357,7 +336,6 @@ paths:
               properties:
                 portableConfig:
                   type: object
-                  additionalProperties: true
                 writeToRepository:
                   type: boolean
       responses:
@@ -432,8 +410,6 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/DeadLetter"
-        default:
-          $ref: "#/components/responses/Error"
   /v1/dead-letters/{deliveryId}/replay:
     post:
       operationId: replayDeadLetter
@@ -486,8 +462,6 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ResourceDescriptor"
-        default:
-          $ref: "#/components/responses/Error"
   /v1/diagnostics:
     post:
       operationId: createDiagnosticBundle
@@ -517,8 +491,6 @@ paths:
                 properties:
                   artifactRef:
                     type: string
-        default:
-          $ref: "#/components/responses/Error"
 components:
   securitySchemes:
     bearerAuth:
@@ -577,11 +549,9 @@ components:
             type: string
         suggested:
           type: object
-          additionalProperties: true
     ProjectSummary:
-      # No `additionalProperties: false`: ProjectDetail composes this schema with
-      # `allOf`, and a closed branch there would reject its own extra properties.
       type: object
+      additionalProperties: false
       required: [id, name, status, moduleCount]
       properties:
         id:
@@ -598,10 +568,6 @@ components:
           type: integer
           minimum: 0
     ProjectDetail:
-      # `unevaluatedProperties` closes the composed object: unlike
-      # `additionalProperties`, it accounts for properties evaluated by the
-      # allOf branches, so the detail response stays strict.
-      unevaluatedProperties: false
       allOf:
         - $ref: "#/components/schemas/ProjectSummary"
         - type: object
@@ -609,10 +575,8 @@ components:
           properties:
             portableConfig:
               type: object
-              additionalProperties: true
             bindingStatus:
               type: object
-              additionalProperties: true
     ValidationReport:
       type: object
       additionalProperties: false
@@ -728,7 +692,6 @@ components:
           type: [string, "null"]
         payload:
           type: object
-          additionalProperties: true
     ModulePackage:
       type: object
       required: [moduleId, version, displayName, categories, consumes, produces, requires, provides]
@@ -768,10 +731,8 @@ components:
           type: string
         repositories:
           type: object
-          additionalProperties: true
         slots:
           type: object
-          additionalProperties: true
     ProjectGraph:
       type: object
       additionalProperties: false
@@ -829,6 +790,5 @@ components:
               type: string
             details:
               type: object
-              additionalProperties: true
             correlationId:
               type: string
