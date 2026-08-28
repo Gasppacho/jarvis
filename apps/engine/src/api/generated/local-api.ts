@@ -433,7 +433,9 @@ export interface components {
             scripts?: {
                 [key: string]: string;
             };
-            suggested: Record<string, never>;
+            suggested: {
+                [key: string]: unknown;
+            };
         };
         ProjectSummary: {
             id: string;
@@ -444,8 +446,12 @@ export interface components {
             activeExecutions?: number;
         };
         ProjectDetail: components["schemas"]["ProjectSummary"] & {
-            portableConfig: Record<string, never>;
-            bindingStatus: Record<string, never>;
+            portableConfig: {
+                [key: string]: unknown;
+            };
+            bindingStatus: {
+                [key: string]: unknown;
+            };
         };
         ValidationReport: {
             valid: boolean;
@@ -503,7 +509,9 @@ export interface components {
             /** Format: date-time */
             occurredAt: string;
             projectId?: string | null;
-            payload: Record<string, never>;
+            payload: {
+                [key: string]: unknown;
+            };
         };
         ModulePackage: {
             moduleId: string;
@@ -517,8 +525,12 @@ export interface components {
         };
         ProjectBindings: {
             projectId: string;
-            repositories: Record<string, never>;
-            slots: Record<string, never>;
+            repositories: {
+                [key: string]: unknown;
+            };
+            slots: {
+                [key: string]: unknown;
+            };
         };
         ProjectGraph: {
             nodes: Record<string, never>[];
@@ -541,7 +553,9 @@ export interface components {
             error: {
                 code: string;
                 message: string;
-                details?: Record<string, never>;
+                details?: {
+                    [key: string]: unknown;
+                };
                 correlationId: string;
             };
         };
@@ -634,6 +648,7 @@ export interface operations {
                     };
                 };
             };
+            default: components["responses"]["Error"];
         };
     };
     importProject: {
@@ -647,7 +662,9 @@ export interface operations {
             content: {
                 "application/json": {
                     repositoryPath: string;
-                    portableConfig?: Record<string, never>;
+                    portableConfig?: {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };
@@ -778,6 +795,7 @@ export interface operations {
                     };
                 };
             };
+            default: components["responses"]["Error"];
         };
     };
     listProjectEvents: {
@@ -805,6 +823,7 @@ export interface operations {
                     };
                 };
             };
+            default: components["responses"]["Error"];
         };
     };
     listProjectExecutions: {
@@ -829,6 +848,7 @@ export interface operations {
                     };
                 };
             };
+            default: components["responses"]["Error"];
         };
     };
     cancelExecution: {
@@ -874,6 +894,7 @@ export interface operations {
                     };
                 };
             };
+            default: components["responses"]["Error"];
         };
     };
     upsertConnection: {
@@ -927,6 +948,7 @@ export interface operations {
                     };
                 };
             };
+            default: components["responses"]["Error"];
         };
     };
     streamUpdates: {
@@ -947,6 +969,7 @@ export interface operations {
                     "text/event-stream": string;
                 };
             };
+            default: components["responses"]["Error"];
         };
     };
     shutdownEngine: {
@@ -965,6 +988,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            default: components["responses"]["Error"];
         };
     };
     listModuleCatalog: {
@@ -987,6 +1011,7 @@ export interface operations {
                     };
                 };
             };
+            default: components["responses"]["Error"];
         };
     };
     replaceProjectConfiguration: {
@@ -1001,7 +1026,9 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    portableConfig: Record<string, never>;
+                    portableConfig: {
+                        [key: string]: unknown;
+                    };
                     writeToRepository: boolean;
                 };
             };
@@ -1114,6 +1141,7 @@ export interface operations {
                     };
                 };
             };
+            default: components["responses"]["Error"];
         };
     };
     replayDeadLetter: {
@@ -1182,6 +1210,7 @@ export interface operations {
                     };
                 };
             };
+            default: components["responses"]["Error"];
         };
     };
     createDiagnosticBundle: {
@@ -1212,6 +1241,7 @@ export interface operations {
                     };
                 };
             };
+            default: components["responses"]["Error"];
         };
     };
 }

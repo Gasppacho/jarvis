@@ -47,12 +47,21 @@ importers:
 
   apps/engine:
     dependencies:
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
+      ajv-formats:
+        specifier: 3.0.1
+        version: 3.0.1(ajv@8.20.0)
       better-sqlite3:
         specifier: 13.0.3
         version: 13.0.3
       fastify:
         specifier: 5.12.1
         version: 5.12.1
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
 
 packages:
 

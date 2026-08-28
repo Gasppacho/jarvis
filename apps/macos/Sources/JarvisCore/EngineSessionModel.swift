@@ -16,6 +16,15 @@ public enum EngineStatus: Sendable, Equatable {
 public final class EngineSessionModel {
     public private(set) var status: EngineStatus = .starting
 
+    /// True once the engine answered a healthy `/v1/health`.
+    public var isReady: Bool {
+        if case .ready = status { return true }
+        return false
+    }
+
+    /// Projects are only reachable once the engine session exists.
+    public let projects = ProjectsModel()
+
     private let supervisor: EngineSupervisor
     private var client: EngineClient?
 
@@ -29,7 +38,9 @@ public final class EngineSessionModel {
             let session = try await supervisor.start()
             let client = EngineClient(session: session)
             self.client = client
+            projects.attach(client: client)
             await refresh()
+            await projects.refresh()
         } catch {
             status = .failed(
                 (error as? LocalizedError)?.errorDescription ?? error.localizedDescription)

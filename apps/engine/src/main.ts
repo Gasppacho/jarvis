@@ -1,6 +1,8 @@
 import { ConfigurationError, LOOPBACK_HOST, loadConfig } from "./config.ts";
 import { openDatabase } from "./db/open.ts";
 import { createServer, type HealthResponse } from "./http/server.ts";
+import { ProjectService } from "./projects/service.ts";
+import { ProjectStore } from "./projects/store.ts";
 import { API_VERSION, ENGINE_VERSION } from "./version.ts";
 
 /**
@@ -30,9 +32,17 @@ async function main(): Promise<void> {
     database: database.status,
   });
 
+  // A failed database degrades the engine; it does not kill it. The shell needs
+  // a reachable /v1/health to explain what is wrong (MVP_SPEC user story 3).
+  const projects =
+    database.db === null
+      ? null
+      : new ProjectService(new ProjectStore(database.db));
+
   const app = createServer({
     token: config.token,
     health,
+    projects,
     onShutdownRequested: () => void shutdown(0),
     ...(process.env.JARVIS_LOG_LEVEL === undefined
       ? {}

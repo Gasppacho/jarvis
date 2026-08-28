@@ -1,31 +1,11 @@
-import { readFileSync } from "node:fs";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { Ajv2020 } from "ajv/dist/2020.js";
-import addFormatsModule from "ajv-formats";
-import { parse as parseYaml } from "yaml";
 
-const addFormats = addFormatsModule.default;
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { explain, localApiValidator } from "./contract.ts";
 import { startEngine, type EngineHandle } from "./harness.ts";
-
-const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
-
-/** The OpenAPI document is the source of truth, so assert against it directly. */
-function healthResponseValidator() {
-  const document = parseYaml(
-    readFileSync(
-      join(REPO_ROOT, "contracts/openapi/local-api.v1.yaml"),
-      "utf8",
-    ),
-  ) as { components: { schemas: Record<string, object> } };
-  const ajv = new Ajv2020({ strict: false, allErrors: true });
-  addFormats(ajv);
-  return ajv.compile(document.components.schemas.HealthResponse!);
-}
 
 const errorEnvelope = (body: string) =>
   JSON.parse(body) as {
@@ -34,10 +14,10 @@ const errorEnvelope = (body: string) =>
 
 describe("engine walking skeleton", () => {
   const started: EngineHandle[] = [];
-  let validateHealth: ReturnType<typeof healthResponseValidator>;
+  let validateHealth: ReturnType<typeof localApiValidator>;
 
   beforeAll(() => {
-    validateHealth = healthResponseValidator();
+    validateHealth = localApiValidator("HealthResponse");
   });
 
   afterEach(async () => {
@@ -171,9 +151,7 @@ describe("engine walking skeleton", () => {
     expect(response.status).toBe(200);
 
     const body = (await response.json()) as Record<string, unknown>;
-    expect(validateHealth(body), JSON.stringify(validateHealth.errors)).toBe(
-      true,
-    );
+    expect(validateHealth(body), explain(validateHealth)).toBe(true);
     expect(body).toMatchObject({
       status: "ready",
       apiVersion: "v1",
@@ -185,7 +163,7 @@ describe("engine walking skeleton", () => {
     const engine = await start();
     await engine.call("/v1/health");
 
-    expect(existsSync(join(engine.dataRoot, "jarvis.db"))).toBe(true);
+    expect(existsSync(join(engine.dataRoot, "jarvis.sqlite"))).toBe(true);
   });
 
   it("reopens an existing data root after a restart", async () => {
