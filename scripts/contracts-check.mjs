@@ -153,11 +153,14 @@ if (existsSync(projectFile)) {
     }
     // 7. the instance configuration must satisfy its module's schema.
     const configRef = manifest.configuration?.schemaRef;
-    if (configRef === undefined || instance.configuration === undefined) continue;
+    if (configRef === undefined) continue;
+    // A missing `configuration:` block is not a free pass: an empty object must
+    // still satisfy the module schema, which is where required keys are caught.
+    const configuration = instance.configuration ?? {};
     const validateConfig = compiled.get(configRef);
     if (validateConfig === undefined) {
       fail("project-module-config-schema-missing", rel(projectFile), configRef);
-    } else if (!validateConfig(instance.configuration)) {
+    } else if (!validateConfig(configuration)) {
       fail(
         "project-module-config-invalid",
         `${rel(projectFile)}#${instance.instanceId}`,

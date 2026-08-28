@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startEngine, type Harness } from "./harness.js";
@@ -31,6 +31,13 @@ describe("engine walking skeleton", () => {
     it("keeps its database inside JARVIS_DATA_ROOT", () => {
       // PERSISTENCE.md names the database `jarvis.sqlite`.
       expect(existsSync(join(engine.dataRoot, "jarvis.sqlite"))).toBe(true);
+    });
+
+    it("keeps the data root and database private to the current user", () => {
+      // The documented dev flow puts the data root under /tmp, and PERSISTENCE.md
+      // says it will hold project configuration and secret references.
+      expect(statSync(engine.dataRoot).mode & 0o077).toBe(0);
+      expect(statSync(join(engine.dataRoot, "jarvis.sqlite")).mode & 0o077).toBe(0);
     });
   });
 
@@ -85,6 +92,19 @@ describe("engine walking skeleton", () => {
   describe("POST /v1/system/shutdown", () => {
     it("acknowledges then exits with code 0", async () => {
       const response = await engine.call("/v1/system/shutdown", { method: "POST" });
+
+      expect(response.status).toBe(202);
+      await expect(engine.waitForExit()).resolves.toBe(0);
+    });
+
+    it("still shuts down when the caller sends an empty JSON body", async () => {
+      // A generated client may set `Content-Type: application/json` on a POST
+      // that has no body. Fastify's default parser answers 400, which would
+      // leave the engine running after the shell asked it to quit.
+      const response = await engine.call("/v1/system/shutdown", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      });
 
       expect(response.status).toBe(202);
       await expect(engine.waitForExit()).resolves.toBe(0);

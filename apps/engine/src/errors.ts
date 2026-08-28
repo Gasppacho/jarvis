@@ -6,6 +6,7 @@ export type ErrorCode =
   | "api.unauthorized"
   | "api.host-not-allowed"
   | "api.invalid-request"
+  | "system.internal-error"
   | "system.storage-unavailable";
 
 export interface ErrorEnvelope {

@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -7,7 +7,8 @@ export type DatabaseState = "ready" | "migrating" | "failed";
 
 export interface OpenedDatabase {
   readonly db: Database.Database;
-  readonly state: DatabaseState;
+  /** Live probe: `/v1/health` must report the database as it is now. */
+  readonly state: () => DatabaseState;
   readonly appliedVersions: readonly string[];
 }
 
@@ -19,15 +20,25 @@ export interface OpenedDatabase {
 const MIGRATIONS_DIR = fileURLToPath(new URL("./migrations/", import.meta.url));
 
 export function openDatabase(databasePath: string): OpenedDatabase {
-  mkdirSync(dirname(databasePath), { recursive: true });
+  // LOCAL_DEVELOPMENT.md puts the data root under /tmp, where the default 0755
+  // would let every local account read a database PERSISTENCE.md says will hold
+  // project configuration and secret references.
+  mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 });
 
   // TECHNOLOGY_STACK.md: the persistence layer accepts an explicit addon path,
   // because the packaged app signs and relocates the native binding.
   const nativeBinding = process.env["JARVIS_SQLITE_ADDON"];
+  // mkdirSync leaves a pre-existing data root at whatever mode it already had,
+  // and the driver gives no way to set the database file's mode, so both are
+  // tightened explicitly once they exist.
+  chmodSync(dirname(databasePath), 0o700);
+
   const db = new Database(databasePath, nativeBinding === undefined ? {} : { nativeBinding });
   // ADR 0007: WAL gives durable local transactions without an external database.
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
+
+  chmodSync(databasePath, 0o600);
 
   const appliedVersions = migrate(db);
 
@@ -35,7 +46,9 @@ export function openDatabase(databasePath: string): OpenedDatabase {
   // that no migration threw.
   db.prepare("SELECT value FROM engine_metadata WHERE key = ?").get("schema_initialized_at");
 
-  return { db, state: "ready", appliedVersions };
+  // better-sqlite3 flips `open` to false on close, so a health check during
+  // shutdown stops claiming the database is ready.
+  return { db, state: () => (db.open ? "ready" : "failed"), appliedVersions };
 }
 
 function migrate(db: Database.Database): readonly string[] {

@@ -49,4 +49,12 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...withToken, JARVIS_PORT: "70000" })).toThrow(ConfigError);
     expect(() => loadConfig({ ...withToken, JARVIS_PORT: "not-a-port" })).toThrow(ConfigError);
   });
+
+  it("rejects a port that only Number() would find plausible", () => {
+    // Number("") is 0 and Number("0x1f") is 31: both would silently bind
+    // something other than what the caller asked for.
+    for (const port of ["", " ", "1e3", "0x1f", "-1", "8080 ", "80.5"]) {
+      expect(() => loadConfig({ ...withToken, JARVIS_PORT: port })).toThrow(ConfigError);
+    }
+  });
 });

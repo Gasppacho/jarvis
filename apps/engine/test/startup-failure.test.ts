@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const enginePath = join(repoRoot, "dist", "engine", "engine.bundle.mjs");
@@ -12,11 +14,33 @@ interface Run {
   readonly stderr: string;
 }
 
+const dataRoots: string[] = [];
+
+/**
+ * A throwaway data root for every run. LOCAL_DEVELOPMENT.md forbids touching the
+ * developer's real Application Support directory, and relying on `loadConfig`
+ * throwing first would make that guarantee an accident of ordering.
+ */
+function freshDataRoot(): string {
+  const root = mkdtempSync(join(tmpdir(), "jarvis-startup-"));
+  dataRoots.push(root);
+  return root;
+}
+
+afterEach(() => {
+  for (const root of dataRoots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
 function runEngine(env: Record<string, string | undefined>): Promise<Run> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [enginePath], {
       cwd: repoRoot,
-      env: { ...process.env, JARVIS_API_TOKEN: undefined, ...env },
+      env: {
+        ...process.env,
+        JARVIS_API_TOKEN: undefined,
+        JARVIS_DATA_ROOT: freshDataRoot(),
+        ...env,
+      },
     });
     let stdout = "";
     let stderr = "";

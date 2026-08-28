@@ -51,10 +51,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): EngineConfig {
 
 function parsePort(raw: string | undefined): number {
   if (raw === undefined) return 0;
-  const port = Number(raw);
-  if (!Number.isInteger(port) || port < 0 || port > 65_535) {
+  // Number() would turn "", " ", "1e3" and "0x1f" into plausible-looking ports,
+  // so a malformed value has to be rejected before conversion.
+  const port = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  if (!Number.isInteger(port) || port > 65_535) {
     throw new ConfigError(
-      `JARVIS_PORT is not a valid port: ${raw}`,
+      `JARVIS_PORT is not a valid port: ${JSON.stringify(raw)}`,
       "Unset it to pick a free port.",
     );
   }

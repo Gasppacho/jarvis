@@ -16,27 +16,46 @@ async function main(): Promise<void> {
   let shuttingDown = false;
   const app = buildServer({
     config,
-    databaseState: () => opened.state,
+    databaseState: opened.state,
+    isShuttingDown: () => shuttingDown,
     onShutdownRequested: () => {
       void shutdown(0);
     },
   });
 
-  async function shutdown(exitCode: number): Promise<void> {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    const forceExit = setTimeout(() => process.exit(exitCode), SHUTDOWN_GRACE_MS);
-    forceExit.unref();
+  function closeDatabase(): void {
     try {
-      await app.close();
-      opened.db.close();
-    } finally {
-      process.exit(exitCode);
+      if (opened.db.open) opened.db.close();
+    } catch (error) {
+      process.stderr.write(`jarvis-engine: could not close the database.\n${String(error)}\n`);
     }
   }
 
-  process.on("SIGTERM", () => void shutdown(0));
-  process.on("SIGINT", () => void shutdown(0));
+  async function shutdown(exitCode: number): Promise<void> {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
+    // If closing hangs past the grace period the shutdown did not complete, so
+    // the shell must not read it as a clean exit.
+    const forceExit = setTimeout(() => {
+      process.stderr.write("jarvis-engine: shutdown timed out; forcing exit.\n");
+      closeDatabase();
+      process.exit(exitCode === 0 ? 1 : exitCode);
+    }, SHUTDOWN_GRACE_MS);
+    forceExit.unref();
+
+    let code = exitCode;
+    try {
+      await app.close();
+    } catch (error) {
+      // A failed close leaves the WAL un-checkpointed; reporting 0 would hide it.
+      process.stderr.write(`jarvis-engine: shutdown failed.\n${String(error)}\n`);
+      code = 1;
+    } finally {
+      closeDatabase();
+      process.exit(code);
+    }
+  }
 
   await app.listen({ host: config.host, port: config.port });
   const address = app.server.address() as AddressInfo;
@@ -50,6 +69,12 @@ async function main(): Promise<void> {
       sessionId: config.sessionId,
     })}\n`,
   );
+
+  // Registered only once the handshake is out. A signal before this point kills
+  // the process with a non-zero status, which is what an engine that never
+  // became ready should report to the shell.
+  process.on("SIGTERM", () => void shutdown(0));
+  process.on("SIGINT", () => void shutdown(0));
 }
 
 main().catch((error: unknown) => {
