@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "development.implementation.requested v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "workItemRef",
+    "repositoryId",
+    "baseBranch"
+  ],
+  "properties": {
+    "workItemRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "repositoryId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "baseBranch": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "requestedGeneration": {
+      "type": "integer",
+      "minimum": 1
+    }
+  }
+}

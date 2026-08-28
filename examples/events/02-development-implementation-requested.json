@@ -1,0 +1,32 @@
+{
+  "specVersion": "1.0",
+  "version": 1,
+  "occurredAt": "2026-08-28T08:00:00.000Z",
+  "projectId": "token-warehouse",
+  "repositoryId": "main",
+  "correlationId": "corr_issue_42_generation_1",
+  "metadata": {
+    "generation": 1
+  },
+  "id": "evt_development_requested_001",
+  "type": "development.implementation.requested",
+  "kind": "request",
+  "producer": {
+    "moduleId": "jarvis.module.automation-rules",
+    "moduleInstanceId": "automation-rules"
+  },
+  "subject": {
+    "type": "work-item",
+    "ref": "github://QServices/token-warehouse/issues/42"
+  },
+  "causationId": "evt_tag_added_001",
+  "target": {
+    "moduleInstanceId": "development"
+  },
+  "idempotencyKey": "token-warehouse:issue-42:development:1",
+  "payload": {
+    "workItemRef": "github://QServices/token-warehouse/issues/42",
+    "repositoryId": "main",
+    "baseBranch": "main"
+  }
+}

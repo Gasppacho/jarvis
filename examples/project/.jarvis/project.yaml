@@ -1,0 +1,73 @@
+apiVersion: jarvis.dev/project/v1
+kind: Project
+metadata:
+  id: token-warehouse
+  name: Token Warehouse
+  description: Example GitHub project using a project-bound coding runtime.
+repositories:
+  - id: main
+    root: .
+    defaultBranch: main
+    remote: origin
+slots:
+  sourceControl:
+    requires: scm.change-request.manage
+  tickets:
+    requires: work-items.read
+  agentRuntime:
+    requires: agent.execute
+commands:
+  install: pnpm install --frozen-lockfile
+  lint: pnpm lint
+  typecheck: pnpm typecheck
+  test: pnpm test
+  build: pnpm build
+git:
+  branchPattern: agent/{workItemId}-{slug}
+  commitStrategy: conventional
+  pushRemote: origin
+  allowForcePush: false
+workspace:
+  strategy: git-worktree
+  maxConcurrentExecutions: 2
+  retainOnFailureDays: 7
+modules:
+  - instanceId: github
+    moduleId: jarvis.module.github
+    enabled: true
+    bindings:
+      sourceControl: sourceControl
+      tickets: tickets
+    configuration:
+      pollIntervalSeconds: 60
+      repositories:
+        - main
+  - instanceId: automation-rules
+    moduleId: jarvis.module.automation-rules
+    enabled: true
+    configuration:
+      rules:
+        - id: ready-label-starts-development
+          when:
+            eventType: scm.work-item.tag-added
+            equals:
+              payload.tag: agent:ready
+          emit:
+            type: development.implementation.requested
+            target:
+              moduleInstanceId: development
+  - instanceId: development
+    moduleId: jarvis.module.development
+    enabled: true
+    runtimeSlot: agentRuntime
+    bindings:
+      tickets: tickets
+      repository: main
+      sourceControl: sourceControl
+    configuration:
+      validationOrder:
+        - lint
+        - typecheck
+        - test
+        - build
+      maxRepairCycles: 2

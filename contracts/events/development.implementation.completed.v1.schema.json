@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "development.implementation.completed v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "workItemRef",
+    "repositoryId",
+    "headBranch",
+    "headCommit",
+    "validation"
+  ],
+  "properties": {
+    "workItemRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "repositoryId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "baseBranch": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "headBranch": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "headCommit": {
+      "type": "string",
+      "minLength": 7,
+      "maxLength": 128,
+      "pattern": "^[0-9a-fA-F]+$"
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "passed",
+        "commands"
+      ],
+      "properties": {
+        "passed": {
+          "const": true
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "status"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "status": {
+                "const": "passed"
+              },
+              "durationMs": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 4000
+    }
+  }
+}

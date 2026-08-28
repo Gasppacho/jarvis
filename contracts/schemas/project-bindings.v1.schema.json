@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jarvis.dev/schemas/project-bindings.v1.schema.json",
+  "title": "Jarvis Project Bindings v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "kind",
+    "projectId",
+    "repositories",
+    "slots"
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "jarvis.dev/project-bindings/v1"
+    },
+    "kind": {
+      "const": "ProjectBindings"
+    },
+    "projectId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "repositories": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "bookmarkRef"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "bookmarkRef": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "slots": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "ref"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "connection",
+              "runtime",
+              "mcp",
+              "module-instance",
+              "engine"
+            ]
+          },
+          "ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
+        }
+      }
+    }
+  }
+}

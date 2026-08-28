@@ -1,0 +1,7 @@
+node_modules
+dist
+contracts
+examples
+
+# Generated from the OpenAPI contract; formatting it would fight `pnpm generate`.
+apps/engine/src/api/generated

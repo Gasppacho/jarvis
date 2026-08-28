@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "scm.change-request.creation-failed v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "repositoryId",
+    "workItemRef",
+    "code",
+    "message",
+    "retryable"
+  ],
+  "properties": {
+    "repositoryId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "workItemRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "retryable": {
+      "type": "boolean"
+    }
+  }
+}

@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jarvis.dev/schemas/event-envelope.v1.schema.json",
+  "title": "Jarvis Event Envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "specVersion",
+    "id",
+    "type",
+    "version",
+    "kind",
+    "occurredAt",
+    "projectId",
+    "producer",
+    "subject",
+    "correlationId",
+    "causationId",
+    "payload"
+  ],
+  "properties": {
+    "specVersion": {
+      "const": "1.0"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128,
+      "pattern": "^evt_[A-Za-z0-9_-]+$"
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*)+$",
+      "maxLength": 160
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "kind": {
+      "enum": [
+        "request",
+        "fact"
+      ]
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "projectId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "maxLength": 100
+    },
+    "repositoryId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "maxLength": 100
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "moduleId",
+        "moduleInstanceId"
+      ],
+      "properties": {
+        "moduleId": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$",
+          "maxLength": 160
+        },
+        "moduleInstanceId": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$",
+          "maxLength": 100
+        }
+      }
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "ref"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$",
+          "maxLength": 100
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      }
+    },
+    "correlationId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128,
+      "pattern": "^corr_[A-Za-z0-9_-]+$"
+    },
+    "causationId": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "binding": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9._-]*$",
+          "maxLength": 100
+        },
+        "moduleInstanceId": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]*$",
+          "maxLength": 100
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "binding"
+          ]
+        },
+        {
+          "required": [
+            "moduleInstanceId"
+          ]
+        }
+      ]
+    },
+    "idempotencyKey": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 256
+    },
+    "payload": {
+      "type": "object"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "traceId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "externalObservedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "request"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "target",
+          "idempotencyKey"
+        ]
+      }
+    }
+  ]
+}

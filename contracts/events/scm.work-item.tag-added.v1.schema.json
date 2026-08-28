@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "scm.work-item.tag-added v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "workItemRef",
+    "tag"
+  ],
+  "properties": {
+    "workItemRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "tag": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 500
+    },
+    "actorRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    }
+  }
+}

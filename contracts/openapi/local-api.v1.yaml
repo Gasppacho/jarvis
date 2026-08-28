@@ -1,0 +1,796 @@
+openapi: 3.1.0
+info:
+  title: Jarvis Local API
+  version: 1.0.0
+  description: Loopback-only API between the native macOS shell and the embedded engine.
+servers:
+  - url: http://127.0.0.1:{port}
+    variables:
+      port:
+        default: "43127"
+security:
+  - bearerAuth: []
+paths:
+  /v1/health:
+    get:
+      operationId: getHealth
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Engine health.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/discovery/repository:
+    post:
+      operationId: discoverRepository
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [path]
+              properties:
+                path:
+                  type: string
+      responses:
+        "200":
+          description: Read-only discovery result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepositoryDiscovery"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/projects:
+    get:
+      operationId: listProjects
+      responses:
+        "200":
+          description: Projects known by this installation.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ProjectSummary"
+    post:
+      operationId: importProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [repositoryPath]
+              properties:
+                repositoryPath:
+                  type: string
+                portableConfig:
+                  type: object
+      responses:
+        "201":
+          description: Imported draft project.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectDetail"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/projects/{projectId}:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      operationId: getProject
+      responses:
+        "200":
+          description: Project detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectDetail"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/projects/{projectId}/validate:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      operationId: validateProject
+      responses:
+        "200":
+          description: Composition validation report.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationReport"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/projects/{projectId}/activate:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      operationId: activateProject
+      responses:
+        "200":
+          description: Activated project.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectSummary"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/projects/{projectId}/pause:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      operationId: pauseProject
+      responses:
+        "200":
+          description: Paused project.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectSummary"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/projects/{projectId}/modules:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      operationId: listProjectModules
+      responses:
+        "200":
+          description: Module instances and validation status.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ModuleInstance"
+  /v1/projects/{projectId}/events:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      operationId: listProjectEvents
+      parameters:
+        - name: correlationId
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        "200":
+          description: Durable event timeline.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/EventSummary"
+  /v1/projects/{projectId}/executions:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      operationId: listProjectExecutions
+      responses:
+        "200":
+          description: Project executions.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ExecutionSummary"
+  /v1/executions/{executionId}/cancel:
+    post:
+      operationId: cancelExecution
+      parameters:
+        - name: executionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Cancellation requested.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutionSummary"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/connections:
+    get:
+      operationId: listConnections
+      responses:
+        "200":
+          description: Global connection descriptors without secrets.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ResourceDescriptor"
+    post:
+      operationId: upsertConnection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [id, kind, displayName, secretRef]
+              properties:
+                id:
+                  type: string
+                kind:
+                  type: string
+                displayName:
+                  type: string
+                secretRef:
+                  type: string
+                configuration:
+                  type: object
+      responses:
+        "201":
+          description: Connection descriptor without secret value.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceDescriptor"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/runtimes:
+    get:
+      operationId: listRuntimes
+      responses:
+        "200":
+          description: Detected agent runtimes.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ResourceDescriptor"
+  /v1/stream:
+    get:
+      operationId: streamUpdates
+      responses:
+        "200":
+          description: Server-sent event stream. Each data field is a StreamMessage JSON object.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+  /v1/system/shutdown:
+    post:
+      operationId: shutdownEngine
+      responses:
+        "202":
+          description: Graceful shutdown started.
+  /v1/module-catalog:
+    get:
+      operationId: listModuleCatalog
+      responses:
+        "200":
+          description: Bundled validated Module Packages.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ModulePackage"
+  /v1/projects/{projectId}/configuration:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    put:
+      operationId: replaceProjectConfiguration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [portableConfig, writeToRepository]
+              properties:
+                portableConfig:
+                  type: object
+                writeToRepository:
+                  type: boolean
+      responses:
+        "200":
+          description: Updated draft Project.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectDetail"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/projects/{projectId}/bindings:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      operationId: getProjectBindings
+      responses:
+        "200":
+          description: Local Project Bindings without secret values.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectBindings"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      operationId: replaceProjectBindings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectBindings"
+      responses:
+        "200":
+          description: Updated Local Bindings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectBindings"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/projects/{projectId}/graph:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      operationId: getProjectGraph
+      responses:
+        "200":
+          description: Emergent graph derived from active Module contracts.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectGraph"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/projects/{projectId}/dead-letters:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      operationId: listProjectDeadLetters
+      responses:
+        "200":
+          description: Dead Letters for one Project.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/DeadLetter"
+  /v1/dead-letters/{deliveryId}/replay:
+    post:
+      operationId: replayDeadLetter
+      parameters:
+        - name: deliveryId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Replay accepted with original idempotency semantics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutionSummary"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/connections/{connectionId}/validate:
+    post:
+      operationId: validateConnection
+      parameters:
+        - name: connectionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Connection health descriptor.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResourceDescriptor"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/runtimes/discover:
+    post:
+      operationId: discoverRuntimes
+      responses:
+        "200":
+          description: Refreshed runtime descriptors.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ResourceDescriptor"
+  /v1/diagnostics:
+    post:
+      operationId: createDiagnosticBundle
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                projectIds:
+                  type: array
+                  items:
+                    type: string
+                includeAgentTranscripts:
+                  type: boolean
+                  default: false
+      responses:
+        "201":
+          description: Redacted diagnostic Artifact.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [artifactRef]
+                properties:
+                  artifactRef:
+                    type: string
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+  parameters:
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    Error:
+      description: Error response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status, engineVersion, apiVersion, database]
+      properties:
+        status:
+          type: string
+          enum: [ready, degraded, shutting-down]
+        engineVersion:
+          type: string
+        apiVersion:
+          type: string
+          const: v1
+        database:
+          type: string
+          enum: [ready, migrating, failed]
+    RepositoryDiscovery:
+      type: object
+      additionalProperties: false
+      required: [isGitRepository, suggested]
+      properties:
+        isGitRepository:
+          type: boolean
+        remoteUrl:
+          type: [string, "null"]
+        provider:
+          type: [string, "null"]
+        defaultBranch:
+          type: [string, "null"]
+        packageManager:
+          type: [string, "null"]
+        scripts:
+          type: object
+          additionalProperties:
+            type: string
+        suggested:
+          type: object
+    ProjectSummary:
+      type: object
+      additionalProperties: false
+      required: [id, name, status, moduleCount]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+          enum: [draft, valid, active, paused, invalid, degraded, archived]
+        moduleCount:
+          type: integer
+          minimum: 0
+        activeExecutions:
+          type: integer
+          minimum: 0
+    ProjectDetail:
+      allOf:
+        - $ref: "#/components/schemas/ProjectSummary"
+        - type: object
+          required: [portableConfig, bindingStatus]
+          properties:
+            portableConfig:
+              type: object
+            bindingStatus:
+              type: object
+    ValidationReport:
+      type: object
+      additionalProperties: false
+      required: [valid, issues]
+      properties:
+        valid:
+          type: boolean
+        issues:
+          type: array
+          items:
+            type: object
+            required: [code, severity, message]
+            properties:
+              code:
+                type: string
+              severity:
+                type: string
+                enum: [error, warning]
+              message:
+                type: string
+              path:
+                type: [string, "null"]
+    ModuleInstance:
+      type: object
+      required: [instanceId, moduleId, version, enabled, status]
+      properties:
+        instanceId:
+          type: string
+        moduleId:
+          type: string
+        version:
+          type: string
+        enabled:
+          type: boolean
+        status:
+          type: string
+          enum: [configured, active, degraded, invalid, inactive]
+    EventSummary:
+      type: object
+      required: [id, type, version, kind, occurredAt, producer, correlationId]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        version:
+          type: integer
+        kind:
+          type: string
+          enum: [request, fact]
+        occurredAt:
+          type: string
+          format: date-time
+        producer:
+          type: string
+        correlationId:
+          type: string
+        causationId:
+          type: [string, "null"]
+        subjectRef:
+          type: string
+    ExecutionSummary:
+      type: object
+      required: [id, projectId, moduleInstanceId, status, attempt, createdAt]
+      properties:
+        id:
+          type: string
+        projectId:
+          type: string
+        moduleInstanceId:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, cancelling, completed, failed, cancelled, timed-out]
+        attempt:
+          type: integer
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: [string, "null"]
+          format: date-time
+    ResourceDescriptor:
+      type: object
+      required: [id, kind, displayName, status, capabilities]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+        displayName:
+          type: string
+        status:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+    StreamMessage:
+      type: object
+      required: [sequence, type, occurredAt, payload]
+      properties:
+        sequence:
+          type: integer
+          minimum: 1
+        type:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+        projectId:
+          type: [string, "null"]
+        payload:
+          type: object
+    ModulePackage:
+      type: object
+      required: [moduleId, version, displayName, categories, consumes, produces, requires, provides]
+      properties:
+        moduleId:
+          type: string
+        version:
+          type: string
+        displayName:
+          type: string
+        categories:
+          type: array
+          items:
+            type: string
+        consumes:
+          type: array
+          items:
+            type: string
+        produces:
+          type: array
+          items:
+            type: string
+        requires:
+          type: array
+          items:
+            type: string
+        provides:
+          type: array
+          items:
+            type: string
+    ProjectBindings:
+      type: object
+      additionalProperties: false
+      required: [projectId, repositories, slots]
+      properties:
+        projectId:
+          type: string
+        repositories:
+          type: object
+        slots:
+          type: object
+    ProjectGraph:
+      type: object
+      additionalProperties: false
+      required: [nodes, edges, valid, issues]
+      properties:
+        nodes:
+          type: array
+          items:
+            type: object
+        edges:
+          type: array
+          items:
+            type: object
+        valid:
+          type: boolean
+        issues:
+          type: array
+          items:
+            type: object
+    DeadLetter:
+      type: object
+      required: [deliveryId, projectId, eventId, moduleInstanceId, code, attempts, createdAt]
+      properties:
+        deliveryId:
+          type: string
+        projectId:
+          type: string
+        eventId:
+          type: string
+        moduleInstanceId:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+        attempts:
+          type: integer
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, correlationId]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: object
+            correlationId:
+              type: string

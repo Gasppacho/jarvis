@@ -1,0 +1,33 @@
+{
+  "specVersion": "1.0",
+  "version": 1,
+  "occurredAt": "2026-08-28T08:12:05.000Z",
+  "projectId": "token-warehouse",
+  "repositoryId": "main",
+  "correlationId": "corr_issue_42_generation_1",
+  "metadata": {
+    "generation": 1
+  },
+  "id": "evt_change_request_created_001",
+  "type": "scm.change-request.created",
+  "kind": "fact",
+  "producer": {
+    "moduleId": "jarvis.module.github",
+    "moduleInstanceId": "github"
+  },
+  "subject": {
+    "type": "change-request",
+    "ref": "github://QServices/token-warehouse/pulls/57"
+  },
+  "causationId": "evt_change_request_requested_001",
+  "payload": {
+    "repositoryId": "main",
+    "changeRequestRef": "github://QServices/token-warehouse/pulls/57",
+    "externalNumber": 57,
+    "url": "https://github.com/QServices/token-warehouse/pull/57",
+    "baseBranch": "main",
+    "headBranch": "agent/42-add-health-endpoint",
+    "headCommit": "abc123def456",
+    "workItemRef": "github://QServices/token-warehouse/issues/42"
+  }
+}

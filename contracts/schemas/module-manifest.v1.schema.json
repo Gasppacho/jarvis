@@ -1,0 +1,328 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jarvis.dev/schemas/module-manifest.v1.schema.json",
+  "title": "Jarvis Module Manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "runtime",
+    "contracts",
+    "capabilities"
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "jarvis.dev/module/v1"
+    },
+    "kind": {
+      "const": "Module"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "displayName",
+        "description",
+        "categories"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^jarvis\\.module\\.[a-z0-9-]+$"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "categories": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "provider",
+              "automation",
+              "agentic",
+              "decision",
+              "observer"
+            ]
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entrypoint"
+      ],
+      "properties": {
+        "entrypoint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "engineRange": {
+          "type": "string",
+          "minLength": 1
+        },
+        "concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "partitionBy": {
+          "type": "string",
+          "maxLength": 100
+        }
+      }
+    },
+    "contracts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "consumes",
+        "produces"
+      ],
+      "properties": {
+        "consumes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "version",
+              "kind",
+              "schemaRef",
+              "handler"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*)+$"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "kind": {
+                "enum": [
+                  "request",
+                  "fact"
+                ]
+              },
+              "schemaRef": {
+                "type": "string",
+                "minLength": 1
+              },
+              "handler": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+              },
+              "filter": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "produces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "version",
+              "kind",
+              "schemaRef"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*)+$"
+              },
+              "version": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "kind": {
+                "enum": [
+                  "request",
+                  "fact"
+                ]
+              },
+              "schemaRef": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requires",
+        "provides"
+      ],
+      "properties": {
+        "requires": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]*$"
+              },
+              "binding": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9._-]*$"
+              },
+              "optional": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "provides": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]*$"
+              },
+              "description": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaRef"
+      ],
+      "properties": {
+        "schemaRef": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "agentic": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "loops": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "entrypoint"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]*$"
+              },
+              "entrypoint": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9._-]*$"
+              },
+              "prompt": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          }
+        }
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "emit": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*)+$"
+          }
+        },
+        "filesystem": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "project-read",
+              "workspace-read",
+              "workspace-write"
+            ]
+          }
+        },
+        "externalMutations": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]*$"
+          }
+        }
+      }
+    }
+  }
+}

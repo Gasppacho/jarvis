@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "development.implementation.failed v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "workItemRef",
+    "repositoryId",
+    "code",
+    "message",
+    "retryable"
+  ],
+  "properties": {
+    "workItemRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "repositoryId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "retryable": {
+      "type": "boolean"
+    },
+    "workspaceRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    }
+  }
+}

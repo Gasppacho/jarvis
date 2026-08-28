@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GitHub Module Config v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "pollIntervalSeconds",
+    "repositories"
+  ],
+  "properties": {
+    "pollIntervalSeconds": {
+      "type": "integer",
+      "minimum": 15,
+      "maximum": 3600
+    },
+    "repositories": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "bootstrapLabelPolicy": {
+      "enum": [
+        "ignore-existing",
+        "emit-existing"
+      ],
+      "default": "ignore-existing"
+    }
+  }
+}

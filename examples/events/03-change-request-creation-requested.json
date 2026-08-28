@@ -1,0 +1,36 @@
+{
+  "specVersion": "1.0",
+  "version": 1,
+  "occurredAt": "2026-08-28T08:12:00.000Z",
+  "projectId": "token-warehouse",
+  "repositoryId": "main",
+  "correlationId": "corr_issue_42_generation_1",
+  "metadata": {
+    "generation": 1
+  },
+  "id": "evt_change_request_requested_001",
+  "type": "scm.change-request.creation-requested",
+  "kind": "request",
+  "producer": {
+    "moduleId": "jarvis.module.development",
+    "moduleInstanceId": "development"
+  },
+  "subject": {
+    "type": "pushed-branch",
+    "ref": "git://token-warehouse/agent/42-add-health-endpoint"
+  },
+  "causationId": "evt_development_requested_001",
+  "target": {
+    "binding": "sourceControl"
+  },
+  "idempotencyKey": "token-warehouse:issue-42:change-request:1",
+  "payload": {
+    "repositoryId": "main",
+    "workItemRef": "github://QServices/token-warehouse/issues/42",
+    "baseBranch": "main",
+    "headBranch": "agent/42-add-health-endpoint",
+    "headCommit": "abc123def456",
+    "title": "feat: add health endpoint",
+    "description": "Implements #42 and adds automated coverage."
+  }
+}

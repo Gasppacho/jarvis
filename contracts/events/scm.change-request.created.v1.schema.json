@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "scm.change-request.created v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "repositoryId",
+    "changeRequestRef",
+    "externalNumber",
+    "url",
+    "baseBranch",
+    "headBranch",
+    "headCommit",
+    "workItemRef"
+  ],
+  "properties": {
+    "repositoryId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "changeRequestRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "externalNumber": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "url": {
+      "type": "string",
+      "format": "uri",
+      "maxLength": 2048
+    },
+    "baseBranch": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "headBranch": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "headCommit": {
+      "type": "string",
+      "minLength": 7,
+      "maxLength": 128,
+      "pattern": "^[0-9a-fA-F]+$"
+    },
+    "workItemRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "draft": {
+      "type": "boolean"
+    }
+  }
+}

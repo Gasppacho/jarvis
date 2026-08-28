@@ -1,0 +1,17 @@
+apiVersion: jarvis.dev/project-bindings/v1
+kind: ProjectBindings
+projectId: token-warehouse
+repositories:
+  main:
+    path: /Users/example/Developer/token-warehouse
+    bookmarkRef: bookmark/project-token-warehouse-main
+slots:
+  sourceControl:
+    kind: connection
+    ref: connection/github-qservices
+  tickets:
+    kind: mcp
+    ref: mcp/github-qservices
+  agentRuntime:
+    kind: runtime
+    ref: runtime/codex-default
