@@ -38,6 +38,23 @@ function editJson(path: string, mutate: (value: Record<string, unknown>) => void
   writeFileSync(path, JSON.stringify(value, null, 2));
 }
 
+/** Drops the first `key` line and everything nested under it. */
+function removeYamlBlock(yaml: string, key: string): string {
+  const lines = yaml.split("\n");
+  const start = lines.findIndex((line) => line.trimStart() === key);
+  if (start === -1) throw new Error(`no ${key} block to remove`);
+
+  const indent = lines[start]!.length - lines[start]!.trimStart().length;
+  let end = start + 1;
+  while (end < lines.length) {
+    const line = lines[end]!;
+    if (line.trim() !== "" && line.length - line.trimStart().length <= indent) break;
+    end += 1;
+  }
+  lines.splice(start, end - start);
+  return lines.join("\n");
+}
+
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
@@ -119,6 +136,17 @@ describe("pnpm contracts:check", () => {
       path,
       readFileSync(path, "utf8").replace("maxRepairCycles: 2", "maxRepairCycles: not-a-number"),
     );
+
+    const { code, stderr } = await runChecker(root);
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("project-module-config-invalid");
+  });
+
+  it("rejects a module instance that drops a configuration its schema requires", async () => {
+    const root = fixtureRoot();
+    const path = join(root, "examples/project/.jarvis/project.yaml");
+    // Deleting the block must not be a way to opt out of rule 7.
+    writeFileSync(path, removeYamlBlock(readFileSync(path, "utf8"), "configuration:"));
 
     const { code, stderr } = await runChecker(root);
     expect(code).not.toBe(0);

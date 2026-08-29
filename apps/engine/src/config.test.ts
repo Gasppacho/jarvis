@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ConfigError, loadConfig } from "./config.js";
 
@@ -27,10 +28,39 @@ describe("loadConfig", () => {
     expect(config.databasePath).toBe("/tmp/jarvis-test/jarvis.sqlite");
   });
 
+  it("treats an empty JARVIS_DATA_ROOT as unset rather than as the current directory", () => {
+    // `${JARVIS_DATA_ROOT:-}` expands to "", and dirname("jarvis.sqlite") is
+    // ".", which would adopt and re-permission the engine's working directory.
+    const { databasePath } = loadConfig({ ...withToken, JARVIS_DATA_ROOT: "" });
+    // Anchored: an unanchored match would also accept the relative
+    // "Library/Application Support/Jarvis/jarvis.sqlite" this guards against.
+    expect(isAbsolute(databasePath)).toBe(true);
+    expect(databasePath).toMatch(/^\/.*\/Library\/Application Support\/Jarvis\/jarvis\.sqlite$/);
+  });
+
+  it("refuses a relative data root, including one that HOME made relative", () => {
+    // homedir() returns HOME verbatim, so a set-but-empty HOME — plausible
+    // under launchd — would otherwise make the default root relative.
+    expect(() => loadConfig(withToken, () => "")).toThrow(ConfigError);
+    for (const root of [".", "data", "../elsewhere"]) {
+      expect(() => loadConfig({ ...withToken, JARVIS_DATA_ROOT: root })).toThrow(ConfigError);
+    }
+  });
+
+  it("mints a session id when the shell passes an empty one", () => {
+    expect(loadConfig({ ...withToken, JARVIS_SESSION_ID: "" }).sessionId).not.toBe("");
+  });
+
   it("falls back to Application Support when no data root is given", () => {
     const config = loadConfig(withToken);
 
     expect(config.databasePath).toMatch(/Library\/Application Support\/Jarvis\/jarvis\.sqlite$/);
+  });
+
+  it("treats an empty JARVIS_PORT as no preference", () => {
+    // A launcher expanding `${PORT:-}` must not turn a working default into a
+    // refusal to boot.
+    expect(loadConfig({ ...withToken, JARVIS_PORT: "" }).port).toBe(0);
   });
 
   it("binds loopback and asks the OS for a free port by default", () => {
@@ -48,5 +78,13 @@ describe("loadConfig", () => {
   it("rejects a port that is not a valid TCP port", () => {
     expect(() => loadConfig({ ...withToken, JARVIS_PORT: "70000" })).toThrow(ConfigError);
     expect(() => loadConfig({ ...withToken, JARVIS_PORT: "not-a-port" })).toThrow(ConfigError);
+  });
+
+  it("rejects a port that only Number() would find plausible", () => {
+    // Number("") is 0 and Number("0x1f") is 31: both would silently bind
+    // something other than what the caller asked for.
+    for (const port of [" ", "1e3", "0x1f", "-1", "8080 ", "80.5"]) {
+      expect(() => loadConfig({ ...withToken, JARVIS_PORT: port })).toThrow(ConfigError);
+    }
   });
 });

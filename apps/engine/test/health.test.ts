@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startEngine, type Harness } from "./harness.js";
@@ -31,6 +31,12 @@ describe("engine walking skeleton", () => {
     it("keeps its database inside JARVIS_DATA_ROOT", () => {
       // PERSISTENCE.md names the database `jarvis.sqlite`.
       expect(existsSync(join(engine.dataRoot, "jarvis.sqlite"))).toBe(true);
+    });
+
+    it("keeps the database private to the current user", () => {
+      // SQLite creates the file 0644; PERSISTENCE.md says it will hold project
+      // configuration and secret references.
+      expect(statSync(join(engine.dataRoot, "jarvis.sqlite")).mode & 0o077).toBe(0);
     });
   });
 
@@ -88,6 +94,43 @@ describe("engine walking skeleton", () => {
 
       expect(response.status).toBe(202);
       await expect(engine.waitForExit()).resolves.toBe(0);
+    });
+
+    it("still shuts down when the caller sends an empty JSON body", async () => {
+      // A generated client may set `Content-Type: application/json` on a POST
+      // that has no body. Fastify's default parser answers 400, which would
+      // leave the engine running after the shell asked it to quit.
+      const response = await engine.call("/v1/system/shutdown", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      });
+
+      expect(response.status).toBe(202);
+      await expect(engine.waitForExit()).resolves.toBe(0);
+    });
+
+    it("still answers 404 for an unknown path sent with a JSON content type", async () => {
+      // Body parsing runs before routing resolves the 404, so the empty-body
+      // rule must key on the matched route rather than the request line.
+      const response = await engine.call("/v1/does-not-exist", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      });
+
+      expect(response.status).toBe(404);
+    });
+
+    it("refuses a body that could reach Object.prototype", async () => {
+      // Replacing Fastify's parser must not lose its protoAction: "error".
+      const response = await engine.call("/v1/system/shutdown", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: '{"__proto__":{"polluted":true}}',
+      });
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as { error: { message: string } };
+      expect(body.error.message).toContain("__proto__");
     });
 
     it("refuses an unauthenticated shutdown", async () => {

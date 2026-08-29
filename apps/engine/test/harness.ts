@@ -49,12 +49,20 @@ export interface Harness {
 export interface StartEngineOptions {
   /** Extra environment for the child, e.g. to point at a poisoned data root. */
   readonly env?: Readonly<Record<string, string>>;
+  /** Use a data root the test already created, instead of a fresh mkdtemp one. */
+  readonly dataRoot?: string;
 }
 
 class ReadyTimeout extends Error {}
 
 export async function startEngine(options: StartEngineOptions = {}): Promise<Harness> {
-  const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-harness-"));
+  // Only a root the harness allocated may be removed on dispose: a caller that
+  // supplies one may keep other fixtures beside it. `env` is spread into the
+  // child last, so a root set there wins and must count as caller-supplied too.
+  const supplied = options.env?.["JARVIS_DATA_ROOT"] ?? options.dataRoot;
+  const suppliedRoot = supplied === undefined || supplied === "" ? undefined : supplied;
+  const ownsDataRoot = suppliedRoot === undefined;
+  const dataRoot = suppliedRoot ?? (await mkdtemp(join(tmpdir(), "jarvis-harness-")));
   const token = randomBytes(32).toString("base64url");
 
   const child = spawn(process.execPath, [enginePath], {
@@ -96,7 +104,7 @@ export async function startEngine(options: StartEngineOptions = {}): Promise<Har
     rejectAfter(READY_TIMEOUT_MS, stderrChunks),
   ]).catch(async (error: unknown) => {
     child.kill("SIGKILL");
-    await rm(dataRoot, { recursive: true, force: true });
+    if (ownsDataRoot) await rm(dataRoot, { recursive: true, force: true });
     throw error;
   });
 
@@ -132,7 +140,7 @@ export async function startEngine(options: StartEngineOptions = {}): Promise<Har
         child.kill("SIGKILL");
         await exited;
       }
-      await rm(dataRoot, { recursive: true, force: true });
+      if (ownsDataRoot) await rm(dataRoot, { recursive: true, force: true });
     },
   };
 }
