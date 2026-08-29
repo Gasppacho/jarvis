@@ -3,7 +3,12 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
 export interface EngineConfig {
-  /** Every file the engine writes lives under this root. */
+  /**
+   * The configured data root, absolute and normalised. `openDatabase`
+   * canonicalises it — on macOS /tmp and /var are symlinks — and reports the
+   * resolved path as `OpenedDatabase.dataRoot`. Anything doing a containment
+   * check on a path the engine produced must use that one, not this.
+   */
   readonly dataRoot: string;
   readonly databasePath: string;
   /** Session bearer token minted by the macOS shell. */

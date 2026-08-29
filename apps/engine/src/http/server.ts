@@ -38,7 +38,10 @@ export function buildServer(deps: ServerDependencies): FastifyInstance {
   // stays a client error rather than becoming an undefined `request.body`.
   app.addContentTypeParser("application/json", { parseAs: "string" }, (request, body, done) => {
     if (typeof body !== "string" || body.trim() === "") {
-      if (routePath(request.url) === SHUTDOWN_PATH) {
+      // Matched route, not the raw request line: parsing runs before the 404
+      // handler, so an unknown path must not be answered with a body error.
+      const matched = request.routeOptions?.url;
+      if (matched === SHUTDOWN_PATH || matched === undefined) {
         done(null, undefined);
         return;
       }
@@ -127,11 +130,6 @@ function toEngineError(error: unknown): EngineError {
 }
 
 const CORRELATION_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/;
-
-function routePath(url: string): string {
-  const query = url.indexOf("?");
-  return query === -1 ? url : url.slice(0, query);
-}
 
 function readCorrelationId(header: string | string[] | undefined): string {
   // Caller-supplied, and it ends up in a response header and an error envelope.

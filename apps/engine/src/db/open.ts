@@ -15,6 +15,11 @@ export type DatabaseState = "ready" | "migrating" | "failed";
 
 export interface OpenedDatabase {
   readonly db: Database.Database;
+  /**
+   * The canonical data root, which is where files actually landed. On macOS
+   * /tmp and /var are symlinks, so this differs from the configured root.
+   */
+  readonly dataRoot: string;
   /** Live probe: `/v1/health` must report the database as it is now. */
   readonly state: () => DatabaseState;
   readonly appliedVersions: readonly string[];
@@ -42,7 +47,7 @@ export function openDatabase(databasePath: string): OpenedDatabase {
   const nativeBinding = process.env["JARVIS_SQLITE_ADDON"];
   const db = new Database(canonicalPath, nativeBinding === undefined ? {} : { nativeBinding });
   try {
-    return prepare(db, canonicalPath);
+    return { ...prepare(db, canonicalPath), dataRoot };
   } catch (error) {
     // chmod, a migration or the probe can all throw here. Propagating with the
     // handle open would leave the WAL un-checkpointed, which is the invariant
@@ -57,7 +62,7 @@ export function openDatabase(databasePath: string): OpenedDatabase {
   }
 }
 
-function prepare(db: Database.Database, databasePath: string): OpenedDatabase {
+function prepare(db: Database.Database, databasePath: string): Omit<OpenedDatabase, "dataRoot"> {
   // ADR 0007: WAL gives durable local transactions without an external database.
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
@@ -106,6 +111,9 @@ function prepareDataRoot(dataRoot: string): string {
   // dangling link, which would bury the cause under a raw errno.
   let stats = lstatIfExists(absolute);
   if (stats === undefined) {
+    // Validate what already exists before creating anything: a refusal should
+    // not leave a trail of new directories under someone else's tree.
+    assertOwnedChain(realpathSync(deepestExisting(absolute)));
     // `recursive: true` succeeds silently when the path is a link to a
     // directory, so something planted between the lstat above and this call
     // would survive. Hence the checks below run on both branches.
@@ -154,6 +162,14 @@ function assertRegularFileOrAbsent(databasePath: string): void {
   }
   if (!stats.isFile()) {
     throw new Error(`${databasePath} exists but is not a regular file.`);
+  }
+  const uid = process.getuid?.();
+  if (uid !== undefined && stats.uid !== uid) {
+    // Otherwise WAL writes to a foreign file before the chmod refuses it with
+    // a bare EPERM, which is the raw errno the sibling guards exist to avoid.
+    throw new Error(
+      `${databasePath} belongs to another user. Refusing to open it as the project database.`,
+    );
   }
 }
 
@@ -204,6 +220,15 @@ function assertOwnedChain(path: string): void {
 }
 
 /** lstat that names the problem instead of surfacing a raw errno. */
+/** The closest ancestor of `path` that exists, `path` itself included. */
+function deepestExisting(path: string): string {
+  const { root } = parsePath(path);
+  for (let current = path; ; current = dirname(current)) {
+    if (lstatIfExists(current) !== undefined) return current;
+    if (current === root) return root;
+  }
+}
+
 function lstatOrExplain(path: string): Stats {
   try {
     return lstatSync(path);

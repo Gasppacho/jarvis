@@ -59,7 +59,7 @@ export async function startEngine(options: StartEngineOptions = {}): Promise<Har
   // Only a root the harness allocated may be removed on dispose: a caller that
   // supplies one may keep other fixtures beside it. `env` is spread into the
   // child last, so a root set there wins and must count as caller-supplied too.
-  const supplied = options.dataRoot ?? options.env?.["JARVIS_DATA_ROOT"];
+  const supplied = options.env?.["JARVIS_DATA_ROOT"] ?? options.dataRoot;
   const suppliedRoot = supplied === undefined || supplied === "" ? undefined : supplied;
   const ownsDataRoot = suppliedRoot === undefined;
   const dataRoot = suppliedRoot ?? (await mkdtemp(join(tmpdir(), "jarvis-harness-")));

@@ -109,6 +109,17 @@ describe("engine walking skeleton", () => {
       await expect(engine.waitForExit()).resolves.toBe(0);
     });
 
+    it("still answers 404 for an unknown path sent with a JSON content type", async () => {
+      // Body parsing runs before routing resolves the 404, so the empty-body
+      // rule must key on the matched route rather than the request line.
+      const response = await engine.call("/v1/does-not-exist", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+      });
+
+      expect(response.status).toBe(404);
+    });
+
     it("refuses a body that could reach Object.prototype", async () => {
       // Replacing Fastify's parser must not lose its protoAction: "error".
       const response = await engine.call("/v1/system/shutdown", {
