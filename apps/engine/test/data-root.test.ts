@@ -9,6 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
+import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -38,6 +39,26 @@ describe("data root", () => {
 
     const engine = await startEngine({ dataRoot });
     try {
+      expect(statSync(dataRoot).mode & 0o077).toBe(0);
+    } finally {
+      await engine.dispose();
+    }
+  });
+
+  it("creates a data root that does not exist yet under a root-owned parent", async () => {
+    // The flow LOCAL_DEVELOPMENT.md prescribes: JARVIS_DATA_ROOT=/tmp/jarvis-dev-<id>
+    // on a first run. Every other test pre-creates its root with mkdtemp, which
+    // takes the other branch and hides this one entirely.
+    //
+    // Literal /tmp, not os.tmpdir(): on macOS the latter is /var/folders/…/T,
+    // which the user owns, so the root-owned-parent case would never be reached.
+    const dataRoot = `/tmp/jarvis-first-run-${randomBytes(6).toString("hex")}`;
+    created.push(dataRoot);
+    expect(existsSync(dataRoot)).toBe(false);
+
+    const engine = await startEngine({ dataRoot });
+    try {
+      expect(engine.handshake.apiVersion).toBe("v1");
       expect(statSync(dataRoot).mode & 0o077).toBe(0);
     } finally {
       await engine.dispose();

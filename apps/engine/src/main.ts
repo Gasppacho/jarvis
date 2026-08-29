@@ -55,11 +55,12 @@ async function main(): Promise<void> {
     }
   }
 
-  // Registered before the database is even opened: migrations are the longest
-  // and most write-heavy part of startup, and leaving them under the default
-  // signal disposition is exactly the "bail without closing" case this exists
-  // to prevent. Exits non-zero until the handshake is out, so the shell never
-  // reads a clean exit from an engine that never became ready.
+  // Registered before the database is opened so no startup phase is ever left
+  // under the default signal disposition. openDatabase is synchronous today, so
+  // a signal during migrations is queued rather than handled mid-flight; this
+  // ordering is what keeps that true if any of it becomes async.
+  // Exits non-zero until the handshake is out, so the shell never reads a clean
+  // exit from an engine that never became ready.
   const onSignal = (): void => void shutdown(announced ? 0 : 1);
   process.on("SIGTERM", onSignal);
   process.on("SIGINT", onSignal);
