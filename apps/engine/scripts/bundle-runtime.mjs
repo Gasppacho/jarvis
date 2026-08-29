@@ -26,4 +26,11 @@ rmSync(sqliteOut, { recursive: true, force: true });
 mkdirSync(dirname(sqliteOut), { recursive: true });
 cpSync(sqlitePackage, sqliteOut, { recursive: true, dereference: true });
 
+// TECHNOLOGY_STACK.md lists `dist/engine/node` among the build outputs. Copying
+// it here means one rule holds everywhere: the Node runtime lives beside the
+// bundle, so neither the tests nor the packaged app ever reach for PATH.
+// ponytail: the development Node is copied as-is; ticket 19 pins and signs an
+// official LTS build instead.
+cpSync(process.execPath, join(outDir, "node"), { dereference: true });
+
 process.stdout.write(`bundled runtime into ${outDir}\n`);

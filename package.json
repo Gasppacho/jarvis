@@ -18,7 +18,9 @@
     "test": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
     "build:engine": "pnpm --filter @jarvis/engine run build",
-    "verify": "pnpm generate:check && pnpm contracts:check && pnpm lint && pnpm typecheck && pnpm arch:check && pnpm build:engine && pnpm test && pnpm test:integration"
+    "build:app": "pnpm build:engine && bash scripts/build-app.sh",
+    "test:swift": "swift test --package-path apps/macos",
+    "verify": "pnpm generate:check && pnpm contracts:check && pnpm lint && pnpm typecheck && pnpm arch:check && pnpm build:engine && pnpm test && pnpm test:integration && pnpm build:app && pnpm test:swift"
   },
   "devDependencies": {
     "@types/better-sqlite3": "9.6.0",

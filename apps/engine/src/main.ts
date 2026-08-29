@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { ConfigError, loadConfig } from "./config.js";
 import { openDatabase, type OpenedDatabase } from "./db/open.js";
 import { buildServer } from "./http/server.js";
+import { watchParentProcess } from "./parent-watch.js";
 import { API_VERSION } from "./version.js";
 
 const SHUTDOWN_GRACE_MS = 5_000;
@@ -99,6 +100,15 @@ async function main(): Promise<void> {
     })}\n`,
   );
   announced = true;
+
+  // The shell's graceful path is POST /v1/system/shutdown. This covers the ones
+  // where it never gets to ask: a crash, a force quit, a SIGKILL.
+  watchParentProcess({
+    onOrphaned: () => {
+      process.stderr.write("jarvis-engine: the shell went away; shutting down.\n");
+      void shutdown(0);
+    },
+  });
 }
 
 main().catch((error: unknown) => {
