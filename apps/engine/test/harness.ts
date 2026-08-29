@@ -57,9 +57,11 @@ class ReadyTimeout extends Error {}
 
 export async function startEngine(options: StartEngineOptions = {}): Promise<Harness> {
   // Only a root the harness allocated may be removed on dispose: a caller that
-  // supplies one may keep other fixtures beside it.
-  const ownsDataRoot = options.dataRoot === undefined;
-  const dataRoot = options.dataRoot ?? (await mkdtemp(join(tmpdir(), "jarvis-harness-")));
+  // supplies one may keep other fixtures beside it. `env` is spread into the
+  // child last, so a root set there wins and must count as caller-supplied too.
+  const supplied = options.dataRoot ?? options.env?.["JARVIS_DATA_ROOT"];
+  const ownsDataRoot = supplied === undefined;
+  const dataRoot = supplied ?? (await mkdtemp(join(tmpdir(), "jarvis-harness-")));
   const token = randomBytes(32).toString("base64url");
 
   const child = spawn(process.execPath, [enginePath], {

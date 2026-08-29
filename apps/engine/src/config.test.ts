@@ -33,6 +33,12 @@ describe("loadConfig", () => {
     expect(config.databasePath).toMatch(/Library\/Application Support\/Jarvis\/jarvis\.sqlite$/);
   });
 
+  it("treats an empty JARVIS_PORT as no preference", () => {
+    // A launcher expanding `${PORT:-}` must not turn a working default into a
+    // refusal to boot.
+    expect(loadConfig({ ...withToken, JARVIS_PORT: "" }).port).toBe(0);
+  });
+
   it("binds loopback and asks the OS for a free port by default", () => {
     const config = loadConfig(withToken);
 
@@ -53,7 +59,7 @@ describe("loadConfig", () => {
   it("rejects a port that only Number() would find plausible", () => {
     // Number("") is 0 and Number("0x1f") is 31: both would silently bind
     // something other than what the caller asked for.
-    for (const port of ["", " ", "1e3", "0x1f", "-1", "8080 ", "80.5"]) {
+    for (const port of [" ", "1e3", "0x1f", "-1", "8080 ", "80.5"]) {
       expect(() => loadConfig({ ...withToken, JARVIS_PORT: port })).toThrow(ConfigError);
     }
   });

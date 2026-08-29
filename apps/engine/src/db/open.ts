@@ -37,7 +37,18 @@ export function openDatabase(databasePath: string): OpenedDatabase {
   // because the packaged app signs and relocates the native binding.
   const nativeBinding = process.env["JARVIS_SQLITE_ADDON"];
   const db = new Database(databasePath, nativeBinding === undefined ? {} : { nativeBinding });
+  try {
+    return prepare(db, databasePath);
+  } catch (error) {
+    // chmod, a migration or the probe can all throw here. Propagating with the
+    // handle open would leave the WAL un-checkpointed, which is the invariant
+    // the shutdown path exists to hold.
+    db.close();
+    throw error;
+  }
+}
 
+function prepare(db: Database.Database, databasePath: string): OpenedDatabase {
   // ADR 0007: WAL gives durable local transactions without an external database.
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
@@ -84,13 +95,19 @@ function prepareDataRoot(dataRoot: string): void {
   // dangling link, which would bury the cause under a raw errno.
   let stats = lstatIfExists(absolute);
   if (stats === undefined) {
+    // `recursive: true` succeeds silently when the path is a link to a
+    // directory, so something planted between the lstat above and this call
+    // would survive. Hence the checks below run on both branches.
     mkdirSync(absolute, { recursive: true, mode: 0o700 });
     stats = lstatSync(absolute);
-  } else if (stats.isSymbolicLink()) {
+  }
+
+  if (stats.isSymbolicLink()) {
     throw new Error(
       `The data root ${absolute} is a symbolic link. Point JARVIS_DATA_ROOT at a real directory you own.`,
     );
-  } else if (!stats.isDirectory()) {
+  }
+  if (!stats.isDirectory()) {
     throw new Error(
       `The data root ${absolute} exists but is not a directory. Point JARVIS_DATA_ROOT at a directory.`,
     );
@@ -149,7 +166,11 @@ function assertOwnedChain(path: string): void {
     // The leaf is exempt: we own it, and the caller tightens it to 0700 next.
     // An ancestor we cannot fix is the one that lets someone swap the leaf.
     if (current !== path) {
-      const writableByOthers = (stats.mode & 0o022) !== 0;
+      // ponytail: world-writable only. A group-writable ancestor is also a
+      // theoretical hole, but rejecting it makes a data root on an external
+      // FAT volume (mounted 0777 under /Volumes) impossible with no override.
+      // Revisit with an explicit opt-out if a shared-group setup shows up.
+      const writableByOthers = (stats.mode & 0o002) !== 0;
       const sticky = (stats.mode & 0o1000) !== 0;
       if (writableByOthers && !sticky) {
         throw new Error(

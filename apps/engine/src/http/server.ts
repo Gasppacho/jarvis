@@ -4,6 +4,7 @@ import type { components } from "../api/generated/local-api.js";
 import type { EngineConfig } from "../config.js";
 import type { DatabaseState } from "../db/open.js";
 import { EngineError, toErrorEnvelope } from "../errors.js";
+import { parseJsonBody } from "./json.js";
 import { API_VERSION, ENGINE_VERSION } from "../version.js";
 
 type HealthResponse = components["schemas"]["HealthResponse"];
@@ -45,7 +46,7 @@ export function buildServer(deps: ServerDependencies): FastifyInstance {
       return;
     }
     try {
-      done(null, JSON.parse(body));
+      done(null, parseJsonBody(body));
     } catch {
       done(
         new EngineError("api.invalid-request", 400, "Request body is not valid JSON."),

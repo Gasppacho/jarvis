@@ -50,7 +50,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): EngineConfig {
 }
 
 function parsePort(raw: string | undefined): number {
-  if (raw === undefined) return 0;
+  // `JARVIS_PORT=${PORT:-}` in a launcher expands to the empty string; that is
+  // still "no preference", not a malformed port.
+  if (raw === undefined || raw === "") return 0;
   // Number() would turn "", " ", "1e3" and "0x1f" into plausible-looking ports,
   // so a malformed value has to be rejected before conversion.
   const port = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
