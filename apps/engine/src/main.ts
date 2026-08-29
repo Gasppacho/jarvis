@@ -23,11 +23,14 @@ async function main(): Promise<void> {
     },
   });
 
-  function closeDatabase(): void {
+  /** Returns false when the WAL could not be checkpointed. */
+  function closeDatabase(): boolean {
     try {
       if (opened.db.open) opened.db.close();
+      return true;
     } catch (error) {
       process.stderr.write(`jarvis-engine: could not close the database.\n${String(error)}\n`);
+      return false;
     }
   }
 
@@ -55,7 +58,9 @@ async function main(): Promise<void> {
       process.stderr.write(`jarvis-engine: shutdown failed.\n${String(error)}\n`);
       code = 1;
     } finally {
-      closeDatabase();
+      // Closing the handle is what checkpoints the WAL, so its failure is the
+      // one that must not be reported as a clean shutdown.
+      if (!closeDatabase()) code = 1;
       process.exit(code);
     }
   }
@@ -68,7 +73,14 @@ async function main(): Promise<void> {
   process.on("SIGTERM", onSignal);
   process.on("SIGINT", onSignal);
 
-  await app.listen({ host: config.host, port: config.port });
+  try {
+    await app.listen({ host: config.host, port: config.port });
+  } catch (error) {
+    // openDatabase already ran migrations, so bailing here without closing
+    // would leave the whole schema sitting in an un-checkpointed WAL.
+    closeDatabase();
+    throw error;
+  }
   const address = app.server.address() as AddressInfo;
 
   // The one and only stdout line. Everything else the engine says goes to stderr.

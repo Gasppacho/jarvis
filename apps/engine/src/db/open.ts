@@ -1,5 +1,13 @@
 import Database from "better-sqlite3";
-import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  type Stats,
+} from "node:fs";
 import { dirname, join, parse as parsePath, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,7 +28,10 @@ export interface OpenedDatabase {
 const MIGRATIONS_DIR = fileURLToPath(new URL("./migrations/", import.meta.url));
 
 export function openDatabase(databasePath: string): OpenedDatabase {
+  // Order matters: the data root is made private to this user first, so nothing
+  // can be planted beside the database between the check below and the open.
   prepareDataRoot(dirname(databasePath));
+  assertRegularFileOrAbsent(databasePath);
 
   // TECHNOLOGY_STACK.md: the persistence layer accepts an explicit addon path,
   // because the packaged app signs and relocates the native binding.
@@ -32,18 +43,32 @@ export function openDatabase(databasePath: string): OpenedDatabase {
   db.pragma("foreign_keys = ON");
 
   // The driver offers no way to set the database file's mode and SQLite creates
-  // it 0644. The -wal and -shm files inherit the mode set here.
+  // it 0644. The -wal and -shm files are created lazily at first write, after
+  // this call, so they inherit the mode set here.
   chmodSync(databasePath, 0o600);
 
   const appliedVersions = migrate(db);
 
   // `database: ready` must mean the schema is genuinely queryable, not merely
   // that no migration threw.
-  db.prepare("SELECT value FROM engine_metadata WHERE key = ?").get("schema_initialized_at");
+  const probe = db.prepare("SELECT value FROM engine_metadata WHERE key = ?");
+  probe.get("schema_initialized_at");
 
-  // Probed per call rather than frozen at open time, so `/v1/health` reports the
-  // handle as it is rather than as it was.
-  return { db, state: () => (db.open ? "ready" : "failed"), appliedVersions };
+  return {
+    db,
+    // Re-run on every call rather than frozen at open time, so `/v1/health`
+    // reports a handle that has since failed instead of the state it had once.
+    state: () => {
+      if (!db.open) return "failed";
+      try {
+        probe.get("schema_initialized_at");
+        return "ready";
+      } catch {
+        return "failed";
+      }
+    },
+    appliedVersions,
+  };
 }
 
 /**
@@ -55,23 +80,23 @@ export function openDatabase(databasePath: string): OpenedDatabase {
 function prepareDataRoot(dataRoot: string): void {
   const absolute = resolve(dataRoot);
 
-  // `recursive: true` succeeds on an existing path and ignores `mode` there, so
-  // this mode only guarantees a root that this call actually creates.
-  mkdirSync(absolute, { recursive: true, mode: 0o700 });
-
-  // lstat, not stat: a symlink planted at the expected path would otherwise
-  // send every check below — and the chmod — to a directory someone else chose.
-  const stats = lstatSync(absolute);
-  if (stats.isSymbolicLink()) {
+  // lstat before mkdir: `mkdirSync` throws EEXIST or ENOENT for a file or a
+  // dangling link, which would bury the cause under a raw errno.
+  let stats = lstatIfExists(absolute);
+  if (stats === undefined) {
+    mkdirSync(absolute, { recursive: true, mode: 0o700 });
+    stats = lstatSync(absolute);
+  } else if (stats.isSymbolicLink()) {
     throw new Error(
       `The data root ${absolute} is a symbolic link. Point JARVIS_DATA_ROOT at a real directory you own.`,
     );
-  }
-  if (!stats.isDirectory()) {
-    throw new Error(`The data root ${absolute} exists but is not a directory.`);
+  } else if (!stats.isDirectory()) {
+    throw new Error(
+      `The data root ${absolute} exists but is not a directory. Point JARVIS_DATA_ROOT at a directory.`,
+    );
   }
 
-  // mkdirSync(recursive) traverses every intermediate component, so checking the
+  // `recursive: true` traverses every intermediate component, so checking the
   // leaf alone would miss a symlink planted higher up the chain. Canonicalise
   // before walking the ancestors — and canonicalise rather than demand an
   // already-canonical path, because on macOS /tmp and /var are themselves links.
@@ -80,6 +105,25 @@ function prepareDataRoot(dataRoot: string): void {
   // Only now, with ownership established, is tightening the mode both safe and
   // permitted.
   if ((stats.mode & 0o077) !== 0) chmodSync(absolute, 0o700);
+}
+
+/**
+ * The data root is private by the time this runs, but it may have been loose
+ * when the engine found it, long enough for someone to leave a link behind.
+ * Opening one would put the database — and the `chmod` that follows — wherever
+ * that link points.
+ */
+function assertRegularFileOrAbsent(databasePath: string): void {
+  const stats = lstatIfExists(databasePath);
+  if (stats === undefined) return;
+  if (stats.isSymbolicLink()) {
+    throw new Error(
+      `${databasePath} is a symbolic link. Refusing to open the database through it.`,
+    );
+  }
+  if (!stats.isFile()) {
+    throw new Error(`${databasePath} exists but is not a regular file.`);
+  }
 }
 
 /**
@@ -115,6 +159,15 @@ function assertOwnedChain(path: string): void {
     }
 
     if (current === root) return;
+  }
+}
+
+function lstatIfExists(path: string): Stats | undefined {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
   }
 }
 
