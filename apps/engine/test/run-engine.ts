@@ -13,8 +13,6 @@ export interface EngineRun {
   readonly code: number;
   readonly stdout: string;
   readonly stderr: string;
-  /** The data root the run used, whether supplied or allocated here. */
-  readonly dataRoot: string;
 }
 
 export interface RunEngineOptions {
@@ -66,7 +64,7 @@ export function runEngineToExit(
     });
     child.on("exit", (code: number | null) => {
       cleanUp();
-      resolve({ code: code ?? 1, stdout, stderr, dataRoot });
+      resolve({ code: code ?? 1, stdout, stderr });
     });
   });
 }

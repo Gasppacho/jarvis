@@ -27,6 +27,24 @@ describe("loadConfig", () => {
     expect(config.databasePath).toBe("/tmp/jarvis-test/jarvis.sqlite");
   });
 
+  it("treats an empty JARVIS_DATA_ROOT as unset rather than as the current directory", () => {
+    // `${JARVIS_DATA_ROOT:-}` expands to "", and dirname("jarvis.sqlite") is
+    // ".", which would adopt and re-permission the engine's working directory.
+    expect(loadConfig({ ...withToken, JARVIS_DATA_ROOT: "" }).databasePath).toMatch(
+      /Library\/Application Support\/Jarvis\/jarvis\.sqlite$/,
+    );
+  });
+
+  it("refuses a relative data root", () => {
+    for (const root of [".", "data", "../elsewhere"]) {
+      expect(() => loadConfig({ ...withToken, JARVIS_DATA_ROOT: root })).toThrow(ConfigError);
+    }
+  });
+
+  it("mints a session id when the shell passes an empty one", () => {
+    expect(loadConfig({ ...withToken, JARVIS_SESSION_ID: "" }).sessionId).not.toBe("");
+  });
+
   it("falls back to Application Support when no data root is given", () => {
     const config = loadConfig(withToken);
 

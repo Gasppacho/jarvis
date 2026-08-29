@@ -20,10 +20,16 @@ describe("parseJsonBody", () => {
     expect(({} as Record<string, unknown>)["polluted"]).toBeUndefined();
   });
 
-  it("rejects constructor, which is the other pollution route", () => {
+  it("rejects a constructor that carries a prototype", () => {
     expect(() => parseJsonBody('{"constructor":{"prototype":{"polluted":true}}}')).toThrow(
       ForbiddenJsonKeyError,
     );
+  });
+
+  it("allows a field merely named constructor", () => {
+    // secure-json-parse only refuses a constructor that carries a prototype;
+    // refusing the bare name would 400 a legitimate body.
+    expect(parseJsonBody('{"constructor":"acme-corp"}')).toEqual({ constructor: "acme-corp" });
   });
 
   it("still rejects malformed JSON", () => {

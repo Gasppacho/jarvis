@@ -175,16 +175,21 @@ function assertOwnedChain(path: string): void {
 
   const { root } = parsePath(path);
   for (let current = path; ; current = dirname(current)) {
-    const stats = lstatSync(current);
+    const stats = lstatOrExplain(current);
+    const isLeaf = current === path;
 
-    if (stats.uid !== uid && stats.uid !== 0) {
+    // The data root itself must be ours: the mode exemption below rests on our
+    // being able to tighten it. Ancestors may belong to root — /usr, /Volumes
+    // and / all do — but to nobody else.
+    if (isLeaf ? stats.uid !== uid : stats.uid !== uid && stats.uid !== 0) {
       throw new Error(
         `${current} belongs to another user, so ${path} is not a safe place for project data.`,
       );
     }
-    // The leaf is exempt: we own it, and the caller tightens it to 0700 next.
-    // An ancestor we cannot fix is the one that lets someone swap the leaf.
-    if (current !== path) {
+    // The leaf is exempt from the mode check only because we own it and the
+    // caller tightens it to 0700 next. An ancestor we cannot fix is the one
+    // that lets someone swap the leaf.
+    if (!isLeaf) {
       const writableByOthers = (stats.mode & 0o022) !== 0;
       const sticky = (stats.mode & 0o1000) !== 0;
       if (writableByOthers && !sticky) {
@@ -195,6 +200,16 @@ function assertOwnedChain(path: string): void {
     }
 
     if (current === root) return;
+  }
+}
+
+/** lstat that names the problem instead of surfacing a raw errno. */
+function lstatOrExplain(path: string): Stats {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    throw new Error(`${path} could not be inspected (${code ?? "unknown error"}).`);
   }
 }
 

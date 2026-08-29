@@ -13,10 +13,19 @@ export class ForbiddenJsonKeyError extends Error {
  * empty body on the shutdown route, so it has to keep the same behaviour —
  * stripping silently would turn a refused pollution probe into a success, and
  * would slip keys past route schemas once those exist.
+ *
+ * `constructor` is refused only when it carries a `prototype`, which is what
+ * makes it dangerous. Refusing the bare name would reject a legitimate body
+ * that simply has a field called "constructor".
  */
 export function parseJsonBody(text: string): unknown {
   return JSON.parse(text, (key, value: unknown) => {
-    if (key === "__proto__" || key === "constructor") throw new ForbiddenJsonKeyError(key);
+    if (key === "__proto__") throw new ForbiddenJsonKeyError(key);
+    if (key === "constructor" && hasOwnPrototype(value)) throw new ForbiddenJsonKeyError(key);
     return value;
   });
+}
+
+function hasOwnPrototype(value: unknown): boolean {
+  return typeof value === "object" && value !== null && Object.hasOwn(value, "prototype");
 }
