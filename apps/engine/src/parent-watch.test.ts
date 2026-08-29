@@ -40,6 +40,24 @@ describe("watchParentProcess", () => {
     vi.useRealTimers();
   });
 
+  it("reports an orphaned engine only once", () => {
+    vi.useFakeTimers();
+    const onOrphaned = vi.fn();
+    let parent = 4242;
+
+    watchParentProcess({
+      onOrphaned,
+      intervalMs: 10,
+      initialParentPid: 4242,
+      currentParentPid: () => parent,
+    });
+    parent = 1;
+
+    vi.advanceTimersByTime(200);
+    expect(onOrphaned).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
   it("stops watching once cancelled", () => {
     vi.useFakeTimers();
     const onOrphaned = vi.fn();

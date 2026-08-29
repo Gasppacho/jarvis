@@ -82,7 +82,9 @@ final class EngineSupervisorTests: XCTestCase {
         // broken implementation pass late instead of failing.
         let script = dataRoot.appendingPathComponent("silent-engine.sh")
         try FileManager.default.createDirectory(at: dataRoot, withIntermediateDirectories: true)
-        try "sleep 300\n".write(to: script, atomically: true, encoding: .utf8)
+        // `exec`, so SIGTERM reaches the sleep instead of orphaning it as a
+        // grandchild of /bin/sh.
+        try "exec sleep 300\n".write(to: script, atomically: true, encoding: .utf8)
 
         let silent = EngineSupervisor(
             resources: EngineResources(
@@ -92,7 +94,6 @@ final class EngineSupervisorTests: XCTestCase {
             dataRoot: dataRoot,
             readyTimeout: .seconds(1)
         )
-        defer { Task { await silent.terminate() } }
 
         // An unstructured Task, polled: a task group would wait for its child,
         // so a hanging start() would hang this test the same way instead of
@@ -124,6 +125,8 @@ final class EngineSupervisorTests: XCTestCase {
 
         let running = await silent.isRunning
         XCTAssertFalse(running, "the timeout must also stop the process it gave up on")
+
+        await silent.terminate()
     }
 
     func testASecondStartReturnsTheRunningEngine() async throws {
@@ -133,6 +136,28 @@ final class EngineSupervisorTests: XCTestCase {
 
         XCTAssertEqual(first.port, second.port)
         XCTAssertEqual(first.token, second.token)
+    }
+
+    func testConcurrentStartsShareOneEngine() async throws {
+        // An actor suspends at every `await`, so two callers arriving while the
+        // first is still handshaking both passed the stored-session check and
+        // each launched an engine — the first becoming untrackable.
+        let engine = supervisor!
+        let sessions = try await withThrowingTaskGroup(of: EngineSession.self) { group in
+            for _ in 0..<3 {
+                group.addTask { try await engine.start() }
+            }
+            var collected: [EngineSession] = []
+            for try await session in group { collected.append(session) }
+            return collected
+        }
+
+        XCTAssertEqual(Set(sessions.map(\.port)).count, 1, "each start launched its own engine")
+        XCTAssertEqual(Set(sessions.map(\.token)).count, 1)
+
+        // A second engine would still be running against the same data root.
+        let health = try await sessions[0].client.health()
+        XCTAssertEqual(health.status, .ready)
     }
 
     func testAMissingEngineFailsWithAnActionableError() async throws {

@@ -28,7 +28,7 @@ struct JarvisApp: App {
         // `Window`, not `WindowGroup`: the latter adds File ▸ New Window, and
         // every window would run the `.task` that starts the engine.
         Window("Jarvis", id: "main") {
-            EngineHealthView(state: delegate.session.state)
+            EngineHealthView(session: delegate.session)
                 .frame(minWidth: 520, minHeight: 320)
                 .task { await delegate.session.start() }
         }

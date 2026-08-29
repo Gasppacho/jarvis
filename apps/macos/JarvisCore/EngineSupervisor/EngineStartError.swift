@@ -33,9 +33,9 @@ public struct EngineStartError: Error, Sendable, Equatable {
         )
     }
 
-    static func timedOut(seconds: Double, stderr: String) -> EngineStartError {
+    static func timedOut(_ timeout: Duration, stderr: String) -> EngineStartError {
         EngineStartError(
-            cause: "The engine did not report that it was ready within \(Int(seconds)) seconds.",
+            cause: "The engine did not report that it was ready within \(timeout).",
             impact: "Jarvis stopped waiting and shut it down.",
             nextAction: "Restart Jarvis. If this repeats, check the details below.",
             detail: stderr.isEmpty ? nil : stderr

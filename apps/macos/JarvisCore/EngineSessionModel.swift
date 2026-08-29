@@ -24,7 +24,19 @@ public final class EngineSessionModel {
 
     /// Convenience for the app: the engine that ships inside this bundle.
     public static func bundled() -> EngineSessionModel {
-        let resources = EngineResources.bundled() ?? EngineResources.developmentBuild()
+        // The development fallback derives its path from #filePath, so a
+        // release build must never reach it: a shipped app missing its engine
+        // would otherwise show the build machine's home directory.
+        #if DEBUG
+            let resources = EngineResources.bundled() ?? EngineResources.developmentBuild()
+        #else
+            let resources =
+                EngineResources.bundled()
+                ?? EngineResources(
+                    nodeExecutable: URL(filePath: "/nonexistent/engine/node"),
+                    bundle: URL(filePath: "/nonexistent/engine/engine.bundle.mjs")
+                )
+        #endif
         return EngineSessionModel(supervisor: EngineSupervisor(resources: resources))
     }
 
@@ -52,7 +64,14 @@ public final class EngineSessionModel {
 
     /// SYSTEM.md shutdown protocol: ask, then terminate after a bounded delay.
     public func shutdown() async {
-        if let session { try? await session.client.shutdown() }
+        // No session means the handshake never completed: there is nobody to
+        // ask, and waiting out the full timeout would leave the app
+        // unresponsive for fifteen seconds after the user pressed Quit.
+        guard let session else {
+            await supervisor.terminate()
+            return
+        }
+        try? await session.client.shutdown()
         _ = try? await supervisor.waitForExit()
         await supervisor.terminate()
     }

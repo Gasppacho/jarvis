@@ -4,10 +4,12 @@ import SwiftUI
 /// The walking skeleton's whole user-visible surface: is the engine up, and if
 /// not, what does the user do about it.
 struct EngineHealthView: View {
-    let state: EngineSessionModel.State
+    // The model, not a snapshot of its state: passing `state` would move the
+    // only tracked read out of this view's body and into whatever built it.
+    let session: EngineSessionModel
 
     var body: some View {
-        switch state {
+        switch session.state {
         case .starting:
             VStack(spacing: 12) {
                 ProgressView()

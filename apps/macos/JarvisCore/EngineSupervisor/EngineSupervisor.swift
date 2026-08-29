@@ -30,6 +30,8 @@ public actor EngineSupervisor {
     private var process: Process?
     private var output: EngineOutput?
     private var session: EngineSession?
+    private var stderrHandle: FileHandle?
+    private var startTask: Task<EngineSession, Error>?
 
     public init(
         resources: EngineResources,
@@ -46,10 +48,20 @@ public actor EngineSupervisor {
     }
 
     public func start() async throws -> EngineSession {
-        // A WindowGroup hands out Cmd-N for free, and every window runs the
-        // `.task` that calls this. Without the guard a second window spawns a
-        // second engine and orphans the first by overwriting the handle.
         if let session, process?.isRunning == true { return session }
+        // An actor suspends at every `await`, so checking a stored session is
+        // not enough: a second caller arriving while the first is still
+        // handshaking would re-enter and launch a second engine. Callers share
+        // the in-flight task instead.
+        if let startTask { return try await startTask.value }
+
+        let task = Task { try await performStart() }
+        startTask = task
+        defer { startTask = nil }
+        return try await task.value
+    }
+
+    private func performStart() async throws -> EngineSession {
         try assertResourcesExist()
 
         // SYSTEM.md startup protocol step 1: a fresh 256-bit token per session,
@@ -130,6 +142,18 @@ public actor EngineSupervisor {
 
     // MARK: - Internals
 
+    /// Reads whatever the exited process left in the pipe. The readability
+    /// handler runs on another queue, so the buffer is usually still empty at
+    /// the moment the termination handler fires.
+    private func drainStandardError(_ output: EngineOutput) -> String {
+        if let stderrHandle, let remaining = try? stderrHandle.readToEnd(),
+            let text = String(data: remaining, encoding: .utf8)
+        {
+            output.appendStandardError(text)
+        }
+        return output.stderrText
+    }
+
     private func assertResourcesExist() throws {
         for url in [resources.nodeExecutable, resources.bundle]
         where !FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
@@ -165,16 +189,26 @@ public actor EngineSupervisor {
         let stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
+        // Empty data means EOF. Without clearing the handler the dispatch
+        // source re-fires it in a tight loop — one pegged core per pipe for the
+        // rest of the app's life.
         stdout.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            output.appendStandardOutput(text)
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
+            if let text = String(data: data, encoding: .utf8) { output.appendStandardOutput(text) }
         }
         stderr.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            output.appendStandardError(text)
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
+            if let text = String(data: data, encoding: .utf8) { output.appendStandardError(text) }
         }
+        stderrHandle = stderr.fileHandleForReading
         return process
     }
 
@@ -196,11 +230,11 @@ public actor EngineSupervisor {
             // Either the engine died first, or nothing arrived in time.
             if !process.isRunning {
                 throw EngineStartError.exitedBeforeReady(
-                    code: process.terminationStatus, stderr: output.stderrText)
+                    code: process.terminationStatus, stderr: drainStandardError(output))
             }
             await terminate()
             throw EngineStartError.timedOut(
-                seconds: Double(readyTimeout.components.seconds), stderr: output.stderrText)
+                readyTimeout, stderr: drainStandardError(output))
         }
 
         guard let data = line.data(using: .utf8),

@@ -25,7 +25,11 @@ export function watchParentProcess(options: ParentWatchOptions): () => void {
   if (initial <= 1) return () => {};
 
   const timer = setInterval(() => {
-    if (readParent() !== initial) options.onOrphaned();
+    if (readParent() === initial) return;
+    // Once is enough: the callback starts a shutdown, and firing again would
+    // repeat its log line for the whole grace window.
+    clearInterval(timer);
+    options.onOrphaned();
   }, options.intervalMs ?? POLL_INTERVAL_MS);
   // Never hold the event loop open on the engine's account.
   timer.unref();

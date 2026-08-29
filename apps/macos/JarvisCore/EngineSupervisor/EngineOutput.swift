@@ -12,6 +12,7 @@ final class EngineOutput: @unchecked Sendable {
     private var firstLine: String?
     private var waiter: CheckedContinuation<String?, Never>?
     private var finished = false
+    private var cancelled = false
 
     var stderrText: String {
         lock.withLock { stderrBuffer }
@@ -50,13 +51,14 @@ final class EngineOutput: @unchecked Sendable {
             await withCheckedContinuation { continuation in
                 let immediate: String?? = lock.withLock {
                     if let firstLine { return .some(firstLine) }
-                    if finished { return .some(nil) }
+                    if finished || cancelled { return .some(nil) }
                     waiter = continuation
                     return nil
                 }
                 if let immediate { continuation.resume(returning: immediate) }
             }
         } onCancel: {
+            lock.withLock { cancelled = true }
             resumeWaiter(with: nil)
         }
     }
