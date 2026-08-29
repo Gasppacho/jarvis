@@ -113,7 +113,9 @@ function prepareDataRoot(dataRoot: string): string {
   if (stats === undefined) {
     // Validate what already exists before creating anything: a refusal should
     // not leave a trail of new directories under someone else's tree.
-    assertOwnedChain(realpathSync(deepestExisting(absolute)));
+    // Nothing here is the leaf yet: the data root does not exist, so every
+    // existing component is an ancestor and gets ancestor rules.
+    assertOwnedChain(realpathSync(deepestExisting(absolute)), undefined);
     // `recursive: true` succeeds silently when the path is a link to a
     // directory, so something planted between the lstat above and this call
     // would survive. Hence the checks below run on both branches.
@@ -137,11 +139,18 @@ function prepareDataRoot(dataRoot: string): string {
   // before walking the ancestors — and canonicalise rather than demand an
   // already-canonical path, because on macOS /tmp and /var are themselves links.
   const canonical = realpathSync(absolute);
-  assertOwnedChain(canonical);
+  assertOwnedChain(canonical, canonical);
 
   // Only now, with ownership established, is tightening the mode both safe and
   // permitted.
-  if ((stats.mode & 0o077) !== 0) chmodSync(canonical, 0o700);
+  if ((stats.mode & 0o077) !== 0) {
+    // Irreversible without a record: the engine cannot restore a mode it never
+    // saw, and a mistyped JARVIS_DATA_ROOT would be re-permissioned silently.
+    process.stderr.write(
+      `jarvis-engine: tightened ${canonical} from ${(stats.mode & 0o777).toString(8)} to 700.\n`,
+    );
+    chmodSync(canonical, 0o700);
+  }
 
   return canonical;
 }
@@ -184,22 +193,27 @@ function assertRegularFileOrAbsent(databasePath: string): void {
  * FAT disk under /Volumes. That is not a safe place for project data anyway,
  * and no override exists on purpose: a knob here would be the first thing a
  * confused setup reaches for.
+ *
+ * `leaf` names the data root when it exists; pass `undefined` to check a chain
+ * of ancestors alone.
  */
-function assertOwnedChain(path: string): void {
+function assertOwnedChain(start: string, leaf: string | undefined): void {
   const uid = process.getuid?.();
   if (uid === undefined) return;
 
-  const { root } = parsePath(path);
-  for (let current = path; ; current = dirname(current)) {
+  const { root } = parsePath(start);
+  for (let current = start; ; current = dirname(current)) {
     const stats = lstatOrExplain(current);
-    const isLeaf = current === path;
+    // Only the data root itself is the leaf. Walking up from an ancestor, there
+    // is no leaf at all: treating one as such would demand ownership of /tmp.
+    const isLeaf = current === leaf;
 
     // The data root itself must be ours: the mode exemption below rests on our
     // being able to tighten it. Ancestors may belong to root — /usr, /Volumes
     // and / all do — but to nobody else.
     if (isLeaf ? stats.uid !== uid : stats.uid !== uid && stats.uid !== 0) {
       throw new Error(
-        `${current} belongs to another user, so ${path} is not a safe place for project data.`,
+        `${current} belongs to another user, so ${leaf ?? start} is not a safe place for project data.`,
       );
     }
     // The leaf is exempt from the mode check only because we own it and the
@@ -210,7 +224,7 @@ function assertOwnedChain(path: string): void {
       const sticky = (stats.mode & 0o1000) !== 0;
       if (writableByOthers && !sticky) {
         throw new Error(
-          `${current} is writable by other users, so ${path} is not a safe place for project data.`,
+          `${current} is writable by other users, so ${leaf ?? start} is not a safe place for project data.`,
         );
       }
     }
@@ -219,7 +233,6 @@ function assertOwnedChain(path: string): void {
   }
 }
 
-/** lstat that names the problem instead of surfacing a raw errno. */
 /** The closest ancestor of `path` that exists, `path` itself included. */
 function deepestExisting(path: string): string {
   const { root } = parsePath(path);
@@ -229,6 +242,7 @@ function deepestExisting(path: string): string {
   }
 }
 
+/** lstat that names the problem instead of surfacing a raw errno. */
 function lstatOrExplain(path: string): Stats {
   try {
     return lstatSync(path);
