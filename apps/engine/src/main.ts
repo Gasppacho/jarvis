@@ -1,3 +1,4 @@
+import { writeSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import type { FastifyInstance } from "fastify";
 import { ConfigError, loadConfig } from "./config.js";
@@ -7,6 +8,16 @@ import { watchParentProcess } from "./parent-watch.js";
 import { API_VERSION } from "./version.js";
 
 const SHUTDOWN_GRACE_MS = 5_000;
+const STDERR_FD = 2;
+
+/**
+ * stderr to a pipe is asynchronous on macOS and `process.exit` does not flush
+ * pending writes, so a diagnostic written just before exiting can be lost — and
+ * the shell renders exactly this text in its failure screen.
+ */
+function reportFatal(message: string): void {
+  writeSync(STDERR_FD, message);
+}
 
 async function main(): Promise<void> {
   const config = loadConfig(process.env);
@@ -23,7 +34,7 @@ async function main(): Promise<void> {
       if (opened.db.open) opened.db.close();
       return true;
     } catch (error) {
-      process.stderr.write(`jarvis-engine: could not close the database.\n${String(error)}\n`);
+      reportFatal(`jarvis-engine: could not close the database.\n${String(error)}\n`);
       return false;
     }
   }
@@ -37,7 +48,7 @@ async function main(): Promise<void> {
     // database. The `finally` below always calls process.exit, so this timer
     // can never delay a shutdown that does complete.
     setTimeout(() => {
-      process.stderr.write("jarvis-engine: shutdown timed out; forcing exit.\n");
+      reportFatal("jarvis-engine: shutdown timed out; forcing exit.\n");
       closeDatabase();
       process.exit(exitCode === 0 ? 1 : exitCode);
     }, SHUTDOWN_GRACE_MS);
@@ -46,7 +57,7 @@ async function main(): Promise<void> {
     try {
       if (app !== undefined) await app.close();
     } catch (error) {
-      process.stderr.write(`jarvis-engine: shutdown failed.\n${String(error)}\n`);
+      reportFatal(`jarvis-engine: shutdown failed.\n${String(error)}\n`);
       code = 1;
     } finally {
       // Closing the handle is what checkpoints the WAL, so its failure is the
@@ -71,7 +82,7 @@ async function main(): Promise<void> {
   // engine nobody is watching.
   watchParentProcess({
     onOrphaned: () => {
-      process.stderr.write("jarvis-engine: the shell went away; shutting down.\n");
+      reportFatal("jarvis-engine: the shell went away; shutting down.\n");
       void shutdown(announced ? 0 : 1);
     },
   });
@@ -115,9 +126,9 @@ async function main(): Promise<void> {
 main().catch((error: unknown) => {
   // Bootstrap failures must be actionable: the shell surfaces this text verbatim.
   if (error instanceof ConfigError) {
-    process.stderr.write(`jarvis-engine: ${error.message}\n${error.remedy}\n`);
+    reportFatal(`jarvis-engine: ${error.message}\n${error.remedy}\n`);
   } else {
-    process.stderr.write(`jarvis-engine: failed to start.\n${String(error)}\n`);
+    reportFatal(`jarvis-engine: failed to start.\n${String(error)}\n`);
   }
   process.exit(1);
 });

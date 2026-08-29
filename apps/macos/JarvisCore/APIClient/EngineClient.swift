@@ -50,10 +50,19 @@ public enum EngineClientError: Error, Sendable, Equatable {
 public struct EngineClient: Sendable {
     private let underlying: Client
 
+    /// Loopback only, so a request that has not answered in a few seconds is
+    /// wedged rather than slow. URLSession's 60-second default would hang Quit
+    /// for over a minute waiting on an engine that will never reply.
+    private static let requestTimeout: TimeInterval = 5
+
     public init(port: Int, token: String) {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = Self.requestTimeout
+        configuration.timeoutIntervalForResource = Self.requestTimeout
         underlying = Client(
             serverURL: URL(string: "http://127.0.0.1:\(port)")!,
-            transport: URLSessionTransport(),
+            transport: URLSessionTransport(
+                configuration: .init(session: URLSession(configuration: configuration))),
             middlewares: [SessionTokenMiddleware(token: token)]
         )
     }

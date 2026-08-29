@@ -160,6 +160,35 @@ final class EngineSupervisorTests: XCTestCase {
         XCTAssertEqual(health.status, .ready)
     }
 
+    func testAnEngineThatRefusesToStartSurfacesItsOwnDiagnostic() async throws {
+        // A real engine failure, not a fake one: the data root is a symlink,
+        // which the engine refuses by design. The UI says "check the details
+        // below", so the engine's stderr has to actually arrive — it is written
+        // just before the process exits, and it is drained on another queue.
+        let real = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jarvis-real-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        let link = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jarvis-link-\(UUID().uuidString)")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+        defer {
+            try? FileManager.default.removeItem(at: link)
+            try? FileManager.default.removeItem(at: real)
+        }
+
+        let refusing = EngineSupervisor(resources: .developmentBuild(), dataRoot: link)
+
+        do {
+            _ = try await refusing.start()
+            XCTFail("the engine should refuse a symlinked data root")
+        } catch let error as EngineStartError {
+            let detail = try XCTUnwrap(error.detail, "the engine's stderr was lost")
+            XCTAssertTrue(
+                detail.contains("symbolic link"),
+                "expected the engine's own diagnostic, got: \(detail)")
+        }
+    }
+
     func testAMissingEngineFailsWithAnActionableError() async throws {
         let broken = EngineSupervisor(
             resources: EngineResources(

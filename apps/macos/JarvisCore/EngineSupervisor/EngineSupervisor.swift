@@ -62,6 +62,10 @@ public actor EngineSupervisor {
     }
 
     private func performStart() async throws -> EngineSession {
+        // The stale check above short-circuits before the in-flight dedup, so a
+        // caller arriving mid-restart would otherwise get the dead engine's
+        // port and token.
+        session = nil
         try assertResourcesExist()
 
         // SYSTEM.md startup protocol step 1: a fresh 256-bit token per session,
@@ -112,7 +116,14 @@ public actor EngineSupervisor {
         // count is the core count, and blocking one for five seconds starves it.
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while process.isRunning && ContinuousClock.now < deadline {
-            try? await Task.sleep(for: .milliseconds(20))
+            do {
+                try await Task.sleep(for: .milliseconds(20))
+            } catch {
+                // Cancelled: `try?` here would return instantly every iteration
+                // and spin a core for the rest of the window. Stop waiting and
+                // go straight to the hard kill.
+                break
+            }
         }
         if process.isRunning { kill(process.processIdentifier, SIGKILL) }
     }
@@ -142,15 +153,17 @@ public actor EngineSupervisor {
 
     // MARK: - Internals
 
-    /// Reads whatever the exited process left in the pipe. The readability
-    /// handler runs on another queue, so the buffer is usually still empty at
-    /// the moment the termination handler fires.
-    private func drainStandardError(_ output: EngineOutput) -> String {
-        if let stderrHandle, let remaining = try? stderrHandle.readToEnd(),
-            let text = String(data: remaining, encoding: .utf8)
-        {
-            output.appendStandardError(text)
-        }
+    /// The readability handler drains stderr on another queue, so the buffer is
+    /// usually still empty the instant the termination handler fires — and the
+    /// failure UI promises "check the details below".
+    ///
+    /// ponytail: a short wait rather than reading the descriptor directly.
+    /// `readToEnd()` would block the actor until EOF, which never comes if a
+    /// grandchild inherited the write end, and would race the handler for the
+    /// same fd. Raise the wait, or hand the pipe over wholesale, if diagnostics
+    /// ever turn up truncated.
+    private func drainStandardError(_ output: EngineOutput) async -> String {
+        try? await Task.sleep(for: .milliseconds(100))
         return output.stderrText
     }
 
@@ -198,7 +211,7 @@ public actor EngineSupervisor {
                 handle.readabilityHandler = nil
                 return
             }
-            if let text = String(data: data, encoding: .utf8) { output.appendStandardOutput(text) }
+            output.appendStandardOutput(data)
         }
         stderr.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
@@ -206,7 +219,7 @@ public actor EngineSupervisor {
                 handle.readabilityHandler = nil
                 return
             }
-            if let text = String(data: data, encoding: .utf8) { output.appendStandardError(text) }
+            output.appendStandardError(data)
         }
         stderrHandle = stderr.fileHandleForReading
         return process
@@ -230,11 +243,11 @@ public actor EngineSupervisor {
             // Either the engine died first, or nothing arrived in time.
             if !process.isRunning {
                 throw EngineStartError.exitedBeforeReady(
-                    code: process.terminationStatus, stderr: drainStandardError(output))
+                    code: process.terminationStatus, stderr: await drainStandardError(output))
             }
             await terminate()
             throw EngineStartError.timedOut(
-                readyTimeout, stderr: drainStandardError(output))
+                readyTimeout, stderr: await drainStandardError(output))
         }
 
         guard let data = line.data(using: .utf8),
