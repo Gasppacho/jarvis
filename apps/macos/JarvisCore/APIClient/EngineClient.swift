@@ -23,7 +23,11 @@ struct SessionTokenMiddleware: ClientMiddleware {
 }
 
 public struct EngineHealth: Sendable, Equatable {
-    public enum Status: String, Sendable { case ready, degraded, shuttingDown }
+    public enum Status: String, Sendable {
+        case ready
+        case degraded
+        case shuttingDown = "shutting-down"
+    }
     public enum Database: String, Sendable { case ready, migrating, failed }
 
     public let status: Status
@@ -59,11 +63,26 @@ public struct EngineClient: Sendable {
         switch output {
         case .ok(let ok):
             let payload = try ok.body.json
+            // Exhaustive switches, not `?? .degraded`: a value added to the
+            // contract must break this build rather than be silently mapped to
+            // something plausible.
+            let status: EngineHealth.Status =
+                switch payload.status {
+                case .ready: .ready
+                case .degraded: .degraded
+                case .shutting_hyphen_down: .shuttingDown
+                }
+            let database: EngineHealth.Database =
+                switch payload.database {
+                case .ready: .ready
+                case .migrating: .migrating
+                case .failed: .failed
+                }
             return EngineHealth(
-                status: EngineHealth.Status(rawValue: payload.status.rawValue) ?? .degraded,
+                status: status,
                 engineVersion: payload.engineVersion,
                 apiVersion: payload.apiVersion.rawValue,
-                database: EngineHealth.Database(rawValue: payload.database.rawValue) ?? .failed
+                database: database
             )
         case .unauthorized:
             throw EngineClientError.unauthorized(operation: "GET /v1/health")

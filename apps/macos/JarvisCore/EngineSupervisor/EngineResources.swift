@@ -14,7 +14,14 @@ public struct EngineResources: Sendable {
     /// `Jarvis.app/Contents/Resources/engine/`, assembled by scripts/build-app.sh.
     public static func bundled(in bundle: Bundle = .main) -> EngineResources? {
         guard let resources = bundle.resourceURL else { return nil }
-        return inDirectory(resources.appending(path: "engine"))
+        let candidate = inDirectory(resources.appending(path: "engine"))
+        // For a plain SwiftPM executable `resourceURL` is just the binary's
+        // directory, so the URL always exists; only the file does not. Without
+        // this check `swift run Jarvis` reports a missing engine instead of
+        // falling back to dist/engine.
+        let bundlePath = candidate.bundle.path(percentEncoded: false)
+        guard FileManager.default.fileExists(atPath: bundlePath) else { return nil }
+        return candidate
     }
 
     /// `dist/engine/`, produced by `pnpm build:engine`. Used by the test seam,

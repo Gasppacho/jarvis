@@ -25,7 +25,9 @@ struct JarvisApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
-        WindowGroup("Jarvis") {
+        // `Window`, not `WindowGroup`: the latter adds File ▸ New Window, and
+        // every window would run the `.task` that starts the engine.
+        Window("Jarvis", id: "main") {
             EngineHealthView(state: delegate.session.state)
                 .frame(minWidth: 520, minHeight: 320)
                 .task { await delegate.session.start() }

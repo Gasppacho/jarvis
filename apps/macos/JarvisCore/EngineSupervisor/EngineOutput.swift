@@ -18,18 +18,15 @@ final class EngineOutput: @unchecked Sendable {
     }
 
     func appendStandardOutput(_ text: String) {
-        let resumeWith: String? = lock.withLock {
-            guard firstLine == nil else {
-                stdoutBuffer += text
+        let line: String? = lock.withLock {
+            stdoutBuffer += text
+            guard firstLine == nil, let newline = stdoutBuffer.firstIndex(of: "\n") else {
                 return nil
             }
-            stdoutBuffer += text
-            guard let newline = stdoutBuffer.firstIndex(of: "\n") else { return nil }
-            let line = String(stdoutBuffer[stdoutBuffer.startIndex..<newline])
-            firstLine = line
-            return takeWaiter(resolving: line)
+            firstLine = String(stdoutBuffer[stdoutBuffer.startIndex..<newline])
+            return firstLine
         }
-        if let resumeWith { resumeContinuation(with: resumeWith) }
+        if let line { resumeWaiter(with: line) }
     }
 
     func appendStandardError(_ text: String) {
@@ -38,34 +35,35 @@ final class EngineOutput: @unchecked Sendable {
 
     /// Called when the process ends: unblocks a waiter that will never get a line.
     func finish() {
-        let hadWaiter: Bool = lock.withLock {
-            finished = true
-            return waiter != nil
-        }
-        if hadWaiter { resumeContinuation(with: nil) }
+        lock.withLock { finished = true }
+        resumeWaiter(with: nil)
     }
 
-    /// The engine's single stdout line, or nil if it exited without writing one.
+    /// The engine's single stdout line; nil if it exited or the wait was
+    /// cancelled before one arrived.
+    ///
+    /// Cancellation-aware on purpose: the caller races this against a timeout,
+    /// and a plain `withCheckedContinuation` would leave the losing child task
+    /// parked forever — which kept `withTaskGroup` from ever returning.
     func firstStandardOutputLine() async -> String? {
-        await withCheckedContinuation { continuation in
-            let immediate: String?? = lock.withLock {
-                if let firstLine { return .some(firstLine) }
-                if finished { return .some(nil) }
-                waiter = continuation
-                return nil
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let immediate: String?? = lock.withLock {
+                    if let firstLine { return .some(firstLine) }
+                    if finished { return .some(nil) }
+                    waiter = continuation
+                    return nil
+                }
+                if let immediate { continuation.resume(returning: immediate) }
             }
-            if let immediate { continuation.resume(returning: immediate) }
+        } onCancel: {
+            resumeWaiter(with: nil)
         }
     }
 
-    // MARK: - Continuation plumbing
-
-    private func takeWaiter(resolving line: String) -> String? {
-        guard waiter != nil else { return nil }
-        return line
-    }
-
-    private func resumeContinuation(with value: String?) {
+    /// Resumes at most once: the continuation is taken under the lock, so a
+    /// line, a process exit and a cancellation racing each other cannot double-resume.
+    private func resumeWaiter(with value: String?) {
         let continuation: CheckedContinuation<String?, Never>? = lock.withLock {
             defer { waiter = nil }
             return waiter

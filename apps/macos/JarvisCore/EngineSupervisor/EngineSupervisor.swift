@@ -29,6 +29,7 @@ public actor EngineSupervisor {
 
     private var process: Process?
     private var output: EngineOutput?
+    private var session: EngineSession?
 
     public init(
         resources: EngineResources,
@@ -45,6 +46,10 @@ public actor EngineSupervisor {
     }
 
     public func start() async throws -> EngineSession {
+        // A WindowGroup hands out Cmd-N for free, and every window runs the
+        // `.task` that calls this. Without the guard a second window spawns a
+        // second engine and orphans the first by overwriting the handle.
+        if let session, process?.isRunning == true { return session }
         try assertResourcesExist()
 
         // SYSTEM.md startup protocol step 1: a fresh 256-bit token per session,
@@ -56,10 +61,16 @@ public actor EngineSupervisor {
         self.output = output
         self.process = process
 
+        // Before run(): a process that dies immediately can be reaped before a
+        // handler assigned afterwards is ever installed, and then nothing would
+        // ever unblock the wait below.
+        process.terminationHandler = { _ in output.finish() }
+
         do {
             try process.run()
         } catch {
             self.process = nil
+            self.output = nil
             throw EngineStartError(
                 cause: "The engine could not be launched: \(error.localizedDescription)",
                 impact: "Jarvis cannot start without it.",
@@ -67,33 +78,42 @@ public actor EngineSupervisor {
             )
         }
 
-        process.terminationHandler = { _ in output.finish() }
-
         let handshake = try await awaitHandshake(process: process, output: output)
-        return EngineSession(
+        let session = EngineSession(
             port: handshake.port,
             apiVersion: handshake.apiVersion,
             sessionId: handshake.sessionId,
             token: token,
             client: EngineClient(port: handshake.port, token: token)
         )
+        self.session = session
+        return session
     }
 
     /// Terminates the engine. The graceful path is `POST /v1/system/shutdown`;
     /// this is the fallback for a shell that is going away regardless.
-    public func terminate() {
+    public func terminate() async {
         guard let process, process.isRunning else { return }
         process.terminate()
         // SYSTEM.md: after a bounded delay the shell kills the process.
-        let deadline = Date().addingTimeInterval(5)
-        while process.isRunning && Date() < deadline {
-            usleep(20_000)
+        // Task.sleep, not usleep: this runs on a cooperative-pool thread whose
+        // count is the core count, and blocking one for five seconds starves it.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while process.isRunning && ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(20))
         }
         if process.isRunning { kill(process.processIdentifier, SIGKILL) }
     }
 
     public func waitForExit(timeout: Duration = .seconds(10)) async throws -> Int32 {
-        guard let process else { return 0 }
+        guard let process else {
+            // Not "exited cleanly": there was never a process to exit.
+            throw EngineStartError(
+                cause: "There is no engine to wait for.",
+                impact: "Jarvis never started one, or the launch failed.",
+                nextAction: "Restart Jarvis."
+            )
+        }
         let deadline = ContinuousClock.now.advanced(by: timeout)
         while process.isRunning {
             guard ContinuousClock.now < deadline else {
@@ -178,7 +198,7 @@ public actor EngineSupervisor {
                 throw EngineStartError.exitedBeforeReady(
                     code: process.terminationStatus, stderr: output.stderrText)
             }
-            terminate()
+            await terminate()
             throw EngineStartError.timedOut(
                 seconds: Double(readyTimeout.components.seconds), stderr: output.stderrText)
         }
@@ -187,7 +207,7 @@ public actor EngineSupervisor {
             let handshake = try? JSONDecoder().decode(ReadyHandshake.self, from: data),
             handshake.type == "ready"
         else {
-            terminate()
+            await terminate()
             throw EngineStartError.malformedHandshake(line)
         }
         return handshake

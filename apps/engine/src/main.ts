@@ -66,6 +66,16 @@ async function main(): Promise<void> {
   process.on("SIGTERM", onSignal);
   process.on("SIGINT", onSignal);
 
+  // Before the database is opened, for the same reason: migrations take the
+  // longest, and a shell that crashes during them would otherwise leave an
+  // engine nobody is watching.
+  watchParentProcess({
+    onOrphaned: () => {
+      process.stderr.write("jarvis-engine: the shell went away; shutting down.\n");
+      void shutdown(announced ? 0 : 1);
+    },
+  });
+
   // SYSTEM.md startup protocol: migrations complete before the ready handshake,
   // so the shell never sees a `ready` engine with an unmigrated database.
   opened = openDatabase(config.databasePath);
@@ -100,15 +110,6 @@ async function main(): Promise<void> {
     })}\n`,
   );
   announced = true;
-
-  // The shell's graceful path is POST /v1/system/shutdown. This covers the ones
-  // where it never gets to ask: a crash, a force quit, a SIGKILL.
-  watchParentProcess({
-    onOrphaned: () => {
-      process.stderr.write("jarvis-engine: the shell went away; shutting down.\n");
-      void shutdown(0);
-    },
-  });
 }
 
 main().catch((error: unknown) => {
