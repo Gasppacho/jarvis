@@ -109,6 +109,19 @@ describe("engine walking skeleton", () => {
       await expect(engine.waitForExit()).resolves.toBe(0);
     });
 
+    it("refuses a body that could reach Object.prototype", async () => {
+      // Replacing Fastify's parser must not lose its protoAction: "error".
+      const response = await engine.call("/v1/system/shutdown", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: '{"__proto__":{"polluted":true}}',
+      });
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as { error: { message: string } };
+      expect(body.error.message).toContain("__proto__");
+    });
+
     it("refuses an unauthenticated shutdown", async () => {
       const response = await engine.callUnauthenticated("/v1/system/shutdown", { method: "POST" });
 

@@ -8,7 +8,7 @@ import {
   realpathSync,
   type Stats,
 } from "node:fs";
-import { dirname, join, parse as parsePath, resolve } from "node:path";
+import { basename, dirname, join, parse as parsePath, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export type DatabaseState = "ready" | "migrating" | "failed";
@@ -30,20 +30,29 @@ const MIGRATIONS_DIR = fileURLToPath(new URL("./migrations/", import.meta.url));
 export function openDatabase(databasePath: string): OpenedDatabase {
   // Order matters: the data root is made private to this user first, so nothing
   // can be planted beside the database between the check below and the open.
-  prepareDataRoot(dirname(databasePath));
-  assertRegularFileOrAbsent(databasePath);
+  // Everything afterwards uses the canonical directory the checks validated —
+  // going back to the literal path would re-open the door to an intermediate
+  // symlink that was never lstat'ed.
+  const dataRoot = prepareDataRoot(dirname(databasePath));
+  const canonicalPath = join(dataRoot, basename(databasePath));
+  assertRegularFileOrAbsent(canonicalPath);
 
   // TECHNOLOGY_STACK.md: the persistence layer accepts an explicit addon path,
   // because the packaged app signs and relocates the native binding.
   const nativeBinding = process.env["JARVIS_SQLITE_ADDON"];
-  const db = new Database(databasePath, nativeBinding === undefined ? {} : { nativeBinding });
+  const db = new Database(canonicalPath, nativeBinding === undefined ? {} : { nativeBinding });
   try {
-    return prepare(db, databasePath);
+    return prepare(db, canonicalPath);
   } catch (error) {
     // chmod, a migration or the probe can all throw here. Propagating with the
     // handle open would leave the WAL un-checkpointed, which is the invariant
-    // the shutdown path exists to hold.
-    db.close();
+    // the shutdown path exists to hold. A failure to close must not replace the
+    // error the operator actually needs to see.
+    try {
+      db.close();
+    } catch {
+      /* the original error below is the useful one */
+    }
     throw error;
   }
 }
@@ -87,8 +96,10 @@ function prepare(db: Database.Database, databasePath: string): OpenedDatabase {
  * predictable path under a world-writable directory, and PERSISTENCE.md says
  * the database will hold project configuration and secret references. So the
  * engine refuses a data root it does not own rather than adopting it.
+ *
+ * Returns the canonical path, which is the only one later steps may use.
  */
-function prepareDataRoot(dataRoot: string): void {
+function prepareDataRoot(dataRoot: string): string {
   const absolute = resolve(dataRoot);
 
   // lstat before mkdir: `mkdirSync` throws EEXIST or ENOENT for a file or a
@@ -117,11 +128,14 @@ function prepareDataRoot(dataRoot: string): void {
   // leaf alone would miss a symlink planted higher up the chain. Canonicalise
   // before walking the ancestors — and canonicalise rather than demand an
   // already-canonical path, because on macOS /tmp and /var are themselves links.
-  assertOwnedChain(realpathSync(absolute));
+  const canonical = realpathSync(absolute);
+  assertOwnedChain(canonical);
 
   // Only now, with ownership established, is tightening the mode both safe and
   // permitted.
-  if ((stats.mode & 0o077) !== 0) chmodSync(absolute, 0o700);
+  if ((stats.mode & 0o077) !== 0) chmodSync(canonical, 0o700);
+
+  return canonical;
 }
 
 /**
@@ -149,6 +163,11 @@ function assertRegularFileOrAbsent(databasePath: string): void {
  * ancestor must therefore belong to this user or to root, and must not be
  * writable by anyone else unless the sticky bit forbids touching our entries —
  * which is exactly what makes `/tmp` (root-owned, 1777) usable.
+ *
+ * This does refuse a data root on a volume mounted 0777, such as an external
+ * FAT disk under /Volumes. That is not a safe place for project data anyway,
+ * and no override exists on purpose: a knob here would be the first thing a
+ * confused setup reaches for.
  */
 function assertOwnedChain(path: string): void {
   const uid = process.getuid?.();
@@ -166,11 +185,7 @@ function assertOwnedChain(path: string): void {
     // The leaf is exempt: we own it, and the caller tightens it to 0700 next.
     // An ancestor we cannot fix is the one that lets someone swap the leaf.
     if (current !== path) {
-      // ponytail: world-writable only. A group-writable ancestor is also a
-      // theoretical hole, but rejecting it makes a data root on an external
-      // FAT volume (mounted 0777 under /Volumes) impossible with no override.
-      // Revisit with an explicit opt-out if a shared-group setup shows up.
-      const writableByOthers = (stats.mode & 0o002) !== 0;
+      const writableByOthers = (stats.mode & 0o022) !== 0;
       const sticky = (stats.mode & 0o1000) !== 0;
       if (writableByOthers && !sticky) {
         throw new Error(
@@ -187,7 +202,15 @@ function lstatIfExists(path: string): Stats | undefined {
   try {
     return lstatSync(path);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return undefined;
+    // ENOTDIR means an intermediate component is a file. Naming it beats
+    // surfacing the raw errno the pre-mkdir lstat exists to avoid.
+    if (code === "ENOTDIR") {
+      throw new Error(
+        `A parent of ${path} is a file, not a directory. Point JARVIS_DATA_ROOT at a path whose parents are all directories.`,
+      );
+    }
     throw error;
   }
 }

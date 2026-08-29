@@ -28,6 +28,8 @@ describe("engine bootstrap failures", () => {
 
     expect(run.code).not.toBe(0);
     expect(run.stdout).toBe("");
-    expect(run.stderr).toContain("failed to start");
+    // A raw ENOTDIR is exactly what the pre-mkdir lstat exists to avoid.
+    expect(run.stderr).toContain("is a file, not a directory");
+    expect(run.stderr).not.toContain("ENOTDIR");
   });
 });

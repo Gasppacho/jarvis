@@ -4,7 +4,7 @@ import type { components } from "../api/generated/local-api.js";
 import type { EngineConfig } from "../config.js";
 import type { DatabaseState } from "../db/open.js";
 import { EngineError, toErrorEnvelope } from "../errors.js";
-import { parseJsonBody } from "./json.js";
+import { ForbiddenJsonKeyError, parseJsonBody } from "./json.js";
 import { API_VERSION, ENGINE_VERSION } from "../version.js";
 
 type HealthResponse = components["schemas"]["HealthResponse"];
@@ -47,11 +47,11 @@ export function buildServer(deps: ServerDependencies): FastifyInstance {
     }
     try {
       done(null, parseJsonBody(body));
-    } catch {
-      done(
-        new EngineError("api.invalid-request", 400, "Request body is not valid JSON."),
-        undefined,
-      );
+    } catch (error) {
+      // A forbidden key names itself; anything else is a parse failure.
+      const message =
+        error instanceof ForbiddenJsonKeyError ? error.message : "Request body is not valid JSON.";
+      done(new EngineError("api.invalid-request", 400, message), undefined);
     }
   });
 
