@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 export interface EngineConfig {
   /** Every file the engine writes lives under this root. */
@@ -26,7 +26,15 @@ export class ConfigError extends Error {
 
 const LOOPBACK_HOST = "127.0.0.1";
 
-export function loadConfig(env: NodeJS.ProcessEnv): EngineConfig {
+/**
+ * `homeDirectory` is injected because `homedir()` reads the process environment
+ * rather than `env`, which would make the set-but-empty HOME case untestable.
+ * coding-standards.md asks for filesystem access behind a testable port.
+ */
+export function loadConfig(
+  env: NodeJS.ProcessEnv,
+  homeDirectory: () => string = homedir,
+): EngineConfig {
   const apiToken = env["JARVIS_API_TOKEN"];
   if (apiToken === undefined || apiToken.length === 0) {
     // LOCAL_DEVELOPMENT.md forbids an unauthenticated mode, in development too.
@@ -36,7 +44,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): EngineConfig {
     );
   }
 
-  const dataRoot = parseDataRoot(env["JARVIS_DATA_ROOT"]);
+  const dataRoot = parseDataRoot(env["JARVIS_DATA_ROOT"], homeDirectory);
 
   return {
     dataRoot,
@@ -50,21 +58,28 @@ export function loadConfig(env: NodeJS.ProcessEnv): EngineConfig {
   };
 }
 
-function parseDataRoot(raw: string | undefined): string {
+function parseDataRoot(raw: string | undefined, homeDirectory: () => string): string {
   // Empty is what a launcher's `${JARVIS_DATA_ROOT:-}` expands to. Treating it
   // as a path makes `dirname` yield ".", which would adopt — and re-permission
   // — whatever directory the engine happens to be started from.
   const supplied = emptyToUndefined(raw);
-  if (supplied === undefined) {
-    return join(homedir(), "Library", "Application Support", "Jarvis");
-  }
-  if (!isAbsolute(supplied)) {
+
+  // The default is checked too: homedir() returns HOME verbatim, so a
+  // set-but-empty HOME — plausible under launchd — makes this relative.
+  const home = homeDirectory();
+  const candidate = supplied ?? join(home, "Library", "Application Support", "Jarvis");
+  if (!isAbsolute(candidate)) {
     throw new ConfigError(
-      `JARVIS_DATA_ROOT must be an absolute path, got ${JSON.stringify(supplied)}.`,
+      supplied === undefined
+        ? `Cannot locate Application Support: HOME is not an absolute path (got ${JSON.stringify(home)}).`
+        : `JARVIS_DATA_ROOT must be an absolute path, got ${JSON.stringify(supplied)}.`,
       "A relative path would resolve against whatever directory the engine was started from.",
     );
   }
-  return supplied;
+
+  // Normalised here so `dataRoot` and `databasePath` cannot disagree: `join`
+  // already normalises the latter.
+  return resolve(candidate);
 }
 
 function emptyToUndefined(raw: string | undefined): string | undefined {

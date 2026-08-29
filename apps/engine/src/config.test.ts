@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ConfigError, loadConfig } from "./config.js";
 
@@ -30,12 +31,17 @@ describe("loadConfig", () => {
   it("treats an empty JARVIS_DATA_ROOT as unset rather than as the current directory", () => {
     // `${JARVIS_DATA_ROOT:-}` expands to "", and dirname("jarvis.sqlite") is
     // ".", which would adopt and re-permission the engine's working directory.
-    expect(loadConfig({ ...withToken, JARVIS_DATA_ROOT: "" }).databasePath).toMatch(
-      /Library\/Application Support\/Jarvis\/jarvis\.sqlite$/,
-    );
+    const { databasePath } = loadConfig({ ...withToken, JARVIS_DATA_ROOT: "" });
+    // Anchored: an unanchored match would also accept the relative
+    // "Library/Application Support/Jarvis/jarvis.sqlite" this guards against.
+    expect(isAbsolute(databasePath)).toBe(true);
+    expect(databasePath).toMatch(/^\/.*\/Library\/Application Support\/Jarvis\/jarvis\.sqlite$/);
   });
 
-  it("refuses a relative data root", () => {
+  it("refuses a relative data root, including one that HOME made relative", () => {
+    // homedir() returns HOME verbatim, so a set-but-empty HOME — plausible
+    // under launchd — would otherwise make the default root relative.
+    expect(() => loadConfig(withToken, () => "")).toThrow(ConfigError);
     for (const root of [".", "data", "../elsewhere"]) {
       expect(() => loadConfig({ ...withToken, JARVIS_DATA_ROOT: root })).toThrow(ConfigError);
     }

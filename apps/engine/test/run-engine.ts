@@ -31,7 +31,8 @@ export function runEngineToExit(
   // Never inherit the developer's real Application Support directory, which
   // LOCAL_DEVELOPMENT.md forbids tests from touching.
   const supplied = env["JARVIS_DATA_ROOT"];
-  const dataRoot = supplied ?? mkdtempSync(join(tmpdir(), "jarvis-run-"));
+  const suppliedRoot = supplied === undefined || supplied === "" ? undefined : supplied;
+  const dataRoot = suppliedRoot ?? mkdtempSync(join(tmpdir(), "jarvis-run-"));
 
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [enginePath], {
@@ -55,7 +56,7 @@ export function runEngineToExit(
 
     const cleanUp = (): void => {
       clearTimeout(deadline);
-      if (supplied === undefined) rmSync(dataRoot, { recursive: true, force: true });
+      if (suppliedRoot === undefined) rmSync(dataRoot, { recursive: true, force: true });
     };
 
     child.on("error", (error) => {
