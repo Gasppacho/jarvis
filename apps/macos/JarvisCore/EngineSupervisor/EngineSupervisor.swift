@@ -39,6 +39,9 @@ public actor EngineSupervisor {
     private var stopExpected = false
 
     private static let terminationGrace: TimeInterval = 5
+    /// Shared by both exit-wait loops below, so tuning one cannot silently
+    /// diverge from the other.
+    private static let pollIntervalMilliseconds: UInt64 = 20
 
     public init(
         resources: EngineResources,
@@ -191,7 +194,7 @@ public actor EngineSupervisor {
                     nextAction: "Quit Jarvis again, or stop the process manually."
                 )
             }
-            try await Task.sleep(for: .milliseconds(20))
+            try await Task.sleep(for: .milliseconds(Self.pollIntervalMilliseconds))
         }
         return process.terminationStatus
     }
@@ -210,7 +213,7 @@ public actor EngineSupervisor {
         await withCheckedContinuation { continuation in
             DispatchQueue.global().async {
                 let deadline = Date().addingTimeInterval(seconds)
-                while watched.isRunning && Date() < deadline { usleep(20_000) }
+                while watched.isRunning && Date() < deadline { usleep(UInt32(Self.pollIntervalMilliseconds * 1_000)) }
                 continuation.resume()
             }
         }
@@ -270,10 +273,14 @@ public actor EngineSupervisor {
         // The supervisor owns these. Inheriting a developer's exported
         // JARVIS_PORT would pin every engine to one port, so a second session
         // dies on EADDRINUSE before it can hand over its handshake.
-        // JARVIS_LOG_LEVEL is deliberately not in this list: it is the only
-        // verbosity knob, and stripping it would pin the engine to `info` with
-        // no way to raise it while diagnosing a start failure.
-        for key in ["JARVIS_PORT", "JARVIS_SESSION_ID", "JARVIS_DATA_ROOT"] {
+        // Every key the supervisor might set is stripped from the inherited
+        // environment first, whether or not this call sets it, so an omitted
+        // one cannot leak a developer's exported value. JARVIS_LOG_LEVEL is
+        // deliberately absent: it is the only verbosity knob, and stripping it
+        // would pin the engine to `info` with no way to raise it while
+        // diagnosing a start failure.
+        let supervisorOwnedKeys = ["JARVIS_PORT", "JARVIS_SESSION_ID", "JARVIS_DATA_ROOT"]
+        for key in supervisorOwnedKeys {
             environment.removeValue(forKey: key)
         }
         environment["JARVIS_API_TOKEN"] = token
