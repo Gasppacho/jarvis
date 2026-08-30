@@ -110,7 +110,11 @@ public actor EngineSupervisor {
         process.terminationHandler = { [weak self] finished in
             output.finish()
             guard let self else { return }
-            Task { await self.engineExited(status: finished.terminationStatus) }
+            // Unstructured and unawaited: nothing serializes this against a
+            // caller that stops this engine and immediately starts another.
+            // The exit is attributed to whichever process object fired it, not
+            // to "whatever the supervisor is running now".
+            Task { await self.engineExited(process: finished, status: finished.terminationStatus) }
         }
 
         do {
@@ -165,7 +169,7 @@ public actor EngineSupervisor {
         // cancels the start task, and this runs inside it: a cancellation-aware
         // wait would collapse to an immediate SIGKILL, killing the engine
         // mid-migration with none of its ordered shutdown.
-        await Self.waitForExit(process, upTo: Self.terminationGrace)
+        await Self.waitUninterruptibly(for: process, upTo: Self.terminationGrace)
         if process.isRunning { kill(process.processIdentifier, SIGKILL) }
     }
 
@@ -194,9 +198,14 @@ public actor EngineSupervisor {
 
     // MARK: - Internals
 
+    /// Uncancellable termination-grace wait, distinct in name from the public
+    /// `waitForExit(timeout:)`: the two exist for different callers with
+    /// different contracts (cancellable/throwing vs. not), and sharing a name
+    /// invites the wrong one to be reached for.
+    ///
     /// Polls on a dispatch thread rather than the cooperative pool, and is not
     /// cancellable by design — see the caller.
-    private static func waitForExit(_ process: Process, upTo seconds: TimeInterval) async {
+    private static func waitUninterruptibly(for process: Process, upTo seconds: TimeInterval) async {
         let watched = process
         await withCheckedContinuation { continuation in
             DispatchQueue.global().async {
@@ -207,9 +216,12 @@ public actor EngineSupervisor {
         }
     }
 
-    /// Reported only for an engine that had actually started: a failure during
-    /// startup is already surfaced by `start()` throwing.
-    private func engineExited(status: Int32) {
+    /// Reported only for an engine that had actually started, and only when
+    /// the exiting process is still the one the supervisor is tracking. A stop
+    /// followed immediately by a restart can let this fire after `self.process`
+    /// has already moved on to a new, healthy engine.
+    private func engineExited(process exited: Process, status: Int32) {
+        guard exited === process else { return }
         guard session != nil else { return }
         session = nil
         guard !stopExpected else { return }

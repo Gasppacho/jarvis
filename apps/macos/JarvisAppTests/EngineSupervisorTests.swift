@@ -15,6 +15,16 @@ final class OutcomeBox: @unchecked Sendable {
     func set(_ newValue: String) { lock.withLock { stored = newValue } }
 }
 
+/// A lock-guarded counter: `onEngineExit`'s handler is `@Sendable` and can run
+/// on any thread.
+final class CrashCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    var count: Int { lock.withLock { value } }
+    func increment() { lock.withLock { value += 1 } }
+}
+
 final class EngineSupervisorTests: XCTestCase {
     private var supervisor: EngineSupervisor!
     private var dataRoot: URL!
@@ -206,6 +216,28 @@ final class EngineSupervisorTests: XCTestCase {
         XCTAssertNotEqual(first.port, 45999)
 
         await second.terminate()
+    }
+
+    func testARestartIsNotMisreportedAsACrashFromTheOldEngine() async throws {
+        // The old process's termination handler spawns an unstructured Task
+        // that is never awaited. If it runs after a fast restart has already
+        // assigned a new session, an identity check is the only thing stopping
+        // it from wiping that session and reporting a false crash.
+        let crashReports = CrashCounter()
+        await supervisor.onEngineExit { _ in crashReports.increment() }
+
+        for _ in 0..<5 {
+            _ = try await supervisor.start()
+            await supervisor.terminate()
+        }
+        let final = try await supervisor.start()
+
+        // Give any stale termination-handler Task a chance to run.
+        try await Task.sleep(for: .milliseconds(300))
+
+        XCTAssertEqual(crashReports.count, 0, "a stop/restart cycle was reported as a crash")
+        let health = try await final.client.health()
+        XCTAssertEqual(health.status, .ready)
     }
 
     func testTerminateHonoursTheGracePeriodFromACancelledTask() async throws {
