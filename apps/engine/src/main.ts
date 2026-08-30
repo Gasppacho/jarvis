@@ -1,3 +1,4 @@
+import { writeSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import type { FastifyInstance } from "fastify";
 import { ConfigError, loadConfig } from "./config.js";
@@ -7,24 +8,39 @@ import { watchParentProcess } from "./parent-watch.js";
 import { API_VERSION } from "./version.js";
 
 const SHUTDOWN_GRACE_MS = 5_000;
+const STDERR_FD = 2;
 /**
- * Node documents stdio pipes as synchronous on Linux and macOS, so a plain
- * write is already flushed before `process.exit` — an earlier `writeSync`
- * refactor here rested on the opposite, and could throw EPIPE out of a
- * shutdown path when the shell had already gone.
+ * Measured on macOS rather than argued from the docs, because two readings of
+ * them disagreed:
  *
- * Never throws: every caller is on its way out, and losing the process before
- * the database closes would be worse than losing the message.
+ *   - `process.stderr.write` of 200 KB followed by `process.exit` delivers only
+ *     65 536 bytes to a pipe. The tail — the part that names the failure — is
+ *     lost every time.
+ *   - `process.stderr.write` to a closed pipe does not throw; it emits an async
+ *     `error`, which without a listener kills the process. That is fatal on the
+ *     orphan path, where the shell is gone by definition and the write happens
+ *     just before the database is closed.
+ *   - `writeSync` delivers all 200 KB before exit, and throws EPIPE
+ *     synchronously, which a `try` can actually contain.
+ *
+ * So: synchronous write, guarded. Never throws — every caller is on its way
+ * out, and losing the process before the database closes is worse than losing
+ * the message.
  */
 function reportFatal(message: string): void {
   try {
-    process.stderr.write(message);
+    writeSync(STDERR_FD, message);
   } catch {
     /* the shell is gone; there is nobody left to tell */
   }
 }
 
 async function main(): Promise<void> {
+  // Pino writes to this stream on every request. Once the shell is gone the
+  // write fails asynchronously, and an unhandled `error` would take the engine
+  // down before it could close the database.
+  process.stderr.on("error", () => {});
+
   const config = loadConfig(process.env);
 
   let opened: OpenedDatabase | undefined;

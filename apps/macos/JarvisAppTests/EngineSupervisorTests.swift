@@ -233,3 +233,36 @@ final class EngineSupervisorTests: XCTestCase {
         }
     }
 }
+
+/// The model's reaction to an engine that dies on its own.
+final class EngineSessionModelTests: XCTestCase {
+    @MainActor
+    func testAnEngineThatDiesMovesTheUIOutOfReady() async throws {
+        let dataRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jarvis-model-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dataRoot) }
+
+        let supervisor = EngineSupervisor(resources: .developmentBuild(), dataRoot: dataRoot)
+        let model = EngineSessionModel(supervisor: supervisor)
+        await model.start()
+
+        guard case .ready = model.state else {
+            return XCTFail("expected a ready engine, got \(model.state)")
+        }
+
+        // The engine crashes five minutes in: nothing polls health, so without
+        // an exit notification the window keeps showing the dead engine's state.
+        await supervisor.terminate()
+
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while ContinuousClock.now < deadline {
+            if case .failed = model.state { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+
+        guard case .failed(let error) = model.state else {
+            return XCTFail("the UI still reports \(model.state) for a dead engine")
+        }
+        XCTAssertFalse(error.nextAction.isEmpty)
+    }
+}

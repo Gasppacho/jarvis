@@ -33,6 +33,10 @@ public actor EngineSupervisor {
     private var stderrHandle: FileHandle?
     private var startTask: Task<EngineSession, Error>?
 
+    /// Called when a started engine exits on its own. Without it nothing
+    /// notices a crash, and the window keeps reporting the dead engine's health.
+    private var onUnexpectedExit: (@Sendable (Int32) -> Void)?
+
     public init(
         resources: EngineResources,
         dataRoot: URL? = nil,
@@ -41,6 +45,10 @@ public actor EngineSupervisor {
         self.resources = resources
         self.dataRoot = dataRoot
         self.readyTimeout = readyTimeout
+    }
+
+    public func onEngineExit(_ handler: @escaping @Sendable (Int32) -> Void) {
+        onUnexpectedExit = handler
     }
 
     public var isRunning: Bool {
@@ -80,7 +88,11 @@ public actor EngineSupervisor {
         // Before run(): a process that dies immediately can be reaped before a
         // handler assigned afterwards is ever installed, and then nothing would
         // ever unblock the wait below.
-        process.terminationHandler = { _ in output.finish() }
+        process.terminationHandler = { [weak self] finished in
+            output.finish()
+            guard let self else { return }
+            Task { await self.engineExited(status: finished.terminationStatus) }
+        }
 
         do {
             try process.run()
@@ -108,7 +120,22 @@ public actor EngineSupervisor {
 
     /// Terminates the engine. The graceful path is `POST /v1/system/shutdown`;
     /// this is the fallback for a shell that is going away regardless.
+    /// Stops the engine, including one whose start is still in flight.
     public func terminate() async {
+        // A start still in flight has not assigned `process` yet, so stopping
+        // only the known process would let it launch an engine after the app
+        // reported a clean shutdown. Cancel it and let it finish first.
+        if let startTask {
+            startTask.cancel()
+            _ = try? await startTask.value
+            self.startTask = nil
+        }
+        await stopProcess()
+    }
+
+    /// Stops the process alone. Used from inside `performStart`, where awaiting
+    /// the start task would be waiting on ourselves.
+    private func stopProcess() async {
         guard let process, process.isRunning else { return }
         process.terminate()
         // SYSTEM.md: after a bounded delay the shell kills the process.
@@ -153,6 +180,14 @@ public actor EngineSupervisor {
 
     // MARK: - Internals
 
+    /// Reported only for an engine that had actually started: a failure during
+    /// startup is already surfaced by `start()` throwing.
+    private func engineExited(status: Int32) {
+        guard session != nil else { return }
+        session = nil
+        onUnexpectedExit?(status)
+    }
+
     /// The readability handler drains stderr on another queue, so the buffer is
     /// usually still empty the instant the termination handler fires — and the
     /// failure UI promises "check the details below".
@@ -195,7 +230,10 @@ public actor EngineSupervisor {
         // The supervisor owns these. Inheriting a developer's exported
         // JARVIS_PORT would pin every engine to one port, so a second session
         // dies on EADDRINUSE before it can hand over its handshake.
-        for key in ["JARVIS_PORT", "JARVIS_SESSION_ID", "JARVIS_DATA_ROOT", "JARVIS_LOG_LEVEL"] {
+        // JARVIS_LOG_LEVEL is deliberately not in this list: it is the only
+        // verbosity knob, and stripping it would pin the engine to `info` with
+        // no way to raise it while diagnosing a start failure.
+        for key in ["JARVIS_PORT", "JARVIS_SESSION_ID", "JARVIS_DATA_ROOT"] {
             environment.removeValue(forKey: key)
         }
         environment["JARVIS_API_TOKEN"] = token
@@ -253,7 +291,7 @@ public actor EngineSupervisor {
                     killedBySignal: process.terminationReason == .uncaughtSignal,
                     stderr: await drainStandardError(output))
             }
-            await terminate()
+            await stopProcess()
             throw EngineStartError.timedOut(
                 readyTimeout, stderr: await drainStandardError(output))
         }
@@ -262,7 +300,7 @@ public actor EngineSupervisor {
             let handshake = try? JSONDecoder().decode(ReadyHandshake.self, from: data),
             handshake.type == "ready"
         else {
-            await terminate()
+            await stopProcess()
             throw EngineStartError.malformedHandshake(line)
         }
         return handshake

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { cpSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -31,6 +32,33 @@ cpSync(sqlitePackage, sqliteOut, { recursive: true, dereference: true });
 // bundle, so neither the tests nor the packaged app ever reach for PATH.
 // ponytail: the development Node is copied as-is; ticket 19 pins and signs an
 // official LTS build instead.
-cpSync(process.execPath, join(outDir, "node"), { dereference: true });
+const nodeOut = join(outDir, "node");
+cpSync(process.execPath, nodeOut, { dereference: true });
+assertSelfContained(nodeOut);
 
 process.stdout.write(`bundled runtime into ${outDir}\n`);
+
+/**
+ * A Homebrew Node links against /opt/homebrew/lib (icu4c, brotli, openssl…),
+ * and an app assembled from such a machine cannot exec its engine anywhere
+ * else. Failing here beats shipping a bundle that dies with "could not be
+ * launched" on someone else's Mac.
+ */
+function assertSelfContained(binary) {
+  const linkage = execFileSync("otool", ["-L", binary], { encoding: "utf8" });
+  const foreign = linkage
+    .split("\n")
+    // A universal binary emits one `path:` header per architecture slice, not
+    // just one overall, so headers are dropped by shape rather than by index.
+    .filter((line) => line.startsWith("\t"))
+    .map((line) => line.trim().split(" ")[0])
+    .filter((path) => path && !path.startsWith("/usr/lib/") && !path.startsWith("/System/"));
+
+  if (foreign.length > 0) {
+    throw new Error(
+      `${binary} links against non-system libraries, so the bundle would only run on this machine:\n` +
+        foreign.map((path) => `  ${path}`).join("\n") +
+        "\nUse an official Node build from nodejs.org rather than a package-manager one.",
+    );
+  }
+}

@@ -22,6 +22,24 @@ public final class EngineSessionModel {
         self.supervisor = supervisor
     }
 
+    /// Reacts to an engine that dies on its own. `refresh()` alone was never
+    /// called by anything, so a crash left "Engine ready" and the dead engine's
+    /// version numbers on screen for the rest of the session.
+    private func observeEngineExit() async {
+        await supervisor.onEngineExit { [weak self] status in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.session = nil
+                self.state = .failed(
+                    EngineStartError(
+                        cause: "The engine stopped unexpectedly (status \(status)).",
+                        impact: "Jarvis cannot reach it, and running work may be lost.",
+                        nextAction: "Restart Jarvis."
+                    ))
+            }
+        }
+    }
+
     /// Convenience for the app: the engine that ships inside this bundle.
     public static func bundled() -> EngineSessionModel {
         // Keyed on where the binary runs, not on how it was compiled. The repo
@@ -34,6 +52,7 @@ public final class EngineSessionModel {
     }
 
     public func start() async {
+        await observeEngineExit()
         do {
             let session = try await supervisor.start()
             self.session = session
