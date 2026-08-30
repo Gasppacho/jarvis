@@ -57,7 +57,7 @@ public final class EngineSessionModel {
         do {
             let session = try await supervisor.start()
             self.session = session
-            state = .ready(try await session.client.health())
+            state = Self.state(for: try await session.client.health())
         } catch let error as EngineStartError {
             state = .failed(error)
         } catch {
@@ -70,21 +70,25 @@ public final class EngineSessionModel {
         }
     }
 
-    public func refresh() async {
-        guard let session else { return }
-        do {
-            state = .ready(try await session.client.health())
-        } catch {
-            // Swallowing this would leave "Engine ready" and stale version
-            // numbers on screen for an engine that has crashed.
-            state = .failed(
+    /// A health response only means "ready" when the engine says so. `status`
+    /// was decoded and then ignored, so a degraded engine — a failed migration,
+    /// for instance — was shown as ready with the failure sitting in the grid
+    /// underneath.
+    ///
+    /// ponytail: read once, at startup. Nothing polls, so an engine that
+    /// degrades mid-session is noticed only if it exits. Add polling when a
+    /// feature needs it.
+    static func state(for health: EngineHealth) -> State {
+        guard health.status == .ready else {
+            return .failed(
                 EngineStartError(
-                    headline: "The engine stopped responding",
-                    cause: "The engine stopped answering: \(error.localizedDescription)",
-                    impact: "Jarvis cannot show its state, and running work may be lost.",
-                    nextAction: "Restart Jarvis."
+                    headline: "The engine is not healthy",
+                    cause: "The engine reports \(health.status.rawValue), with its database \(health.database.rawValue).",
+                    impact: "Projects cannot be opened until it recovers.",
+                    nextAction: "Restart Jarvis. If this repeats, the local data may be damaged."
                 ))
         }
+        return .ready(health)
     }
 
     /// SYSTEM.md shutdown protocol: ask, then terminate after a bounded delay.
@@ -93,14 +97,17 @@ public final class EngineSessionModel {
         // does not flash a crash screen while AppKit finishes terminating.
         await supervisor.expectStop()
         // No session means the handshake never completed: there is nobody to
-        // ask, and waiting out the full timeout would leave the app
-        // unresponsive for fifteen seconds after the user pressed Quit.
+        // ask, and waiting out the full budget would leave the app
+        // unresponsive after the user pressed Quit.
         guard let session else {
             await supervisor.terminate()
             return
         }
         try? await session.client.shutdown()
-        _ = try? await supervisor.waitForExit()
+        // The engine acknowledged and is on loopback: three seconds is generous.
+        // The default ten, plus the request timeout and the termination grace,
+        // adds up to twenty seconds of an unresponsive Quit.
+        _ = try? await supervisor.waitForExit(timeout: .seconds(3))
         await supervisor.terminate()
     }
 }

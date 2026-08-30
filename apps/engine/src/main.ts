@@ -98,9 +98,13 @@ async function main(): Promise<void> {
   process.on("SIGTERM", onSignal);
   process.on("SIGINT", onSignal);
 
-  // Before the database is opened, for the same reason: migrations take the
-  // longest, and a shell that crashes during them would otherwise leave an
-  // engine nobody is watching.
+  // Registered before the database is opened so that no *asynchronous* phase
+  // of startup is left unwatched.
+  //
+  // ponytail: it cannot fire during migrations themselves — openDatabase is
+  // synchronous and blocks the event loop, so a shell that dies mid-migration
+  // is noticed only once it returns. Migrations are a single small file today;
+  // revisit with an explicit orphan check between steps if they grow.
   watchParentProcess({
     onOrphaned: () => {
       reportFatal("jarvis-engine: the shell went away; shutting down.\n");

@@ -30,7 +30,6 @@ public actor EngineSupervisor {
     private var process: Process?
     private var output: EngineOutput?
     private var session: EngineSession?
-    private var stderrHandle: FileHandle?
     private var startTask: Task<EngineSession, Error>?
 
     /// Called when a started engine exits on its own. Without it nothing
@@ -91,6 +90,9 @@ public actor EngineSupervisor {
         // caller arriving mid-restart would otherwise get the dead engine's
         // port and token.
         session = nil
+        // Latched by the previous stop. Left set, it disables crash reporting
+        // for every engine started afterwards.
+        stopExpected = false
         try assertResourcesExist()
 
         // SYSTEM.md startup protocol step 1: a fresh 256-bit token per session,
@@ -291,7 +293,6 @@ public actor EngineSupervisor {
             }
             output.appendStandardError(data)
         }
-        stderrHandle = stderr.fileHandleForReading
         return process
     }
 

@@ -47,11 +47,10 @@ final class EngineSupervisorTests: XCTestCase {
 
     func testEachSessionMintsItsOwnToken() async throws {
         let first = try await supervisor.start()
-        let second = EngineSupervisor(
-            resources: .developmentBuild(),
-            dataRoot: FileManager.default.temporaryDirectory
-                .appendingPathComponent("jarvis-supervisor-\(UUID().uuidString)")
-        )
+        let otherRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jarvis-supervisor-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: otherRoot) }
+        let second = EngineSupervisor(resources: .developmentBuild(), dataRoot: otherRoot)
         let other = try await second.start()
 
         // A shared token would let one session drive the other's engine.
@@ -283,6 +282,64 @@ final class EngineSessionModelTests: XCTestCase {
         XCTAssertFalse(error.nextAction.isEmpty)
         // A crash after startup must not be headlined "The engine did not start".
         XCTAssertFalse(error.headline.contains("did not start"))
+    }
+
+    @MainActor
+    func testADegradedEngineIsNotShownAsReady() {
+        // A 200 is not a clearance: the engine reports `degraded` when its
+        // database is not ready, and rendering that as a green "Engine ready"
+        // with "Database: failed" in the grid below is the exact opposite of
+        // what the failure state exists to guarantee.
+        let degraded = EngineHealth(
+            status: .degraded, engineVersion: "0.1.0", apiVersion: "v1", database: .failed)
+
+        guard case .failed(let error) = EngineSessionModel.state(for: degraded) else {
+            return XCTFail("a degraded engine was reported as ready")
+        }
+        XCTAssertTrue(error.cause.contains("degraded"))
+        XCTAssertTrue(error.cause.contains("failed"))
+        XCTAssertFalse(error.nextAction.isEmpty)
+    }
+
+    @MainActor
+    func testAHealthyEngineIsStillReady() {
+        let healthy = EngineHealth(
+            status: .ready, engineVersion: "0.1.0", apiVersion: "v1", database: .ready)
+
+        guard case .ready = EngineSessionModel.state(for: healthy) else {
+            return XCTFail("a healthy engine should be ready")
+        }
+    }
+
+    @MainActor
+    func testACrashIsStillReportedAfterAStopAndRestart() async throws {
+        // `stopExpected` was latched by the first stop and never cleared, so
+        // every engine started afterwards had crash reporting disabled.
+        let dataRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jarvis-restart-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dataRoot) }
+
+        let supervisor = EngineSupervisor(resources: .developmentBuild(), dataRoot: dataRoot)
+        let model = EngineSessionModel(supervisor: supervisor)
+        await model.start()
+        await model.shutdown()
+        await model.start()
+
+        guard case .ready = model.state else {
+            return XCTFail("the restarted engine should be ready, got \(model.state)")
+        }
+
+        let pid = await supervisor.processIdentifier
+        kill(try XCTUnwrap(pid), SIGKILL)
+
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while ContinuousClock.now < deadline {
+            if case .failed = model.state { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        guard case .failed = model.state else {
+            return XCTFail("a crash after a restart went unreported: \(model.state)")
+        }
     }
 
     @MainActor
