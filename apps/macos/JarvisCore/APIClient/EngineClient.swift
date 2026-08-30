@@ -1,0 +1,119 @@
+import Foundation
+import HTTPTypes
+import JarvisAPI
+import OpenAPIRuntime
+import OpenAPIURLSession
+
+/// Adds the session bearer token to every request. The token never reaches
+/// disk or user defaults, so it lives only in this middleware for the session.
+struct SessionTokenMiddleware: ClientMiddleware {
+    let token: String
+
+    func intercept(
+        _ request: HTTPRequest,
+        body: HTTPBody?,
+        baseURL: URL,
+        operationID: String,
+        next: (HTTPRequest, HTTPBody?, URL) async throws -> (HTTPResponse, HTTPBody?)
+    ) async throws -> (HTTPResponse, HTTPBody?) {
+        var request = request
+        request.headerFields[.authorization] = "Bearer \(token)"
+        return try await next(request, body, baseURL)
+    }
+}
+
+public struct EngineHealth: Sendable, Equatable {
+    public enum Status: String, Sendable {
+        case ready
+        case degraded
+        case shuttingDown = "shutting-down"
+    }
+    public enum Database: String, Sendable { case ready, migrating, failed }
+
+    public let status: Status
+    public let engineVersion: String
+    public let apiVersion: String
+    public let database: Database
+}
+
+public enum EngineClientError: Error, Sendable, Equatable {
+    /// The engine rejected the session token. The contract declares this on
+    /// every operation, so the generated client makes it a real case.
+    case unauthorized(operation: String)
+    /// The engine refused a request that did not address the loopback interface.
+    case hostNotAllowed(operation: String)
+    case unexpectedResponse(String)
+}
+
+/// The Local API as the shell uses it. Types come from the generated client, so
+/// nothing here can drift from contracts/openapi/local-api.v1.yaml.
+public struct EngineClient: Sendable {
+    private let underlying: Client
+
+    /// Loopback only, so a request that has not answered in a few seconds is
+    /// wedged rather than slow. URLSession's 60-second default would hang Quit
+    /// for over a minute waiting on an engine that will never reply.
+    private static let requestTimeout: TimeInterval = 5
+
+    public init(port: Int, token: String) {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = Self.requestTimeout
+        configuration.timeoutIntervalForResource = Self.requestTimeout
+        underlying = Client(
+            serverURL: URL(string: "http://127.0.0.1:\(port)")!,
+            transport: URLSessionTransport(
+                configuration: .init(session: URLSession(configuration: configuration))),
+            middlewares: [SessionTokenMiddleware(token: token)]
+        )
+    }
+
+    public func health() async throws -> EngineHealth {
+        let output = try await underlying.getHealth(.init())
+        switch output {
+        case .ok(let ok):
+            let payload = try ok.body.json
+            // Exhaustive switches, not `?? .degraded`: a value added to the
+            // contract must break this build rather than be silently mapped to
+            // something plausible.
+            let status: EngineHealth.Status =
+                switch payload.status {
+                case .ready: .ready
+                case .degraded: .degraded
+                case .shutting_hyphen_down: .shuttingDown
+                }
+            let database: EngineHealth.Database =
+                switch payload.database {
+                case .ready: .ready
+                case .migrating: .migrating
+                case .failed: .failed
+                }
+            return EngineHealth(
+                status: status,
+                engineVersion: payload.engineVersion,
+                apiVersion: payload.apiVersion.rawValue,
+                database: database
+            )
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: "GET /v1/health")
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: "GET /v1/health")
+        case .undocumented(let statusCode, _):
+            throw EngineClientError.unexpectedResponse("GET /v1/health returned \(statusCode)")
+        }
+    }
+
+    public func shutdown() async throws {
+        let output = try await underlying.shutdownEngine(.init())
+        switch output {
+        case .accepted:
+            return
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: "POST /v1/system/shutdown")
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: "POST /v1/system/shutdown")
+        case .undocumented(let statusCode, _):
+            throw EngineClientError.unexpectedResponse(
+                "POST /v1/system/shutdown returned \(statusCode)")
+        }
+    }
+}

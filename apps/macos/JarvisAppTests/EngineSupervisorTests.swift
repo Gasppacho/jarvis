@@ -1,0 +1,398 @@
+import XCTest
+
+@testable import JarvisCore
+
+/// TESTING.md macOS seam: the real engine bundle, driven through the generated
+/// client. No HTTP fake — this test exists to prove the Swift → process → HTTP
+/// → TypeScript traversal actually works.
+/// A lock-guarded slot: the polling loop and the task write and read it from
+/// different isolation domains.
+final class OutcomeBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: String?
+
+    var value: String? { lock.withLock { stored } }
+    func set(_ newValue: String) { lock.withLock { stored = newValue } }
+}
+
+/// A lock-guarded counter: `onEngineExit`'s handler is `@Sendable` and can run
+/// on any thread.
+final class CrashCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    var count: Int { lock.withLock { value } }
+    func increment() { lock.withLock { value += 1 } }
+}
+
+final class EngineSupervisorTests: XCTestCase {
+    private var supervisor: EngineSupervisor!
+    private var dataRoot: URL!
+
+    override func setUp() async throws {
+        dataRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jarvis-supervisor-\(UUID().uuidString)")
+        supervisor = EngineSupervisor(resources: .developmentBuild(), dataRoot: dataRoot)
+    }
+
+    override func tearDown() async throws {
+        await supervisor?.terminate()
+        if let dataRoot { try? FileManager.default.removeItem(at: dataRoot) }
+    }
+
+    func testStartingTheEngineReportsItsHealth() async throws {
+        let session = try await supervisor.start()
+
+        XCTAssertGreaterThan(session.port, 0)
+        XCTAssertEqual(session.apiVersion, "v1")
+        XCTAssertFalse(session.sessionId.isEmpty)
+
+        let health = try await session.client.health()
+
+        XCTAssertEqual(health.status, .ready)
+        XCTAssertEqual(health.apiVersion, "v1")
+        XCTAssertEqual(health.database, .ready)
+        XCTAssertFalse(health.engineVersion.isEmpty)
+    }
+
+    func testEachSessionMintsItsOwnToken() async throws {
+        let first = try await supervisor.start()
+        let otherRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jarvis-supervisor-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: otherRoot) }
+        let second = EngineSupervisor(resources: .developmentBuild(), dataRoot: otherRoot)
+        let other = try await second.start()
+
+        // A shared token would let one session drive the other's engine.
+        XCTAssertNotEqual(first.token, other.token)
+        XCTAssertGreaterThanOrEqual(first.token.count, 43)
+
+        await second.terminate()
+    }
+
+    func testShutdownFollowsTheProtocolAndLeavesNoProcess() async throws {
+        let session = try await supervisor.start()
+
+        try await session.client.shutdown()
+        let exitCode = try await supervisor.waitForExit()
+
+        XCTAssertEqual(exitCode, 0)
+        let running = await supervisor.isRunning
+        XCTAssertFalse(running)
+    }
+
+    func testASilentEngineTimesOutInsteadOfHangingForever() async throws {
+        // The engine is alive but never writes its handshake — a hung migration,
+        // a stuck listen. Racing the wait against a timeout is only useful if
+        // the wait is cancellable; otherwise start() only returns when the
+        // process eventually dies, and the UI sits on "Starting the engine…".
+        //
+        // The engine outlives the test on purpose: a shorter sleep would let a
+        // broken implementation pass late instead of failing.
+        let script = dataRoot.appendingPathComponent("silent-engine.sh")
+        try FileManager.default.createDirectory(at: dataRoot, withIntermediateDirectories: true)
+        // `exec`, so SIGTERM reaches the sleep instead of orphaning it as a
+        // grandchild of /bin/sh.
+        try "exec sleep 300\n".write(to: script, atomically: true, encoding: .utf8)
+
+        let silent = EngineSupervisor(
+            resources: EngineResources(
+                nodeExecutable: URL(filePath: "/bin/sh"),
+                bundle: script
+            ),
+            dataRoot: dataRoot,
+            readyTimeout: .seconds(1)
+        )
+
+        // An unstructured Task, polled: a task group would wait for its child,
+        // so a hanging start() would hang this test the same way instead of
+        // reporting it. The task is abandoned on failure and dies with the
+        // test process.
+        let result = OutcomeBox()
+        let started = ContinuousClock.now
+        let attempt = Task {
+            do {
+                _ = try await silent.start()
+                result.set("start() unexpectedly succeeded")
+            } catch let error as EngineStartError {
+                result.set(error.cause)
+            } catch {
+                result.set("unexpected error: \(error)")
+            }
+        }
+        while result.value == nil, started.duration(to: .now) < .seconds(10) {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let elapsed = started.duration(to: .now)
+        attempt.cancel()
+
+        let cause = try XCTUnwrap(result.value, "start() hung instead of timing out")
+        XCTAssertTrue(cause.contains("ready"), "expected a readiness timeout, got: \(cause)")
+        // The point of the timeout is that it fires on its own schedule, not
+        // whenever the process happens to die.
+        XCTAssertLessThan(elapsed, .seconds(5), "the timeout did not fire on time")
+
+        let running = await silent.isRunning
+        XCTAssertFalse(running, "the timeout must also stop the process it gave up on")
+
+        await silent.terminate()
+    }
+
+    func testASecondStartReturnsTheRunningEngine() async throws {
+        // A WindowGroup gives Cmd-N for free and every window runs `.task`.
+        let first = try await supervisor.start()
+        let second = try await supervisor.start()
+
+        XCTAssertEqual(first.port, second.port)
+        XCTAssertEqual(first.token, second.token)
+    }
+
+    func testConcurrentStartsShareOneEngine() async throws {
+        // An actor suspends at every `await`, so two callers arriving while the
+        // first is still handshaking both passed the stored-session check and
+        // each launched an engine — the first becoming untrackable.
+        let engine = supervisor!
+        let sessions = try await withThrowingTaskGroup(of: EngineSession.self) { group in
+            for _ in 0..<3 {
+                group.addTask { try await engine.start() }
+            }
+            var collected: [EngineSession] = []
+            for try await session in group { collected.append(session) }
+            return collected
+        }
+
+        XCTAssertEqual(Set(sessions.map(\.port)).count, 1, "each start launched its own engine")
+        XCTAssertEqual(Set(sessions.map(\.token)).count, 1)
+
+        // A second engine would still be running against the same data root.
+        let health = try await sessions[0].client.health()
+        XCTAssertEqual(health.status, .ready)
+    }
+
+    func testAnEngineThatRefusesToStartSurfacesItsOwnDiagnostic() async throws {
+        // A real engine failure, not a fake one: the data root is a symlink,
+        // which the engine refuses by design. The UI says "check the details
+        // below", so the engine's stderr has to actually arrive — it is written
+        // just before the process exits, and it is drained on another queue.
+        let real = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jarvis-real-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        let link = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jarvis-link-\(UUID().uuidString)")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+        defer {
+            try? FileManager.default.removeItem(at: link)
+            try? FileManager.default.removeItem(at: real)
+        }
+
+        let refusing = EngineSupervisor(resources: .developmentBuild(), dataRoot: link)
+
+        do {
+            _ = try await refusing.start()
+            XCTFail("the engine should refuse a symlinked data root")
+        } catch let error as EngineStartError {
+            let detail = try XCTUnwrap(error.detail, "the engine's stderr was lost")
+            XCTAssertTrue(
+                detail.contains("symbolic link"),
+                "expected the engine's own diagnostic, got: \(detail)")
+        }
+    }
+
+    func testAnInheritedJarvisPortDoesNotPinEveryEngine() async throws {
+        // The supervisor forwarded the whole environment, so a developer with
+        // JARVIS_PORT exported pinned every engine to one port and the second
+        // session died on EADDRINUSE before its handshake.
+        setenv("JARVIS_PORT", "45999", 1)
+        defer { unsetenv("JARVIS_PORT") }
+
+        let first = try await supervisor.start()
+        let otherRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jarvis-port-\(UUID().uuidString)")
+        let second = EngineSupervisor(resources: .developmentBuild(), dataRoot: otherRoot)
+        let other = try await second.start()
+        defer { try? FileManager.default.removeItem(at: otherRoot) }
+
+        XCTAssertNotEqual(first.port, other.port, "both engines took the inherited port")
+        XCTAssertNotEqual(first.port, 45999)
+
+        await second.terminate()
+    }
+
+    func testARestartIsNotMisreportedAsACrashFromTheOldEngine() async throws {
+        // The old process's termination handler spawns an unstructured Task
+        // that is never awaited. If it runs after a fast restart has already
+        // assigned a new session, an identity check is the only thing stopping
+        // it from wiping that session and reporting a false crash.
+        let crashReports = CrashCounter()
+        await supervisor.onEngineExit { _ in crashReports.increment() }
+
+        for _ in 0..<5 {
+            _ = try await supervisor.start()
+            await supervisor.terminate()
+        }
+        let final = try await supervisor.start()
+
+        // Give any stale termination-handler Task a chance to run.
+        try await Task.sleep(for: .milliseconds(300))
+
+        XCTAssertEqual(crashReports.count, 0, "a stop/restart cycle was reported as a crash")
+        let health = try await final.client.health()
+        XCTAssertEqual(health.status, .ready)
+    }
+
+    func testTerminateHonoursTheGracePeriodFromACancelledTask() async throws {
+        // Quitting during startup cancels the start task, and stopProcess runs
+        // inside it. A cancellation-aware wait collapses to an immediate
+        // SIGKILL, killing the engine before it can checkpoint the WAL.
+        _ = try await supervisor.start()
+
+        let stopping = Task { [supervisor] in await supervisor?.terminate() }
+        stopping.cancel()
+        await stopping.value
+
+        let wal = dataRoot.appendingPathComponent("jarvis.sqlite-wal")
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: wal.path(percentEncoded: false)),
+            "the engine was killed before it could checkpoint the WAL")
+    }
+
+    func testAMissingEngineFailsWithAnActionableError() async throws {
+        let broken = EngineSupervisor(
+            resources: EngineResources(
+                nodeExecutable: URL(filePath: "/nonexistent/node"),
+                bundle: URL(filePath: "/nonexistent/engine.bundle.mjs")
+            ),
+            dataRoot: dataRoot
+        )
+
+        do {
+            _ = try await broken.start()
+            XCTFail("starting a missing engine should fail")
+        } catch let error as EngineStartError {
+            // MACOS_APP.md: cause, impact and next action — never a blank screen.
+            // The cause must name the file, otherwise the message is no more
+            // useful than the raw launch failure it is meant to improve on.
+            XCTAssertTrue(
+                error.cause.contains("/nonexistent/node"),
+                "cause should name the missing file, got: \(error.cause)")
+            XCTAssertFalse(error.impact.isEmpty)
+            XCTAssertFalse(error.nextAction.isEmpty)
+        }
+    }
+}
+
+/// The model's reaction to an engine that dies on its own.
+final class EngineSessionModelTests: XCTestCase {
+    @MainActor
+    func testAnEngineThatDiesMovesTheUIOutOfReady() async throws {
+        let dataRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jarvis-model-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dataRoot) }
+
+        let supervisor = EngineSupervisor(resources: .developmentBuild(), dataRoot: dataRoot)
+        let model = EngineSessionModel(supervisor: supervisor)
+        await model.start()
+
+        guard case .ready = model.state else {
+            return XCTFail("expected a ready engine, got \(model.state)")
+        }
+
+        // A real crash, not terminate(): an asked-for stop is expected by
+        // design now, and would no longer reach the UI.
+        let pid = await supervisor.processIdentifier
+        kill(try XCTUnwrap(pid), SIGKILL)
+
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while ContinuousClock.now < deadline {
+            if case .failed = model.state { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+
+        guard case .failed(let error) = model.state else {
+            return XCTFail("the UI still reports \(model.state) for a dead engine")
+        }
+        XCTAssertFalse(error.nextAction.isEmpty)
+        // A crash after startup must not be headlined "The engine did not start".
+        XCTAssertFalse(error.headline.contains("did not start"))
+    }
+
+    @MainActor
+    func testADegradedEngineIsNotShownAsReady() {
+        // A 200 is not a clearance: the engine reports `degraded` when its
+        // database is not ready, and rendering that as a green "Engine ready"
+        // with "Database: failed" in the grid below is the exact opposite of
+        // what the failure state exists to guarantee.
+        let degraded = EngineHealth(
+            status: .degraded, engineVersion: "0.1.0", apiVersion: "v1", database: .failed)
+
+        guard case .failed(let error) = EngineSessionModel.state(for: degraded) else {
+            return XCTFail("a degraded engine was reported as ready")
+        }
+        XCTAssertTrue(error.cause.contains("degraded"))
+        XCTAssertTrue(error.cause.contains("failed"))
+        XCTAssertFalse(error.nextAction.isEmpty)
+    }
+
+    @MainActor
+    func testAHealthyEngineIsStillReady() {
+        let healthy = EngineHealth(
+            status: .ready, engineVersion: "0.1.0", apiVersion: "v1", database: .ready)
+
+        guard case .ready = EngineSessionModel.state(for: healthy) else {
+            return XCTFail("a healthy engine should be ready")
+        }
+    }
+
+    @MainActor
+    func testACrashIsStillReportedAfterAStopAndRestart() async throws {
+        // `stopExpected` was latched by the first stop and never cleared, so
+        // every engine started afterwards had crash reporting disabled.
+        let dataRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jarvis-restart-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dataRoot) }
+
+        let supervisor = EngineSupervisor(resources: .developmentBuild(), dataRoot: dataRoot)
+        let model = EngineSessionModel(supervisor: supervisor)
+        await model.start()
+        await model.shutdown()
+        await model.start()
+
+        guard case .ready = model.state else {
+            return XCTFail("the restarted engine should be ready, got \(model.state)")
+        }
+
+        let pid = await supervisor.processIdentifier
+        kill(try XCTUnwrap(pid), SIGKILL)
+
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while ContinuousClock.now < deadline {
+            if case .failed = model.state { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        guard case .failed = model.state else {
+            return XCTFail("a crash after a restart went unreported: \(model.state)")
+        }
+    }
+
+    @MainActor
+    func testAnAskedForShutdownIsNotReportedAsACrash() async throws {
+        // The exit observer fires for any exit. Without marking the stop as
+        // expected, Cmd-Q flashes an error screen while AppKit is still
+        // terminating.
+        let dataRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jarvis-quit-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dataRoot) }
+
+        let supervisor = EngineSupervisor(resources: .developmentBuild(), dataRoot: dataRoot)
+        let model = EngineSessionModel(supervisor: supervisor)
+        await model.start()
+        await model.shutdown()
+
+        // Give the termination handler time to run.
+        try await Task.sleep(for: .milliseconds(500))
+
+        if case .failed(let error) = model.state {
+            XCTFail("a clean quit reported a failure: \(error.cause)")
+        }
+    }
+}

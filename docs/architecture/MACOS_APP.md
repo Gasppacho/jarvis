@@ -105,6 +105,11 @@ Elles contiennent projet et résumé, jamais ticket privé complet, diff ou secr
 
 ## Packaging pipeline
 
+Le bundle est assemblé par `scripts/build-app.sh` depuis le binaire SwiftPM et
+`dist/engine/` (ADR 0013). Le script assemble et ne signe pas ; la signature et
+la notarisation appartiennent au ticket 19.
+
+
 1. Build Swift Release arm64.
 2. Bundle Node LTS officiel, engine JS, schemas, migrations et modules.
 3. Rebuild/package native addons pour la cible.
