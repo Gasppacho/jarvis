@@ -24,9 +24,13 @@ public struct EngineStartError: Error, Sendable, Equatable {
         )
     }
 
-    static func exitedBeforeReady(code: Int32, stderr: String) -> EngineStartError {
+    static func exitedBeforeReady(code: Int32, killedBySignal: Bool, stderr: String)
+        -> EngineStartError
+    {
         EngineStartError(
-            cause: "The engine exited with code \(code) before reporting that it was ready.",
+            cause: killedBySignal
+                ? "The engine was killed by signal \(code) before reporting that it was ready."
+                : "The engine exited with code \(code) before reporting that it was ready.",
             impact: "No project can be opened until the engine starts.",
             nextAction: "Check the details below, then restart Jarvis.",
             detail: stderr.isEmpty ? nil : stderr

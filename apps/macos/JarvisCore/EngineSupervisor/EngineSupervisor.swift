@@ -192,6 +192,12 @@ public actor EngineSupervisor {
         process.arguments = [resources.bundle.path(percentEncoded: false)]
 
         var environment = ProcessInfo.processInfo.environment
+        // The supervisor owns these. Inheriting a developer's exported
+        // JARVIS_PORT would pin every engine to one port, so a second session
+        // dies on EADDRINUSE before it can hand over its handshake.
+        for key in ["JARVIS_PORT", "JARVIS_SESSION_ID", "JARVIS_DATA_ROOT", "JARVIS_LOG_LEVEL"] {
+            environment.removeValue(forKey: key)
+        }
         environment["JARVIS_API_TOKEN"] = token
         if let dataRoot {
             environment["JARVIS_DATA_ROOT"] = dataRoot.path(percentEncoded: false)
@@ -243,7 +249,9 @@ public actor EngineSupervisor {
             // Either the engine died first, or nothing arrived in time.
             if !process.isRunning {
                 throw EngineStartError.exitedBeforeReady(
-                    code: process.terminationStatus, stderr: await drainStandardError(output))
+                    code: process.terminationStatus,
+                    killedBySignal: process.terminationReason == .uncaughtSignal,
+                    stderr: await drainStandardError(output))
             }
             await terminate()
             throw EngineStartError.timedOut(

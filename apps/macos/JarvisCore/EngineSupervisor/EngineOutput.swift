@@ -7,6 +7,10 @@ import Foundation
 /// is small enough to reason about directly.
 final class EngineOutput: @unchecked Sendable {
     private static let newline = UInt8(ascii: "\n")
+    /// The buffers exist to explain a startup failure, not to archive a
+    /// session: the engine logs every HTTP request to stderr, so an uncapped
+    /// buffer grows with request volume for as long as the app runs.
+    private static let maximumBufferedBytes = 64 * 1024
 
     private let lock = NSLock()
     /// Bytes, not String: `availableData` can split a multi-byte UTF-8 sequence
@@ -26,6 +30,7 @@ final class EngineOutput: @unchecked Sendable {
     func appendStandardOutput(_ data: Data) {
         let line: String? = lock.withLock {
             stdoutBytes.append(data)
+            Self.trim(&stdoutBytes)
             guard firstLine == nil, let newline = stdoutBytes.firstIndex(of: Self.newline) else {
                 return nil
             }
@@ -36,7 +41,17 @@ final class EngineOutput: @unchecked Sendable {
     }
 
     func appendStandardError(_ data: Data) {
-        lock.withLock { stderrBytes.append(data) }
+        lock.withLock {
+            stderrBytes.append(data)
+            Self.trim(&stderrBytes)
+        }
+    }
+
+    /// Keeps the tail: the last thing the engine said before dying is the part
+    /// that explains why.
+    private static func trim(_ buffer: inout Data) {
+        guard buffer.count > maximumBufferedBytes else { return }
+        buffer.removeFirst(buffer.count - maximumBufferedBytes)
     }
 
     /// Called when the process ends: unblocks a waiter that will never get a line.

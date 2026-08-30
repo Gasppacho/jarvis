@@ -24,19 +24,12 @@ public final class EngineSessionModel {
 
     /// Convenience for the app: the engine that ships inside this bundle.
     public static func bundled() -> EngineSessionModel {
-        // The development fallback derives its path from #filePath, so a
-        // release build must never reach it: a shipped app missing its engine
-        // would otherwise show the build machine's home directory.
-        #if DEBUG
-            let resources = EngineResources.bundled() ?? EngineResources.developmentBuild()
-        #else
-            let resources =
-                EngineResources.bundled()
-                ?? EngineResources(
-                    nodeExecutable: URL(filePath: "/nonexistent/engine/node"),
-                    bundle: URL(filePath: "/nonexistent/engine/engine.bundle.mjs")
-                )
-        #endif
+        // Keyed on where the binary runs, not on how it was compiled. The repo
+        // builds dist/Jarvis.app in debug by default, so `#if DEBUG` left the
+        // #filePath-derived fallback live inside the only app artifact it
+        // produces — which would silently run the build machine's dist/engine,
+        // or name its home directory in the failure UI.
+        let resources = EngineResources.bundled() ?? EngineResources.developmentFallback()
         return EngineSessionModel(supervisor: EngineSupervisor(resources: resources))
     }
 
@@ -59,7 +52,18 @@ public final class EngineSessionModel {
 
     public func refresh() async {
         guard let session else { return }
-        if let health = try? await session.client.health() { state = .ready(health) }
+        do {
+            state = .ready(try await session.client.health())
+        } catch {
+            // Swallowing this would leave "Engine ready" and stale version
+            // numbers on screen for an engine that has crashed.
+            state = .failed(
+                EngineStartError(
+                    cause: "The engine stopped answering: \(error.localizedDescription)",
+                    impact: "Jarvis cannot show its state, and running work may be lost.",
+                    nextAction: "Restart Jarvis."
+                ))
+        }
     }
 
     /// SYSTEM.md shutdown protocol: ask, then terminate after a bounded delay.

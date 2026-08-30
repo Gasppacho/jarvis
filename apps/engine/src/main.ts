@@ -1,4 +1,3 @@
-import { writeSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import type { FastifyInstance } from "fastify";
 import { ConfigError, loadConfig } from "./config.js";
@@ -8,15 +7,21 @@ import { watchParentProcess } from "./parent-watch.js";
 import { API_VERSION } from "./version.js";
 
 const SHUTDOWN_GRACE_MS = 5_000;
-const STDERR_FD = 2;
-
 /**
- * stderr to a pipe is asynchronous on macOS and `process.exit` does not flush
- * pending writes, so a diagnostic written just before exiting can be lost — and
- * the shell renders exactly this text in its failure screen.
+ * Node documents stdio pipes as synchronous on Linux and macOS, so a plain
+ * write is already flushed before `process.exit` — an earlier `writeSync`
+ * refactor here rested on the opposite, and could throw EPIPE out of a
+ * shutdown path when the shell had already gone.
+ *
+ * Never throws: every caller is on its way out, and losing the process before
+ * the database closes would be worse than losing the message.
  */
 function reportFatal(message: string): void {
-  writeSync(STDERR_FD, message);
+  try {
+    process.stderr.write(message);
+  } catch {
+    /* the shell is gone; there is nobody left to tell */
+  }
 }
 
 async function main(): Promise<void> {

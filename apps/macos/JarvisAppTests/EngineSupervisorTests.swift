@@ -189,6 +189,26 @@ final class EngineSupervisorTests: XCTestCase {
         }
     }
 
+    func testAnInheritedJarvisPortDoesNotPinEveryEngine() async throws {
+        // The supervisor forwarded the whole environment, so a developer with
+        // JARVIS_PORT exported pinned every engine to one port and the second
+        // session died on EADDRINUSE before its handshake.
+        setenv("JARVIS_PORT", "45999", 1)
+        defer { unsetenv("JARVIS_PORT") }
+
+        let first = try await supervisor.start()
+        let otherRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jarvis-port-\(UUID().uuidString)")
+        let second = EngineSupervisor(resources: .developmentBuild(), dataRoot: otherRoot)
+        let other = try await second.start()
+        defer { try? FileManager.default.removeItem(at: otherRoot) }
+
+        XCTAssertNotEqual(first.port, other.port, "both engines took the inherited port")
+        XCTAssertNotEqual(first.port, 45999)
+
+        await second.terminate()
+    }
+
     func testAMissingEngineFailsWithAnActionableError() async throws {
         let broken = EngineSupervisor(
             resources: EngineResources(

@@ -24,6 +24,21 @@ public struct EngineResources: Sendable {
         return candidate
     }
 
+    /// The repository's `dist/engine/`, or a path that fails with a message
+    /// naming no local directory. Used when the running binary is not inside an
+    /// app bundle — `swift run Jarvis` and the test seam.
+    public static func developmentFallback(bundle: Bundle = .main) -> EngineResources {
+        // Inside a .app the engine belongs in Resources/engine and nowhere
+        // else: falling back would run a tree from whichever machine built it.
+        guard !bundle.bundlePath.hasSuffix(".app") else {
+            return EngineResources(
+                nodeExecutable: URL(filePath: "/nonexistent/Jarvis.app/Contents/Resources/engine/node"),
+                bundle: URL(filePath: "/nonexistent/Jarvis.app/Contents/Resources/engine/engine.bundle.mjs")
+            )
+        }
+        return developmentBuild()
+    }
+
     /// `dist/engine/`, produced by `pnpm build:engine`. Used by the test seam,
     /// which drives the same layout the app ships.
     public static func developmentBuild(file: StaticString = #filePath) -> EngineResources {
