@@ -209,6 +209,22 @@ final class EngineSupervisorTests: XCTestCase {
         await second.terminate()
     }
 
+    func testTerminateHonoursTheGracePeriodFromACancelledTask() async throws {
+        // Quitting during startup cancels the start task, and stopProcess runs
+        // inside it. A cancellation-aware wait collapses to an immediate
+        // SIGKILL, killing the engine before it can checkpoint the WAL.
+        _ = try await supervisor.start()
+
+        let stopping = Task { [supervisor] in await supervisor?.terminate() }
+        stopping.cancel()
+        await stopping.value
+
+        let wal = dataRoot.appendingPathComponent("jarvis.sqlite-wal")
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: wal.path(percentEncoded: false)),
+            "the engine was killed before it could checkpoint the WAL")
+    }
+
     func testAMissingEngineFailsWithAnActionableError() async throws {
         let broken = EngineSupervisor(
             resources: EngineResources(
@@ -250,9 +266,10 @@ final class EngineSessionModelTests: XCTestCase {
             return XCTFail("expected a ready engine, got \(model.state)")
         }
 
-        // The engine crashes five minutes in: nothing polls health, so without
-        // an exit notification the window keeps showing the dead engine's state.
-        await supervisor.terminate()
+        // A real crash, not terminate(): an asked-for stop is expected by
+        // design now, and would no longer reach the UI.
+        let pid = await supervisor.processIdentifier
+        kill(try XCTUnwrap(pid), SIGKILL)
 
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while ContinuousClock.now < deadline {
@@ -264,5 +281,29 @@ final class EngineSessionModelTests: XCTestCase {
             return XCTFail("the UI still reports \(model.state) for a dead engine")
         }
         XCTAssertFalse(error.nextAction.isEmpty)
+        // A crash after startup must not be headlined "The engine did not start".
+        XCTAssertFalse(error.headline.contains("did not start"))
+    }
+
+    @MainActor
+    func testAnAskedForShutdownIsNotReportedAsACrash() async throws {
+        // The exit observer fires for any exit. Without marking the stop as
+        // expected, Cmd-Q flashes an error screen while AppKit is still
+        // terminating.
+        let dataRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jarvis-quit-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dataRoot) }
+
+        let supervisor = EngineSupervisor(resources: .developmentBuild(), dataRoot: dataRoot)
+        let model = EngineSessionModel(supervisor: supervisor)
+        await model.start()
+        await model.shutdown()
+
+        // Give the termination handler time to run.
+        try await Task.sleep(for: .milliseconds(500))
+
+        if case .failed(let error) = model.state {
+            XCTFail("a clean quit reported a failure: \(error.cause)")
+        }
     }
 }

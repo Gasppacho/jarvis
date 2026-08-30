@@ -36,6 +36,10 @@ public actor EngineSupervisor {
     /// Called when a started engine exits on its own. Without it nothing
     /// notices a crash, and the window keeps reporting the dead engine's health.
     private var onUnexpectedExit: (@Sendable (Int32) -> Void)?
+    /// Set when the stop was asked for, so a clean quit is not reported as a crash.
+    private var stopExpected = false
+
+    private static let terminationGrace: TimeInterval = 5
 
     public init(
         resources: EngineResources,
@@ -49,6 +53,19 @@ public actor EngineSupervisor {
 
     public func onEngineExit(_ handler: @escaping @Sendable (Int32) -> Void) {
         onUnexpectedExit = handler
+    }
+
+    /// Marks the coming exit as asked for. The shell calls this before sending
+    /// `POST /v1/system/shutdown`, which exits the engine cleanly.
+    public func expectStop() {
+        stopExpected = true
+    }
+
+    /// The engine's pid while it runs, for diagnostics and for tests that need
+    /// to simulate a crash rather than an orderly stop.
+    public var processIdentifier: Int32? {
+        guard let process, process.isRunning else { return nil }
+        return process.processIdentifier
     }
 
     public var isRunning: Bool {
@@ -122,6 +139,7 @@ public actor EngineSupervisor {
     /// this is the fallback for a shell that is going away regardless.
     /// Stops the engine, including one whose start is still in flight.
     public func terminate() async {
+        stopExpected = true
         // A start still in flight has not assigned `process` yet, so stopping
         // only the known process would let it launch an engine after the app
         // reported a clean shutdown. Cancel it and let it finish first.
@@ -141,17 +159,11 @@ public actor EngineSupervisor {
         // SYSTEM.md: after a bounded delay the shell kills the process.
         // Task.sleep, not usleep: this runs on a cooperative-pool thread whose
         // count is the core count, and blocking one for five seconds starves it.
-        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while process.isRunning && ContinuousClock.now < deadline {
-            do {
-                try await Task.sleep(for: .milliseconds(20))
-            } catch {
-                // Cancelled: `try?` here would return instantly every iteration
-                // and spin a core for the rest of the window. Stop waiting and
-                // go straight to the hard kill.
-                break
-            }
-        }
+        // The grace period must survive cancellation. Quitting during startup
+        // cancels the start task, and this runs inside it: a cancellation-aware
+        // wait would collapse to an immediate SIGKILL, killing the engine
+        // mid-migration with none of its ordered shutdown.
+        await Self.waitForExit(process, upTo: Self.terminationGrace)
         if process.isRunning { kill(process.processIdentifier, SIGKILL) }
     }
 
@@ -180,11 +192,25 @@ public actor EngineSupervisor {
 
     // MARK: - Internals
 
+    /// Polls on a dispatch thread rather than the cooperative pool, and is not
+    /// cancellable by design — see the caller.
+    private static func waitForExit(_ process: Process, upTo seconds: TimeInterval) async {
+        let watched = process
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                let deadline = Date().addingTimeInterval(seconds)
+                while watched.isRunning && Date() < deadline { usleep(20_000) }
+                continuation.resume()
+            }
+        }
+    }
+
     /// Reported only for an engine that had actually started: a failure during
     /// startup is already surfaced by `start()` throwing.
     private func engineExited(status: Int32) {
         guard session != nil else { return }
         session = nil
+        guard !stopExpected else { return }
         onUnexpectedExit?(status)
     }
 

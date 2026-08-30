@@ -32,6 +32,7 @@ public final class EngineSessionModel {
                 self.session = nil
                 self.state = .failed(
                     EngineStartError(
+                        headline: "The engine stopped",
                         cause: "The engine stopped unexpectedly (status \(status)).",
                         impact: "Jarvis cannot reach it, and running work may be lost.",
                         nextAction: "Restart Jarvis."
@@ -78,6 +79,7 @@ public final class EngineSessionModel {
             // numbers on screen for an engine that has crashed.
             state = .failed(
                 EngineStartError(
+                    headline: "The engine stopped responding",
                     cause: "The engine stopped answering: \(error.localizedDescription)",
                     impact: "Jarvis cannot show its state, and running work may be lost.",
                     nextAction: "Restart Jarvis."
@@ -87,6 +89,9 @@ public final class EngineSessionModel {
 
     /// SYSTEM.md shutdown protocol: ask, then terminate after a bounded delay.
     public func shutdown() async {
+        // Tell the supervisor the coming exit was asked for, so the clean quit
+        // does not flash a crash screen while AppKit finishes terminating.
+        await supervisor.expectStop()
         // No session means the handshake never completed: there is nobody to
         // ask, and waiting out the full timeout would leave the app
         // unresponsive for fifteen seconds after the user pressed Quit.

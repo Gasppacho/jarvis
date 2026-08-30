@@ -3,13 +3,23 @@ import Foundation
 /// coding-standards.md: user-facing errors state cause, impact and next action.
 /// The shell shows these verbatim, so a blank screen is never the outcome.
 public struct EngineStartError: Error, Sendable, Equatable {
+    /// What the screen leads with. A failure after an hour of use must not be
+    /// headlined "The engine did not start" above a cause that says otherwise.
+    public let headline: String
     public let cause: String
     public let impact: String
     public let nextAction: String
     /// Engine stderr, when there was any. Diagnostics, not the headline.
     public let detail: String?
 
-    public init(cause: String, impact: String, nextAction: String, detail: String? = nil) {
+    public init(
+        headline: String = "The engine did not start",
+        cause: String,
+        impact: String,
+        nextAction: String,
+        detail: String? = nil
+    ) {
+        self.headline = headline
         self.cause = cause
         self.impact = impact
         self.nextAction = nextAction

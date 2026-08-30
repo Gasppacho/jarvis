@@ -34,7 +34,7 @@ struct EngineHealthView: View {
 
         case .failed(let error):
             VStack(alignment: .leading, spacing: 12) {
-                Label("The engine did not start", systemImage: "exclamationmark.triangle.fill")
+                Label(error.headline, systemImage: "exclamationmark.triangle.fill")
                     .font(.title2)
                     .foregroundStyle(.orange)
                 Text(error.cause).font(.callout)
