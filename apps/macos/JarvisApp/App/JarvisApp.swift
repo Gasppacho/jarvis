@@ -8,7 +8,14 @@ import SwiftUI
 /// a logout or a Dock quit bypass it and would leave the engine running.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let session = EngineSessionModel.bundled()
+    let session: EngineSessionModel
+    let projects: ProjectsModel
+
+    override init() {
+        session = EngineSessionModel.bundled()
+        projects = ProjectsModel(session: session)
+        super.init()
+    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // SYSTEM.md: ask the engine to stop, then let AppKit finish quitting.
@@ -28,7 +35,7 @@ struct JarvisApp: App {
         // `Window`, not `WindowGroup`: the latter adds File ▸ New Window, and
         // every window would run the `.task` that starts the engine.
         Window("Jarvis", id: "main") {
-            EngineHealthView(session: delegate.session)
+            ContentView(session: delegate.session, projects: delegate.projects)
                 .frame(minWidth: 520, minHeight: 320)
                 .task { await delegate.session.start() }
         }

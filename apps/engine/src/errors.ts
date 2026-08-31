@@ -6,6 +6,11 @@ export type ErrorCode =
   | "api.unauthorized"
   | "api.host-not-allowed"
   | "api.invalid-request"
+  | "engine.database-unavailable"
+  | "repository.path-invalid"
+  | "project.already-imported"
+  | "project.config-invalid"
+  | "project.not-found"
   | "system.internal-error"
   | "system.storage-unavailable";
 

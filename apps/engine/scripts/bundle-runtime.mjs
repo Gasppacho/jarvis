@@ -19,6 +19,17 @@ cpSync(join(engineRoot, "src", "db", "migrations"), join(outDir, "migrations"), 
   recursive: true,
 });
 
+// Project import validates a repository's committed portable config at runtime.
+// Keep that contract beside the bundle so the packaged app never reaches back
+// into the source checkout to find it.
+const contractsOut = join(outDir, "contracts", "schemas");
+rmSync(join(outDir, "contracts"), { recursive: true, force: true });
+mkdirSync(contractsOut, { recursive: true });
+cpSync(
+  join(engineRoot, "..", "..", "contracts", "schemas", "project-config.v1.schema.json"),
+  join(contractsOut, "project-config.v1.schema.json"),
+);
+
 // The SQLite driver stays external: it carries a native addon the release
 // pipeline signs separately (ADR 0007).
 const sqlitePackage = dirname(require.resolve("better-sqlite3/package.json"));

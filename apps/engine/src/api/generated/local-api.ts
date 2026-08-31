@@ -442,7 +442,13 @@ export interface components {
             moduleCount: number;
             activeExecutions?: number;
         };
-        ProjectDetail: components["schemas"]["ProjectSummary"] & {
+        ProjectDetail: {
+            id: string;
+            name: string;
+            /** @enum {string} */
+            status: "draft" | "valid" | "active" | "paused" | "invalid" | "degraded" | "archived";
+            moduleCount: number;
+            activeExecutions?: number;
             portableConfig: Record<string, never>;
             bindingStatus: Record<string, never>;
         };
