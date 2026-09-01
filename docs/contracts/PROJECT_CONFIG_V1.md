@@ -45,6 +45,8 @@ slots:
 
 Le fichier est un exemple de forme ; l'implémentation stocke ces valeurs localement et ne les commit pas.
 
+Un import ou draft non résolu reste explicitement valide avec `slots: {}`. Un ancien import peut aussi porter `bookmarkRef: null` jusqu'à ce que le macOS Shell fournisse un Repository Grant. Les `ref` de slots sont des identifiants locaux opaques : leur présence ne prouve ni l'existence ni la disponibilité d'une connexion, d'un MCP ou d'un Agent Runtime. Les registres correspondants ne font pas partie de ce tracer bullet et aucune candidate implicite n'est synthétisée.
+
 ## Merge algorithm
 
 1. Valider portable config.
@@ -66,7 +68,7 @@ Un `ref` de connexion peut pointer vers un record global contenant un `secretRef
 Certaines règles sont sémantiques :
 
 - ID unique de module instance ;
-- exactly one main repository au MVP ;
+- exactement un repository `main` au MVP ;
 - tous les bindings requis présents ;
 - requests avec un consumer unique ;
 - commandes autorisées ;

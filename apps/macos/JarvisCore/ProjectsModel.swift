@@ -1,4 +1,5 @@
 import Foundation
+import JarvisAPI
 import Observation
 import OSLog
 
@@ -17,6 +18,11 @@ public final class ProjectsModel {
     /// Per-project Repository Grant failures do not erase the Project Registry.
     /// The detail remains queryable and can explain how to grant access again.
     public private(set) var repositoryGrantMessages: [String: String] = [:]
+    public private(set) var configurationDetails: [String: ProjectDetail] = [:]
+    public private(set) var localBindings: [String: LocalProjectBindings] = [:]
+    public private(set) var loadingConfigurationProjectIds: Set<String> = []
+    public private(set) var savingConfigurationProjectIds: Set<String> = []
+    public private(set) var configurationErrorMessages: [String: String] = [:]
 
     /// Where the import flow stands. The shell never imports before the user
     /// confirms the detected configuration (UX wizard step 2), and the sheet
@@ -127,6 +133,63 @@ public final class ProjectsModel {
             return detail.project
         } catch {
             importState = .failed(Self.describe(error))
+            return nil
+        }
+    }
+
+    public func refreshConfiguration(projectId: String) async {
+        guard let client else { return }
+        loadingConfigurationProjectIds.insert(projectId)
+        defer { loadingConfigurationProjectIds.remove(projectId) }
+        do {
+            configurationDetails[projectId] = try await client.getProject(id: projectId)
+            localBindings[projectId] = try await client.getProjectBindings(projectId: projectId)
+            configurationErrorMessages[projectId] = nil
+        } catch {
+            configurationErrorMessages[projectId] = Self.describe(error)
+        }
+    }
+
+    @discardableResult
+    public func saveConfiguration(
+        projectId: String,
+        portableConfig: Components.Schemas.PortableProjectConfiguration,
+        writeToRepository: Bool
+    ) async -> ProjectDetail? {
+        guard let client else { return nil }
+        savingConfigurationProjectIds.insert(projectId)
+        defer { savingConfigurationProjectIds.remove(projectId) }
+        do {
+            let detail = try await client.replaceProjectConfiguration(
+                projectId: projectId,
+                portableConfig: portableConfig,
+                writeToRepository: writeToRepository)
+            configurationDetails[projectId] = detail
+            configurationErrorMessages[projectId] = nil
+            await refresh()
+            return detail
+        } catch {
+            configurationErrorMessages[projectId] = Self.describe(error)
+            return nil
+        }
+    }
+
+    @discardableResult
+    public func saveBindings(
+        projectId: String,
+        bindings: Components.Schemas.ProjectBindings
+    ) async -> LocalProjectBindings? {
+        guard let client else { return nil }
+        savingConfigurationProjectIds.insert(projectId)
+        defer { savingConfigurationProjectIds.remove(projectId) }
+        do {
+            let saved = try await client.replaceProjectBindings(
+                projectId: projectId, bindings: bindings)
+            localBindings[projectId] = saved
+            configurationErrorMessages[projectId] = nil
+            return saved
+        } catch {
+            configurationErrorMessages[projectId] = Self.describe(error)
             return nil
         }
     }
@@ -283,7 +346,11 @@ public final class ProjectsModel {
                 case "project.already-imported":
                     "\(message) (\(code)) Select the existing project in the sidebar instead."
                 case "project.config-invalid":
-                    "\(message) (\(code)) No project was created. Fix .jarvis/project.yaml and try again."
+                    "\(message) (\(code)) The saved configuration was not changed. Fix the named configuration path and try again."
+                case "project.bindings-invalid":
+                    "\(message) (\(code)) Local Bindings were not changed. Bind only declared project repositories and slots, then try again."
+                case "project.repository-write-failed":
+                    "\(message) (\(code)) SQLite was not changed. Restore repository write access and try again."
                 case "repository.path-invalid":
                     "\(message) (\(code)) No project was created. Choose an accessible repository folder and try again."
                 case "engine.database-unavailable":

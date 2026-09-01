@@ -49,7 +49,9 @@ Les bindings locaux restent dans Application Support/SQLite et référencent :
 - MCP autorisés ;
 - overrides machine non portables.
 
-Un exemple exportable nettoyé est fourni sous `examples/project/local-bindings.yaml`, mais le fichier réel n'est pas commité.
+Un exemple exportable nettoyé est fourni sous `examples/project/local-bindings.yaml`, mais le fichier réel n'est pas commité. La configuration portable et les Local Bindings sont remplacés indépendamment dans SQLite ; chaque remplacement SQLite est transactionnel. Une configuration invalide ne modifie aucune ligne.
+
+Quand `writeToRepository` vaut `true`, le moteur écrit un sibling temporaire privé puis le renomme sur `.jarvis/project.yaml`, sans créer de commit Git. Le système de fichiers et SQLite ne peuvent pas partager une transaction : l'écriture/rename précède donc SQLite afin qu'un échec fichier ne change pas la base. Les remplacements sont déterministes et les retries idempotents, mais le moteur ne prétend pas offrir une atomicité cross-resource.
 
 ## Slots
 
@@ -65,7 +67,7 @@ slots:
     requires: agent.execute
 ```
 
-Les bindings locaux résolvent :
+Les bindings locaux pourront résoudre :
 
 ```text
 sourceControl → connection/github-qservices
@@ -73,7 +75,7 @@ tickets       → mcp/github-qservices
 agentRuntime  → runtime/codex-default
 ```
 
-Un module référence un slot, jamais le catalogue global.
+Un module référence un slot, jamais le catalogue global. Tant que les registres Connection, MCP et Agent Runtime ne sont pas implémentés, les slots non bindés restent affichés explicitement `Unbound`; Jarvis ne fabrique ni candidats, ni connexion, ni activation implicite.
 
 ## Import flow
 

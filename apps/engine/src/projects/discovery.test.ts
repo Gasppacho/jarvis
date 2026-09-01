@@ -122,7 +122,7 @@ describe("discoverRepository", () => {
   it("never suggests an absolute path as a repository root", () => {
     const root = fixture();
     const suggested = discoverRepository(root).suggested as {
-      repositories: { root: string }[];
+      readonly repositories: readonly { readonly root: string }[];
     };
     expect(suggested.repositories[0]?.root).toBe(".");
   });

@@ -8,9 +8,6 @@ struct ProjectDetailView: View {
     let projects: ProjectsModel
     let project: Project
 
-    @State private var detail: ProjectDetail?
-    @State private var loadError: String?
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -66,7 +63,56 @@ struct ProjectDetailView: View {
                                 .foregroundStyle(.orange)
                         }
                     }
-                } else if let loadError {
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Configured modules")
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ForEach(detail.modules) { module in
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text(module.instanceId).font(.headline)
+                                    Spacer()
+                                    Text(module.enabled ? "Enabled" : "Disabled")
+                                        .font(.caption.weight(.medium))
+                                        .foregroundStyle(module.enabled ? .green : .secondary)
+                                }
+                                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
+                                    ForEach(module.presentationFields) { field in
+                                        row(field.label, field.value)
+                                    }
+                                }
+                                .font(.callout)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(14)
+                            .background(
+                                .quaternary.opacity(0.5),
+                                in: RoundedRectangle(cornerRadius: 10))
+                        }
+                    }
+
+                    if !detail.projectSlots.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Project slots")
+                                .font(.callout.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            ForEach(detail.projectSlots, id: \.self) { slot in
+                                let binding = projects.localBindings[project.id]?.slots.first {
+                                    $0.slotId == slot
+                                }
+                                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
+                                    row(slot, binding.map { "\($0.kind): \($0.ref)" } ?? "Unbound")
+                                }
+                            }
+                            Text(
+                                "Unbound slots are unresolved local capabilities. Connection, MCP, and runtime candidate registries are not implemented yet."
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                } else if let loadError = projects.configurationErrorMessages[project.id] {
                     Label(loadError, systemImage: "exclamationmark.triangle.fill")
                         .font(.callout)
                         .foregroundStyle(.orange)
@@ -75,7 +121,7 @@ struct ProjectDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(24)
         }
-        .task(id: project.id) { await loadDetail() }
+        .task(id: project.id) { await projects.refreshConfiguration(projectId: project.id) }
     }
 
     private func chooseRepository(for binding: ProjectBinding) {
@@ -93,19 +139,13 @@ struct ProjectDetailView: View {
                 replacing: binding.bookmarkRef,
                 with: url
             ) {
-                await loadDetail()
+                await projects.refreshConfiguration(projectId: project.id)
             }
         }
     }
 
-    private func loadDetail() async {
-        do {
-            detail = try await projects.detail(for: project.id)
-            loadError = nil
-        } catch {
-            detail = nil
-            loadError = ProjectsModel.describe(error)
-        }
+    private var detail: ProjectDetail? {
+        projects.configurationDetails[project.id]
     }
 
     private func row(_ label: String, _ value: String) -> some View {

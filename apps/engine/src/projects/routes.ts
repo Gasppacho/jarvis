@@ -5,9 +5,14 @@ import type {
   ProjectRegistry,
   RepositoryDiscoveryPort,
 } from "../../../../packages/kernel/src/project-registry.js";
-import type { ProjectDetail, ProjectSummary, RepositoryDiscovery } from "./types.js";
+import type {
+  ProjectBindings,
+  ProjectDetail,
+  ProjectSummary,
+  RepositoryDiscovery,
+} from "./types.js";
 
-export type LocalProjectRegistry = ProjectRegistry<ProjectSummary, ProjectDetail>;
+export type LocalProjectRegistry = ProjectRegistry<ProjectSummary, ProjectDetail, ProjectBindings>;
 export type LocalRepositoryDiscovery = RepositoryDiscoveryPort<RepositoryDiscovery>;
 
 /**
@@ -50,6 +55,37 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
     const params = request.params as { projectId?: unknown } | undefined;
     const detail = service.getProject(params?.projectId);
     return reply.code(200).send(detail);
+  });
+
+  app.put("/v1/projects/:projectId/configuration", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    const body = request.body as
+      { portableConfig?: unknown; writeToRepository?: unknown } | undefined;
+    return reply.code(200).send(
+      service.replaceProjectConfiguration({
+        projectId: params?.projectId,
+        portableConfig: body?.portableConfig,
+        writeToRepository: body?.writeToRepository,
+      }),
+    );
+  });
+
+  app.get("/v1/projects/:projectId/bindings", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    return reply.code(200).send(service.getProjectBindings(params?.projectId));
+  });
+
+  app.put("/v1/projects/:projectId/bindings", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    return reply.code(200).send(
+      service.replaceProjectBindings({
+        projectId: params?.projectId,
+        bindings: request.body,
+      }),
+    );
   });
 
   app.put("/v1/projects/:projectId/repositories/:repositoryId/binding", async (request, reply) => {

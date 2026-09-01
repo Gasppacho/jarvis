@@ -468,7 +468,7 @@ export interface components {
             status: "draft" | "valid" | "active" | "paused" | "invalid" | "degraded" | "archived";
             moduleCount: number;
             activeExecutions?: number;
-            portableConfig: Record<string, never>;
+            portableConfig: components["schemas"]["PortableProjectConfiguration"] | Record<string, never>;
             bindingStatus: {
                 [key: string]: {
                     path: string;
@@ -551,10 +551,91 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        ProjectMetadata: {
+            id: string;
+            name: string;
+            description?: string;
+        };
+        ProjectRepositoryConfiguration: {
+            id: string;
+            root: string;
+            defaultBranch: string;
+            remote: string;
+        };
+        ProjectSlotRequirement: {
+            requires: string;
+            optional?: boolean;
+            description?: string;
+        };
+        ProjectCommands: {
+            install?: string;
+            lint?: string;
+            typecheck?: string;
+            test?: string;
+            build?: string;
+        };
+        ProjectGitConfiguration: {
+            branchPattern: string;
+            /** @enum {unknown} */
+            commitStrategy: "conventional" | "ticket-prefix" | "freeform";
+            pushRemote: string;
+            /** @constant */
+            allowForcePush?: false;
+        };
+        ProjectWorkspaceConfiguration: {
+            /** @constant */
+            strategy: "git-worktree";
+            maxConcurrentExecutions: number;
+            retainOnFailureDays: number;
+        };
+        ModuleInstanceConfiguration: {
+            instanceId: string;
+            moduleId: string;
+            enabled: boolean;
+            runtimeSlot?: string;
+            bindings?: {
+                [key: string]: string;
+            };
+            configuration?: {
+                [key: string]: unknown;
+            };
+        };
+        PortableProjectConfiguration: {
+            /** @constant */
+            apiVersion: "jarvis.dev/project/v1";
+            /** @constant */
+            kind: "Project";
+            metadata: components["schemas"]["ProjectMetadata"];
+            repositories: components["schemas"]["ProjectRepositoryConfiguration"][];
+            slots: {
+                [key: string]: components["schemas"]["ProjectSlotRequirement"];
+            };
+            commands: components["schemas"]["ProjectCommands"];
+            git: components["schemas"]["ProjectGitConfiguration"];
+            workspace: components["schemas"]["ProjectWorkspaceConfiguration"];
+            modules: components["schemas"]["ModuleInstanceConfiguration"][];
+        };
+        ProjectRepositoryBinding: {
+            path: string;
+            bookmarkRef: string | null;
+        };
+        ProjectSlotBinding: {
+            /** @enum {unknown} */
+            kind: "connection" | "runtime" | "mcp" | "module-instance" | "engine";
+            ref: string;
+        };
         ProjectBindings: {
+            /** @constant */
+            apiVersion: "jarvis.dev/project-bindings/v1";
+            /** @constant */
+            kind: "ProjectBindings";
             projectId: string;
-            repositories: Record<string, never>;
-            slots: Record<string, never>;
+            repositories: {
+                [key: string]: components["schemas"]["ProjectRepositoryBinding"];
+            };
+            slots: {
+                [key: string]: components["schemas"]["ProjectSlotBinding"];
+            };
         };
         ProjectGraph: {
             nodes: Record<string, never>[];
@@ -706,7 +787,7 @@ export interface operations {
             content: {
                 "application/json": {
                     repositoryPath: string;
-                    portableConfig?: Record<string, never>;
+                    portableConfig?: components["schemas"]["PortableProjectConfiguration"];
                 };
             };
         };
@@ -1123,7 +1204,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    portableConfig: Record<string, never>;
+                    portableConfig: components["schemas"]["PortableProjectConfiguration"];
                     writeToRepository: boolean;
                 };
             };

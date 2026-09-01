@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 import { explain, localApiValidator } from "./contract.js";
 import { startEngine, type Harness } from "./harness.js";
 import { makeNodeRepositoryFixture, makeRepositoryFixture } from "./repository-fixture.js";
@@ -37,10 +38,10 @@ function treeSnapshot(root: string): string {
 }
 
 describe("repository discovery and project import", () => {
-  it("bundles the schema needed to validate a committed project config", () => {
-    expect(
-      existsSync(join(REPO_ROOT, "dist/engine/contracts/schemas/project-config.v1.schema.json")),
-    ).toBe(true);
+  it("bundles the schemas needed to validate project configuration and Local Bindings", () => {
+    for (const schema of ["project-config.v1.schema.json", "project-bindings.v1.schema.json"]) {
+      expect(existsSync(join(REPO_ROOT, "dist/engine/contracts/schemas", schema))).toBe(true);
+    }
   });
 
   const started: Harness[] = [];
@@ -386,6 +387,287 @@ describe("repository discovery and project import", () => {
     } finally {
       await rm(dataRoot, { recursive: true, force: true });
     }
+  });
+
+  it("replaces and persists validated module configuration without writing the repository", async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-project-config-"));
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const portableConfig = parseYaml(
+      readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
+    ) as Record<string, unknown>;
+    try {
+      const first = await start({ dataRoot });
+      const created = (await (await importProject(first, { repositoryPath: root })).json()) as {
+        id: string;
+      };
+      const projectFile = join(root, ".jarvis", "project.yaml");
+
+      const replaced = await first.call(`/v1/projects/${created.id}/configuration`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ portableConfig, writeToRepository: false }),
+      });
+      expect(replaced.status).toBe(200);
+      expect(existsSync(projectFile)).toBe(false);
+      expect(await replaced.json()).toMatchObject({
+        name: "Token Warehouse",
+        status: "draft",
+        moduleCount: 3,
+        portableConfig,
+      });
+      const localBindings = (await (
+        await first.call(`/v1/projects/${created.id}/bindings`)
+      ).json()) as Record<string, unknown>;
+      const persistedBindings = {
+        ...localBindings,
+        slots: {
+          sourceControl: { kind: "connection", ref: "connection/github" },
+          agentRuntime: { kind: "runtime", ref: "runtime/codex" },
+        },
+      };
+      expect(
+        (
+          await first.call(`/v1/projects/${created.id}/bindings`, {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(persistedBindings),
+          })
+        ).status,
+      ).toBe(200);
+      await first.dispose();
+
+      const second = await start({ dataRoot });
+      started.push(second);
+      expect(await (await second.call(`/v1/projects/${created.id}`)).json()).toMatchObject({
+        portableConfig,
+        moduleCount: 3,
+      });
+      expect(await (await second.call(`/v1/projects/${created.id}/bindings`)).json()).toEqual(
+        persistedBindings,
+      );
+    } finally {
+      await rm(dataRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    [
+      "duplicate instance id",
+      (config: Record<string, unknown>) => {
+        const modules = config["modules"] as Record<string, unknown>[];
+        modules[1]!["instanceId"] = modules[0]!["instanceId"];
+      },
+    ],
+    [
+      "unknown bundled package",
+      (config: Record<string, unknown>) => {
+        const modules = config["modules"] as Record<string, unknown>[];
+        modules[0]!["moduleId"] = "jarvis.module.unknown";
+      },
+    ],
+    [
+      "missing required package configuration",
+      (config: Record<string, unknown>) => {
+        const modules = config["modules"] as Record<string, unknown>[];
+        delete modules[0]!["configuration"];
+      },
+    ],
+    [
+      "invalid package configuration",
+      (config: Record<string, unknown>) => {
+        const modules = config["modules"] as Record<string, unknown>[];
+        (modules[2]!["configuration"] as Record<string, unknown>)["maxRepairCycles"] = "invalid";
+      },
+    ],
+    [
+      "unknown project slot",
+      (config: Record<string, unknown>) => {
+        const modules = config["modules"] as Record<string, unknown>[];
+        modules[2]!["runtimeSlot"] = "missingRuntime";
+      },
+    ],
+    [
+      "unknown project repository",
+      (config: Record<string, unknown>) => {
+        const modules = config["modules"] as Record<string, unknown>[];
+        const bindings = modules[2]!["bindings"] as Record<string, unknown>;
+        bindings["repository"] = "missingRepository";
+      },
+    ],
+  ])("atomically rejects %s", async (_case, mutate) => {
+    const engine = await start();
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
+      id: string;
+      portableConfig: unknown;
+    };
+    const portableConfig = parseYaml(
+      readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
+    ) as Record<string, unknown>;
+    mutate(portableConfig);
+
+    const response = await engine.call(`/v1/projects/${created.id}/configuration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ portableConfig, writeToRepository: false }),
+    });
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
+      "project.config-invalid",
+    );
+    expect(await (await engine.call(`/v1/projects/${created.id}`)).json()).toMatchObject({
+      portableConfig: created.portableConfig,
+    });
+  });
+
+  it("gets and replaces schema-valid Local Bindings while preserving the Repository Grant", async () => {
+    const engine = await start();
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
+      id: string;
+    };
+    const portableConfig = parseYaml(
+      readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(
+      (
+        await engine.call(`/v1/projects/${created.id}/configuration`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ portableConfig, writeToRepository: false }),
+        })
+      ).status,
+    ).toBe(200);
+    const initial = (await (
+      await engine.call(`/v1/projects/${created.id}/bindings`)
+    ).json()) as Record<string, unknown>;
+    expect(initial).toEqual({
+      apiVersion: "jarvis.dev/project-bindings/v1",
+      kind: "ProjectBindings",
+      projectId: created.id,
+      repositories: {
+        main: {
+          path: (initial["repositories"] as Record<string, { path: string }>)["main"]!.path,
+          bookmarkRef: null,
+        },
+      },
+      slots: {},
+    });
+    const validateBindings = localApiValidator("ProjectBindings");
+    expect(validateBindings(initial), explain(validateBindings)).toBe(true);
+
+    const replacement = {
+      ...initial,
+      slots: {
+        sourceControl: { kind: "connection", ref: "connection/github" },
+        agentRuntime: { kind: "runtime", ref: "runtime/codex" },
+      },
+    };
+    const response = await engine.call(`/v1/projects/${created.id}/bindings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(replacement),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(replacement);
+  });
+
+  it("rejects invalid Local Bindings without changing the persisted envelope", async () => {
+    const engine = await start();
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const portableConfig = parseYaml(
+      readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
+    ) as Record<string, unknown>;
+    const created = (await (
+      await importProject(engine, { repositoryPath: root, portableConfig })
+    ).json()) as { id: string };
+    const before = await (await engine.call(`/v1/projects/${created.id}/bindings`)).json();
+    const invalid = {
+      ...(before as Record<string, unknown>),
+      slots: { undeclared: { kind: "runtime", ref: "runtime/opaque" } },
+    };
+
+    const response = await engine.call(`/v1/projects/${created.id}/bindings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(invalid),
+    });
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
+      "project.bindings-invalid",
+    );
+    expect(await (await engine.call(`/v1/projects/${created.id}/bindings`)).json()).toEqual(before);
+  });
+
+  it("refuses a symlinked .jarvis write target before changing SQLite", async () => {
+    const engine = await start();
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
+      id: string;
+      portableConfig: unknown;
+    };
+    const outside = fixture(() => mkdtempSync(join(tmpdir(), "jarvis-write-outside-")));
+    symlinkSync(outside, join(root, ".jarvis"), "dir");
+    const portableConfig = parseYaml(
+      readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
+    ) as Record<string, unknown>;
+
+    const response = await engine.call(`/v1/projects/${created.id}/configuration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ portableConfig, writeToRepository: true }),
+    });
+    expect(response.status).toBe(500);
+    expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
+      "project.repository-write-failed",
+    );
+    expect(existsSync(join(outside, "project.yaml"))).toBe(false);
+    expect(await (await engine.call(`/v1/projects/${created.id}`)).json()).toMatchObject({
+      portableConfig: created.portableConfig,
+    });
+  });
+
+  it("atomically writes portable YAML only when explicitly requested and does not commit it", async () => {
+    const engine = await start();
+    const root = fixture(() => makeNodeRepositoryFixture());
+    execFileSync("git", ["-C", root, "init"]);
+    execFileSync("git", ["-C", root, "add", "."]);
+    execFileSync("git", [
+      "-C",
+      root,
+      "-c",
+      "user.name=Jarvis Test",
+      "-c",
+      "user.email=test@jarvis.dev",
+      "commit",
+      "-m",
+      "fixture",
+    ]);
+    const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
+      id: string;
+    };
+    const portableConfig = parseYaml(
+      readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
+    ) as Record<string, unknown>;
+    const beforeHead = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], {
+      encoding: "utf8",
+    });
+
+    const response = await engine.call(`/v1/projects/${created.id}/configuration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ portableConfig, writeToRepository: true }),
+    });
+    expect(response.status).toBe(200);
+    expect(parseYaml(readFileSync(join(root, ".jarvis", "project.yaml"), "utf8"))).toEqual(
+      portableConfig,
+    );
+    expect(execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" })).toBe(
+      beforeHead,
+    );
+    expect(execFileSync("git", ["-C", root, "status", "--short"], { encoding: "utf8" })).toContain(
+      ".jarvis/",
+    );
   });
 
   it("persists a Repository Grant path resolved after the repository moves", async () => {

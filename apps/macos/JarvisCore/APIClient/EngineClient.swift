@@ -231,6 +231,73 @@ public struct EngineClient: Sendable {
         }
     }
 
+    public func replaceProjectConfiguration(
+        projectId: String,
+        portableConfig: Components.Schemas.PortableProjectConfiguration,
+        writeToRepository: Bool
+    ) async throws -> ProjectDetail {
+        let operation = "PUT /v1/projects/\(projectId)/configuration"
+        let output = try await underlying.replaceProjectConfiguration(
+            .init(
+                path: .init(projectId: projectId),
+                body: .json(.init(
+                    portableConfig: portableConfig,
+                    writeToRepository: writeToRepository
+                ))
+            ))
+        switch output {
+        case .ok(let ok):
+            return ProjectDetail(detail: try ok.body.json)
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            let payload = try error.body.json
+            throw EngineClientError.engineError(
+                operation: operation, code: payload.error.code, message: payload.error.message)
+        }
+    }
+
+    public func getProjectBindings(projectId: String) async throws -> LocalProjectBindings {
+        let operation = "GET /v1/projects/\(projectId)/bindings"
+        let output = try await underlying.getProjectBindings(
+            .init(path: .init(projectId: projectId)))
+        switch output {
+        case .ok(let ok):
+            return LocalProjectBindings(payload: try ok.body.json)
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            let payload = try error.body.json
+            throw EngineClientError.engineError(
+                operation: operation, code: payload.error.code, message: payload.error.message)
+        }
+    }
+
+    public func replaceProjectBindings(
+        projectId: String,
+        bindings: Components.Schemas.ProjectBindings
+    ) async throws -> LocalProjectBindings {
+        let operation = "PUT /v1/projects/\(projectId)/bindings"
+        let output = try await underlying.replaceProjectBindings(
+            .init(path: .init(projectId: projectId), body: .json(bindings)))
+        switch output {
+        case .ok(let ok):
+            return LocalProjectBindings(payload: try ok.body.json)
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            let payload = try error.body.json
+            throw EngineClientError.engineError(
+                operation: operation, code: payload.error.code, message: payload.error.message)
+        }
+    }
+
     /// Updates the machine-local repository path after the macOS Shell resolves
     /// its Repository Grant. Bookmark bytes remain in the shell; only their
     /// opaque reference crosses the Local API boundary.

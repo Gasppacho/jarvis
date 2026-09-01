@@ -88,7 +88,7 @@ paths:
                 repositoryPath:
                   type: string
                 portableConfig:
-                  type: object
+                  $ref: "#/components/schemas/PortableProjectConfiguration"
       responses:
         "201":
           description: Imported draft project.
@@ -446,7 +446,7 @@ paths:
               required: [portableConfig, writeToRepository]
               properties:
                 portableConfig:
-                  type: object
+                  $ref: "#/components/schemas/PortableProjectConfiguration"
                 writeToRepository:
                   type: boolean
       responses:
@@ -750,7 +750,10 @@ components:
           type: integer
           minimum: 0
         portableConfig:
-          type: object
+          anyOf:
+            - $ref: "#/components/schemas/PortableProjectConfiguration"
+            - type: object
+              description: Partial read-only discovery draft before configuration replacement.
         bindingStatus:
           type: object
           additionalProperties:
@@ -928,17 +931,194 @@ components:
         configurationSchema:
           type: [object, "null"]
           additionalProperties: true
+    ProjectMetadata:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9._-]*$"
+          maxLength: 100
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 500
+    ProjectRepositoryConfiguration:
+      type: object
+      additionalProperties: false
+      required: [id, root, defaultBranch, remote]
+      properties:
+        id:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9._-]*$"
+        root:
+          type: string
+          minLength: 1
+          pattern: '^(?!/|~|[A-Za-z]:\\).+'
+        defaultBranch:
+          type: string
+          minLength: 1
+          maxLength: 200
+        remote:
+          type: string
+          minLength: 1
+          maxLength: 100
+    ProjectSlotRequirement:
+      type: object
+      additionalProperties: false
+      required: [requires]
+      properties:
+        requires:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9._-]*$"
+        optional:
+          type: boolean
+        description:
+          type: string
+    ProjectCommands:
+      type: object
+      additionalProperties: false
+      properties:
+        install: { type: string, minLength: 1 }
+        lint: { type: string, minLength: 1 }
+        typecheck: { type: string, minLength: 1 }
+        test: { type: string, minLength: 1 }
+        build: { type: string, minLength: 1 }
+    ProjectGitConfiguration:
+      type: object
+      additionalProperties: false
+      required: [branchPattern, commitStrategy, pushRemote]
+      properties:
+        branchPattern:
+          type: string
+          minLength: 1
+          maxLength: 200
+        commitStrategy:
+          enum: [conventional, ticket-prefix, freeform]
+        pushRemote:
+          type: string
+          minLength: 1
+        allowForcePush:
+          const: false
+    ProjectWorkspaceConfiguration:
+      type: object
+      additionalProperties: false
+      required: [strategy, maxConcurrentExecutions, retainOnFailureDays]
+      properties:
+        strategy:
+          const: git-worktree
+        maxConcurrentExecutions:
+          type: integer
+          minimum: 1
+          maximum: 16
+        retainOnFailureDays:
+          type: integer
+          minimum: 0
+          maximum: 90
+    ModuleInstanceConfiguration:
+      type: object
+      additionalProperties: false
+      required: [instanceId, moduleId, enabled]
+      properties:
+        instanceId:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9._-]*$"
+        moduleId:
+          type: string
+          pattern: "^jarvis\\.module\\.[a-z0-9-]+$"
+        enabled:
+          type: boolean
+        runtimeSlot:
+          type: string
+          pattern: "^[A-Za-z][A-Za-z0-9._-]*$"
+        bindings:
+          type: object
+          additionalProperties:
+            type: string
+            pattern: "^[A-Za-z][A-Za-z0-9._-]*$"
+        configuration:
+          type: object
+          additionalProperties: true
+    PortableProjectConfiguration:
+      type: object
+      additionalProperties: false
+      required: [apiVersion, kind, metadata, repositories, slots, commands, git, workspace, modules]
+      properties:
+        apiVersion:
+          const: jarvis.dev/project/v1
+        kind:
+          const: Project
+        metadata:
+          $ref: "#/components/schemas/ProjectMetadata"
+        repositories:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items:
+            $ref: "#/components/schemas/ProjectRepositoryConfiguration"
+        slots:
+          type: object
+          minProperties: 1
+          additionalProperties:
+            $ref: "#/components/schemas/ProjectSlotRequirement"
+        commands:
+          $ref: "#/components/schemas/ProjectCommands"
+        git:
+          $ref: "#/components/schemas/ProjectGitConfiguration"
+        workspace:
+          $ref: "#/components/schemas/ProjectWorkspaceConfiguration"
+        modules:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/ModuleInstanceConfiguration"
+    ProjectRepositoryBinding:
+      type: object
+      additionalProperties: false
+      required: [path, bookmarkRef]
+      properties:
+        path:
+          type: string
+          minLength: 1
+        bookmarkRef:
+          type: [string, "null"]
+          minLength: 1
+    ProjectSlotBinding:
+      type: object
+      additionalProperties: false
+      required: [kind, ref]
+      properties:
+        kind:
+          enum: [connection, runtime, mcp, module-instance, engine]
+        ref:
+          type: string
+          minLength: 1
+          maxLength: 300
     ProjectBindings:
       type: object
       additionalProperties: false
-      required: [projectId, repositories, slots]
+      required: [apiVersion, kind, projectId, repositories, slots]
       properties:
+        apiVersion:
+          const: jarvis.dev/project-bindings/v1
+        kind:
+          const: ProjectBindings
         projectId:
           type: string
+          pattern: "^[a-z0-9][a-z0-9._-]*$"
         repositories:
           type: object
+          minProperties: 1
+          additionalProperties:
+            $ref: "#/components/schemas/ProjectRepositoryBinding"
         slots:
           type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ProjectSlotBinding"
     ProjectGraph:
       type: object
       additionalProperties: false

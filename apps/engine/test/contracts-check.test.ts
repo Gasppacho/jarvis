@@ -153,6 +153,100 @@ describe("pnpm contracts:check", () => {
     expect(stderr).toContain("project-module-config-invalid");
   });
 
+  it.each([
+    [
+      "apiVersion",
+      "      required: [kind, metadata, repositories, slots, commands, git, workspace, modules]\n",
+    ],
+    [
+      "kind",
+      "      required: [apiVersion, metadata, repositories, slots, commands, git, workspace, modules]\n",
+    ],
+    [
+      "repositories",
+      "      required: [apiVersion, kind, metadata, slots, commands, git, workspace, modules]\n",
+    ],
+  ])("rejects Portable Project Configuration parity drift in %s", async (_field, replacement) => {
+    const root = fixtureRoot();
+    const path = join(root, "contracts/openapi/local-api.v1.yaml");
+    const source = readFileSync(path, "utf8");
+    writeFileSync(
+      path,
+      source.replace(
+        "      required: [apiVersion, kind, metadata, repositories, slots, commands, git, workspace, modules]\n",
+        replacement,
+      ),
+    );
+
+    const { code, stderr } = await runChecker(root);
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("project-config-openapi-parity");
+  });
+
+  it.each([
+    ["apiVersion", "      required: [kind, projectId, repositories, slots]\n"],
+    ["kind", "      required: [apiVersion, projectId, repositories, slots]\n"],
+    ["repository bindings", "      required: [apiVersion, kind, projectId, slots]\n"],
+  ])("rejects Local Bindings parity drift in %s", async (_field, replacement) => {
+    const root = fixtureRoot();
+    const path = join(root, "contracts/openapi/local-api.v1.yaml");
+    const source = readFileSync(path, "utf8");
+    writeFileSync(
+      path,
+      source.replace(
+        "      required: [apiVersion, kind, projectId, repositories, slots]\n",
+        replacement,
+      ),
+    );
+
+    const { code, stderr } = await runChecker(root);
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("project-bindings-openapi-parity");
+  });
+
+  it("rejects Local Bindings drift that disallows empty unresolved draft slots", async () => {
+    const root = fixtureRoot();
+    const path = join(root, "contracts/openapi/local-api.v1.yaml");
+    const source = readFileSync(path, "utf8");
+    writeFileSync(
+      path,
+      source.replace(
+        '        slots:\n          type: object\n          additionalProperties:\n            $ref: "#/components/schemas/ProjectSlotBinding"\n',
+        '        slots:\n          type: object\n          minProperties: 1\n          additionalProperties:\n            $ref: "#/components/schemas/ProjectSlotBinding"\n',
+      ),
+    );
+
+    const { code, stderr } = await runChecker(root);
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("project-bindings-openapi-parity");
+  });
+
+  it.each([
+    ["slot binding kind", "        kind:\n          type: string\n"],
+    ["slot binding ref", "        ref:\n          type: integer\n"],
+    [
+      "nullable legacy bookmarkRef",
+      "        bookmarkRef:\n          type: string\n          minLength: 1\n",
+    ],
+  ])("rejects Local Binding component drift in %s", async (field, replacement) => {
+    const root = fixtureRoot();
+    const path = join(root, "contracts/openapi/local-api.v1.yaml");
+    const source = readFileSync(path, "utf8");
+    const originals: Record<string, string> = {
+      "slot binding kind":
+        "        kind:\n          enum: [connection, runtime, mcp, module-instance, engine]\n",
+      "slot binding ref":
+        "        ref:\n          type: string\n          minLength: 1\n          maxLength: 300\n",
+      "nullable legacy bookmarkRef":
+        '        bookmarkRef:\n          type: [string, "null"]\n          minLength: 1\n',
+    };
+    writeFileSync(path, source.replace(originals[field]!, replacement));
+
+    const { code, stderr } = await runChecker(root);
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("project-bindings-openapi-parity");
+  });
+
   it("rejects a protected operation that does not document how it refuses callers", async () => {
     const root = fixtureRoot();
     const path = join(root, "contracts/openapi/local-api.v1.yaml");

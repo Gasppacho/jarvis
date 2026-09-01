@@ -10,6 +10,8 @@ export type ErrorCode =
   | "repository.path-invalid"
   | "project.already-imported"
   | "project.config-invalid"
+  | "project.bindings-invalid"
+  | "project.repository-write-failed"
   | "project.not-found"
   | "system.internal-error"
   | "system.storage-unavailable";

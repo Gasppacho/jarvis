@@ -10,6 +10,17 @@ export interface ImportProjectRequest {
   readonly portableConfig: unknown;
 }
 
+export interface ReplaceProjectConfigurationRequest {
+  readonly projectId: unknown;
+  readonly portableConfig: unknown;
+  readonly writeToRepository: unknown;
+}
+
+export interface ReplaceProjectBindingsRequest {
+  readonly projectId: unknown;
+  readonly bindings: unknown;
+}
+
 export interface UpdateRepositoryBindingRequest {
   readonly projectId: unknown;
   readonly repositoryId: unknown;
@@ -23,9 +34,12 @@ export interface RepositoryDiscoveryPort<Discovery> {
 }
 
 /** Registry operations that require durable Project persistence. */
-export interface ProjectRegistry<Summary, Detail> {
+export interface ProjectRegistry<Summary, Detail, Bindings> {
   importProject(request: ImportProjectRequest): Detail;
   listProjects(): Summary[];
   getProject(id: unknown): Detail;
   updateRepositoryBinding(request: UpdateRepositoryBindingRequest): Detail;
+  replaceProjectConfiguration(request: ReplaceProjectConfigurationRequest): Detail;
+  getProjectBindings(projectId: unknown): Bindings;
+  replaceProjectBindings(request: ReplaceProjectBindingsRequest): Bindings;
 }

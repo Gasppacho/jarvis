@@ -1,7 +1,9 @@
 import type { components } from "../api/generated/local-api.js";
 import type {
   BindingStatus,
-  PortableProjectConfig,
+  ProjectBindings,
+  PortableProjectConfiguration,
+  StoredPortableProjectConfiguration,
   SuggestedProjectConfig,
 } from "../../../../packages/project-runtime/src/project-types.js";
 
@@ -17,14 +19,10 @@ export interface ProjectSummary {
 }
 
 export interface ProjectDetail extends ProjectSummary {
-  readonly portableConfig: PortableProjectConfig;
+  readonly portableConfig: StoredPortableProjectConfiguration;
   readonly bindingStatus: BindingStatus;
 }
 
-/**
- * The contract types `suggested` as a free-form object; this is the shape the
- * repository-discovery adapter returns. The wire JSON is identical.
- */
 export type RepositoryDiscovery = Omit<
   components["schemas"]["RepositoryDiscovery"],
   "suggested"
@@ -34,6 +32,8 @@ export type RepositoryDiscovery = Omit<
 
 export type {
   BindingStatus,
-  PortableProjectConfig,
+  ProjectBindings,
+  PortableProjectConfiguration,
+  StoredPortableProjectConfiguration,
   SuggestedProjectConfig,
 } from "../../../../packages/project-runtime/src/project-types.js";

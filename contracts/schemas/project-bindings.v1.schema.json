@@ -38,7 +38,10 @@
             "minLength": 1
           },
           "bookmarkRef": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "minLength": 1
           }
         }
@@ -46,7 +49,6 @@
     },
     "slots": {
       "type": "object",
-      "minProperties": 1,
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
