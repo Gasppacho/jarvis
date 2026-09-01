@@ -1,0 +1,28 @@
+apiVersion: jarvis.dev/module/v1
+kind: Module
+metadata:
+  id: jarvis.module.change-request-review
+  version: 1.0.0
+  displayName: Change Request Review
+  description: Inspects a created Change Request revision and records a local verdict.
+  categories:
+    - agentic
+    - decision
+runtime:
+  entrypoint: dist/index.mjs
+  engineRange: ">=1.0.0 <2.0.0"
+  concurrency: 2
+  partitionBy: subject.ref
+contracts:
+  consumes:
+    - type: scm.change-request.created
+      version: 1
+      kind: fact
+      schemaRef: contracts/events/scm.change-request.created.v1.schema.json
+      handler: handleChangeRequestCreated
+  produces: []
+capabilities:
+  requires:
+    - id: agent.execute
+      binding: agentRuntime
+  provides: []

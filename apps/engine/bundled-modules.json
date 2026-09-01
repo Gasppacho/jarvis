@@ -1,3 +1,6 @@
 {
-  "development": "../../packages/modules/development/src/index.ts"
+  "automation-rules": "../../packages/modules/automation-rules/src/index.ts",
+  "change-request-review": "../../packages/modules/change-request-review/src/index.ts",
+  "development": "../../packages/modules/development/src/index.ts",
+  "github": "../../packages/modules/github/src/index.ts"
 }

@@ -24,3 +24,11 @@ The request asking the bound SCM provider to publish a Review Verdict.
 
 ### Stale Review
 A review whose Revision no longer matches the Change Request head.
+
+## MVP catalogue status
+
+The official package is bundled in the MVP catalogue as an inactive composition candidate. Its
+Manifest consumes `scm.change-request.created` and may require an Agent Runtime, but produces no
+events until the reserved review-publication contracts become versioned. Activating handlers and
+emitting a Review Publication Request remain post-MVP work; the catalogue must not invent those
+contracts early.

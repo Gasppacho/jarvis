@@ -2,8 +2,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import {
+  InvalidModuleConfigurationSchemaError,
   ModuleHost,
   ModuleManifestContractRegistry,
+  ModuleManifestDiscoveryError,
   type DiscoveredModuleManifest,
   type ModulePackageRegistry,
 } from "../../../../packages/kernel/src/module-host.js";
@@ -18,14 +20,33 @@ class BundledModulePackageRegistry implements ModulePackageRegistry {
     return this.packageNames.map((name) => {
       const source = join(this.runtimeRoot, "modules", name, "module.manifest.yaml");
       return {
+        packageName: name,
         source,
-        document: parseYaml(readFileSync(source, "utf8")) as unknown,
+        get document(): unknown {
+          let yaml: string;
+          try {
+            yaml = readFileSync(source, "utf8");
+          } catch {
+            throw new ModuleManifestDiscoveryError("/", "Manifest could not be read.");
+          }
+          try {
+            return parseYaml(yaml) as unknown;
+          } catch {
+            throw new ModuleManifestDiscoveryError("/", "Manifest is not valid YAML.");
+          }
+        },
       };
     });
   }
 
   public readConfigurationSchema(schemaRef: string): unknown {
-    return JSON.parse(readFileSync(join(this.runtimeRoot, schemaRef), "utf8")) as unknown;
+    try {
+      return JSON.parse(readFileSync(join(this.runtimeRoot, schemaRef), "utf8")) as unknown;
+    } catch {
+      throw new InvalidModuleConfigurationSchemaError(
+        "Configuration schema could not be read as JSON.",
+      );
+    }
   }
 }
 

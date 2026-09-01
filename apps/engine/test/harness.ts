@@ -53,6 +53,8 @@ export interface Harness {
 export interface StartEngineOptions {
   /** Extra environment for the child, e.g. to point at a poisoned data root. */
   readonly env?: Readonly<Record<string, string>>;
+  /** Alternate self-contained engine bundle used by bootstrap-fixture tests. */
+  readonly enginePath?: string;
   /** Use a data root the test already created, instead of a fresh mkdtemp one. */
   readonly dataRoot?: string;
 }
@@ -69,7 +71,7 @@ export async function startEngine(options: StartEngineOptions = {}): Promise<Har
   const dataRoot = suppliedRoot ?? (await mkdtemp(join(tmpdir(), "jarvis-harness-")));
   const token = randomBytes(32).toString("base64url");
 
-  const child = spawn(process.execPath, [enginePath], {
+  const child = spawn(process.execPath, [options.enginePath ?? enginePath], {
     cwd: repoRoot,
     stdio: ["ignore", "pipe", "pipe"],
     env: {

@@ -46,8 +46,14 @@ interface ModuleManifest {
 }
 
 export interface DiscoveredModuleManifest {
+  readonly packageName: string;
   readonly source: string;
   readonly document: unknown;
+}
+
+export interface ModuleCatalogDiagnostic {
+  readonly packageName: string;
+  readonly issues: readonly string[];
 }
 
 /** Filesystem-backed discovery is an adapter injected through this port. */
@@ -56,9 +62,21 @@ export interface ModulePackageRegistry {
   readConfigurationSchema(schemaRef: string): unknown;
 }
 
+export class ModuleManifestDiscoveryError extends Error {
+  public constructor(
+    public readonly path: string,
+    public readonly reason: string,
+  ) {
+    super(reason);
+    this.name = "ModuleManifestDiscoveryError";
+  }
+}
+
 export class InvalidModuleConfigurationSchemaError extends Error {
-  public constructor() {
-    super("A Module configuration schema must be a JSON object.");
+  public readonly path = "/configuration/schemaRef";
+
+  public constructor(public readonly reason: string) {
+    super(reason);
     this.name = "InvalidModuleConfigurationSchemaError";
   }
 }
@@ -86,7 +104,8 @@ export class ModuleManifestContractRegistry {
   }
 
   public requireModuleManifestV1(candidate: DiscoveredModuleManifest): ModuleManifest {
-    if (this.validateModuleManifestV1(candidate.document)) return candidate.document;
+    const document = candidate.document;
+    if (this.validateModuleManifestV1(document)) return document;
 
     const issues = (this.validateModuleManifestV1.errors ?? []).map(
       (error) =>
@@ -102,18 +121,49 @@ export class ModuleManifestContractRegistry {
  * other side of the Module SDK boundary.
  */
 export class ModuleHost {
-  private readonly entries: readonly ModuleCatalogEntry[];
+  private readonly entries: ModuleCatalogEntry[] = [];
+  private readonly rejected: ModuleCatalogDiagnostic[] = [];
 
   public constructor(registry: ModulePackageRegistry, contracts: ModuleManifestContractRegistry) {
-    this.entries = registry
-      .discover()
-      .map((candidate) => contracts.requireModuleManifestV1(candidate))
-      .map((manifest) => toCatalogEntry(manifest, registry));
+    for (const candidate of registry.discover()) {
+      try {
+        const manifest = contracts.requireModuleManifestV1(candidate);
+        this.entries.push(toCatalogEntry(manifest, registry));
+      } catch (error) {
+        this.rejected.push(toDiagnostic(candidate, error));
+      }
+    }
   }
 
   public catalog(): readonly ModuleCatalogEntry[] {
     return this.entries;
   }
+
+  public diagnostics(): readonly ModuleCatalogDiagnostic[] {
+    return this.rejected;
+  }
+}
+
+function toDiagnostic(
+  candidate: DiscoveredModuleManifest,
+  error: unknown,
+): ModuleCatalogDiagnostic {
+  if (error instanceof InvalidModuleManifestError) {
+    return { packageName: candidate.packageName, issues: error.issues };
+  }
+  if (error instanceof ModuleManifestDiscoveryError) {
+    return {
+      packageName: candidate.packageName,
+      issues: [`${error.path} ${error.reason}`],
+    };
+  }
+  if (error instanceof InvalidModuleConfigurationSchemaError) {
+    return {
+      packageName: candidate.packageName,
+      issues: [`${error.path} ${error.reason}`],
+    };
+  }
+  throw error;
 }
 
 function toCatalogEntry(
@@ -145,7 +195,7 @@ function toCatalogEntry(
 
 function requireJsonObject(value: unknown): Readonly<Record<string, unknown>> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new InvalidModuleConfigurationSchemaError();
+    throw new InvalidModuleConfigurationSchemaError("Configuration schema must be a JSON object.");
   }
   return value as Readonly<Record<string, unknown>>;
 }

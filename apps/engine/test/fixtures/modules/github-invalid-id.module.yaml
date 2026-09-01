@@ -1,0 +1,45 @@
+apiVersion: jarvis.dev/module/v1
+kind: Module
+metadata:
+  id: invalid-github-id
+  version: 1.0.0
+  displayName: GitHub
+  description: Translates GitHub observations and requested SCM actions.
+  categories:
+    - provider
+runtime:
+  entrypoint: dist/index.mjs
+  engineRange: ">=1.0.0 <2.0.0"
+  concurrency: 4
+  partitionBy: subject.ref
+contracts:
+  consumes:
+    - type: scm.change-request.creation-requested
+      version: 1
+      kind: request
+      schemaRef: contracts/events/scm.change-request.creation-requested.v1.schema.json
+      handler: handleChangeRequestCreationRequested
+  produces:
+    - type: scm.work-item.tag-added
+      version: 1
+      kind: fact
+      schemaRef: contracts/events/scm.work-item.tag-added.v1.schema.json
+    - type: scm.change-request.created
+      version: 1
+      kind: fact
+      schemaRef: contracts/events/scm.change-request.created.v1.schema.json
+    - type: scm.change-request.creation-failed
+      version: 1
+      kind: fact
+      schemaRef: contracts/events/scm.change-request.creation-failed.v1.schema.json
+capabilities:
+  requires:
+    - id: github.api
+      binding: sourceControl
+  provides:
+    - id: scm.change-request.manage
+      description: Creates and manages canonical Change Requests through GitHub.
+    - id: work-items.read
+      description: Reads GitHub Issues as canonical Work Items.
+configuration:
+  schemaRef: contracts/module-config/github.v1.schema.json

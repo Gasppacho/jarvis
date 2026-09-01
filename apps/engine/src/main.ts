@@ -49,6 +49,11 @@ async function main(): Promise<void> {
   const config = loadConfig(process.env);
   const runtimeRoot = dirname(fileURLToPath(import.meta.url));
   const modules = loadBundledModuleHost(runtimeRoot);
+  for (const diagnostic of modules.diagnostics()) {
+    report(
+      `jarvis-engine: rejected bundled Module Package ${diagnostic.packageName}: ${diagnostic.issues.join("; ")}\n`,
+    );
+  }
 
   let opened: OpenedDatabase | undefined;
   let app: FastifyInstance | undefined;
