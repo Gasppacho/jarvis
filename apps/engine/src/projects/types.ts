@@ -34,6 +34,9 @@ export type {
   BindingStatus,
   ProjectBindings,
   PortableProjectConfiguration,
+  ProjectResourceCandidate,
+  ProjectResourceCandidateRegistry,
+  ProjectResourceGrantPort,
   StoredPortableProjectConfiguration,
   SuggestedProjectConfig,
 } from "../../../../packages/project-runtime/src/project-types.js";

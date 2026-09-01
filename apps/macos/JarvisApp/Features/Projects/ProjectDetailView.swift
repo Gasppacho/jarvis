@@ -1,19 +1,23 @@
 import AppKit
+import JarvisCore
 import SwiftUI
 
 /// Project composition editor. All repeated controls are driven by the module
 /// catalogue, configuration schemas, Project slots and eligible candidate arrays.
 public struct ProjectDetailView: View {
     let projects: ProjectsModel
+    let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
     let project: Project
 
     public init(
         projects: ProjectsModel,
+        projectConfiguration: ProjectConfigurationModel,
         moduleCatalog: ModuleCatalogModel,
         project: Project
     ) {
         self.projects = projects
+        self.projectConfiguration = projectConfiguration
         self.moduleCatalog = moduleCatalog
         self.project = project
     }
@@ -49,7 +53,7 @@ public struct ProjectDetailView: View {
             .disabled(state.isSaving)
         }
         .task(id: refreshID) {
-            await projects.refreshConfiguration(
+            await projectConfiguration.refresh(
                 projectId: project.id, packages: moduleCatalog.packages)
         }
     }
@@ -59,7 +63,7 @@ public struct ProjectDetailView: View {
     }
 
     private var state: ProjectConfigurationState {
-        projects.configurationState(for: project.id)
+        projectConfiguration.state(for: project.id)
     }
 
     private var header: some View {
@@ -110,7 +114,7 @@ public struct ProjectDetailView: View {
                 Menu("Add Module Instance") {
                     ForEach(moduleCatalog.packages) { package in
                         Button(package.displayName) {
-                            projects.editDraft(projectId: project.id) { $0.add(package: package) }
+                            projectConfiguration.addModule(projectId: project.id, package: package)
                         }
                     }
                 }
@@ -128,29 +132,23 @@ public struct ProjectDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Project slots").font(.headline)
             ForEach((state.draft?.slotRequirements.keys.sorted() ?? []), id: \.self) { slot in
-                HStack {
-                    TextField("Slot", text: slotNameBinding(slot))
-                    TextField("Required capability", text: slotRequirementBinding(slot))
-                    Button(role: .destructive) {
-                        projects.editDraft(projectId: project.id) {
-                            $0.slotRequirements[slot] = nil
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        TextField("Slot", text: slotNameBinding(slot))
+                        TextField("Required capability", text: slotRequirementBinding(slot))
+                        Toggle("Optional", isOn: slotOptionalBinding(slot))
+                        Button(role: .destructive) {
+                            projectConfiguration.removeSlot(projectId: project.id, slotId: slot)
+                        } label: {
+                            Image(systemName: "trash")
                         }
-                    } label: {
-                        Image(systemName: "trash")
+                        .buttonStyle(.borderless)
                     }
-                    .buttonStyle(.borderless)
+                    TextField("Description", text: slotDescriptionBinding(slot))
                 }
             }
             Button("Add slot") {
-                projects.editDraft(projectId: project.id) { draft in
-                    var index = draft.slotRequirements.count + 1
-                    var name = "slot\(index)"
-                    while draft.slotRequirements[name] != nil {
-                        index += 1
-                        name = "slot\(index)"
-                    }
-                    draft.slotRequirements[name] = "capability.required"
-                }
+                projectConfiguration.addSlot(projectId: project.id)
             }
         }
     }
@@ -167,9 +165,7 @@ public struct ProjectDetailView: View {
                 }
                 Toggle("Enabled", isOn: moduleBinding(module.id, \.enabled, default: false))
                 Button(role: .destructive) {
-                    projects.editDraft(projectId: project.id) {
-                        $0.modules.removeAll { $0.id == module.id }
-                    }
+                    projectConfiguration.removeModule(projectId: project.id, moduleId: module.id)
                 } label: {
                     Image(systemName: "trash")
                 }
@@ -270,7 +266,7 @@ public struct ProjectDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Local Bindings").sectionLabel()
             ForEach(state.draft?.slotRequirements.keys.sorted() ?? [], id: \.self) { slot in
-                let requirement = state.draft?.slotRequirements[slot] ?? ""
+                let requirement = state.draft?.slotRequirements[slot]?.requires ?? ""
                 let candidates = state.candidates.filter { $0.capabilities.contains(requirement) }
                 Picker(slot, selection: localBindingSelection(slot)) {
                     Text("Unbound").tag("")
@@ -293,18 +289,24 @@ public struct ProjectDetailView: View {
     private var saveActions: some View {
         HStack {
             Button("Save locally") {
-                Task { await projects.saveDraft(projectId: project.id, writeToRepository: false) }
+                Task {
+                    await projectConfiguration.saveDraft(
+                        projectId: project.id, writeToRepository: false)
+                }
             }
             .keyboardShortcut("s", modifiers: [.command])
             Button("Save and write .jarvis/project.yaml") {
-                Task { await projects.saveDraft(projectId: project.id, writeToRepository: true) }
+                Task {
+                    await projectConfiguration.saveDraft(
+                        projectId: project.id, writeToRepository: true)
+                }
             }
             .disabled(state.isSaving)
         }
     }
 
     private func editModule(_ id: UUID, _ edit: (inout ProjectModuleDraft) -> Void) {
-        projects.editDraft(projectId: project.id) { draft in
+        projectConfiguration.editDraft(projectId: project.id) { draft in
             guard let index = draft.modules.firstIndex(where: { $0.id == id }) else { return }
             edit(&draft.modules[index])
         }
@@ -316,7 +318,9 @@ public struct ProjectDetailView: View {
         Binding(
             get: { state.draft?[keyPath: keyPath] ?? fallback },
             set: { value in
-                projects.editDraft(projectId: project.id) { $0[keyPath: keyPath] = value }
+                projectConfiguration.editDraft(projectId: project.id) {
+                    $0[keyPath: keyPath] = value
+                }
             })
     }
 
@@ -338,7 +342,7 @@ public struct ProjectDetailView: View {
             set: { moduleId in
                 guard let package = moduleCatalog.packages.first(where: { $0.moduleId == moduleId })
                 else { return }
-                projects.editDraft(projectId: project.id) {
+                projectConfiguration.editDraft(projectId: project.id) {
                     $0.select(package: package, for: id)
                 }
             })
@@ -376,9 +380,31 @@ public struct ProjectDetailView: View {
 
     private func slotRequirementBinding(_ slot: String) -> Binding<String> {
         Binding(
-            get: { state.draft?.slotRequirements[slot] ?? "" },
+            get: { state.draft?.slotRequirements[slot]?.requires ?? "" },
             set: { value in
-                projects.editDraft(projectId: project.id) { $0.slotRequirements[slot] = value }
+                projectConfiguration.editDraft(projectId: project.id) {
+                    $0.slotRequirements[slot]?.requires = value
+                }
+            })
+    }
+
+    private func slotOptionalBinding(_ slot: String) -> Binding<Bool> {
+        Binding(
+            get: { state.draft?.slotRequirements[slot]?.optional ?? false },
+            set: { value in
+                projectConfiguration.editDraft(projectId: project.id) {
+                    $0.slotRequirements[slot]?.optional = value
+                }
+            })
+    }
+
+    private func slotDescriptionBinding(_ slot: String) -> Binding<String> {
+        Binding(
+            get: { state.draft?.slotRequirements[slot]?.description ?? "" },
+            set: { value in
+                projectConfiguration.editDraft(projectId: project.id) {
+                    $0.slotRequirements[slot]?.description = value.isEmpty ? nil : value
+                }
             })
     }
 
@@ -387,7 +413,8 @@ public struct ProjectDetailView: View {
             get: { oldName },
             set: { newName in
                 guard !newName.isEmpty, newName != oldName else { return }
-                projects.renameDraftSlot(projectId: project.id, from: oldName, to: newName)
+                projectConfiguration.renameSlot(
+                    projectId: project.id, from: oldName, to: newName)
             })
     }
 
@@ -401,7 +428,7 @@ public struct ProjectDetailView: View {
             set: { selection in
                 let candidate = state.candidates.first { $0.id == selection }
                 Task {
-                    await projects.setLocalBinding(
+                    await projectConfiguration.setLocalBinding(
                         projectId: project.id, slotId: slot, candidate: candidate)
                 }
             })
@@ -422,7 +449,7 @@ public struct ProjectDetailView: View {
                 replacing: binding.bookmarkRef,
                 with: url
             ) {
-                await projects.refreshConfiguration(
+                await projectConfiguration.refresh(
                     projectId: project.id, packages: moduleCatalog.packages)
             }
         }

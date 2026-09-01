@@ -6,6 +6,7 @@ import SwiftUI
 /// detail. `NavigationSplitView` because the sidebar list is the navigation.
 struct RootView: View {
     let projects: ProjectsModel
+    let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
 
     @State private var selection: SidebarSelection?
@@ -92,6 +93,7 @@ struct RootView: View {
             if let project = projects.projects.first(where: { $0.id == projectId }) {
                 ProjectDetailView(
                     projects: projects,
+                    projectConfiguration: projectConfiguration,
                     moduleCatalog: moduleCatalog,
                     project: project)
             } else {

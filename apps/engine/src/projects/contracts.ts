@@ -33,6 +33,7 @@ export function requirePortableProjectConfiguration(
 ): PortableProjectConfiguration {
   validatePortableConfig(value);
   const config = value as PortableProjectConfiguration;
+  requirePortableConfigurationValues(config, "");
   if (
     config.repositories.length !== 1 ||
     config.repositories[0]?.id !== "main" ||
@@ -53,7 +54,6 @@ export function requirePortableProjectConfiguration(
       invalid(`${base}/moduleId is not an accepted bundled Module Package`);
     }
     const configuration = instance.configuration ?? {};
-    requirePortableConfigurationValues(configuration, `${base}/configuration`);
     const validation = modules.validateConfiguration(instance.moduleId, configuration);
     if (!validation.valid) {
       invalid(validation.issues.map((issue) => `${base}/configuration${issue}`).join("; "));
@@ -103,12 +103,14 @@ function requireValid(
   throw new EngineError(code, 400, `The ${subject} does not satisfy its v1 schema: ${problems}`);
 }
 
-const SECRET_LITERAL_KEY = /(?:secret|token|password|credential)$|^(?:private|api).*key$/i;
-const MACHINE_PATH = /^(?:\/|~|[A-Za-z]:[\\/]|\\\\)/;
+const SECRET_LITERAL_KEY = /(?:secret|token|password|credential)$|^(?:private|api).*[-_ ]?key$/i;
+const MACHINE_PATH = /^(?:file:|\/|~|[A-Za-z]:[\\/]|\\)/i;
 
 function requirePortableConfigurationValues(value: unknown, path: string): void {
   if (typeof value === "string") {
-    if (MACHINE_PATH.test(value)) invalid(`${path} must not contain a machine-absolute path`);
+    if (MACHINE_PATH.test(value.trim())) {
+      invalid(`${path || "/"} must not contain a machine-absolute path`);
+    }
     return;
   }
   if (Array.isArray(value)) {
@@ -118,7 +120,9 @@ function requirePortableConfigurationValues(value: unknown, path: string): void 
   if (typeof value !== "object" || value === null) return;
   for (const [key, entry] of Object.entries(value)) {
     const child = `${path}/${key}`;
-    if (SECRET_LITERAL_KEY.test(key)) invalid(`${child} must not contain a secret literal`);
+    if (SECRET_LITERAL_KEY.test(key.trim())) {
+      invalid(`${child} must not contain a secret literal`);
+    }
     requirePortableConfigurationValues(entry, child);
   }
 }

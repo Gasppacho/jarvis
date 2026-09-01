@@ -1,5 +1,25 @@
 /** Project Runtime-owned shapes aligned with the v1 machine contracts. */
 
+export type ProjectResourceKind = "connection" | "runtime" | "mcp" | "module-instance" | "engine";
+
+/** A resource explicitly inside one Project's authority boundary. */
+export interface ProjectResourceCandidate {
+  readonly ref: string;
+  readonly kind: ProjectResourceKind;
+  readonly displayName: string;
+  readonly capabilities: readonly string[];
+}
+
+/** Project Runtime port exposing only candidates eligible inside one Project. */
+export interface ProjectResourceCandidateRegistry {
+  listProjectResourceCandidates(projectId: unknown): readonly ProjectResourceCandidate[];
+}
+
+/** Global registries expose only resources explicitly granted to one Project. */
+export interface ProjectResourceGrantPort {
+  grantedToProject(projectId: string): readonly ProjectResourceCandidate[];
+}
+
 export interface SuggestedProjectConfig {
   readonly apiVersion: "jarvis.dev/project/v1";
   readonly kind: "Project";

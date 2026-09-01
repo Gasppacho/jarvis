@@ -32,6 +32,14 @@ function setNestedConfigurationValue(config: Record<string, unknown>, value: str
   emit["payload"] = { nested: { value } };
 }
 
+function setNestedSecretLiteral(config: Record<string, unknown>, key: string): void {
+  const modules = config["modules"] as Record<string, unknown>[];
+  const configuration = modules[1]!["configuration"] as Record<string, unknown>;
+  const rules = configuration["rules"] as Record<string, unknown>[];
+  const emit = rules[0]!["emit"] as Record<string, unknown>;
+  emit["payload"] = { nested: { [key]: "must-not-appear" } };
+}
+
 function treeSnapshot(root: string): string {
   const files = execFileSync("find", [root, "-type", "f"], { encoding: "utf8" })
     .split("\n")
@@ -527,14 +535,47 @@ describe("repository discovery and project import", () => {
         setNestedConfigurationValue(config, "C:\\Users\\alice\\private"),
     ],
     [
-      "nested secret literal",
+      "whitespace-padded command absolute path",
       (config: Record<string, unknown>) => {
-        const modules = config["modules"] as Record<string, unknown>[];
-        const configuration = modules[1]!["configuration"] as Record<string, unknown>;
-        const rules = configuration["rules"] as Record<string, unknown>[];
-        const emit = rules[0]!["emit"] as Record<string, unknown>;
-        emit["payload"] = { nested: { apiToken: "must-not-appear" } };
+        (config["commands"] as Record<string, unknown>)["test"] = "  /usr/local/bin/test  ";
       },
+    ],
+    [
+      "file URL in metadata",
+      (config: Record<string, unknown>) => {
+        (config["metadata"] as Record<string, unknown>)["description"] =
+          "  file:///Users/alice/private  ";
+      },
+    ],
+    [
+      "single-slash file URL in metadata",
+      (config: Record<string, unknown>) => {
+        (config["metadata"] as Record<string, unknown>)["description"] =
+          "  file:/Users/alice/private  ";
+      },
+    ],
+    [
+      "Windows UNC path in slot metadata",
+      (config: Record<string, unknown>) => {
+        const slots = config["slots"] as Record<string, Record<string, unknown>>;
+        slots["sourceControl"]!["description"] = "  \\\\server\\private  ";
+      },
+    ],
+    [
+      "nested secret literal",
+      (config: Record<string, unknown>) => setNestedSecretLiteral(config, "secret"),
+    ],
+    [
+      "nested token literal",
+      (config: Record<string, unknown>) => setNestedSecretLiteral(config, "token"),
+    ],
+    [
+      "nested password literal with padded key",
+      (config: Record<string, unknown>) => setNestedSecretLiteral(config, " password "),
+    ],
+    [
+      "nested API-key literal",
+      (config: Record<string, unknown>) => setNestedSecretLiteral(config, "api-key"),
     ],
   ])("rejects %s without replacing the last durable configuration", async (_case, mutate) => {
     const engine = await start();
@@ -560,6 +601,27 @@ describe("repository discovery and project import", () => {
     expect(await (await engine.call(`/v1/projects/${created.id}`)).json()).toMatchObject({
       portableConfig: created.portableConfig,
     });
+  });
+
+  it("preserves valid remote URLs and relative commands during portable validation", async () => {
+    const engine = await start();
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
+      id: string;
+    };
+    const portableConfig = parseYaml(
+      readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
+    ) as Record<string, unknown>;
+    (portableConfig["repositories"] as Record<string, unknown>[])[0]!["remote"] =
+      "https://github.com/QServices/token-warehouse.git";
+    (portableConfig["commands"] as Record<string, unknown>)["test"] = "pnpm test";
+
+    const response = await engine.call(`/v1/projects/${created.id}/configuration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ portableConfig, writeToRepository: false }),
+    });
+    expect(response.status).toBe(200);
   });
 
   it("allows an explicit secret reference where the Module contract permits one", async () => {

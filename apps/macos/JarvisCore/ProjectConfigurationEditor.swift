@@ -70,10 +70,28 @@ public struct ProjectModuleDraft: Identifiable, Sendable, Equatable {
     }
 }
 
+public struct ProjectSlotDraft: Sendable, Equatable {
+    public var requires: String
+    public var optional: Bool?
+    public var description: String?
+
+    public init(requires: String, optional: Bool? = nil, description: String? = nil) {
+        self.requires = requires
+        self.optional = optional
+        self.description = description
+    }
+
+    init(payload: Components.Schemas.ProjectSlotRequirement) {
+        requires = payload.requires
+        optional = payload.optional
+        description = payload.description
+    }
+}
+
 public struct ProjectConfigurationDraft: Sendable, Equatable {
     public var name: String
     public var modules: [ProjectModuleDraft]
-    public var slotRequirements: [String: String]
+    public var slotRequirements: [String: ProjectSlotDraft]
 
     private let base: Components.Schemas.PortableProjectConfiguration
 
@@ -87,7 +105,51 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
         modules = configuration.modules.map {
             ProjectModuleDraft(payload: $0, package: packagesById[$0.moduleId])
         }
-        slotRequirements = configuration.slots.additionalProperties.mapValues(\.requires)
+        slotRequirements = configuration.slots.additionalProperties.mapValues(ProjectSlotDraft.init)
+    }
+
+    /// Discovery deliberately returns a partial draft. Completing its required
+    /// v1 fields here lets the first Project Wizard visit edit the same model as
+    /// a reopened configuration instead of dead-ending on the wire union.
+    public init(
+        partialConfigurationJSON: Data,
+        project: Project,
+        packages: [ModulePackage]
+    ) throws {
+        guard var document = try JSONSerialization.jsonObject(with: partialConfigurationJSON)
+            as? [String: Any]
+        else { throw ProjectEditorValidationError(issues: ["The discovered draft is invalid."]) }
+        document["apiVersion"] = document["apiVersion"] ?? "jarvis.dev/project/v1"
+        document["kind"] = document["kind"] ?? "Project"
+        var metadata = document["metadata"] as? [String: Any] ?? [:]
+        metadata["id"] = (metadata["id"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? project.id
+        metadata["name"] = (metadata["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? project.name
+        document["metadata"] = metadata
+        var repositories = document["repositories"] as? [[String: Any]] ?? []
+        if repositories.isEmpty { repositories = [["id": "main", "root": "."]] }
+        repositories[0]["id"] = "main"
+        repositories[0]["root"] = "."
+        repositories[0]["defaultBranch"] = repositories[0]["defaultBranch"] ?? "main"
+        repositories[0]["remote"] = repositories[0]["remote"] ?? "origin"
+        document["repositories"] = [repositories[0]]
+        document["commands"] = document["commands"] ?? [String: String]()
+        var git = document["git"] as? [String: Any] ?? [:]
+        git["branchPattern"] = git["branchPattern"] ?? "agent/{workItemId}-{slug}"
+        git["commitStrategy"] = git["commitStrategy"] ?? "conventional"
+        git["pushRemote"] = git["pushRemote"] ?? "origin"
+        git["allowForcePush"] = false
+        document["git"] = git
+        var workspace = document["workspace"] as? [String: Any] ?? [:]
+        workspace["strategy"] = "git-worktree"
+        workspace["maxConcurrentExecutions"] = workspace["maxConcurrentExecutions"] ?? 1
+        workspace["retainOnFailureDays"] = workspace["retainOnFailureDays"] ?? 7
+        document["workspace"] = workspace
+        document["slots"] = document["slots"] ?? [String: Any]()
+        document["modules"] = document["modules"] ?? [Any]()
+        let completed = try JSONSerialization.data(withJSONObject: document)
+        let configuration = try JSONDecoder().decode(
+            Components.Schemas.PortableProjectConfiguration.self, from: completed)
+        self.init(configuration: configuration, packages: packages)
     }
 
     public mutating func select(package: ModulePackage, for moduleId: UUID) {
@@ -139,7 +201,12 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
         var metadata = document["metadata"] as? [String: Any] ?? [:]
         metadata["name"] = name
         document["metadata"] = metadata
-        document["slots"] = slotRequirements.mapValues { ["requires": $0] }
+        document["slots"] = slotRequirements.mapValues { requirement in
+            var value: [String: Any] = ["requires": requirement.requires]
+            if let optional = requirement.optional { value["optional"] = optional }
+            if let description = requirement.description { value["description"] = description }
+            return value
+        }
         document["modules"] = modules.map { module in
             var configuration: [String: Any] = [:]
             if module.configurationFields.isEmpty, let raw = module.rawConfigurationJSON,

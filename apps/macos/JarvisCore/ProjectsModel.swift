@@ -3,16 +3,6 @@ import JarvisAPI
 import OSLog
 import Observation
 
-public struct ProjectConfigurationState: Sendable, Equatable {
-    public var detail: ProjectDetail?
-    public var localBindings: LocalProjectBindings?
-    public var candidates: [ProjectResourceCandidate] = []
-    public var draft: ProjectConfigurationDraft?
-    public var isLoading = false
-    public var isSaving = false
-    public var errorMessage: String?
-}
-
 /// The Project Registry as the shell shows it (docs/architecture/PROJECTS.md):
 /// the sidebar list and the import flow. MACOS_APP.md: an AppModel owns this
 /// state; the views derive from it and hold none of their own.
@@ -28,7 +18,6 @@ public final class ProjectsModel {
     /// Per-project Repository Grant failures do not erase the Project Registry.
     /// The detail remains queryable and can explain how to grant access again.
     public private(set) var repositoryGrantMessages: [String: String] = [:]
-    public private(set) var configurationStates: [String: ProjectConfigurationState] = [:]
 
     /// Where the import flow stands. The shell never imports before the user
     /// confirms the detected configuration (UX wizard step 2), and the sheet
@@ -143,175 +132,6 @@ public final class ProjectsModel {
             importState = .failed(Self.describe(error))
             return nil
         }
-    }
-
-    public func configurationState(for projectId: String) -> ProjectConfigurationState {
-        configurationStates[projectId] ?? ProjectConfigurationState()
-    }
-
-    public func refreshConfiguration(projectId: String, packages: [ModulePackage] = []) async {
-        guard let client else { return }
-        updateConfigurationState(projectId) {
-            $0.isLoading = true
-            $0.candidates = []
-        }
-        defer { updateConfigurationState(projectId) { $0.isLoading = false } }
-        do {
-            let detail = try await client.getProject(id: projectId)
-            let bindings = try await client.getProjectBindings(projectId: projectId)
-            let candidates = try await client.listProjectBindingCandidates(projectId: projectId)
-            updateConfigurationState(projectId) {
-                $0.detail = detail
-                $0.localBindings = bindings
-                $0.candidates = candidates
-                $0.draft = detail.portableConfiguration.map {
-                    ProjectConfigurationDraft(configuration: $0, packages: packages)
-                }
-                $0.errorMessage = nil
-            }
-        } catch {
-            updateConfigurationState(projectId) {
-                $0.candidates = []
-                $0.errorMessage = Self.describe(error)
-            }
-        }
-    }
-
-    public func editDraft(
-        projectId: String,
-        _ edit: (inout ProjectConfigurationDraft) -> Void
-    ) {
-        updateConfigurationState(projectId) { state in
-            guard var draft = state.draft else { return }
-            edit(&draft)
-            state.draft = draft
-            state.errorMessage = nil
-        }
-    }
-
-    public func renameDraftSlot(projectId: String, from oldName: String, to newName: String) {
-        guard !newName.isEmpty, newName != oldName else { return }
-        let state = configurationState(for: projectId)
-        if state.localBindings?.slots.contains(where: { $0.slotId == oldName }) == true {
-            updateConfigurationState(projectId) {
-                $0.errorMessage =
-                    "Unbind \(oldName) before renaming it so Local Bindings remain valid."
-            }
-            return
-        }
-        editDraft(projectId: projectId) { draft in
-            guard draft.slotRequirements[newName] == nil,
-                let requirement = draft.slotRequirements.removeValue(forKey: oldName)
-            else { return }
-            draft.slotRequirements[newName] = requirement
-            for index in draft.modules.indices {
-                if draft.modules[index].runtimeSlot == oldName {
-                    draft.modules[index].runtimeSlot = newName
-                }
-                for (binding, target) in draft.modules[index].bindings where target == oldName {
-                    draft.modules[index].bindings[binding] = newName
-                }
-            }
-        }
-    }
-
-    @discardableResult
-    public func saveDraft(projectId: String, writeToRepository: Bool) async -> ProjectDetail? {
-        do {
-            guard let draft = configurationState(for: projectId).draft else { return nil }
-            return await saveConfiguration(
-                projectId: projectId,
-                portableConfig: try draft.payload(),
-                writeToRepository: writeToRepository)
-        } catch {
-            updateConfigurationState(projectId) { $0.errorMessage = error.localizedDescription }
-            return nil
-        }
-    }
-
-    @discardableResult
-    public func saveConfiguration(
-        projectId: String,
-        portableConfig: Components.Schemas.PortableProjectConfiguration,
-        writeToRepository: Bool
-    ) async -> ProjectDetail? {
-        guard let client, !configurationState(for: projectId).isSaving else { return nil }
-        updateConfigurationState(projectId) { $0.isSaving = true }
-        defer { updateConfigurationState(projectId) { $0.isSaving = false } }
-        do {
-            let detail = try await client.replaceProjectConfiguration(
-                projectId: projectId,
-                portableConfig: portableConfig,
-                writeToRepository: writeToRepository)
-            let candidates: [ProjectResourceCandidate]
-            let candidateError: String?
-            do {
-                candidates = try await client.listProjectBindingCandidates(projectId: projectId)
-                candidateError = nil
-            } catch {
-                candidates = []
-                candidateError =
-                    "Configuration was saved, but eligible Local Binding candidates could not be refreshed. Reload this Project before binding a slot."
-            }
-            updateConfigurationState(projectId) {
-                $0.detail = detail
-                $0.candidates = candidates
-                $0.errorMessage = candidateError
-            }
-            await refresh()
-            return detail
-        } catch {
-            updateConfigurationState(projectId) { $0.errorMessage = Self.describe(error) }
-            return nil
-        }
-    }
-
-    public func setLocalBinding(
-        projectId: String,
-        slotId: String,
-        candidate: ProjectResourceCandidate?
-    ) async -> LocalProjectBindings? {
-        guard var payload = configurationState(for: projectId).localBindings?.wirePayload else {
-            return nil
-        }
-        if let candidate {
-            payload.slots.additionalProperties[slotId] = .init(
-                kind: candidate.kind.payload, ref: candidate.ref)
-        } else {
-            payload.slots.additionalProperties.removeValue(forKey: slotId)
-        }
-        return await saveBindings(projectId: projectId, bindings: payload)
-    }
-
-    @discardableResult
-    public func saveBindings(
-        projectId: String,
-        bindings: Components.Schemas.ProjectBindings
-    ) async -> LocalProjectBindings? {
-        guard let client, !configurationState(for: projectId).isSaving else { return nil }
-        updateConfigurationState(projectId) { $0.isSaving = true }
-        defer { updateConfigurationState(projectId) { $0.isSaving = false } }
-        do {
-            let saved = try await client.replaceProjectBindings(
-                projectId: projectId, bindings: bindings)
-            updateConfigurationState(projectId) {
-                $0.localBindings = saved
-                $0.errorMessage = nil
-            }
-            return saved
-        } catch {
-            updateConfigurationState(projectId) { $0.errorMessage = Self.describe(error) }
-            return nil
-        }
-    }
-
-    private func updateConfigurationState(
-        _ projectId: String,
-        _ update: (inout ProjectConfigurationState) -> Void
-    ) {
-        var state = configurationStates[projectId] ?? ProjectConfigurationState()
-        update(&state)
-        configurationStates[projectId] = state
     }
 
     public func detail(for id: String) async throws -> ProjectDetail {

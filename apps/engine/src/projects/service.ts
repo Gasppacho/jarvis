@@ -5,8 +5,6 @@ import type { ModuleHost } from "../../../../packages/kernel/src/module-host.js"
 import type {
   ImportProjectRequest,
   ProjectRegistry,
-  ProjectResourceCandidate,
-  ProjectResourceGrantPort,
   ReplaceProjectBindingsRequest,
   ReplaceProjectConfigurationRequest,
   RepositoryDiscoveryPort,
@@ -30,6 +28,8 @@ import type {
   BindingStatus,
   PortableProjectConfiguration,
   ProjectBindings,
+  ProjectResourceCandidate,
+  ProjectResourceGrantPort,
   ProjectDetail,
   ProjectSummary,
   StoredPortableProjectConfiguration,

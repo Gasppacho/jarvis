@@ -1,12 +1,20 @@
 import Database from "better-sqlite3";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Clock } from "../../../../packages/kernel/src/clock.js";
-import type { ProjectResourceGrantPort } from "../../../../packages/kernel/src/project-registry.js";
+import type { ProjectResourceGrantPort } from "../../../../packages/project-runtime/src/project-types.js";
 import {
   ModuleHost,
   ModuleManifestContractRegistry,
@@ -96,6 +104,84 @@ describe("Project configuration replacement", () => {
     ).toMatchObject({
       slots: { agentRuntime: { kind: "runtime", ref: "runtime/codex-test" } },
     });
+  });
+
+  it("removes a first repository file when SQLite fails after writing it", () => {
+    const repository = mkdtempSync(join(tmpdir(), "jarvis-first-write-compensation-"));
+    roots.push(repository);
+    const projectFile = join(repository, ".jarvis", "project.yaml");
+    const db = projectDatabase();
+    databases.push(db);
+    const store = new ProjectStore(db, clock);
+    const configuration = exampleConfiguration();
+    store.createProject({
+      id: "token-warehouse",
+      name: "Before",
+      status: "draft",
+      portableConfig: { ...configuration, metadata: { ...configuration.metadata, name: "Before" } },
+      repositoryPath: repository,
+    });
+    db.exec(`CREATE TRIGGER fail_first_project_update BEFORE UPDATE ON projects
+      BEGIN SELECT RAISE(ABORT, 'injected SQLite failure'); END`);
+    const service = new ProjectService(
+      store,
+      moduleHost(),
+      new AtomicProjectConfigurationWriter(),
+      new EmptyProjectResourceGrants(),
+    );
+
+    expect(() =>
+      service.replaceProjectConfiguration({
+        projectId: "token-warehouse",
+        portableConfig: configuration,
+        writeToRepository: true,
+      }),
+    ).toThrow("injected SQLite failure");
+    expect(existsSync(projectFile)).toBe(false);
+    expect(store.findById("token-warehouse")?.name).toBe("Before");
+  });
+
+  it("reports a stable compensation error when a first-file cleanup fails", () => {
+    const repository = mkdtempSync(join(tmpdir(), "jarvis-first-cleanup-failure-"));
+    roots.push(repository);
+    const projectFile = join(repository, ".jarvis", "project.yaml");
+    const db = projectDatabase();
+    databases.push(db);
+    const store = new ProjectStore(db, clock);
+    const configuration = exampleConfiguration();
+    store.createProject({
+      id: "token-warehouse",
+      name: "Before",
+      status: "draft",
+      portableConfig: { ...configuration, metadata: { ...configuration.metadata, name: "Before" } },
+      repositoryPath: repository,
+    });
+    db.exec(`CREATE TRIGGER fail_cleanup_project_update BEFORE UPDATE ON projects
+      BEGIN SELECT RAISE(ABORT, 'injected SQLite failure'); END`);
+    const atomic = new AtomicProjectConfigurationWriter();
+    const cleanupFailure: ProjectConfigurationWriter = {
+      write: (path, next) => {
+        const compensation = atomic.write(path, next);
+        rmSync(projectFile);
+        mkdirSync(projectFile);
+        return compensation;
+      },
+    };
+    const service = new ProjectService(
+      store,
+      moduleHost(),
+      cleanupFailure,
+      new EmptyProjectResourceGrants(),
+    );
+
+    expect(() =>
+      service.replaceProjectConfiguration({
+        projectId: "token-warehouse",
+        portableConfig: configuration,
+        writeToRepository: true,
+      }),
+    ).toThrowError(expect.objectContaining({ code: "project.repository-compensation-failed" }));
+    expect(store.findById("token-warehouse")?.name).toBe("Before");
   });
 
   it("restores the repository file when SQLite fails after the file replacement", () => {

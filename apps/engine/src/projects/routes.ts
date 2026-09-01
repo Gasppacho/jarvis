@@ -8,11 +8,13 @@ import type {
 import type {
   ProjectBindings,
   ProjectDetail,
+  ProjectResourceCandidateRegistry,
   ProjectSummary,
   RepositoryDiscovery,
 } from "./types.js";
 
-export type LocalProjectRegistry = ProjectRegistry<ProjectSummary, ProjectDetail, ProjectBindings>;
+export type LocalProjectRegistry = ProjectRegistry<ProjectSummary, ProjectDetail, ProjectBindings> &
+  ProjectResourceCandidateRegistry;
 export type LocalRepositoryDiscovery = RepositoryDiscoveryPort<RepositoryDiscovery>;
 
 /**

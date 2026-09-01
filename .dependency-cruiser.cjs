@@ -23,6 +23,13 @@ module.exports = {
       to: { path: "^packages/modules/" },
     },
     {
+      name: "no-kernel-to-project-runtime",
+      severity: "error",
+      comment: "The generic Kernel cannot own or depend on Project Runtime domain concepts.",
+      from: { path: "^packages/kernel/" },
+      to: { path: "^packages/project-runtime/" },
+    },
+    {
       name: "no-shell-to-engine-internals",
       severity: "error",
       comment: "The macOS shell talks to the engine only through the Local API contract.",

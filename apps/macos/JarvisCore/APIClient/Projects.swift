@@ -133,24 +133,21 @@ public enum ProjectResourceKind: String, CaseIterable, Sendable, Equatable {
     case moduleInstance = "module-instance"
     case engine
 
-    init(payload: Components.Schemas.ProjectSlotBinding.kindPayload) {
-        self = switch payload {
-        case .connection: .connection
-        case .runtime: .runtime
-        case .mcp: .mcp
-        case .module_hyphen_instance: .moduleInstance
-        case .engine: .engine
+    init(wireValue: String) {
+        guard let kind = Self(rawValue: wireValue) else {
+            preconditionFailure("Generated Project resource kind drifted: \(wireValue)")
         }
+        self = kind
+    }
+
+    init(payload: Components.Schemas.ProjectSlotBinding.kindPayload) {
+        self.init(wireValue: payload.rawValue)
     }
 
     var payload: Components.Schemas.ProjectSlotBinding.kindPayload {
-        switch self {
-        case .connection: .connection
-        case .runtime: .runtime
-        case .mcp: .mcp
-        case .moduleInstance: .module_hyphen_instance
-        case .engine: .engine
-        }
+        guard let payload = Components.Schemas.ProjectSlotBinding.kindPayload(rawValue: rawValue)
+        else { preconditionFailure("Generated Project resource kind drifted: \(rawValue)") }
+        return payload
     }
 }
 
@@ -172,13 +169,7 @@ public struct ProjectResourceCandidate: Identifiable, Sendable, Equatable {
         ref = payload.ref
         displayName = payload.displayName
         capabilities = payload.capabilities
-        kind = switch payload.kind {
-        case .connection: .connection
-        case .runtime: .runtime
-        case .mcp: .mcp
-        case .module_hyphen_instance: .moduleInstance
-        case .engine: .engine
-        }
+        kind = ProjectResourceKind(wireValue: payload.kind.rawValue)
     }
 }
 
@@ -226,6 +217,7 @@ public struct ProjectDetail: Sendable, Equatable {
     /// absolute path (docs/architecture/PROJECTS.md) — tests assert that.
     public let portableConfigJSON: Data?
     public let portableConfiguration: Components.Schemas.PortableProjectConfiguration?
+    public let partialPortableConfigurationJSON: Data?
     public let modules: [ProjectModuleInstance]
     public let projectSlots: [String]
 
@@ -239,6 +231,7 @@ public struct ProjectDetail: Sendable, Equatable {
         )
         bindings = ProjectDetail.decodeBindings(detail.bindingStatus)
         portableConfiguration = detail.portableConfig.value1
+        partialPortableConfigurationJSON = detail.portableConfig.value2?.jsonData
         modules = detail.portableConfig.value1?.modules.map(ProjectModuleInstance.init(payload:)) ?? []
         projectSlots = detail.portableConfig.value1?.slots.additionalProperties.keys.sorted() ?? []
         portableConfigJSON = encodedJSON(detail.portableConfig)
