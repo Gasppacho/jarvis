@@ -6,8 +6,11 @@ import type { DatabaseState } from "../db/open.js";
 import { EngineError, toErrorEnvelope } from "../errors.js";
 import { ForbiddenJsonKeyError, parseJsonBody } from "./json.js";
 import { API_VERSION, ENGINE_VERSION } from "../version.js";
-import type { ProjectService } from "../projects/service.js";
-import { registerProjectRoutes } from "../projects/routes.js";
+import {
+  registerProjectRoutes,
+  type LocalProjectRegistry,
+  type LocalRepositoryDiscovery,
+} from "../projects/routes.js";
 import type { ModuleHost } from "../../../../packages/kernel/src/module-host.js";
 
 type HealthResponse = components["schemas"]["HealthResponse"];
@@ -15,8 +18,9 @@ type HealthResponse = components["schemas"]["HealthResponse"];
 export interface ServerDependencies {
   readonly config: EngineConfig;
   readonly databaseState: () => DatabaseState;
+  readonly repositoryDiscovery: LocalRepositoryDiscovery;
   /** The Project Registry; absent while the engine runs degraded. */
-  readonly projects: ProjectService | undefined;
+  readonly projects: LocalProjectRegistry | undefined;
   /** Validated official Module Packages available to every project. */
   readonly modules: ModuleHost;
   readonly isShuttingDown: () => boolean;
@@ -117,6 +121,7 @@ export function buildServer(deps: ServerDependencies): FastifyInstance {
 
   registerProjectRoutes(app, {
     databaseState: deps.databaseState,
+    repositoryDiscovery: deps.repositoryDiscovery,
     projects: deps.projects,
   });
 

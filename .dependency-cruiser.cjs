@@ -30,6 +30,28 @@ module.exports = {
       to: { path: "^(apps/engine|packages)/" },
     },
     {
+      name: "no-http-to-project-service",
+      severity: "error",
+      comment:
+        "HTTP adapters depend on the Kernel Project Registry port, never its concrete engine adapter.",
+      from: { path: "^apps/engine/src/(http/|projects/routes\\.ts$)" },
+      to: { path: "^apps/engine/src/projects/service\\.ts$" },
+    },
+    {
+      name: "no-project-runtime-to-engine",
+      severity: "error",
+      comment: "Project Runtime owns its boundary and cannot depend on engine adapters.",
+      from: { path: "^packages/project-runtime/" },
+      to: { path: "^apps/engine/" },
+    },
+    {
+      name: "no-project-runtime-to-module",
+      severity: "error",
+      comment: "Project Runtime composes manifests and ports, never module business code.",
+      from: { path: "^packages/project-runtime/" },
+      to: { path: "^packages/modules/" },
+    },
+    {
       name: "no-circular",
       severity: "error",
       from: {},
@@ -50,6 +72,7 @@ module.exports = {
     doNotFollow: { path: "node_modules" },
     exclude: { path: "(node_modules|dist)" },
     tsConfig: { fileName: "tsconfig.json" },
+    tsPreCompilationDeps: true,
     enhancedResolveOptions: { exportsFields: ["exports"], conditionNames: ["import", "node"] },
   },
 };

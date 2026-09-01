@@ -1,8 +1,14 @@
 import type { FastifyInstance } from "fastify";
 import type { DatabaseState } from "../db/open.js";
 import { EngineError } from "../errors.js";
-import { discoverRepository, RepositoryPathError } from "./discovery.js";
-import type { ProjectService } from "./service.js";
+import type {
+  ProjectRegistry,
+  RepositoryDiscoveryPort,
+} from "../../../../packages/kernel/src/project-registry.js";
+import type { ProjectDetail, ProjectSummary, RepositoryDiscovery } from "./types.js";
+
+export type LocalProjectRegistry = ProjectRegistry<ProjectSummary, ProjectDetail>;
+export type LocalRepositoryDiscovery = RepositoryDiscoveryPort<RepositoryDiscovery>;
 
 /**
  * The Project Registry's HTTP surface: discovery plus import/list/detail.
@@ -13,18 +19,15 @@ import type { ProjectService } from "./service.js";
 
 export interface ProjectRouteDependencies {
   readonly databaseState: () => DatabaseState;
+  readonly repositoryDiscovery: LocalRepositoryDiscovery;
   /** `undefined` while the engine runs without a database (degraded). */
-  readonly projects: ProjectService | undefined;
+  readonly projects: LocalProjectRegistry | undefined;
 }
 
 export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDependencies): void {
   app.post("/v1/discovery/repository", async (request, reply) => {
     const body = request.body as { path?: unknown } | undefined;
-    try {
-      return reply.code(200).send(discoverRepository(body?.path));
-    } catch (error) {
-      throw discoveryError(error);
-    }
+    return reply.code(200).send(deps.repositoryDiscovery.discoverRepository(body?.path));
   });
 
   app.post("/v1/projects", async (request, reply) => {
@@ -53,21 +56,19 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
     const service = requireDatabaseReady(deps);
     const params = request.params as { projectId?: unknown; repositoryId?: unknown } | undefined;
     const body = request.body as { path?: unknown; bookmarkRef?: unknown } | undefined;
-    return reply
-      .code(200)
-      .send(
-        service.updateRepositoryBinding(
-          params?.projectId,
-          params?.repositoryId,
-          body?.path,
-          body?.bookmarkRef,
-        ),
-      );
+    return reply.code(200).send(
+      service.updateRepositoryBinding({
+        projectId: params?.projectId,
+        repositoryId: params?.repositoryId,
+        path: body?.path,
+        bookmarkRef: body?.bookmarkRef,
+      }),
+    );
   });
 }
 
 /** The live probe, so a database handle that fails mid-session degrades too. */
-function requireDatabaseReady(deps: ProjectRouteDependencies): ProjectService {
+function requireDatabaseReady(deps: ProjectRouteDependencies): LocalProjectRegistry {
   if (deps.databaseState() !== "ready") {
     throw new EngineError(
       "engine.database-unavailable",
@@ -84,12 +85,4 @@ function requireDatabaseReady(deps: ProjectRouteDependencies): ProjectService {
     );
   }
   return service;
-}
-
-function discoveryError(error: unknown): EngineError {
-  if (error instanceof RepositoryPathError) {
-    return new EngineError("repository.path-invalid", 400, error.message);
-  }
-  if (error instanceof EngineError) return error;
-  return new EngineError("system.internal-error", 500, "The repository could not be inspected.");
 }

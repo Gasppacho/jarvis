@@ -11,10 +11,17 @@ import {
 import { validatePortableConfig } from "./contracts.js";
 import type { ProjectStore, ProjectRow } from "./store.js";
 import type {
+  ImportProjectRequest,
+  ProjectRegistry,
+  RepositoryDiscoveryPort,
+  UpdateRepositoryBindingRequest,
+} from "../../../../packages/kernel/src/project-registry.js";
+import type {
   BindingStatus,
   PortableProjectConfig,
   ProjectDetail,
   ProjectSummary,
+  RepositoryDiscovery,
 } from "./types.js";
 
 /**
@@ -28,15 +35,20 @@ const PROJECT_YAML = join(".jarvis", "project.yaml");
 /** A committed config beyond this size is rejected: it will not be read at all. */
 const MAX_PROJECT_YAML_BYTES = 512 * 1024;
 
-export interface ImportProjectRequest {
-  readonly repositoryPath: unknown;
-  readonly portableConfig: unknown;
-}
-
 /** The MVP import flow ends in `draft` (IMPLEMENTATION_SEQUENCE.md, ticket 02). */
 const INITIAL_STATUS = "draft" as const;
 
-export class ProjectService {
+export class RepositoryDiscoveryService implements RepositoryDiscoveryPort<RepositoryDiscovery> {
+  discoverRepository(root: unknown): RepositoryDiscovery {
+    try {
+      return discoverRepository(root);
+    } catch (error) {
+      throw repositoryPathError(error);
+    }
+  }
+}
+
+export class ProjectService implements ProjectRegistry<ProjectSummary, ProjectDetail> {
   constructor(private readonly store: ProjectStore) {}
 
   importProject(request: ImportProjectRequest): ProjectDetail {
@@ -85,13 +97,9 @@ export class ProjectService {
     return toDetail(this.requireProject(id));
   }
 
-  updateRepositoryBinding(
-    id: unknown,
-    repositoryId: unknown,
-    path: unknown,
-    bookmarkRef: unknown,
-  ): ProjectDetail {
-    const current = this.requireProject(id);
+  updateRepositoryBinding(request: UpdateRepositoryBindingRequest): ProjectDetail {
+    const { projectId, repositoryId, path, bookmarkRef } = request;
+    const current = this.requireProject(projectId);
     const expectedRepositoryId = current.portableConfig.repositories?.[0]?.id ?? "main";
     if (repositoryId !== expectedRepositoryId) {
       throw new EngineError(

@@ -8,7 +8,7 @@ import { openDatabase, type DatabaseState, type OpenedDatabase } from "./db/open
 import { buildServer } from "./http/server.js";
 import { watchParentProcess } from "./parent-watch.js";
 import { API_VERSION } from "./version.js";
-import { ProjectService } from "./projects/service.js";
+import { ProjectService, RepositoryDiscoveryService } from "./projects/service.js";
 import { ProjectStore } from "./projects/store.js";
 import { loadBundledModuleHost } from "./modules/bundled-module-registry.js";
 
@@ -142,12 +142,14 @@ async function main(): Promise<void> {
     );
   }
   const database = opened;
+  const repositoryDiscovery = new RepositoryDiscoveryService();
   const projects =
     database === undefined ? undefined : new ProjectService(new ProjectStore(database.db));
 
   app = buildServer({
     config,
     databaseState: (): DatabaseState => database?.state() ?? "failed",
+    repositoryDiscovery,
     projects,
     modules,
     isShuttingDown: () => shuttingDown,
