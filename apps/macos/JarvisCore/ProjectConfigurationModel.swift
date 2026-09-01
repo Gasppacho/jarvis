@@ -134,6 +134,101 @@ public final class ProjectConfigurationModel {
         }
     }
 
+    /// Applies synchronous Project Wizard edits through the presentation's action seam.
+    public func apply(
+        _ action: ProjectDetailPresentation.Action,
+        projectId: String,
+        packages: [ModulePackage],
+        bindingOptions: [String] = []
+    ) {
+        switch action {
+        case .setProjectName(let name):
+            editDraft(projectId: projectId) { $0.name = name }
+        case .addSlot:
+            addSlot(projectId: projectId)
+        case .removeSlot(let slotId):
+            removeSlot(projectId: projectId, slotId: slotId)
+        case .renameSlot(let oldName, let newName):
+            renameSlot(projectId: projectId, from: oldName, to: newName)
+        case .setSlotRequirement(let slotId, let requirement):
+            editDraft(projectId: projectId) { $0.slotRequirements[slotId]?.requires = requirement }
+        case .setSlotOptional(let slotId, let optional):
+            editDraft(projectId: projectId) { $0.slotRequirements[slotId]?.optional = optional }
+        case .setSlotDescription(let slotId, let description):
+            editDraft(projectId: projectId) {
+                $0.slotRequirements[slotId]?.description = description?.isEmpty == true
+                    ? nil : description
+            }
+        case .addModule(let packageId):
+            guard let package = packages.first(where: { $0.moduleId == packageId }) else { return }
+            addModule(projectId: projectId, package: package)
+        case .removeModule(let moduleId):
+            removeModule(projectId: projectId, moduleId: moduleId)
+        case .setModulePackage(let moduleId, let packageId):
+            guard let package = packages.first(where: { $0.moduleId == packageId }) else { return }
+            editDraft(projectId: projectId) { $0.select(package: package, for: moduleId) }
+        case .setModuleInstanceID(let moduleId, let instanceId):
+            editModule(projectId: projectId, moduleId: moduleId) { $0.instanceId = instanceId }
+        case .setModuleEnabled(let moduleId, let enabled):
+            editModule(projectId: projectId, moduleId: moduleId) { $0.enabled = enabled }
+        case .setModuleRuntimeSlot(let moduleId, let slotId):
+            editModule(projectId: projectId, moduleId: moduleId) { $0.runtimeSlot = slotId }
+        case .addModuleBinding(let moduleId):
+            editModule(projectId: projectId, moduleId: moduleId) { module in
+                var index = module.bindings.count + 1
+                var key = "binding\(index)"
+                while module.bindings[key] != nil {
+                    index += 1
+                    key = "binding\(index)"
+                }
+                module.bindings[key] = bindingOptions.first ?? "main"
+            }
+        case .removeModuleBinding(let moduleId, let key):
+            editModule(projectId: projectId, moduleId: moduleId) { $0.bindings[key] = nil }
+        case .renameModuleBinding(let moduleId, let oldKey, let newKey):
+            guard !newKey.isEmpty, newKey != oldKey else { return }
+            editModule(projectId: projectId, moduleId: moduleId) { module in
+                guard module.bindings[newKey] == nil else { return }
+                let value = module.bindings.removeValue(forKey: oldKey)
+                module.bindings[newKey] = value
+            }
+        case .setModuleBinding(let moduleId, let key, let value):
+            editModule(projectId: projectId, moduleId: moduleId) { $0.bindings[key] = value }
+        case .setModuleConfiguration(let moduleId, let key, let value):
+            editModule(projectId: projectId, moduleId: moduleId) {
+                $0.configurationValues[key] = value
+            }
+        case .chooseRepository, .setLocalBinding, .saveLocal, .saveRepository:
+            break
+        }
+    }
+
+    /// Performs asynchronous binding and save actions; edit actions are delegated to `apply`.
+    public func perform(
+        _ action: ProjectDetailPresentation.Action,
+        projectId: String,
+        packages: [ModulePackage],
+        bindingOptions: [String] = []
+    ) async {
+        switch action {
+        case .setLocalBinding(let slotId, let candidateId):
+            let candidate = candidateId.flatMap { id in
+                state(for: projectId).candidates.first { $0.id == id }
+            }
+            _ = await setLocalBinding(projectId: projectId, slotId: slotId, candidate: candidate)
+        case .saveLocal:
+            _ = await saveDraft(projectId: projectId, writeToRepository: false)
+        case .saveRepository:
+            _ = await saveDraft(projectId: projectId, writeToRepository: true)
+        default:
+            apply(
+                action,
+                projectId: projectId,
+                packages: packages,
+                bindingOptions: bindingOptions)
+        }
+    }
+
     @discardableResult
     public func saveDraft(projectId: String, writeToRepository: Bool) async -> ProjectDetail? {
         do {
@@ -239,6 +334,17 @@ public final class ProjectConfigurationModel {
         } catch {
             update(projectId) { $0.errorMessage = ProjectsModel.describe(error) }
             return nil
+        }
+    }
+
+    private func editModule(
+        projectId: String,
+        moduleId: UUID,
+        _ edit: (inout ProjectModuleDraft) -> Void
+    ) {
+        editDraft(projectId: projectId) { draft in
+            guard let index = draft.modules.firstIndex(where: { $0.id == moduleId }) else { return }
+            edit(&draft.modules[index])
         }
     }
 

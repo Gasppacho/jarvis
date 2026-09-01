@@ -117,7 +117,7 @@ public struct ProjectDetailView: View {
     private func portableConfigurationEditor(_ detail: ProjectDetail) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Portable Configuration").sectionLabel()
-            TextField("Project name", text: draftBinding(\.name, default: ""))
+            TextField("Project name", text: projectNameBinding)
                 .textFieldStyle(.roundedBorder)
 
             slotRequirementsEditor
@@ -181,7 +181,7 @@ public struct ProjectDetailView: View {
                         Text(package.displayName).tag(package.moduleId)
                     }
                 }
-                Toggle("Enabled", isOn: moduleBinding(module.id, \.enabled, default: false))
+                Toggle("Enabled", isOn: moduleEnabledBinding(module.id))
                 Button(role: .destructive) {
                     perform(.removeModule(module.id))
                 } label: {
@@ -191,11 +191,11 @@ public struct ProjectDetailView: View {
             }
             TextField(
                 "Unique Instance ID",
-                text: moduleBinding(module.id, \.instanceId, default: "")
+                text: moduleInstanceIDBinding(module.id)
             )
             .textFieldStyle(.roundedBorder)
 
-            Picker("Runtime slot", selection: moduleBinding(module.id, \.runtimeSlot, default: ""))
+            Picker("Runtime slot", selection: moduleRuntimeSlotBinding(module.id))
             {
                 Text("None").tag("")
                 ForEach(projectSlots, id: \.self) { Text($0).tag($0) }
@@ -244,7 +244,9 @@ public struct ProjectDetailView: View {
                             isOn: Binding(
                                 get: { module.configurationValues[field.key] == "true" },
                                 set: { value in
-                                    setConfiguration(module.id, field.key, value ? "true" : "false")
+                                    perform(
+                                        .setModuleConfiguration(
+                                            module.id, field.key, value ? "true" : "false"))
                                 }))
                     case .choice(let choices):
                         Picker(
@@ -323,91 +325,51 @@ public struct ProjectDetailView: View {
                 $0.repositoryId == repositoryId
             }) else { return }
             chooseRepository(for: binding)
-        case .addSlot:
-            projectConfiguration.addSlot(projectId: project.id)
-        case .removeSlot(let slotId):
-            projectConfiguration.removeSlot(projectId: project.id, slotId: slotId)
-        case .addModule(let packageId):
-            guard let package = moduleCatalog.packages.first(where: {
-                $0.moduleId == packageId
-            }) else { return }
-            projectConfiguration.addModule(projectId: project.id, package: package)
-        case .removeModule(let moduleId):
-            projectConfiguration.removeModule(projectId: project.id, moduleId: moduleId)
-        case .addModuleBinding(let moduleId):
-            editModule(moduleId) { draft in
-                var index = draft.bindings.count + 1
-                var key = "binding\(index)"
-                while draft.bindings[key] != nil {
-                    index += 1
-                    key = "binding\(index)"
-                }
-                draft.bindings[key] = bindingOptions.first ?? "main"
-            }
-        case .removeModuleBinding(let moduleId, let key):
-            editModule(moduleId) { $0.bindings[key] = nil }
-        case .setLocalBinding(let slotId, let candidateId):
-            let candidate = candidateId.flatMap { id in
-                state.candidates.first { $0.id == id }
-            }
+        case .setLocalBinding, .saveLocal, .saveRepository:
             Task {
-                await projectConfiguration.setLocalBinding(
-                    projectId: project.id, slotId: slotId, candidate: candidate)
+                await projectConfiguration.perform(
+                    action,
+                    projectId: project.id,
+                    packages: moduleCatalog.packages,
+                    bindingOptions: bindingOptions)
             }
-        case .saveLocal:
-            Task {
-                await projectConfiguration.saveDraft(
-                    projectId: project.id, writeToRepository: false)
-            }
-        case .saveRepository:
-            Task {
-                await projectConfiguration.saveDraft(
-                    projectId: project.id, writeToRepository: true)
-            }
+        default:
+            projectConfiguration.apply(
+                action,
+                projectId: project.id,
+                packages: moduleCatalog.packages,
+                bindingOptions: bindingOptions)
         }
     }
 
-    private func editModule(_ id: UUID, _ edit: (inout ProjectModuleDraft) -> Void) {
-        projectConfiguration.editDraft(projectId: project.id) { draft in
-            guard let index = draft.modules.firstIndex(where: { $0.id == id }) else { return }
-            edit(&draft.modules[index])
-        }
+    private var projectNameBinding: Binding<String> {
+        Binding(
+            get: { state.draft?.name ?? "" },
+            set: { perform(.setProjectName($0)) })
     }
 
-    private func draftBinding<Value>(
-        _ keyPath: WritableKeyPath<ProjectConfigurationDraft, Value>, default fallback: Value
-    ) -> Binding<Value> {
+    private func moduleInstanceIDBinding(_ id: UUID) -> Binding<String> {
         Binding(
-            get: { state.draft?[keyPath: keyPath] ?? fallback },
-            set: { value in
-                projectConfiguration.editDraft(projectId: project.id) {
-                    $0[keyPath: keyPath] = value
-                }
-            })
+            get: { state.draft?.modules.first(where: { $0.id == id })?.instanceId ?? "" },
+            set: { perform(.setModuleInstanceID(id, $0)) })
     }
 
-    private func moduleBinding<Value>(
-        _ id: UUID,
-        _ keyPath: WritableKeyPath<ProjectModuleDraft, Value>,
-        default fallback: Value
-    ) -> Binding<Value> {
+    private func moduleEnabledBinding(_ id: UUID) -> Binding<Bool> {
         Binding(
-            get: {
-                state.draft?.modules.first(where: { $0.id == id })?[keyPath: keyPath] ?? fallback
-            },
-            set: { value in editModule(id) { $0[keyPath: keyPath] = value } })
+            get: { state.draft?.modules.first(where: { $0.id == id })?.enabled ?? false },
+            set: { perform(.setModuleEnabled(id, $0)) })
+    }
+
+    private func moduleRuntimeSlotBinding(_ id: UUID) -> Binding<String> {
+        Binding(
+            get: { state.draft?.modules.first(where: { $0.id == id })?.runtimeSlot ?? "" },
+            set: { perform(.setModuleRuntimeSlot(id, $0)) })
     }
 
     private func modulePackageBinding(_ id: UUID, _ fallback: String) -> Binding<String> {
         Binding(
             get: { state.draft?.modules.first(where: { $0.id == id })?.moduleId ?? fallback },
-            set: { moduleId in
-                guard let package = moduleCatalog.packages.first(where: { $0.moduleId == moduleId })
-                else { return }
-                projectConfiguration.editDraft(projectId: project.id) {
-                    $0.select(package: package, for: id)
-                }
-            })
+            set: { perform(.setModulePackage(id, $0)) })
     }
 
     private func configurationBinding(_ id: UUID, _ key: String) -> Binding<String> {
@@ -415,69 +377,43 @@ public struct ProjectDetailView: View {
             get: {
                 state.draft?.modules.first(where: { $0.id == id })?.configurationValues[key] ?? ""
             },
-            set: { setConfiguration(id, key, $0) })
-    }
-
-    private func setConfiguration(_ id: UUID, _ key: String, _ value: String) {
-        editModule(id) { $0.configurationValues[key] = value }
+            set: { perform(.setModuleConfiguration(id, key, $0)) })
     }
 
     private func moduleBindingValue(_ id: UUID, _ key: String) -> Binding<String> {
         Binding(
             get: { state.draft?.modules.first(where: { $0.id == id })?.bindings[key] ?? "" },
-            set: { value in editModule(id) { $0.bindings[key] = value } })
+            set: { perform(.setModuleBinding(id, key, $0)) })
     }
 
     private func moduleBindingName(_ id: UUID, _ oldKey: String) -> Binding<String> {
         Binding(
             get: { oldKey },
-            set: { newKey in
-                guard !newKey.isEmpty, newKey != oldKey else { return }
-                editModule(id) { module in
-                    let value = module.bindings.removeValue(forKey: oldKey)
-                    module.bindings[newKey] = value
-                }
-            })
+            set: { perform(.renameModuleBinding(id, oldKey, $0)) })
     }
 
     private func slotRequirementBinding(_ slot: String) -> Binding<String> {
         Binding(
             get: { state.draft?.slotRequirements[slot]?.requires ?? "" },
-            set: { value in
-                projectConfiguration.editDraft(projectId: project.id) {
-                    $0.slotRequirements[slot]?.requires = value
-                }
-            })
+            set: { perform(.setSlotRequirement(slot, $0)) })
     }
 
     private func slotOptionalBinding(_ slot: String) -> Binding<Bool> {
         Binding(
             get: { state.draft?.slotRequirements[slot]?.optional ?? false },
-            set: { value in
-                projectConfiguration.editDraft(projectId: project.id) {
-                    $0.slotRequirements[slot]?.optional = value
-                }
-            })
+            set: { perform(.setSlotOptional(slot, $0)) })
     }
 
     private func slotDescriptionBinding(_ slot: String) -> Binding<String> {
         Binding(
             get: { state.draft?.slotRequirements[slot]?.description ?? "" },
-            set: { value in
-                projectConfiguration.editDraft(projectId: project.id) {
-                    $0.slotRequirements[slot]?.description = value.isEmpty ? nil : value
-                }
-            })
+            set: { perform(.setSlotDescription(slot, $0)) })
     }
 
     private func slotNameBinding(_ oldName: String) -> Binding<String> {
         Binding(
             get: { oldName },
-            set: { newName in
-                guard !newName.isEmpty, newName != oldName else { return }
-                projectConfiguration.renameSlot(
-                    projectId: project.id, from: oldName, to: newName)
-            })
+            set: { perform(.renameSlot(oldName, $0)) })
     }
 
     private func localBindingSelection(_ slot: String) -> Binding<String> {

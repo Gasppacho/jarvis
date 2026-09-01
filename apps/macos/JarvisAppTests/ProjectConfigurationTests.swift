@@ -188,24 +188,79 @@ final class ProjectConfigurationTests: XCTestCase {
 
         let github = try XCTUnwrap(
             catalog.packages.first { $0.moduleId == "jarvis.module.github" })
-        configuration.addSlot(projectId: imported.id)
-        configuration.addModule(projectId: imported.id, package: github)
-        configuration.editDraft(projectId: imported.id) { draft in
-            draft.slotRequirements["slot1"] = ProjectSlotDraft(
-                requires: "scm.change-request.manage",
-                optional: true,
-                description: "Primary source-control provider")
-            draft.modules[0].bindings["repository"] = "main"
-            draft.modules[0].configurationValues["pollIntervalSeconds"] = "60"
-            draft.modules[0].configurationValues["repositories"] = #"["main"]"#
-        }
+        let development = try XCTUnwrap(
+            catalog.packages.first { $0.moduleId == "jarvis.module.development" })
+        configuration.apply(
+            .setProjectName("Action-edited Project"),
+            projectId: imported.id, packages: catalog.packages)
+        configuration.apply(.addSlot, projectId: imported.id, packages: catalog.packages)
+        configuration.apply(
+            .setSlotRequirement("slot1", "scm.change-request.manage"),
+            projectId: imported.id, packages: catalog.packages)
+        configuration.apply(
+            .setSlotOptional("slot1", true),
+            projectId: imported.id, packages: catalog.packages)
+        configuration.apply(
+            .setSlotDescription("slot1", "Primary source-control provider"),
+            projectId: imported.id, packages: catalog.packages)
+        configuration.apply(
+            .renameSlot("slot1", "sourceControl"),
+            projectId: imported.id, packages: catalog.packages)
+        configuration.apply(.addSlot, projectId: imported.id, packages: catalog.packages)
+        configuration.apply(
+            .removeSlot("slot2"), projectId: imported.id, packages: catalog.packages)
+        configuration.apply(
+            .addModule(development.moduleId),
+            projectId: imported.id, packages: catalog.packages)
+        let moduleId = try XCTUnwrap(
+            configuration.state(for: imported.id).draft?.modules.first?.id)
+        configuration.apply(
+            .addModule(development.moduleId),
+            projectId: imported.id, packages: catalog.packages)
+        let removedModuleId = try XCTUnwrap(
+            configuration.state(for: imported.id).draft?.modules.last?.id)
+        configuration.apply(
+            .removeModule(removedModuleId),
+            projectId: imported.id, packages: catalog.packages)
+        configuration.apply(
+            .setModulePackage(moduleId, github.moduleId),
+            projectId: imported.id, packages: catalog.packages)
+        configuration.apply(
+            .setModuleInstanceID(moduleId, "github-primary"),
+            projectId: imported.id, packages: catalog.packages)
+        configuration.apply(
+            .setModuleEnabled(moduleId, true),
+            projectId: imported.id, packages: catalog.packages)
+        configuration.apply(
+            .setModuleRuntimeSlot(moduleId, "sourceControl"),
+            projectId: imported.id, packages: catalog.packages)
+        configuration.apply(
+            .addModuleBinding(moduleId),
+            projectId: imported.id, packages: catalog.packages, bindingOptions: ["main"])
+        configuration.apply(
+            .renameModuleBinding(moduleId, "binding1", "repository"),
+            projectId: imported.id, packages: catalog.packages)
+        configuration.apply(
+            .setModuleBinding(moduleId, "repository", "main"),
+            projectId: imported.id, packages: catalog.packages)
+        configuration.apply(
+            .addModuleBinding(moduleId),
+            projectId: imported.id, packages: catalog.packages, bindingOptions: ["main"])
+        configuration.apply(
+            .removeModuleBinding(moduleId, "binding2"),
+            projectId: imported.id, packages: catalog.packages)
+        configuration.apply(
+            .setModuleConfiguration(moduleId, "pollIntervalSeconds", "60"),
+            projectId: imported.id, packages: catalog.packages)
+        configuration.apply(
+            .setModuleConfiguration(moduleId, "repositories", #"["main"]"#),
+            projectId: imported.id, packages: catalog.packages)
 
         let editorState = configuration.state(for: imported.id)
         let presentation = ProjectDetailPresentation(
             detail: editorState.detail, state: editorState, packages: catalog.packages)
-        let moduleId = try XCTUnwrap(editorState.draft?.modules.first?.id)
         XCTAssertEqual(presentation.repositories.map(\.repositoryId), ["main"])
-        XCTAssertEqual(presentation.slots.map(\.id), ["slot1"])
+        XCTAssertEqual(presentation.slots.map(\.id), ["sourceControl"])
         XCTAssertEqual(presentation.modules.map(\.moduleId), ["jarvis.module.github"])
         XCTAssertTrue(presentation.actions.contains(.chooseRepository("main")))
         XCTAssertTrue(presentation.actions.contains(.addSlot))
@@ -215,19 +270,45 @@ final class ProjectConfigurationTests: XCTestCase {
                 return packageId
             }.sorted(),
             catalog.packages.map(\.moduleId).sorted())
-        XCTAssertTrue(presentation.actions.contains(.removeSlot("slot1")))
-        XCTAssertTrue(presentation.actions.contains(.setLocalBinding("slot1", nil)))
+        XCTAssertTrue(presentation.actions.contains(.setProjectName("Action-edited Project")))
+        XCTAssertTrue(presentation.actions.contains(.removeSlot("sourceControl")))
+        XCTAssertTrue(
+            presentation.actions.contains(
+                .setSlotRequirement("sourceControl", "scm.change-request.manage")))
+        XCTAssertTrue(presentation.actions.contains(.setSlotOptional("sourceControl", true)))
+        XCTAssertTrue(
+            presentation.actions.contains(
+                .setSlotDescription("sourceControl", "Primary source-control provider")))
+        XCTAssertTrue(presentation.actions.contains(.setLocalBinding("sourceControl", nil)))
         XCTAssertTrue(presentation.actions.contains(.removeModule(moduleId)))
+        XCTAssertTrue(
+            presentation.actions.contains(.setModulePackage(moduleId, github.moduleId)))
+        XCTAssertTrue(
+            presentation.actions.contains(.setModuleInstanceID(moduleId, "github-primary")))
+        XCTAssertTrue(presentation.actions.contains(.setModuleEnabled(moduleId, true)))
+        XCTAssertTrue(
+            presentation.actions.contains(.setModuleRuntimeSlot(moduleId, "sourceControl")))
         XCTAssertTrue(presentation.actions.contains(.addModuleBinding(moduleId)))
         XCTAssertTrue(
             presentation.actions.contains(.removeModuleBinding(moduleId, "repository")))
+        XCTAssertTrue(
+            presentation.actions.contains(
+                .setModuleBinding(moduleId, "repository", "main")))
+        XCTAssertTrue(
+            presentation.actions.contains(
+                .setModuleConfiguration(moduleId, "pollIntervalSeconds", "60")))
         XCTAssertTrue(presentation.actions.contains(.saveLocal))
         XCTAssertTrue(presentation.actions.contains(.saveRepository))
         XCTAssertTrue(presentation.isSaveEnabled)
 
-        let saved = await configuration.saveDraft(
-            projectId: imported.id, writeToRepository: false)
+        await configuration.perform(
+            .saveLocal, projectId: imported.id, packages: catalog.packages)
+        let saved = configuration.state(for: imported.id).detail
+        XCTAssertEqual(saved?.portableConfiguration?.metadata.name, "Action-edited Project")
         XCTAssertEqual(saved?.modules.map(\.moduleId), ["jarvis.module.github"])
+        XCTAssertEqual(saved?.modules.map(\.instanceId), ["github-primary"])
+        XCTAssertEqual(saved?.modules.map(\.enabled), [true])
+        XCTAssertEqual(saved?.modules.map(\.runtimeSlot), ["sourceControl"])
         XCTAssertEqual(saved?.portableConfiguration?.repositories.first?.defaultBranch, "develop")
         XCTAssertEqual(saved?.portableConfiguration?.repositories.first?.remote, "upstream")
         XCTAssertEqual(saved?.portableConfiguration?.git.pushRemote, "upstream")
@@ -236,28 +317,42 @@ final class ProjectConfigurationTests: XCTestCase {
             configuration.state(for: imported.id).candidates.first {
                 $0.capabilities.contains("scm.change-request.manage")
             })
-        let bindings = await configuration.setLocalBinding(
-            projectId: imported.id, slotId: "slot1", candidate: candidate)
-        XCTAssertEqual(bindings?.slots.map(\.slotId), ["slot1"])
+        await configuration.perform(
+            .setLocalBinding("sourceControl", candidate.id),
+            projectId: imported.id, packages: catalog.packages)
+        XCTAssertEqual(
+            configuration.state(for: imported.id).localBindings?.slots.map(\.slotId),
+            ["sourceControl"])
 
         let reopenedConfiguration = ProjectConfigurationModel(
             session: session, projects: projects)
         await reopenedConfiguration.refresh(
             projectId: imported.id, packages: catalog.packages)
         let reopened = try XCTUnwrap(reopenedConfiguration.state(for: imported.id).draft)
+        XCTAssertEqual(reopened.name, "Action-edited Project")
         XCTAssertEqual(reopened.modules.map(\.moduleId), ["jarvis.module.github"])
+        XCTAssertEqual(reopened.modules.map(\.instanceId), ["github-primary"])
+        XCTAssertEqual(reopened.modules.map(\.enabled), [true])
+        XCTAssertEqual(reopened.modules.map(\.runtimeSlot), ["sourceControl"])
+        XCTAssertEqual(reopened.modules.first?.bindings, ["repository": "main"])
+        XCTAssertEqual(reopened.modules.first?.configurationValues["pollIntervalSeconds"], "60")
+        XCTAssertEqual(reopened.modules.first?.configurationValues["repositories"], #"["main"]"#)
         let roundTripped = try reopened.payload()
         XCTAssertEqual(roundTripped.repositories.first?.defaultBranch, "develop")
         XCTAssertEqual(roundTripped.repositories.first?.remote, "upstream")
         XCTAssertEqual(roundTripped.git.pushRemote, "upstream")
         XCTAssertEqual(roundTripped.workspace.maxConcurrentExecutions, 1)
-        XCTAssertEqual(reopened.slotRequirements["slot1"]?.optional, true)
+        XCTAssertEqual(Set(reopened.slotRequirements.keys), Set(["sourceControl"]))
         XCTAssertEqual(
-            reopened.slotRequirements["slot1"]?.description,
+            reopened.slotRequirements["sourceControl"]?.requires,
+            "scm.change-request.manage")
+        XCTAssertEqual(reopened.slotRequirements["sourceControl"]?.optional, true)
+        XCTAssertEqual(
+            reopened.slotRequirements["sourceControl"]?.description,
             "Primary source-control provider")
         XCTAssertEqual(
             reopenedConfiguration.state(for: imported.id).localBindings?.slots.map(\.slotId),
-            ["slot1"])
+            ["sourceControl"])
         projects.releaseRepositoryAccess()
         await session.shutdown()
     }

@@ -140,6 +140,9 @@ function requirePortableConfigurationValues(value: unknown, path: string, key = 
   for (const [key, entry] of Object.entries(value)) {
     const child = `${path}/${key}`;
     const normalizedKey = key.trim();
+    if (SECRET_LITERAL_VALUE.test(normalizedKey)) {
+      invalid("portable configuration must not contain a secret literal");
+    }
     if (SECRET_LITERAL_KEY.test(normalizedKey)) {
       invalid(`${child} must not contain a secret literal`);
     }

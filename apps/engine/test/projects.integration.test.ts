@@ -677,6 +677,39 @@ describe("repository discovery and project import", () => {
     );
   });
 
+  it("atomically rejects a recognizable token used as an object key without echoing it", async () => {
+    const engine = await start();
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
+      id: string;
+      portableConfig: unknown;
+    };
+    const portableConfig = parseYaml(
+      readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
+    ) as Record<string, unknown>;
+    const token = "ghp_abcdefghijklmnopqrstuvwxyz1234567890";
+    const modules = portableConfig["modules"] as Record<string, unknown>[];
+    const configuration = modules[1]!["configuration"] as Record<string, unknown>;
+    const rules = configuration["rules"] as Record<string, unknown>[];
+    const emit = rules[0]!["emit"] as Record<string, unknown>;
+    emit["payload"] = { [token]: "must-not-appear" };
+
+    const response = await engine.call(`/v1/projects/${created.id}/configuration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ portableConfig, writeToRepository: false }),
+    });
+
+    expect(response.status).toBe(400);
+    const error = (await response.json()) as { error: { code: string; message: string } };
+    expect(error.error.code).toBe("project.config-invalid");
+    expect(error.error.message).not.toContain(token);
+    expect(error.error.message).not.toContain("must-not-appear");
+    expect(await (await engine.call(`/v1/projects/${created.id}`)).json()).toMatchObject({
+      portableConfig: created.portableConfig,
+    });
+  });
+
   it("rejects recognizable embedded secret values without echoing them", async () => {
     const engine = await start();
     const root = fixture(() => makeNodeRepositoryFixture());
