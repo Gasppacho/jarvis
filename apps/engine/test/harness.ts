@@ -31,6 +31,10 @@ export interface Harness {
   readonly handshake: ReadyHandshake;
   /** stdout lines the engine emitted, in order. */
   readonly stdoutLines: readonly string[];
+  /** The engine's stderr so far, in order. Grows while the engine runs. */
+  stderr(): string;
+  /** Resolves once `needle` appears on the engine's stderr. */
+  waitForStderr(needle: string, timeoutMs?: number): Promise<void>;
   /** Authenticated request. */
   call(path: string, init?: RequestInit): Promise<Response>;
   /** Request without the bearer token. */
@@ -122,6 +126,26 @@ export async function startEngine(options: StartEngineOptions = {}): Promise<Har
     dataRoot,
     handshake,
     stdoutLines,
+    stderr: () => stderrChunks.join(""),
+    waitForStderr: (needle: string, timeoutMs = 5_000) =>
+      new Promise<void>((resolve, reject) => {
+        const startedAt = Date.now();
+        const timer = setInterval(() => {
+          if (stderrChunks.join("").includes(needle)) {
+            clearInterval(timer);
+            resolve();
+            return;
+          }
+          if (Date.now() - startedAt > timeoutMs) {
+            clearInterval(timer);
+            reject(
+              new Error(
+                `engine stderr did not contain "${needle}" within ${timeoutMs}ms.\n${stderrChunks.join("")}`,
+              ),
+            );
+          }
+        }, 25);
+      }),
     call: (path, init = {}) => request(path, init, true),
     callRaw: (path, headers) => rawRequest(handshake.port, path, headers),
     callUnauthenticated: (path, init = {}) => request(path, init, false),

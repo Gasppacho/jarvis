@@ -690,15 +690,30 @@ components:
           type: integer
           minimum: 0
     ProjectDetail:
-      allOf:
-        - $ref: "#/components/schemas/ProjectSummary"
-        - type: object
-          required: [portableConfig, bindingStatus]
-          properties:
-            portableConfig:
-              type: object
-            bindingStatus:
-              type: object
+      # Not an allOf on ProjectSummary: that member's `additionalProperties: false`
+      # would reject the detail's own `portableConfig`/`bindingStatus` properties,
+      # making the schema unsatisfiable. It restates the summary properties instead.
+      type: object
+      additionalProperties: false
+      required: [id, name, status, moduleCount, portableConfig, bindingStatus]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+          enum: [draft, valid, active, paused, invalid, degraded, archived]
+        moduleCount:
+          type: integer
+          minimum: 0
+        activeExecutions:
+          type: integer
+          minimum: 0
+        portableConfig:
+          type: object
+        bindingStatus:
+          type: object
     ValidationReport:
       type: object
       additionalProperties: false

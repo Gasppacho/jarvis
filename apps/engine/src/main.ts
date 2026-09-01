@@ -2,10 +2,12 @@ import { writeSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import type { FastifyInstance } from "fastify";
 import { ConfigError, loadConfig } from "./config.js";
-import { openDatabase, type OpenedDatabase } from "./db/open.js";
+import { openDatabase, type DatabaseState, type OpenedDatabase } from "./db/open.js";
 import { buildServer } from "./http/server.js";
 import { watchParentProcess } from "./parent-watch.js";
 import { API_VERSION } from "./version.js";
+import { ProjectService } from "./projects/service.js";
+import { ProjectStore } from "./projects/store.js";
 
 const SHUTDOWN_GRACE_MS = 5_000;
 const STDERR_FD = 2;
@@ -23,11 +25,11 @@ const STDERR_FD = 2;
  *   - `writeSync` delivers all 200 KB before exit, and throws EPIPE
  *     synchronously, which a `try` can actually contain.
  *
- * So: synchronous write, guarded. Never throws — every caller is on its way
- * out, and losing the process before the database closes is worse than losing
- * the message.
+ * So: synchronous write, guarded. Never throws — every caller either is on its
+ * way out or must keep the engine reachable, and losing the process before the
+ * message is out is worse than losing the message.
  */
-function reportFatal(message: string): void {
+function report(message: string): void {
   try {
     writeSync(STDERR_FD, message);
   } catch {
@@ -55,7 +57,7 @@ async function main(): Promise<void> {
       if (opened.db.open) opened.db.close();
       return true;
     } catch (error) {
-      reportFatal(`jarvis-engine: could not close the database.\n${String(error)}\n`);
+      report(`jarvis-engine: could not close the database.\n${String(error)}\n`);
       return false;
     }
   }
@@ -69,7 +71,7 @@ async function main(): Promise<void> {
     // database. The `finally` below always calls process.exit, so this timer
     // can never delay a shutdown that does complete.
     setTimeout(() => {
-      reportFatal("jarvis-engine: shutdown timed out; forcing exit.\n");
+      report("jarvis-engine: shutdown timed out; forcing exit.\n");
       closeDatabase();
       process.exit(exitCode === 0 ? 1 : exitCode);
     }, SHUTDOWN_GRACE_MS);
@@ -78,7 +80,7 @@ async function main(): Promise<void> {
     try {
       if (app !== undefined) await app.close();
     } catch (error) {
-      reportFatal(`jarvis-engine: shutdown failed.\n${String(error)}\n`);
+      report(`jarvis-engine: shutdown failed.\n${String(error)}\n`);
       code = 1;
     } finally {
       // Closing the handle is what checkpoints the WAL, so its failure is the
@@ -107,19 +109,36 @@ async function main(): Promise<void> {
   // revisit with an explicit orphan check between steps if they grow.
   watchParentProcess({
     onOrphaned: () => {
-      reportFatal("jarvis-engine: the shell went away; shutting down.\n");
+      report("jarvis-engine: the shell went away; shutting down.\n");
       void shutdown(announced ? 0 : 1);
     },
   });
 
   // SYSTEM.md startup protocol: migrations complete before the ready handshake,
   // so the shell never sees a `ready` engine with an unmigrated database.
-  opened = openDatabase(config.databasePath);
+  //
+  // Ticket 02: a database that cannot be opened degrades the engine instead of
+  // killing it. The shell stays up, `/v1/health` reports degraded and the
+  // project routes answer 503 until the database is reachable again, so the
+  // app can explain what is wrong (MVP_SPEC.md user story 3). No safety guard
+  // above is bypassed: a degraded engine creates no database file, it only
+  // reports that it cannot.
+  try {
+    opened = openDatabase(config.databasePath);
+  } catch (error) {
+    report(
+      `jarvis-engine: the database could not be opened: ${String(error)}\n` +
+        "Continuing degraded: /v1/health reports degraded and project routes answer 503 engine.database-unavailable.\n",
+    );
+  }
   const database = opened;
+  const projects =
+    database === undefined ? undefined : new ProjectService(new ProjectStore(database.db));
 
   app = buildServer({
     config,
-    databaseState: database.state,
+    databaseState: (): DatabaseState => database?.state() ?? "failed",
+    projects,
     isShuttingDown: () => shuttingDown,
     onShutdownRequested: () => {
       void shutdown(0);
@@ -151,9 +170,9 @@ async function main(): Promise<void> {
 main().catch((error: unknown) => {
   // Bootstrap failures must be actionable: the shell surfaces this text verbatim.
   if (error instanceof ConfigError) {
-    reportFatal(`jarvis-engine: ${error.message}\n${error.remedy}\n`);
+    report(`jarvis-engine: ${error.message}\n${error.remedy}\n`);
   } else {
-    reportFatal(`jarvis-engine: failed to start.\n${String(error)}\n`);
+    report(`jarvis-engine: failed to start.\n${String(error)}\n`);
   }
   process.exit(1);
 });

@@ -169,11 +169,13 @@ final class EngineSupervisorTests: XCTestCase {
         XCTAssertEqual(health.status, .ready)
     }
 
-    func testAnEngineThatRefusesToStartSurfacesItsOwnDiagnostic() async throws {
+    func testAnEngineWithAnUnopenableDatabaseRunsDegradedInsteadOfExiting() async throws {
         // A real engine failure, not a fake one: the data root is a symlink,
-        // which the engine refuses by design. The UI says "check the details
-        // below", so the engine's stderr has to actually arrive — it is written
-        // just before the process exits, and it is drained on another queue.
+        // which the engine refuses by design. Ticket 02: the refusal no longer
+        // ends the process — the engine hands over its ready line, then runs
+        // degraded so the shell can explain what is wrong (the failure UI
+        // built for exactly this, `testADegradedEngineIsNotShownAsReady`,
+        // needs a live engine to talk to).
         let real = FileManager.default.temporaryDirectory
             .appendingPathComponent("jarvis-real-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
@@ -185,17 +187,19 @@ final class EngineSupervisorTests: XCTestCase {
             try? FileManager.default.removeItem(at: real)
         }
 
-        let refusing = EngineSupervisor(resources: .developmentBuild(), dataRoot: link)
+        let degraded = EngineSupervisor(resources: .developmentBuild(), dataRoot: link)
 
-        do {
-            _ = try await refusing.start()
-            XCTFail("the engine should refuse a symlinked data root")
-        } catch let error as EngineStartError {
-            let detail = try XCTUnwrap(error.detail, "the engine's stderr was lost")
-            XCTAssertTrue(
-                detail.contains("symbolic link"),
-                "expected the engine's own diagnostic, got: \(detail)")
-        }
+        let session = try await degraded.start()
+
+        let health = try await session.client.health()
+        XCTAssertEqual(health.status, .degraded)
+        XCTAssertEqual(health.database, .failed)
+        // The engine process stays up in the degraded state: it must keep
+        // answering so the shell can report why the database is gone.
+        let stillRunning = await degraded.isRunning
+        XCTAssertTrue(stillRunning)
+
+        await degraded.terminate()
     }
 
     func testAnInheritedJarvisPortDoesNotPinEveryEngine() async throws {

@@ -15,6 +15,11 @@ public final class EngineSessionModel {
 
     public private(set) var state: State = .starting
 
+    /// The client for the live session, while the engine runs. `nil` once the
+    /// engine has exited — the state moves to `.failed` at the same moment, so
+    /// the views stop showing the project surface with it.
+    public var client: EngineClient? { session?.client }
+
     private let supervisor: EngineSupervisor
     private var session: EngineSession?
 

@@ -12,13 +12,17 @@ Errors crossing the Local API or stored as terminal Execution errors use stable 
 | `api.host-not-allowed` | No | Request did not address the loopback interface |
 | `api.invalid-request` | No | OpenAPI/JSON Schema validation failed |
 | `system.internal-error` | Maybe | Engine failed to handle the request; detail stays in the log |
-| `system.storage-unavailable` | Maybe | SQLite or Application Support unavailable |
+| `system.storage-unavailable` | Maybe | SQLite or Application Support unavailable during bootstrap |
+| `engine.database-unavailable` | Yes | Engine remains reachable but project operations are suspended because SQLite is unavailable |
 
 ## Project
 
 | Code | Retryable | Meaning |
 |---|---:|---|
+| `repository.path-invalid` | No | Repository discovery/import received a missing, relative, inaccessible or non-directory path |
+| `project.already-imported` | No | The canonical repository path is already bound to a Project |
 | `project.config-invalid` | No | Portable configuration fails schema/semantic validation |
+| `project.not-found` | No | No Project with the requested ID exists in this installation |
 | `project.binding-missing` | No | Required slot has no Local Binding |
 | `project.capability-unresolved` | No | Bound resource does not provide the required capability |
 | `project.request-orphaned` | No | Request contract has no active consumer |

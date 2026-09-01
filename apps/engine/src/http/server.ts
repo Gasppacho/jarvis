@@ -6,12 +6,16 @@ import type { DatabaseState } from "../db/open.js";
 import { EngineError, toErrorEnvelope } from "../errors.js";
 import { ForbiddenJsonKeyError, parseJsonBody } from "./json.js";
 import { API_VERSION, ENGINE_VERSION } from "../version.js";
+import type { ProjectService } from "../projects/service.js";
+import { registerProjectRoutes } from "../projects/routes.js";
 
 type HealthResponse = components["schemas"]["HealthResponse"];
 
 export interface ServerDependencies {
   readonly config: EngineConfig;
   readonly databaseState: () => DatabaseState;
+  /** The Project Registry; absent while the engine runs degraded. */
+  readonly projects: ProjectService | undefined;
   readonly isShuttingDown: () => boolean;
   /** Invoked after the 202 has been flushed to the caller. */
   readonly onShutdownRequested: () => void;
@@ -104,6 +108,11 @@ export function buildServer(deps: ServerDependencies): FastifyInstance {
     void reply.code(202).send();
     await reply;
     deps.onShutdownRequested();
+  });
+
+  registerProjectRoutes(app, {
+    databaseState: deps.databaseState,
+    projects: deps.projects,
   });
 
   return app;

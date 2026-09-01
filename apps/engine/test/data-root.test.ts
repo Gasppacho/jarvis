@@ -65,38 +65,56 @@ describe("data root", () => {
     }
   });
 
-  it("refuses a data root that is a symbolic link", async () => {
+  it("refuses a data root that is a symbolic link, and degrades instead of exiting", async () => {
     // LOCAL_DEVELOPMENT.md documents a predictable path under world-writable
-    // /tmp, so another account can plant a link there first.
+    // /tmp, so another account can plant a link there first. Ticket 02: the
+    // guard still fires — the engine must not create or open a database behind
+    // the planted link — but it reports a degraded engine instead of exiting,
+    // so the shell can show why.
     const real = tempDir();
     const link = join(tempDir(), "data-root");
     symlinkSync(real, link);
     expect(lstatSync(link).isSymbolicLink()).toBe(true);
 
-    const run = await runEngineToExit({ JARVIS_DATA_ROOT: link, JARVIS_API_TOKEN: "t" });
+    const engine = await startEngine({ dataRoot: link });
+    try {
+      expect(engine.handshake).toMatchObject({ type: "ready" });
 
-    expect(run.code).not.toBe(0);
-    expect(run.stdout).toBe("");
-    expect(run.stderr).toContain("symbolic link");
+      const health = (await (await engine.call("/v1/health")).json()) as Record<string, unknown>;
+      expect(health).toMatchObject({ status: "degraded", database: "failed" });
+
+      await engine.waitForStderr("symbolic link");
+      // The planted target must not have become a database.
+      expect(existsSync(join(real, "jarvis.sqlite"))).toBe(false);
+    } finally {
+      await engine.dispose();
+    }
   });
 });
 
 describe("database file", () => {
-  it("refuses to open the database through a planted symbolic link", async () => {
+  it("refuses to open the database through a planted symbolic link, and degrades instead of exiting", async () => {
     // The data root may have been loose when the engine found it, long enough
-    // for another account to leave a link named jarvis.sqlite behind.
+    // for another account to leave a link named jarvis.sqlite behind. Ticket 02:
+    // the refusal still fires, but the engine stays up reporting degraded.
     const dataRoot = tempDir(0o777);
     const elsewhere = join(tempDir(), "somewhere-else.conf");
     writeFileSync(elsewhere, "");
     symlinkSync(elsewhere, join(dataRoot, "jarvis.sqlite"));
 
-    const run = await runEngineToExit({ JARVIS_DATA_ROOT: dataRoot, JARVIS_API_TOKEN: "t" });
+    const engine = await startEngine({ dataRoot });
+    try {
+      expect(engine.handshake).toMatchObject({ type: "ready" });
 
-    expect(run.code).not.toBe(0);
-    expect(run.stdout).toBe("");
-    expect(run.stderr).toContain("symbolic link");
-    // The link target must not have become a database.
-    expect(existsSync(`${elsewhere}-wal`)).toBe(false);
+      const health = (await (await engine.call("/v1/health")).json()) as Record<string, unknown>;
+      expect(health).toMatchObject({ status: "degraded", database: "failed" });
+
+      await engine.waitForStderr("symbolic link");
+      // The link target must not have become a database.
+      expect(existsSync(`${elsewhere}-wal`)).toBe(false);
+    } finally {
+      await engine.dispose();
+    }
   });
 
   it("closes the database when the engine cannot bind its port", async () => {
