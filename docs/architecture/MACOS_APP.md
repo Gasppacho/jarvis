@@ -82,9 +82,9 @@ Le SSE peut utiliser URLSession bytes et un parseur dédié ; les payloads d'év
 
 ## Repository access
 
-L'utilisateur choisit un dossier avec `NSOpenPanel`. Le shell crée un security-scoped bookmark et le stocke en local. Le moteur n'accède au repository que via un chemin résolu/autorisé transmis dans les bindings.
+L'utilisateur choisit un dossier avec `NSOpenPanel`. Le shell crée un bookmark durable et le stocke en local. Un build sandboxé utilise un security-scoped bookmark ; la distribution directe non sandboxée utilise un bookmark standard, afin que les rebuilds signés ad hoc ne rendent pas le Repository Grant illisible au processus suivant. Le moteur n'accède au repository que via un chemin résolu/autorisé transmis dans les bindings.
 
-Pour une distribution directe non sandboxée, le bookmark reste utile pour la pérennité et le consentement explicite, même si certaines contraintes de sandbox ne s'appliquent pas.
+Dans les deux distributions, le bookmark conserve la pérennité du binding et la trace du consentement explicite. Un ancien security-scoped bookmark devenu illisible exige une nouvelle sélection explicite ; un binding moteur ne suffit jamais à recréer une autorisation shell.
 
 ## Menu bar and lifecycle
 
