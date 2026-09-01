@@ -14,6 +14,20 @@ final class RepositoryGrantTests: XCTestCase {
         super.tearDown()
     }
 
+    func testRepositoryGrantSurvivesAnApplicationSupportPathContainingSpaces() throws {
+        let storage = temporaryDirectory(prefix: "Jarvis Application Support")
+        let repository = temporaryDirectory(prefix: "jarvis-space-repository")
+        let first = RepositoryGrantStore(storageDirectory: storage, isSandboxed: false)
+        let reference = try first.save(
+            repositoryURL: repository,
+            projectId: "space-project",
+            repositoryId: "main"
+        )
+
+        let relaunched = RepositoryGrantStore(storageDirectory: storage, isSandboxed: false)
+        XCTAssertNotNil(try relaunched.resolve(bookmarkRef: reference))
+    }
+
     func testRepositoryGrantSurvivesCreatingANewStore() throws {
         let storage = temporaryDirectory(prefix: "jarvis-grants")
         let repository = temporaryDirectory(prefix: "jarvis-repository")

@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import OSLog
 
 /// The Project Registry as the shell shows it (docs/architecture/PROJECTS.md):
 /// the sidebar list and the import flow. MACOS_APP.md: an AppModel owns this
@@ -7,6 +8,8 @@ import Observation
 @MainActor
 @Observable
 public final class ProjectsModel {
+    private static let logger = Logger(subsystem: "dev.jarvis.app", category: "RepositoryGrant")
+
     public private(set) var projects: [Project] = []
     public private(set) var isRefreshing = false
     /// The failure of the last refresh, phrased for the user.
@@ -139,11 +142,14 @@ public final class ProjectsModel {
         do {
             let detail = try await client.getProject(id: project.id)
             guard let binding = detail.bindings.first else { return }
-            guard let bookmarkRef = binding.bookmarkRef,
-                let grant = try repositoryGrants.resolve(bookmarkRef: bookmarkRef)
-            else {
+            guard let bookmarkRef = binding.bookmarkRef else {
                 repositoryGrantMessages[project.id] =
-                    "Repository access is unavailable. Choose the repository again."
+                    "The Repository Grant reference is missing. Choose the repository again."
+                return
+            }
+            guard let grant = try repositoryGrants.resolve(bookmarkRef: bookmarkRef) else {
+                repositoryGrantMessages[project.id] =
+                    "The Repository Grant file is missing. Choose the repository again."
                 return
             }
 
@@ -172,6 +178,9 @@ public final class ProjectsModel {
             )
             repositoryGrantMessages[project.id] = nil
         } catch {
+            Self.logger.error(
+                "Failed to restore Repository Grant for \(project.id, privacy: .public): \(String(reflecting: error), privacy: .private)"
+            )
             repositoryGrantMessages[project.id] =
                 "Repository access could not be restored. Choose the repository again."
         }

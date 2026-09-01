@@ -66,7 +66,7 @@ public final class RepositoryGrantStore {
 
     public func remove(bookmarkRef: String) throws {
         let file = fileURL(for: bookmarkRef)
-        if fileManager.fileExists(atPath: file.path()) {
+        if fileManager.fileExists(atPath: file.path(percentEncoded: false)) {
             try fileManager.removeItem(at: file)
         }
     }
@@ -95,7 +95,7 @@ public final class RepositoryGrantStore {
 
     public func resolve(bookmarkRef: String) throws -> ResolvedGrant? {
         let file = fileURL(for: bookmarkRef)
-        guard fileManager.fileExists(atPath: file.path()) else { return nil }
+        guard fileManager.fileExists(atPath: file.path(percentEncoded: false)) else { return nil }
 
         let persisted = try Data(contentsOf: file)
         let stored: StoredBookmark?
