@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { cpSync, mkdirSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 const engineRoot = fileURLToPath(new URL("..", import.meta.url));
 const outDir = join(engineRoot, "..", "..", "dist", "engine");
 const require = createRequire(import.meta.url);
+const bundledModules = require("../bundled-modules.json");
 
 // Migrations are read from disk at startup, not inlined in the bundle.
 rmSync(join(outDir, "migrations"), { recursive: true, force: true });
@@ -25,9 +26,37 @@ cpSync(join(engineRoot, "src", "db", "migrations"), join(outDir, "migrations"), 
 const contractsOut = join(outDir, "contracts", "schemas");
 rmSync(join(outDir, "contracts"), { recursive: true, force: true });
 mkdirSync(contractsOut, { recursive: true });
+for (const schema of ["project-config.v1.schema.json", "module-manifest.v1.schema.json"]) {
+  cpSync(join(engineRoot, "..", "..", "contracts", "schemas", schema), join(contractsOut, schema));
+}
 cpSync(
-  join(engineRoot, "..", "..", "contracts", "schemas", "project-config.v1.schema.json"),
-  join(contractsOut, "project-config.v1.schema.json"),
+  join(engineRoot, "..", "..", "contracts", "module-config"),
+  join(outDir, "contracts", "module-config"),
+  { recursive: true },
+);
+
+// ADR 0011: production discovers only official Module Packages registered in
+// the build. Copying their declarative Manifests creates that registry without
+// coupling the Kernel to any module's application or domain code.
+const modulesOut = join(outDir, "modules");
+const registeredModuleNames = Object.keys(bundledModules).sort();
+for (const name of registeredModuleNames) {
+  const manifest = join(
+    engineRoot,
+    "..",
+    "..",
+    "packages",
+    "modules",
+    name,
+    "module.manifest.yaml",
+  );
+  const packageOut = join(modulesOut, name);
+  mkdirSync(packageOut, { recursive: true });
+  cpSync(manifest, join(packageOut, "module.manifest.yaml"));
+}
+writeFileSync(
+  join(outDir, "module-registry.json"),
+  `${JSON.stringify({ packages: registeredModuleNames }, null, 2)}\n`,
 );
 
 // The SQLite driver stays external: it carries a native addon the release

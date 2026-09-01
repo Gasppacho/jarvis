@@ -540,11 +540,16 @@ export interface components {
             moduleId: string;
             version: string;
             displayName: string;
+            description: string;
             categories: string[];
             consumes: string[];
             produces: string[];
             requires: string[];
             provides: string[];
+            configurationSchemaRef: string | null;
+            configurationSchema: {
+                [key: string]: unknown;
+            } | null;
         };
         ProjectBindings: {
             projectId: string;

@@ -1,0 +1,3 @@
+{
+  "development": "../../packages/modules/development/src/index.ts"
+}

@@ -1,0 +1,62 @@
+apiVersion: jarvis.dev/module/v1
+kind: Module
+metadata:
+  id: jarvis.module.development
+  version: 1.0.0
+  displayName: Development
+  description: Implements a requested work item in an isolated Git workspace.
+  categories:
+    - agentic
+runtime:
+  entrypoint: dist/index.mjs
+  engineRange: ">=1.0.0 <2.0.0"
+  concurrency: 2
+  partitionBy: payload.repositoryId
+contracts:
+  consumes:
+    - type: development.implementation.requested
+      version: 1
+      kind: request
+      schemaRef: contracts/events/development.implementation.requested.v1.schema.json
+      handler: handleImplementationRequested
+  produces:
+    - type: development.implementation.completed
+      version: 1
+      kind: fact
+      schemaRef: contracts/events/development.implementation.completed.v1.schema.json
+    - type: development.implementation.failed
+      version: 1
+      kind: fact
+      schemaRef: contracts/events/development.implementation.failed.v1.schema.json
+    - type: scm.change-request.creation-requested
+      version: 1
+      kind: request
+      schemaRef: contracts/events/scm.change-request.creation-requested.v1.schema.json
+capabilities:
+  requires:
+    - id: repository.write
+      binding: repository
+    - id: git.branch
+      binding: repository
+    - id: git.commit
+      binding: repository
+    - id: git.push
+      binding: repository
+    - id: shell.execute
+    - id: work-items.read
+      binding: tickets
+    - id: agent.execute
+      binding: agentRuntime
+  provides: []
+configuration:
+  schemaRef: contracts/module-config/development.v1.schema.json
+permissions:
+  emit:
+    - development.implementation.completed
+    - development.implementation.failed
+    - scm.change-request.creation-requested
+  filesystem:
+    - workspace-read
+    - workspace-write
+  externalMutations:
+    - git.push

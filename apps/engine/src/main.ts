@@ -1,5 +1,7 @@
 import { writeSync } from "node:fs";
 import type { AddressInfo } from "node:net";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 import { ConfigError, loadConfig } from "./config.js";
 import { openDatabase, type DatabaseState, type OpenedDatabase } from "./db/open.js";
@@ -8,6 +10,7 @@ import { watchParentProcess } from "./parent-watch.js";
 import { API_VERSION } from "./version.js";
 import { ProjectService } from "./projects/service.js";
 import { ProjectStore } from "./projects/store.js";
+import { loadBundledModuleHost } from "./modules/bundled-module-registry.js";
 
 const SHUTDOWN_GRACE_MS = 5_000;
 const STDERR_FD = 2;
@@ -44,6 +47,8 @@ async function main(): Promise<void> {
   process.stderr.on("error", () => {});
 
   const config = loadConfig(process.env);
+  const runtimeRoot = dirname(fileURLToPath(import.meta.url));
+  const modules = loadBundledModuleHost(runtimeRoot);
 
   let opened: OpenedDatabase | undefined;
   let app: FastifyInstance | undefined;
@@ -139,6 +144,7 @@ async function main(): Promise<void> {
     config,
     databaseState: (): DatabaseState => database?.state() ?? "failed",
     projects,
+    modules,
     isShuttingDown: () => shuttingDown,
     onShutdownRequested: () => {
       void shutdown(0);

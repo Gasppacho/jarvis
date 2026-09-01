@@ -31,6 +31,16 @@ const listFiles = (dir, suffix) =>
         .map((name) => join(dir, name))
     : [];
 
+const listBundledModuleManifests = () => {
+  const modulesDir = join(repoRoot, "packages/modules");
+  if (!existsSync(modulesDir)) return [];
+  return readdirSync(modulesDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => join(modulesDir, entry.name, "module.manifest.yaml"))
+    .filter(existsSync)
+    .sort();
+};
+
 const ajv = new Ajv2020({
   strict: true,
   // `required` inside an if/then branch names properties defined in the parent
@@ -95,7 +105,11 @@ for (const file of listFiles(join(repoRoot, "examples/events"), ".json")) {
 const validateManifest = compiled.get("contracts/schemas/module-manifest.v1.schema.json");
 const manifestsById = new Map();
 
-for (const file of listFiles(join(repoRoot, "examples/modules"), ".module.yaml")) {
+const moduleManifestFiles = [
+  ...listBundledModuleManifests(),
+  ...listFiles(join(repoRoot, "examples/modules"), ".module.yaml"),
+];
+for (const file of moduleManifestFiles) {
   const manifest = readYaml(file);
 
   if (validateManifest !== undefined && !validateManifest(manifest)) {

@@ -7,6 +7,7 @@ import SwiftUI
 struct ContentView: View {
     let session: EngineSessionModel
     let projects: ProjectsModel
+    let moduleCatalog: ModuleCatalogModel
 
     var body: some View {
         switch session.state {
@@ -14,7 +15,7 @@ struct ContentView: View {
             EngineHealthView(session: session)
 
         case .ready:
-            RootView(projects: projects)
+            RootView(projects: projects, moduleCatalog: moduleCatalog)
         }
     }
 }

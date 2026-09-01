@@ -10,10 +10,12 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let session: EngineSessionModel
     let projects: ProjectsModel
+    let moduleCatalog: ModuleCatalogModel
 
     override init() {
         session = EngineSessionModel.bundled()
         projects = ProjectsModel(session: session)
+        moduleCatalog = ModuleCatalogModel(session: session)
         super.init()
     }
 
@@ -36,7 +38,10 @@ struct JarvisApp: App {
         // `Window`, not `WindowGroup`: the latter adds File ▸ New Window, and
         // every window would run the `.task` that starts the engine.
         Window("Jarvis", id: "main") {
-            ContentView(session: delegate.session, projects: delegate.projects)
+            ContentView(
+                session: delegate.session,
+                projects: delegate.projects,
+                moduleCatalog: delegate.moduleCatalog)
                 .frame(minWidth: 520, minHeight: 320)
                 .task { await delegate.session.start() }
         }

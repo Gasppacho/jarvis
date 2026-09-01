@@ -6,8 +6,9 @@ import SwiftUI
 /// detail. `NavigationSplitView` because the sidebar list is the navigation.
 struct RootView: View {
     let projects: ProjectsModel
+    let moduleCatalog: ModuleCatalogModel
 
-    @State private var selection: String?
+    @State private var selection: SidebarSelection?
     @State private var pendingImport: Bool = false
 
     var body: some View {
@@ -16,7 +17,10 @@ struct RootView: View {
         } detail: {
             detail
         }
-        .task { await projects.refresh() }
+        .task {
+            await projects.refresh()
+            await moduleCatalog.refresh()
+        }
         // The import flow's position lives in the model, not here: a snapshot
         // passed into `.sheet(isPresented:)` would go stale on import.
         .sheet(
@@ -35,16 +39,20 @@ struct RootView: View {
 
     private var sidebar: some View {
         List(selection: $selection) {
-            Section {
-                ForEach(projects.projects) { project in
-                    ProjectRow(project: project).tag(project.id)
-                }
+            Section("Modules") {
+                Label("Module Catalog", systemImage: "shippingbox")
+                    .tag(SidebarSelection.moduleCatalog)
             }
-            if projects.projects.isEmpty {
-                ContentUnavailableView {
-                    Label("No projects yet", systemImage: "tray")
-                } description: {
-                    Text("Add a repository to import it as a draft project.")
+            Section("Projects") {
+                ForEach(projects.projects) { project in
+                    ProjectRow(project: project).tag(SidebarSelection.project(project.id))
+                }
+                if projects.projects.isEmpty {
+                    ContentUnavailableView {
+                        Label("No projects yet", systemImage: "tray")
+                    } description: {
+                        Text("Add a repository to import it as a draft project.")
+                    }
                 }
             }
         }
@@ -57,7 +65,7 @@ struct RootView: View {
                     .background(.bar)
             }
         }
-        .navigationTitle("Projects")
+        .navigationTitle("Jarvis")
         .toolbar {
             ToolbarItem {
                 Button {
@@ -77,12 +85,21 @@ struct RootView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let selection, let project = projects.projects.first(where: { $0.id == selection }) {
-            ProjectDetailView(projects: projects, project: project)
-        } else {
+        switch selection {
+        case .moduleCatalog:
+            ModuleCatalogView(moduleCatalog: moduleCatalog)
+        case .project(let projectId):
+            if let project = projects.projects.first(where: { $0.id == projectId }) {
+                ProjectDetailView(projects: projects, project: project)
+            } else {
+                ContentUnavailableView(
+                    "Project unavailable", systemImage: "folder.badge.questionmark",
+                    description: Text("Refresh the project list and try again."))
+            }
+        case nil:
             ContentUnavailableView(
-                "No project selected", systemImage: "folder",
-                description: Text("Pick a project in the sidebar."))
+                "No selection", systemImage: "sidebar.left",
+                description: Text("Pick the module catalogue or a project in the sidebar."))
         }
     }
 
@@ -98,6 +115,11 @@ struct RootView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task { await projects.inspect(at: url) }
     }
+}
+
+private enum SidebarSelection: Hashable {
+    case moduleCatalog
+    case project(String)
 }
 
 private struct ProjectRow: View {

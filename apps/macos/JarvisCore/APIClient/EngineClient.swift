@@ -121,6 +121,23 @@ public struct EngineClient: Sendable {
         }
     }
 
+    // MARK: Module Host (ticket 04)
+
+    public func listModuleCatalog() async throws -> [ModulePackage] {
+        let operation = "GET /v1/module-catalog"
+        let output = try await underlying.listModuleCatalog(.init())
+        switch output {
+        case .ok(let ok):
+            return try ok.body.json.items.map(ModulePackage.init(payload:))
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .undocumented(let statusCode, _):
+            throw EngineClientError.unexpectedResponse("\(operation) returned \(statusCode)")
+        }
+    }
+
     // MARK: Project Registry (ticket 02)
 
     /// Inspects a local repository read-only. Discovery never spawns git, never

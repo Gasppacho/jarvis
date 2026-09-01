@@ -13,7 +13,7 @@ const roots: string[] = [];
 function fixtureRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "jarvis-contracts-"));
   roots.push(root);
-  for (const dir of ["contracts", "examples"]) {
+  for (const dir of ["contracts", "examples", "packages/modules"]) {
     cpSync(join(repoRoot, dir), join(root, dir), { recursive: true });
   }
   return root;
@@ -99,7 +99,7 @@ describe("pnpm contracts:check", () => {
 
   it("rejects a manifest whose schemaRef points nowhere", async () => {
     const root = fixtureRoot();
-    const path = join(root, "examples/modules/development.module.yaml");
+    const path = join(root, "packages/modules/development/module.manifest.yaml");
     writeFileSync(
       path,
       readFileSync(path, "utf8").replace(

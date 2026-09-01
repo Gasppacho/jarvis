@@ -882,13 +882,26 @@ components:
           type: object
     ModulePackage:
       type: object
-      required: [moduleId, version, displayName, categories, consumes, produces, requires, provides]
+      required:
+        - moduleId
+        - version
+        - displayName
+        - description
+        - categories
+        - consumes
+        - produces
+        - requires
+        - provides
+        - configurationSchemaRef
+        - configurationSchema
       properties:
         moduleId:
           type: string
         version:
           type: string
         displayName:
+          type: string
+        description:
           type: string
         categories:
           type: array
@@ -910,6 +923,11 @@ components:
           type: array
           items:
             type: string
+        configurationSchemaRef:
+          type: [string, "null"]
+        configurationSchema:
+          type: [object, "null"]
+          additionalProperties: true
     ProjectBindings:
       type: object
       additionalProperties: false

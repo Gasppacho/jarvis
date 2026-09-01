@@ -39,7 +39,10 @@ module.exports = {
       name: "no-orphans",
       severity: "warn",
       // Generated API types are type-only imports, which read as orphans here.
-      from: { orphan: true, pathNot: "(\\.d\\.ts$|/generated/)" },
+      from: {
+        orphan: true,
+        pathNot: "(\\.d\\.ts$|/generated/|packages/modules/[^/]+/src/index\\.ts$)",
+      },
       to: {},
     },
   ],
