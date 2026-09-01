@@ -156,9 +156,7 @@ public struct EngineClient: Sendable {
         case .forbidden:
             throw EngineClientError.hostNotAllowed(operation: operation)
         case .`default`(_, let error):
-            let payload = try error.body.json
-            throw EngineClientError.engineError(
-                operation: operation, code: payload.error.code, message: payload.error.message)
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
         }
     }
 
@@ -180,9 +178,7 @@ public struct EngineClient: Sendable {
         case .forbidden:
             throw EngineClientError.hostNotAllowed(operation: operation)
         case .`default`(_, let error):
-            let payload = try error.body.json
-            throw EngineClientError.engineError(
-                operation: operation, code: payload.error.code, message: payload.error.message)
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
         }
     }
 
@@ -225,9 +221,7 @@ public struct EngineClient: Sendable {
         case .forbidden:
             throw EngineClientError.hostNotAllowed(operation: operation)
         case .`default`(_, let error):
-            let payload = try error.body.json
-            throw EngineClientError.engineError(
-                operation: operation, code: payload.error.code, message: payload.error.message)
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
         }
     }
 
@@ -253,9 +247,23 @@ public struct EngineClient: Sendable {
         case .forbidden:
             throw EngineClientError.hostNotAllowed(operation: operation)
         case .`default`(_, let error):
-            let payload = try error.body.json
-            throw EngineClientError.engineError(
-                operation: operation, code: payload.error.code, message: payload.error.message)
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
+    public func listProjectBindingCandidates(projectId: String) async throws -> [ProjectResourceCandidate] {
+        let operation = "GET /v1/projects/\(projectId)/binding-candidates"
+        let output = try await underlying.listProjectBindingCandidates(
+            .init(path: .init(projectId: projectId)))
+        switch output {
+        case .ok(let ok):
+            return try ok.body.json.items.map(ProjectResourceCandidate.init(payload:))
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
         }
     }
 
@@ -271,9 +279,7 @@ public struct EngineClient: Sendable {
         case .forbidden:
             throw EngineClientError.hostNotAllowed(operation: operation)
         case .`default`(_, let error):
-            let payload = try error.body.json
-            throw EngineClientError.engineError(
-                operation: operation, code: payload.error.code, message: payload.error.message)
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
         }
     }
 
@@ -292,10 +298,18 @@ public struct EngineClient: Sendable {
         case .forbidden:
             throw EngineClientError.hostNotAllowed(operation: operation)
         case .`default`(_, let error):
-            let payload = try error.body.json
-            throw EngineClientError.engineError(
-                operation: operation, code: payload.error.code, message: payload.error.message)
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
         }
+    }
+
+    private func mappedEngineError(
+        operation: String,
+        payload: Components.Schemas.ErrorResponse
+    ) -> EngineClientError {
+        .engineError(
+            operation: operation,
+            code: payload.error.code,
+            message: payload.error.message)
     }
 
     /// Updates the machine-local repository path after the macOS Shell resolves
@@ -321,9 +335,7 @@ public struct EngineClient: Sendable {
         case .forbidden:
             throw EngineClientError.hostNotAllowed(operation: operation)
         case .`default`(_, let error):
-            let payload = try error.body.json
-            throw EngineClientError.engineError(
-                operation: operation, code: payload.error.code, message: payload.error.message)
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
         }
     }
 }

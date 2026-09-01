@@ -222,7 +222,10 @@ describe("pnpm contracts:check", () => {
   });
 
   it.each([
-    ["slot binding kind", "        kind:\n          type: string\n"],
+    [
+      "slot binding kind",
+      "    ProjectSlotBinding:\n      type: object\n      additionalProperties: false\n      required: [kind, ref]\n      properties:\n        kind:\n          type: string\n          enum: [connection, runtime, mcp]\n",
+    ],
     ["slot binding ref", "        ref:\n          type: integer\n"],
     [
       "nullable legacy bookmarkRef",
@@ -234,7 +237,7 @@ describe("pnpm contracts:check", () => {
     const source = readFileSync(path, "utf8");
     const originals: Record<string, string> = {
       "slot binding kind":
-        "        kind:\n          enum: [connection, runtime, mcp, module-instance, engine]\n",
+        "    ProjectSlotBinding:\n      type: object\n      additionalProperties: false\n      required: [kind, ref]\n      properties:\n        kind:\n          type: string\n          enum: [connection, runtime, mcp, module-instance, engine]\n",
       "slot binding ref":
         "        ref:\n          type: string\n          minLength: 1\n          maxLength: 300\n",
       "nullable legacy bookmarkRef":

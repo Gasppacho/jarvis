@@ -2,6 +2,7 @@ import {
   chmodSync,
   lstatSync,
   mkdirSync,
+  readFileSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -13,30 +14,63 @@ import { stringify as stringifyYaml } from "yaml";
 import type { StoredPortableProjectConfiguration } from "./types.js";
 import { EngineError } from "../errors.js";
 
+export interface ProjectConfigurationCompensation {
+  restore(): void;
+}
+
 export interface ProjectConfigurationWriter {
-  write(repositoryPath: string, configuration: StoredPortableProjectConfiguration): void;
+  write(
+    repositoryPath: string,
+    configuration: StoredPortableProjectConfiguration,
+  ): ProjectConfigurationCompensation;
 }
 
 /** Filesystem adapter for an atomic private sibling write followed by rename. */
 export class AtomicProjectConfigurationWriter implements ProjectConfigurationWriter {
-  write(repositoryPath: string, configuration: StoredPortableProjectConfiguration): void {
+  write(
+    repositoryPath: string,
+    configuration: StoredPortableProjectConfiguration,
+  ): ProjectConfigurationCompensation {
     const destination = join(repositoryPath, ".jarvis", "project.yaml");
-    const directory = dirname(destination);
-    const temporary = join(directory, `.project.yaml.${randomUUID()}.tmp`);
-    try {
-      ensurePrivateProjectDirectory(repositoryPath, directory);
-      writeFileSync(temporary, stringifyYaml(configuration), {
-        encoding: "utf8",
-        mode: 0o600,
-        flag: "wx",
-      });
-      chmodSync(temporary, 0o600);
-      renameSync(temporary, destination);
-    } catch (error) {
-      rmSync(temporary, { force: true });
-      if (error instanceof EngineError) throw error;
-      throw writeFailure();
-    }
+    const previous = readDurableConfiguration(repositoryPath, destination);
+    replaceFile(repositoryPath, destination, stringifyYaml(configuration));
+    return {
+      restore: () => {
+        if (previous === undefined) {
+          rmSync(destination, { force: true });
+          return;
+        }
+        replaceFile(repositoryPath, destination, previous);
+      },
+    };
+  }
+}
+
+function readDurableConfiguration(repositoryPath: string, destination: string): Buffer | undefined {
+  ensurePrivateProjectDirectory(repositoryPath, dirname(destination));
+  try {
+    const stats = lstatSync(destination);
+    if (stats.isSymbolicLink() || !stats.isFile()) throw writeFailure();
+    return readFileSync(destination);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    if (error instanceof EngineError) throw error;
+    throw writeFailure();
+  }
+}
+
+function replaceFile(repositoryPath: string, destination: string, content: string | Buffer): void {
+  const directory = dirname(destination);
+  const temporary = join(directory, `.project.yaml.${randomUUID()}.tmp`);
+  try {
+    ensurePrivateProjectDirectory(repositoryPath, directory);
+    writeFileSync(temporary, content, { mode: 0o600, flag: "wx" });
+    chmodSync(temporary, 0o600);
+    renameSync(temporary, destination);
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    if (error instanceof EngineError) throw error;
+    throw writeFailure();
   }
 }
 

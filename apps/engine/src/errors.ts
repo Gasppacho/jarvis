@@ -12,6 +12,7 @@ export type ErrorCode =
   | "project.config-invalid"
   | "project.bindings-invalid"
   | "project.repository-write-failed"
+  | "project.repository-compensation-failed"
   | "project.not-found"
   | "system.internal-error"
   | "system.storage-unavailable";

@@ -16,6 +16,7 @@ public struct ModulePackage: Identifiable, Sendable, Equatable {
     public let provides: [String]
     public let configurationSchemaRef: String?
     public let configurationSchema: String?
+    public let configurationFields: [ModuleConfigurationField]
 
     init(payload: Components.Schemas.ModulePackage) {
         let configurationSchema: String? = if let schema = payload.configurationSchema,
@@ -39,6 +40,7 @@ public struct ModulePackage: Identifiable, Sendable, Equatable {
         provides = payload.provides
         configurationSchemaRef = payload.configurationSchemaRef
         self.configurationSchema = configurationSchema
+        configurationFields = ModuleConfigurationField.decode(from: configurationSchema)
     }
 
     public var presentationFields: [ModulePackagePresentationField] {
@@ -56,6 +58,46 @@ public struct ModulePackage: Identifiable, Sendable, Equatable {
 
     private func list(_ values: [String]) -> String {
         values.isEmpty ? "None" : values.joined(separator: ", ")
+    }
+}
+
+public struct ModuleConfigurationField: Identifiable, Sendable, Equatable {
+    public enum ValueKind: Sendable, Equatable {
+        case string
+        case integer
+        case boolean
+        case choice([String])
+        case json
+    }
+
+    public var id: String { key }
+    public let key: String
+    public let label: String
+    public let required: Bool
+    public let kind: ValueKind
+
+    static func decode(from schema: String?) -> [ModuleConfigurationField] {
+        guard let schema, let data = schema.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let properties = object["properties"] as? [String: [String: Any]]
+        else { return [] }
+        let required = Set(object["required"] as? [String] ?? [])
+        return properties.keys.sorted().map { key in
+            let property = properties[key] ?? [:]
+            let label = property["title"] as? String ?? key
+            let kind: ValueKind
+            if let choices = property["enum"] as? [String] {
+                kind = .choice(choices)
+            } else {
+                kind = switch property["type"] as? String {
+                case "string": .string
+                case "integer", "number": .integer
+                case "boolean": .boolean
+                default: .json
+                }
+            }
+            return .init(key: key, label: label, required: required.contains(key), kind: kind)
+        }
     }
 }
 

@@ -12,7 +12,7 @@ La configuration portable définit la composition logique. Exemple complet : `ex
 ### Key sections
 
 - `metadata` : ID stable et nom.
-- `repositories` : repository logique, root relative, branche et remote.
+- `repositories` : exactement le repository logique MVP `main`, avec root `.` ; branche et remote.
 - `slots` : capabilities que la machine doit binder.
 - `commands` : commandes projet contrôlées.
 - `git` : pattern de branche, stratégie de commit et push.
@@ -45,7 +45,7 @@ slots:
 
 Le fichier est un exemple de forme ; l'implémentation stocke ces valeurs localement et ne les commit pas.
 
-Un import ou draft non résolu reste explicitement valide avec `slots: {}`. Un ancien import peut aussi porter `bookmarkRef: null` jusqu'à ce que le macOS Shell fournisse un Repository Grant. Les `ref` de slots sont des identifiants locaux opaques : leur présence ne prouve ni l'existence ni la disponibilité d'une connexion, d'un MCP ou d'un Agent Runtime. Les registres correspondants ne font pas partie de ce tracer bullet et aucune candidate implicite n'est synthétisée.
+Un import ou draft non résolu reste explicitement valide avec `slots: {}`. Un ancien import peut aussi porter `bookmarkRef: null` jusqu'à ce que le macOS Shell fournisse un Repository Grant. Un `ref` de slot n'est accepté que s'il désigne un candidat explicitement dans l'autorité du projet, du bon `kind`, et fournissant la capability demandée. Les registres Connection, MCP et Agent Runtime ne font pas partie de ce tracer bullet : leur catalogue est vide et aucun grant implicite n'est synthétisé. Les Module Instances déjà sélectionnées sont des candidats project-scoped pour les capabilities déclarées par leur manifest.
 
 ## Merge algorithm
 
@@ -68,7 +68,7 @@ Un `ref` de connexion peut pointer vers un record global contenant un `secretRef
 Certaines règles sont sémantiques :
 
 - ID unique de module instance ;
-- exactement un repository `main` au MVP ;
+- exactement un repository `main` de root `.` au MVP ;
 - tous les bindings requis présents ;
 - requests avec un consumer unique ;
 - commandes autorisées ;

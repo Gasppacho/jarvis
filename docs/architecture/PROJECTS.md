@@ -51,7 +51,7 @@ Les bindings locaux restent dans Application Support/SQLite et référencent :
 
 Un exemple exportable nettoyé est fourni sous `examples/project/local-bindings.yaml`, mais le fichier réel n'est pas commité. La configuration portable et les Local Bindings sont remplacés indépendamment dans SQLite ; chaque remplacement SQLite est transactionnel. Une configuration invalide ne modifie aucune ligne.
 
-Quand `writeToRepository` vaut `true`, le moteur écrit un sibling temporaire privé puis le renomme sur `.jarvis/project.yaml`, sans créer de commit Git. Le système de fichiers et SQLite ne peuvent pas partager une transaction : l'écriture/rename précède donc SQLite afin qu'un échec fichier ne change pas la base. Les remplacements sont déterministes et les retries idempotents, mais le moteur ne prétend pas offrir une atomicité cross-resource.
+Quand `writeToRepository` vaut `true`, le moteur écrit un sibling temporaire privé puis le renomme sur `.jarvis/project.yaml`, sans créer de commit Git. Le système de fichiers et SQLite ne peuvent pas partager une transaction : l'écriture/rename précède donc SQLite afin qu'un échec fichier ne change pas la base. Si SQLite refuse ensuite le remplacement, le moteur restaure le dernier fichier durable (ou supprime le nouveau fichier lorsqu'il n'en existait pas). Cette compensation est testée, sans prétendre fournir une transaction cross-resource générale.
 
 ## Slots
 
@@ -75,7 +75,7 @@ tickets       → mcp/github-qservices
 agentRuntime  → runtime/codex-default
 ```
 
-Un module référence un slot, jamais le catalogue global. Tant que les registres Connection, MCP et Agent Runtime ne sont pas implémentés, les slots non bindés restent affichés explicitement `Unbound`; Jarvis ne fabrique ni candidats, ni connexion, ni activation implicite.
+Un module référence un slot, jamais le catalogue global. Les Module Instances sélectionnées sont des candidats déjà project-scoped pour les capabilities qu'elles fournissent. Les autres candidats passent par un port de grants explicites ; tant que les registres Connection, MCP et Agent Runtime ne sont pas implémentés, leur catalogue est vide et les slots concernés restent `Unbound`. Jarvis ne fabrique ni grant, ni connexion, ni activation implicite.
 
 ## Import flow
 

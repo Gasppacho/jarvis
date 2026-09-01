@@ -1,7 +1,17 @@
 import Foundation
 import JarvisAPI
-import Observation
 import OSLog
+import Observation
+
+public struct ProjectConfigurationState: Sendable, Equatable {
+    public var detail: ProjectDetail?
+    public var localBindings: LocalProjectBindings?
+    public var candidates: [ProjectResourceCandidate] = []
+    public var draft: ProjectConfigurationDraft?
+    public var isLoading = false
+    public var isSaving = false
+    public var errorMessage: String?
+}
 
 /// The Project Registry as the shell shows it (docs/architecture/PROJECTS.md):
 /// the sidebar list and the import flow. MACOS_APP.md: an AppModel owns this
@@ -18,11 +28,7 @@ public final class ProjectsModel {
     /// Per-project Repository Grant failures do not erase the Project Registry.
     /// The detail remains queryable and can explain how to grant access again.
     public private(set) var repositoryGrantMessages: [String: String] = [:]
-    public private(set) var configurationDetails: [String: ProjectDetail] = [:]
-    public private(set) var localBindings: [String: LocalProjectBindings] = [:]
-    public private(set) var loadingConfigurationProjectIds: Set<String> = []
-    public private(set) var savingConfigurationProjectIds: Set<String> = []
-    public private(set) var configurationErrorMessages: [String: String] = [:]
+    public private(set) var configurationStates: [String: ProjectConfigurationState] = [:]
 
     /// Where the import flow stands. The shell never imports before the user
     /// confirms the detected configuration (UX wizard step 2), and the sheet
@@ -116,9 +122,11 @@ public final class ProjectsModel {
                         path: repositoryURL.path(percentEncoded: false),
                         bookmarkRef: bookmarkRef
                     )
-                    try retainAccess(to: repositoryURL, key: grantKey(
-                        projectId: detail.project.id,
-                        repositoryId: binding.repositoryId))
+                    try retainAccess(
+                        to: repositoryURL,
+                        key: grantKey(
+                            projectId: detail.project.id,
+                            repositoryId: binding.repositoryId))
                     repositoryGrantMessages[detail.project.id] = nil
                 } catch {
                     repositoryGrantMessages[detail.project.id] =
@@ -137,16 +145,87 @@ public final class ProjectsModel {
         }
     }
 
-    public func refreshConfiguration(projectId: String) async {
+    public func configurationState(for projectId: String) -> ProjectConfigurationState {
+        configurationStates[projectId] ?? ProjectConfigurationState()
+    }
+
+    public func refreshConfiguration(projectId: String, packages: [ModulePackage] = []) async {
         guard let client else { return }
-        loadingConfigurationProjectIds.insert(projectId)
-        defer { loadingConfigurationProjectIds.remove(projectId) }
+        updateConfigurationState(projectId) {
+            $0.isLoading = true
+            $0.candidates = []
+        }
+        defer { updateConfigurationState(projectId) { $0.isLoading = false } }
         do {
-            configurationDetails[projectId] = try await client.getProject(id: projectId)
-            localBindings[projectId] = try await client.getProjectBindings(projectId: projectId)
-            configurationErrorMessages[projectId] = nil
+            let detail = try await client.getProject(id: projectId)
+            let bindings = try await client.getProjectBindings(projectId: projectId)
+            let candidates = try await client.listProjectBindingCandidates(projectId: projectId)
+            updateConfigurationState(projectId) {
+                $0.detail = detail
+                $0.localBindings = bindings
+                $0.candidates = candidates
+                $0.draft = detail.portableConfiguration.map {
+                    ProjectConfigurationDraft(configuration: $0, packages: packages)
+                }
+                $0.errorMessage = nil
+            }
         } catch {
-            configurationErrorMessages[projectId] = Self.describe(error)
+            updateConfigurationState(projectId) {
+                $0.candidates = []
+                $0.errorMessage = Self.describe(error)
+            }
+        }
+    }
+
+    public func editDraft(
+        projectId: String,
+        _ edit: (inout ProjectConfigurationDraft) -> Void
+    ) {
+        updateConfigurationState(projectId) { state in
+            guard var draft = state.draft else { return }
+            edit(&draft)
+            state.draft = draft
+            state.errorMessage = nil
+        }
+    }
+
+    public func renameDraftSlot(projectId: String, from oldName: String, to newName: String) {
+        guard !newName.isEmpty, newName != oldName else { return }
+        let state = configurationState(for: projectId)
+        if state.localBindings?.slots.contains(where: { $0.slotId == oldName }) == true {
+            updateConfigurationState(projectId) {
+                $0.errorMessage =
+                    "Unbind \(oldName) before renaming it so Local Bindings remain valid."
+            }
+            return
+        }
+        editDraft(projectId: projectId) { draft in
+            guard draft.slotRequirements[newName] == nil,
+                let requirement = draft.slotRequirements.removeValue(forKey: oldName)
+            else { return }
+            draft.slotRequirements[newName] = requirement
+            for index in draft.modules.indices {
+                if draft.modules[index].runtimeSlot == oldName {
+                    draft.modules[index].runtimeSlot = newName
+                }
+                for (binding, target) in draft.modules[index].bindings where target == oldName {
+                    draft.modules[index].bindings[binding] = newName
+                }
+            }
+        }
+    }
+
+    @discardableResult
+    public func saveDraft(projectId: String, writeToRepository: Bool) async -> ProjectDetail? {
+        do {
+            guard let draft = configurationState(for: projectId).draft else { return nil }
+            return await saveConfiguration(
+                projectId: projectId,
+                portableConfig: try draft.payload(),
+                writeToRepository: writeToRepository)
+        } catch {
+            updateConfigurationState(projectId) { $0.errorMessage = error.localizedDescription }
+            return nil
         }
     }
 
@@ -156,22 +235,52 @@ public final class ProjectsModel {
         portableConfig: Components.Schemas.PortableProjectConfiguration,
         writeToRepository: Bool
     ) async -> ProjectDetail? {
-        guard let client else { return nil }
-        savingConfigurationProjectIds.insert(projectId)
-        defer { savingConfigurationProjectIds.remove(projectId) }
+        guard let client, !configurationState(for: projectId).isSaving else { return nil }
+        updateConfigurationState(projectId) { $0.isSaving = true }
+        defer { updateConfigurationState(projectId) { $0.isSaving = false } }
         do {
             let detail = try await client.replaceProjectConfiguration(
                 projectId: projectId,
                 portableConfig: portableConfig,
                 writeToRepository: writeToRepository)
-            configurationDetails[projectId] = detail
-            configurationErrorMessages[projectId] = nil
+            let candidates: [ProjectResourceCandidate]
+            let candidateError: String?
+            do {
+                candidates = try await client.listProjectBindingCandidates(projectId: projectId)
+                candidateError = nil
+            } catch {
+                candidates = []
+                candidateError =
+                    "Configuration was saved, but eligible Local Binding candidates could not be refreshed. Reload this Project before binding a slot."
+            }
+            updateConfigurationState(projectId) {
+                $0.detail = detail
+                $0.candidates = candidates
+                $0.errorMessage = candidateError
+            }
             await refresh()
             return detail
         } catch {
-            configurationErrorMessages[projectId] = Self.describe(error)
+            updateConfigurationState(projectId) { $0.errorMessage = Self.describe(error) }
             return nil
         }
+    }
+
+    public func setLocalBinding(
+        projectId: String,
+        slotId: String,
+        candidate: ProjectResourceCandidate?
+    ) async -> LocalProjectBindings? {
+        guard var payload = configurationState(for: projectId).localBindings?.wirePayload else {
+            return nil
+        }
+        if let candidate {
+            payload.slots.additionalProperties[slotId] = .init(
+                kind: candidate.kind.payload, ref: candidate.ref)
+        } else {
+            payload.slots.additionalProperties.removeValue(forKey: slotId)
+        }
+        return await saveBindings(projectId: projectId, bindings: payload)
     }
 
     @discardableResult
@@ -179,19 +288,30 @@ public final class ProjectsModel {
         projectId: String,
         bindings: Components.Schemas.ProjectBindings
     ) async -> LocalProjectBindings? {
-        guard let client else { return nil }
-        savingConfigurationProjectIds.insert(projectId)
-        defer { savingConfigurationProjectIds.remove(projectId) }
+        guard let client, !configurationState(for: projectId).isSaving else { return nil }
+        updateConfigurationState(projectId) { $0.isSaving = true }
+        defer { updateConfigurationState(projectId) { $0.isSaving = false } }
         do {
             let saved = try await client.replaceProjectBindings(
                 projectId: projectId, bindings: bindings)
-            localBindings[projectId] = saved
-            configurationErrorMessages[projectId] = nil
+            updateConfigurationState(projectId) {
+                $0.localBindings = saved
+                $0.errorMessage = nil
+            }
             return saved
         } catch {
-            configurationErrorMessages[projectId] = Self.describe(error)
+            updateConfigurationState(projectId) { $0.errorMessage = Self.describe(error) }
             return nil
         }
+    }
+
+    private func updateConfigurationState(
+        _ projectId: String,
+        _ update: (inout ProjectConfigurationState) -> Void
+    ) {
+        var state = configurationStates[projectId] ?? ProjectConfigurationState()
+        update(&state)
+        configurationStates[projectId] = state
     }
 
     public func detail(for id: String) async throws -> ProjectDetail {
@@ -224,10 +344,12 @@ public final class ProjectsModel {
                 try repositoryGrants.refresh(grant)
             }
             var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(
-                atPath: grant.url.path(percentEncoded: false),
-                isDirectory: &isDirectory
-            ), isDirectory.boolValue else {
+            guard
+                FileManager.default.fileExists(
+                    atPath: grant.url.path(percentEncoded: false),
+                    isDirectory: &isDirectory
+                ), isDirectory.boolValue
+            else {
                 repositoryGrantMessages[project.id] =
                     "The repository cannot be reached. Choose the repository again."
                 return
@@ -340,7 +462,8 @@ public final class ProjectsModel {
             case .unauthorized(let operation):
                 return "The engine rejected the session token (\(operation)). Restart Jarvis."
             case .hostNotAllowed(let operation):
-                return "The engine refused a request that does not address this machine (\(operation)). Restart Jarvis."
+                return
+                    "The engine refused a request that does not address this machine (\(operation)). Restart Jarvis."
             case .engineError(_, let code, let message):
                 return switch code {
                 case "project.already-imported":
@@ -351,6 +474,8 @@ public final class ProjectsModel {
                     "\(message) (\(code)) Local Bindings were not changed. Bind only declared project repositories and slots, then try again."
                 case "project.repository-write-failed":
                     "\(message) (\(code)) SQLite was not changed. Restore repository write access and try again."
+                case "project.repository-compensation-failed":
+                    "\(message) (\(code)) Do not retry until .jarvis/project.yaml has been inspected."
                 case "repository.path-invalid":
                     "\(message) (\(code)) No project was created. Choose an accessible repository folder and try again."
                 case "engine.database-unavailable":

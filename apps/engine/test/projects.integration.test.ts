@@ -24,6 +24,14 @@ import { makeNodeRepositoryFixture, makeRepositoryFixture } from "./repository-f
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
 /** Snapshot of every file's size and mtime, to prove discovery mutates nothing. */
+function setNestedConfigurationValue(config: Record<string, unknown>, value: string): void {
+  const modules = config["modules"] as Record<string, unknown>[];
+  const configuration = modules[1]!["configuration"] as Record<string, unknown>;
+  const rules = configuration["rules"] as Record<string, unknown>[];
+  const emit = rules[0]!["emit"] as Record<string, unknown>;
+  emit["payload"] = { nested: { value } };
+}
+
 function treeSnapshot(root: string): string {
   const files = execFileSync("find", [root, "-type", "f"], { encoding: "utf8" })
     .split("\n")
@@ -421,8 +429,7 @@ describe("repository discovery and project import", () => {
       const persistedBindings = {
         ...localBindings,
         slots: {
-          sourceControl: { kind: "connection", ref: "connection/github" },
-          agentRuntime: { kind: "runtime", ref: "runtime/codex" },
+          sourceControl: { kind: "module-instance", ref: "github" },
         },
       };
       expect(
@@ -456,6 +463,13 @@ describe("repository discovery and project import", () => {
       (config: Record<string, unknown>) => {
         const modules = config["modules"] as Record<string, unknown>[];
         modules[1]!["instanceId"] = modules[0]!["instanceId"];
+      },
+    ],
+    [
+      "repository root other than the MVP root",
+      (config: Record<string, unknown>) => {
+        const repositories = config["repositories"] as Record<string, unknown>[];
+        repositories[0]!["root"] = "packages/app";
       },
     ],
     [
@@ -494,7 +508,35 @@ describe("repository discovery and project import", () => {
         bindings["repository"] = "missingRepository";
       },
     ],
-  ])("atomically rejects %s", async (_case, mutate) => {
+    [
+      "nested POSIX absolute path",
+      (config: Record<string, unknown>) =>
+        setNestedConfigurationValue(config, "/Users/alice/private"),
+    ],
+    [
+      "nested home-relative path",
+      (config: Record<string, unknown>) => setNestedConfigurationValue(config, "~/private"),
+    ],
+    [
+      "nested named-user home path",
+      (config: Record<string, unknown>) => setNestedConfigurationValue(config, "~alice/private"),
+    ],
+    [
+      "nested Windows absolute path",
+      (config: Record<string, unknown>) =>
+        setNestedConfigurationValue(config, "C:\\Users\\alice\\private"),
+    ],
+    [
+      "nested secret literal",
+      (config: Record<string, unknown>) => {
+        const modules = config["modules"] as Record<string, unknown>[];
+        const configuration = modules[1]!["configuration"] as Record<string, unknown>;
+        const rules = configuration["rules"] as Record<string, unknown>[];
+        const emit = rules[0]!["emit"] as Record<string, unknown>;
+        emit["payload"] = { nested: { apiToken: "must-not-appear" } };
+      },
+    ],
+  ])("rejects %s without replacing the last durable configuration", async (_case, mutate) => {
     const engine = await start();
     const root = fixture(() => makeNodeRepositoryFixture());
     const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
@@ -512,12 +554,35 @@ describe("repository discovery and project import", () => {
       body: JSON.stringify({ portableConfig, writeToRepository: false }),
     });
     expect(response.status).toBe(400);
-    expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
-      "project.config-invalid",
-    );
+    const error = (await response.json()) as { error: { code: string; message: string } };
+    expect(error.error.code).toBe("project.config-invalid");
+    expect(error.error.message).not.toContain("must-not-appear");
     expect(await (await engine.call(`/v1/projects/${created.id}`)).json()).toMatchObject({
       portableConfig: created.portableConfig,
     });
+  });
+
+  it("allows an explicit secret reference where the Module contract permits one", async () => {
+    const engine = await start();
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
+      id: string;
+    };
+    const portableConfig = parseYaml(
+      readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
+    ) as Record<string, unknown>;
+    const modules = portableConfig["modules"] as Record<string, unknown>[];
+    const configuration = modules[1]!["configuration"] as Record<string, unknown>;
+    const rules = configuration["rules"] as Record<string, unknown>[];
+    const emit = rules[0]!["emit"] as Record<string, unknown>;
+    emit["payload"] = { secretRef: "keychain/project/service" };
+
+    const response = await engine.call(`/v1/projects/${created.id}/configuration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ portableConfig, writeToRepository: false }),
+    });
+    expect(response.status).toBe(200);
   });
 
   it("gets and replaces schema-valid Local Bindings while preserving the Repository Grant", async () => {
@@ -526,6 +591,9 @@ describe("repository discovery and project import", () => {
     const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
       id: string;
     };
+    expect(
+      await (await engine.call(`/v1/projects/${created.id}/binding-candidates`)).json(),
+    ).toEqual({ items: [] });
     const portableConfig = parseYaml(
       readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
     ) as Record<string, unknown>;
@@ -538,6 +606,19 @@ describe("repository discovery and project import", () => {
         })
       ).status,
     ).toBe(200);
+    const candidates = await (
+      await engine.call(`/v1/projects/${created.id}/binding-candidates`)
+    ).json();
+    expect(candidates).toEqual({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          ref: "github",
+          kind: "module-instance",
+          capabilities: expect.arrayContaining(["scm.change-request.manage"]),
+        }),
+      ]),
+    });
+
     const initial = (await (
       await engine.call(`/v1/projects/${created.id}/bindings`)
     ).json()) as Record<string, unknown>;
@@ -559,8 +640,7 @@ describe("repository discovery and project import", () => {
     const replacement = {
       ...initial,
       slots: {
-        sourceControl: { kind: "connection", ref: "connection/github" },
-        agentRuntime: { kind: "runtime", ref: "runtime/codex" },
+        sourceControl: { kind: "module-instance", ref: "github" },
       },
     };
     const response = await engine.call(`/v1/projects/${created.id}/bindings`, {
@@ -570,9 +650,55 @@ describe("repository discovery and project import", () => {
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(replacement);
+
+    const incompatibleConfiguration = structuredClone(portableConfig);
+    const modules = incompatibleConfiguration["modules"] as Record<string, unknown>[];
+    modules[0]!["enabled"] = false;
+    const configurationResponse = await engine.call(`/v1/projects/${created.id}/configuration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        portableConfig: incompatibleConfiguration,
+        writeToRepository: false,
+      }),
+    });
+    expect(configurationResponse.status).toBe(400);
+    expect(((await configurationResponse.json()) as { error: { code: string } }).error.code).toBe(
+      "project.config-invalid",
+    );
   });
 
-  it("rejects invalid Local Bindings without changing the persisted envelope", async () => {
+  it("rejects a Repository Grant smuggled through generic Local Bindings replacement", async () => {
+    const engine = await start();
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
+      id: string;
+    };
+    const before = (await (
+      await engine.call(`/v1/projects/${created.id}/bindings`)
+    ).json()) as Record<string, unknown>;
+    const repositories = structuredClone(before["repositories"]) as Record<
+      string,
+      { path: string; bookmarkRef: string | null }
+    >;
+    repositories["main"] = {
+      path: fixture(() => makeNodeRepositoryFixture()),
+      bookmarkRef: "bookmark/smuggled",
+    };
+
+    const response = await engine.call(`/v1/projects/${created.id}/bindings`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...before, repositories }),
+    });
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
+      "project.bindings-invalid",
+    );
+    expect(await (await engine.call(`/v1/projects/${created.id}/bindings`)).json()).toEqual(before);
+  });
+
+  it("rejects unknown or capability-incompatible Local Binding refs without changing the persisted envelope", async () => {
     const engine = await start();
     const root = fixture(() => makeNodeRepositoryFixture());
     const portableConfig = parseYaml(
@@ -582,20 +708,20 @@ describe("repository discovery and project import", () => {
       await importProject(engine, { repositoryPath: root, portableConfig })
     ).json()) as { id: string };
     const before = await (await engine.call(`/v1/projects/${created.id}/bindings`)).json();
-    const invalid = {
-      ...(before as Record<string, unknown>),
-      slots: { undeclared: { kind: "runtime", ref: "runtime/opaque" } },
-    };
-
-    const response = await engine.call(`/v1/projects/${created.id}/bindings`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(invalid),
-    });
-    expect(response.status).toBe(400);
-    expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
-      "project.bindings-invalid",
-    );
+    for (const slots of [
+      { sourceControl: { kind: "connection", ref: "connection/opaque" } },
+      { agentRuntime: { kind: "module-instance", ref: "github" } },
+    ]) {
+      const response = await engine.call(`/v1/projects/${created.id}/bindings`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...(before as Record<string, unknown>), slots }),
+      });
+      expect(response.status).toBe(400);
+      const error = (await response.json()) as { error: { code: string; message: string } };
+      expect(error.error.code).toBe("project.bindings-invalid");
+      expect(error.error.message).not.toContain("connection/opaque");
+    }
     expect(await (await engine.call(`/v1/projects/${created.id}/bindings`)).json()).toEqual(before);
   });
 

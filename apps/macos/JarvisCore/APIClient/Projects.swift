@@ -126,11 +126,60 @@ public struct ProjectModuleInstance: Identifiable, Sendable, Equatable {
     }
 }
 
+public enum ProjectResourceKind: String, CaseIterable, Sendable, Equatable {
+    case connection
+    case runtime
+    case mcp
+    case moduleInstance = "module-instance"
+    case engine
+
+    init(payload: Components.Schemas.ProjectSlotBinding.kindPayload) {
+        self = switch payload {
+        case .connection: .connection
+        case .runtime: .runtime
+        case .mcp: .mcp
+        case .module_hyphen_instance: .moduleInstance
+        case .engine: .engine
+        }
+    }
+
+    var payload: Components.Schemas.ProjectSlotBinding.kindPayload {
+        switch self {
+        case .connection: .connection
+        case .runtime: .runtime
+        case .mcp: .mcp
+        case .moduleInstance: .module_hyphen_instance
+        case .engine: .engine
+        }
+    }
+}
+
 public struct ProjectSlotBinding: Identifiable, Sendable, Equatable {
     public var id: String { slotId }
     public let slotId: String
-    public let kind: String
+    public let kind: ProjectResourceKind
     public let ref: String
+}
+
+public struct ProjectResourceCandidate: Identifiable, Sendable, Equatable {
+    public var id: String { "\(kind.rawValue)/\(ref)" }
+    public let ref: String
+    public let kind: ProjectResourceKind
+    public let displayName: String
+    public let capabilities: [String]
+
+    init(payload: Components.Schemas.ProjectResourceCandidate) {
+        ref = payload.ref
+        displayName = payload.displayName
+        capabilities = payload.capabilities
+        kind = switch payload.kind {
+        case .connection: .connection
+        case .runtime: .runtime
+        case .mcp: .mcp
+        case .module_hyphen_instance: .moduleInstance
+        case .engine: .engine
+        }
+    }
 }
 
 public struct LocalRepositoryBinding: Identifiable, Sendable, Equatable {
@@ -161,7 +210,7 @@ public struct LocalProjectBindings: Sendable, Equatable {
             .map { slotId, binding in
                 ProjectSlotBinding(
                     slotId: slotId,
-                    kind: jsonScalar(binding.kind),
+                    kind: ProjectResourceKind(payload: binding.kind),
                     ref: binding.ref)
             }
         wirePayload = payload
@@ -285,13 +334,6 @@ private func prettyJSON<Value: Encodable>(_ value: Value) -> String? {
             withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
     else { return nil }
     return String(data: pretty, encoding: .utf8)
-}
-
-private func jsonScalar<Value: Encodable>(_ value: Value) -> String {
-    guard let data = encodedJSON(value),
-        let scalar = try? JSONSerialization.jsonObject(with: data) as? String
-    else { return "unknown" }
-    return scalar
 }
 
 extension OpenAPIObjectContainer {

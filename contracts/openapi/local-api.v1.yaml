@@ -501,6 +501,31 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /v1/projects/{projectId}/binding-candidates:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      operationId: listProjectBindingCandidates
+      responses:
+        "200":
+          description: Resources explicitly eligible for this Project's slots.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ProjectResourceCandidate"
+        default:
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/projects/{projectId}/graph:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -957,8 +982,7 @@ components:
           pattern: "^[a-z0-9][a-z0-9._-]*$"
         root:
           type: string
-          minLength: 1
-          pattern: '^(?!/|~|[A-Za-z]:\\).+'
+          const: "."
         defaultBranch:
           type: string
           minLength: 1
@@ -1087,12 +1111,29 @@ components:
         bookmarkRef:
           type: [string, "null"]
           minLength: 1
+    ProjectResourceCandidate:
+      type: object
+      additionalProperties: false
+      required: [ref, kind, displayName, capabilities]
+      properties:
+        ref:
+          type: string
+        kind:
+          type: string
+          enum: [connection, runtime, mcp, module-instance, engine]
+        displayName:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
     ProjectSlotBinding:
       type: object
       additionalProperties: false
       required: [kind, ref]
       properties:
         kind:
+          type: string
           enum: [connection, runtime, mcp, module-instance, engine]
         ref:
           type: string

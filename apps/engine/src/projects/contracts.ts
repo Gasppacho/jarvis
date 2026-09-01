@@ -33,13 +33,17 @@ export function requirePortableProjectConfiguration(
 ): PortableProjectConfiguration {
   validatePortableConfig(value);
   const config = value as PortableProjectConfiguration;
-  if (config.repositories.length !== 1 || config.repositories[0]?.id !== "main") {
-    invalid("/repositories must contain exactly one repository with id main");
+  if (
+    config.repositories.length !== 1 ||
+    config.repositories[0]?.id !== "main" ||
+    config.repositories[0].root !== "."
+  ) {
+    invalid("/repositories must contain exactly one repository with id main and root .");
   }
 
   const instanceIds = new Set<string>();
   const slots = new Set(Object.keys(config.slots));
-  const repositories = new Set(config.repositories.map((repository) => repository.id));
+  const repositories = new Set<string>(config.repositories.map((repository) => repository.id));
   for (const [index, instance] of config.modules.entries()) {
     const base = `/modules/${index}`;
     if (instanceIds.has(instance.instanceId)) invalid(`${base}/instanceId must be unique`);
@@ -48,10 +52,9 @@ export function requirePortableProjectConfiguration(
     if (modules.package(instance.moduleId) === undefined) {
       invalid(`${base}/moduleId is not an accepted bundled Module Package`);
     }
-    const validation = modules.validateConfiguration(
-      instance.moduleId,
-      instance.configuration ?? {},
-    );
+    const configuration = instance.configuration ?? {};
+    requirePortableConfigurationValues(configuration, `${base}/configuration`);
+    const validation = modules.validateConfiguration(instance.moduleId, configuration);
     if (!validation.valid) {
       invalid(validation.issues.map((issue) => `${base}/configuration${issue}`).join("; "));
     }
@@ -98,6 +101,26 @@ function requireValid(
     )
     .join("; ");
   throw new EngineError(code, 400, `The ${subject} does not satisfy its v1 schema: ${problems}`);
+}
+
+const SECRET_LITERAL_KEY = /(?:secret|token|password|credential)$|^(?:private|api).*key$/i;
+const MACHINE_PATH = /^(?:\/|~|[A-Za-z]:[\\/]|\\\\)/;
+
+function requirePortableConfigurationValues(value: unknown, path: string): void {
+  if (typeof value === "string") {
+    if (MACHINE_PATH.test(value)) invalid(`${path} must not contain a machine-absolute path`);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => requirePortableConfigurationValues(entry, `${path}/${index}`));
+    return;
+  }
+  if (typeof value !== "object" || value === null) return;
+  for (const [key, entry] of Object.entries(value)) {
+    const child = `${path}/${key}`;
+    if (SECRET_LITERAL_KEY.test(key)) invalid(`${child} must not contain a secret literal`);
+    requirePortableConfigurationValues(entry, child);
+  }
 }
 
 function invalid(problem: string): never {

@@ -90,7 +90,10 @@ struct RootView: View {
             ModuleCatalogView(moduleCatalog: moduleCatalog)
         case .project(let projectId):
             if let project = projects.projects.first(where: { $0.id == projectId }) {
-                ProjectDetailView(projects: projects, project: project)
+                ProjectDetailView(
+                    projects: projects,
+                    moduleCatalog: moduleCatalog,
+                    project: project)
             } else {
                 ContentUnavailableView(
                     "Project unavailable", systemImage: "folder.badge.questionmark",

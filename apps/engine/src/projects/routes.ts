@@ -77,6 +77,14 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
     return reply.code(200).send(service.getProjectBindings(params?.projectId));
   });
 
+  app.get("/v1/projects/:projectId/binding-candidates", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    return reply
+      .code(200)
+      .send({ items: service.listProjectResourceCandidates(params?.projectId) });
+  });
+
   app.put("/v1/projects/:projectId/bindings", async (request, reply) => {
     const service = requireDatabaseReady(deps);
     const params = request.params as { projectId?: unknown } | undefined;

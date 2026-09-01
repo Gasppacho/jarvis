@@ -5,6 +5,8 @@ import type { ModuleHost } from "../../../../packages/kernel/src/module-host.js"
 import type {
   ImportProjectRequest,
   ProjectRegistry,
+  ProjectResourceCandidate,
+  ProjectResourceGrantPort,
   ReplaceProjectBindingsRequest,
   ReplaceProjectConfigurationRequest,
   RepositoryDiscoveryPort,
@@ -26,6 +28,7 @@ import type { ProjectConfigurationWriter } from "./repository-config-writer.js";
 import type { ProjectRow, ProjectStore } from "./store.js";
 import type {
   BindingStatus,
+  PortableProjectConfiguration,
   ProjectBindings,
   ProjectDetail,
   ProjectSummary,
@@ -56,6 +59,7 @@ export class ProjectService implements ProjectRegistry<
     private readonly store: ProjectStore,
     private readonly modules: ModuleHost,
     private readonly repositoryWriter: ProjectConfigurationWriter,
+    private readonly resourceGrants: ProjectResourceGrantPort,
   ) {}
 
   importProject(request: ImportProjectRequest): ProjectDetail {
@@ -116,22 +120,50 @@ export class ProjectService implements ProjectRegistry<
         );
       }
     }
-
-    // Filesystem + SQLite cannot form one transaction. Write/rename first so a
-    // filesystem refusal never changes durable engine state. Retrying is safe:
-    // both replacements are deterministic and idempotent.
-    if (request.writeToRepository) {
-      this.repositoryWriter.write(current.repositoryPath, configuration);
-    }
-    const updated = this.store.transaction(() =>
-      this.store.replaceConfiguration(current.id, configuration, configuration.metadata.name),
+    validateSlotBindings(
+      configuration.slots,
+      current.slotBindings,
+      eligibleCandidates(current.id, configuration, this.modules, this.resourceGrants),
+      "project.config-invalid",
     );
-    if (updated === undefined) throw notFound(current.id);
-    return toDetail(updated);
+
+    // Filesystem + SQLite cannot share a transaction. The repository write happens
+    // first, then is compensated if SQLite refuses the replacement.
+    const compensation = request.writeToRepository
+      ? this.repositoryWriter.write(current.repositoryPath, configuration)
+      : undefined;
+    try {
+      const updated = this.store.transaction(() =>
+        this.store.replaceConfiguration(current.id, configuration, configuration.metadata.name),
+      );
+      if (updated === undefined) throw notFound(current.id);
+      return toDetail(updated);
+    } catch (error) {
+      try {
+        compensation?.restore();
+      } catch {
+        throw new EngineError(
+          "project.repository-compensation-failed",
+          500,
+          "SQLite rejected the configuration and the previous repository file could not be restored. Reload the Project and inspect .jarvis/project.yaml before retrying.",
+        );
+      }
+      throw error;
+    }
   }
 
   getProjectBindings(projectId: unknown): ProjectBindings {
     return toBindings(this.requireProject(projectId));
+  }
+
+  listProjectResourceCandidates(projectId: unknown): readonly ProjectResourceCandidate[] {
+    const current = this.requireProject(projectId);
+    return eligibleCandidates(
+      current.id,
+      current.portableConfig,
+      this.modules,
+      this.resourceGrants,
+    );
   }
 
   replaceProjectBindings(request: ReplaceProjectBindingsRequest): ProjectBindings {
@@ -144,7 +176,11 @@ export class ProjectService implements ProjectRegistry<
         "/projectId must match the Project selected by the URL.",
       );
     }
-    validateBindingReferences(current, bindings);
+    validateBindingReferences(
+      current,
+      bindings,
+      eligibleCandidates(current.id, current.portableConfig, this.modules, this.resourceGrants),
+    );
     const repositoryId = current.portableConfig.repositories[0]?.id ?? "main";
     const supplied = bindings.repositories[repositoryId];
     if (supplied === undefined || Object.keys(bindings.repositories).length !== 1) {
@@ -155,21 +191,26 @@ export class ProjectService implements ProjectRegistry<
       );
     }
 
-    let repositoryPath = current.repositoryPath;
-    let bookmarkRef = current.bookmarkRef;
-    // A nil bookmark is a valid legacy/draft envelope, not an instruction to
-    // discard an existing Repository Grant. A complete binding replaces both.
-    if (supplied.bookmarkRef !== null) {
-      try {
-        repositoryPath = requireRepositoryDirectory(supplied.path);
-      } catch (error) {
-        throw repositoryPathError(error);
-      }
-      bookmarkRef = supplied.bookmarkRef;
+    // Generic Local Bindings replacement cannot establish or replace the shell-owned
+    // Repository Grant. Only the dedicated repository binding operation may do that.
+    if (
+      supplied.bookmarkRef !== null &&
+      (supplied.bookmarkRef !== current.bookmarkRef || supplied.path !== current.repositoryPath)
+    ) {
+      throw new EngineError(
+        "project.bindings-invalid",
+        400,
+        "/repositories/main must preserve the shell-established Repository Grant.",
+      );
     }
 
     const updated = this.store.transaction(() =>
-      this.store.replaceBindings(current.id, repositoryPath, bookmarkRef, bindings.slots),
+      this.store.replaceBindings(
+        current.id,
+        current.repositoryPath,
+        current.bookmarkRef,
+        bindings.slots,
+      ),
     );
     if (updated === undefined) throw notFound(current.id);
     return toBindings(updated);
@@ -212,19 +253,75 @@ export class ProjectService implements ProjectRegistry<
   }
 }
 
-function validateBindingReferences(current: ProjectRow, bindings: ProjectBindings): void {
-  const declaredSlots = new Set(
-    "slots" in current.portableConfig ? Object.keys(current.portableConfig.slots ?? {}) : [],
-  );
-  for (const slot of Object.keys(bindings.slots)) {
-    if (!declaredSlots.has(slot)) {
+function validateBindingReferences(
+  current: ProjectRow,
+  bindings: ProjectBindings,
+  candidates: readonly ProjectResourceCandidate[],
+): void {
+  const declaredSlots =
+    "slots" in current.portableConfig ? current.portableConfig.slots : undefined;
+  validateSlotBindings(declaredSlots, bindings.slots, candidates, "project.bindings-invalid");
+}
+
+function validateSlotBindings(
+  declaredSlots: PortableProjectConfiguration["slots"] | undefined,
+  bindings: ProjectBindings["slots"],
+  candidates: readonly ProjectResourceCandidate[],
+  code: "project.config-invalid" | "project.bindings-invalid",
+): void {
+  for (const [slot, binding] of Object.entries(bindings)) {
+    const requirement = declaredSlots?.[slot];
+    if (requirement === undefined) {
       throw new EngineError(
-        "project.bindings-invalid",
+        code,
         400,
         `/slots/${slot} is not declared by the Portable Configuration.`,
       );
     }
+    const eligible = candidates.some(
+      (candidate) =>
+        candidate.ref === binding.ref &&
+        candidate.kind === binding.kind &&
+        candidate.capabilities.includes(requirement.requires),
+    );
+    if (!eligible) {
+      throw new EngineError(
+        code,
+        400,
+        `/slots/${slot} must reference an explicitly granted resource with capability ${requirement.requires}.`,
+      );
+    }
   }
+}
+
+function eligibleCandidates(
+  projectId: string,
+  configuration: StoredPortableProjectConfiguration,
+  modules: ModuleHost,
+  grants: ProjectResourceGrantPort,
+): readonly ProjectResourceCandidate[] {
+  const selected =
+    "modules" in configuration
+      ? configuration.modules.flatMap((instance) => {
+          const packageEntry = modules.package(instance.moduleId);
+          if (
+            !instance.enabled ||
+            packageEntry === undefined ||
+            packageEntry.provides.length === 0
+          ) {
+            return [];
+          }
+          return [
+            {
+              ref: instance.instanceId,
+              kind: "module-instance" as const,
+              displayName: instance.instanceId,
+              capabilities: packageEntry.provides,
+            },
+          ];
+        })
+      : [];
+  return [...selected, ...grants.grantedToProject(projectId)];
 }
 
 function resolvePortableConfig(

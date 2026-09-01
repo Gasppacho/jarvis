@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
+import { SystemClock } from "../../../packages/kernel/src/clock.js";
 import { ConfigError, loadConfig } from "./config.js";
 import { openDatabase, type DatabaseState, type OpenedDatabase } from "./db/open.js";
 import { buildServer } from "./http/server.js";
@@ -10,6 +11,7 @@ import { watchParentProcess } from "./parent-watch.js";
 import { API_VERSION } from "./version.js";
 import { AtomicProjectConfigurationWriter } from "./projects/repository-config-writer.js";
 import { ProjectService, RepositoryDiscoveryService } from "./projects/service.js";
+import { EmptyProjectResourceGrants } from "./projects/resource-grants.js";
 import { ProjectStore } from "./projects/store.js";
 import { loadBundledModuleHost } from "./modules/bundled-module-registry.js";
 
@@ -148,9 +150,10 @@ async function main(): Promise<void> {
     database === undefined
       ? undefined
       : new ProjectService(
-          new ProjectStore(database.db),
+          new ProjectStore(database.db, new SystemClock()),
           modules,
           new AtomicProjectConfigurationWriter(),
+          new EmptyProjectResourceGrants(),
         );
 
   app = buildServer({

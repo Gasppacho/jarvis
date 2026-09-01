@@ -329,6 +329,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{projectId}/binding-candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        get: operations["listProjectBindingCandidates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{projectId}/graph": {
         parameters: {
             query?: never;
@@ -558,7 +576,8 @@ export interface components {
         };
         ProjectRepositoryConfiguration: {
             id: string;
-            root: string;
+            /** @constant */
+            root: ".";
             defaultBranch: string;
             remote: string;
         };
@@ -619,8 +638,15 @@ export interface components {
             path: string;
             bookmarkRef: string | null;
         };
+        ProjectResourceCandidate: {
+            ref: string;
+            /** @enum {string} */
+            kind: "connection" | "runtime" | "mcp" | "module-instance" | "engine";
+            displayName: string;
+            capabilities: string[];
+        };
         ProjectSlotBinding: {
-            /** @enum {unknown} */
+            /** @enum {string} */
             kind: "connection" | "runtime" | "mcp" | "module-instance" | "engine";
             ref: string;
         };
@@ -1271,6 +1297,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectBindings"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listProjectBindingCandidates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resources explicitly eligible for this Project's slots. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ProjectResourceCandidate"][];
+                    };
                 };
             };
             401: components["responses"]["Unauthorized"];

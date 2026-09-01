@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import type { Clock } from "../../../../packages/kernel/src/clock.js";
 import type {
   ProjectBindings,
   StoredPortableProjectConfiguration,
@@ -46,10 +47,13 @@ const SELECT_PROJECT = `SELECT p.id, p.name, p.status, p.portable_config, p.crea
   FROM projects p JOIN project_bindings b ON b.project_id = p.id`;
 
 export class ProjectStore {
-  constructor(private readonly db: Database.Database) {}
+  constructor(
+    private readonly db: Database.Database,
+    private readonly clock: Clock,
+  ) {}
 
   createProject(project: NewProject): ProjectRow {
-    const now = new Date().toISOString();
+    const now = this.clock.now().toISOString();
     this.db.transaction(() => {
       this.db
         .prepare(
@@ -122,7 +126,7 @@ export class ProjectStore {
     configuration: StoredPortableProjectConfiguration,
     name: string,
   ): ProjectRow | undefined {
-    const now = new Date().toISOString();
+    const now = this.clock.now().toISOString();
     const result = this.db
       .prepare(
         `UPDATE projects
