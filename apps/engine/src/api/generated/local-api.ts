@@ -70,6 +70,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{projectId}/repositories/{repositoryId}/binding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+                repositoryId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["updateRepositoryBinding"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{projectId}/validate": {
         parameters: {
             query?: never;
@@ -450,7 +469,14 @@ export interface components {
             moduleCount: number;
             activeExecutions?: number;
             portableConfig: Record<string, never>;
-            bindingStatus: Record<string, never>;
+            bindingStatus: {
+                [key: string]: {
+                    path: string;
+                    accessible: boolean;
+                    /** @description Opaque reference to bookmark bytes owned by the macOS Shell. */
+                    bookmarkRef: string | null;
+                };
+            };
         };
         ValidationReport: {
             valid: boolean;
@@ -706,6 +732,39 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Project detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectDetail"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    updateRepositoryBinding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+                repositoryId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    path: string;
+                    bookmarkRef: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Project detail with the resolved Local Binding. */
             200: {
                 headers: {
                     [name: string]: unknown;

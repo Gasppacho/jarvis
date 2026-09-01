@@ -120,6 +120,45 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /v1/projects/{projectId}/repositories/{repositoryId}/binding:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - name: repositoryId
+        in: path
+        required: true
+        schema:
+          type: string
+    put:
+      operationId: updateRepositoryBinding
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [path, bookmarkRef]
+              properties:
+                path:
+                  type: string
+                  minLength: 1
+                bookmarkRef:
+                  type: string
+                  minLength: 1
+                  maxLength: 300
+      responses:
+        "200":
+          description: Project detail with the resolved Local Binding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectDetail"
+        default:
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/projects/{projectId}/validate:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -714,6 +753,18 @@ components:
           type: object
         bindingStatus:
           type: object
+          additionalProperties:
+            type: object
+            additionalProperties: false
+            required: [path, accessible, bookmarkRef]
+            properties:
+              path:
+                type: string
+              accessible:
+                type: boolean
+              bookmarkRef:
+                type: [string, "null"]
+                description: Opaque reference to bookmark bytes owned by the macOS Shell.
     ValidationReport:
       type: object
       additionalProperties: false

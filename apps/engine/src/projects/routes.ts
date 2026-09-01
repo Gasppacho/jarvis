@@ -48,6 +48,22 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
     const detail = service.getProject(params?.projectId);
     return reply.code(200).send(detail);
   });
+
+  app.put("/v1/projects/:projectId/repositories/:repositoryId/binding", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown; repositoryId?: unknown } | undefined;
+    const body = request.body as { path?: unknown; bookmarkRef?: unknown } | undefined;
+    return reply
+      .code(200)
+      .send(
+        service.updateRepositoryBinding(
+          params?.projectId,
+          params?.repositoryId,
+          body?.path,
+          body?.bookmarkRef,
+        ),
+      );
+  });
 }
 
 /** The live probe, so a database handle that fails mid-session degrades too. */

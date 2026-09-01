@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // SYSTEM.md: ask the engine to stop, then let AppKit finish quitting.
         Task {
             await session.shutdown()
+            projects.releaseRepositoryAccess()
             NSApplication.shared.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

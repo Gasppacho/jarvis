@@ -82,6 +82,51 @@ export class ProjectService {
   }
 
   getProject(id: unknown): ProjectDetail {
+    return toDetail(this.requireProject(id));
+  }
+
+  updateRepositoryBinding(
+    id: unknown,
+    repositoryId: unknown,
+    path: unknown,
+    bookmarkRef: unknown,
+  ): ProjectDetail {
+    const current = this.requireProject(id);
+    const expectedRepositoryId = current.portableConfig.repositories?.[0]?.id ?? "main";
+    if (repositoryId !== expectedRepositoryId) {
+      throw new EngineError(
+        "api.invalid-request",
+        400,
+        `Project "${current.id}" has no repository binding "${String(repositoryId)}".`,
+      );
+    }
+    if (typeof bookmarkRef !== "string" || bookmarkRef.trim() === "" || bookmarkRef.length > 300) {
+      throw new EngineError(
+        "api.invalid-request",
+        400,
+        "bookmarkRef must be a non-empty local reference of at most 300 characters.",
+      );
+    }
+
+    let repositoryPath: string;
+    try {
+      repositoryPath = requireRepositoryDirectory(path);
+    } catch (error) {
+      throw repositoryPathError(error);
+    }
+
+    const updated = this.store.updateRepositoryBinding(current.id, repositoryPath, bookmarkRef);
+    if (updated === undefined) {
+      throw new EngineError(
+        "project.not-found",
+        404,
+        `No project with id "${current.id}" in this installation.`,
+      );
+    }
+    return toDetail(updated);
+  }
+
+  private requireProject(id: unknown): ProjectRow {
     const projectId = typeof id === "string" ? id : "";
     const row = this.store.findById(projectId);
     if (row === undefined) {
@@ -91,7 +136,7 @@ export class ProjectService {
         `No project with id "${projectId || "(empty)"}" in this installation.`,
       );
     }
-    return toDetail(row);
+    return row;
   }
 }
 
@@ -202,6 +247,7 @@ function toDetail(row: ProjectRow): ProjectDetail {
       path: row.repositoryPath,
       // Live probe: a repository moved away since import must show as such.
       accessible: isAccessibleDirectory(row.repositoryPath),
+      bookmarkRef: row.bookmarkRef,
     },
   };
   return {

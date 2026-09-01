@@ -1,3 +1,4 @@
+import AppKit
 import JarvisCore
 import SwiftUI
 
@@ -43,6 +44,26 @@ struct ProjectDetailView: View {
                                 row("Access", binding.accessible ? "reachable" : "not reachable")
                             }
                             .font(.callout)
+                            if !binding.accessible
+                                || projects.repositoryGrantMessages[project.id] != nil
+                            {
+                                HStack {
+                                    Label(
+                                        "The repository is unavailable.",
+                                        systemImage: "folder.badge.questionmark"
+                                    )
+                                    .foregroundStyle(.orange)
+                                    Button("Choose repository…") {
+                                        chooseRepository(for: binding)
+                                    }
+                                }
+                                .font(.callout)
+                            }
+                        }
+                        if let message = projects.repositoryGrantMessages[project.id] {
+                            Label(message, systemImage: "exclamationmark.triangle.fill")
+                                .font(.callout)
+                                .foregroundStyle(.orange)
                         }
                     }
                 } else if let loadError {
@@ -54,14 +75,36 @@ struct ProjectDetailView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(24)
         }
-        .task(id: project.id) {
-            do {
-                detail = try await projects.detail(for: project.id)
-                loadError = nil
-            } catch {
-                detail = nil
-                loadError = ProjectsModel.describe(error)
+        .task(id: project.id) { await loadDetail() }
+    }
+
+    private func chooseRepository(for binding: ProjectBinding) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Restore Access"
+        panel.message = "Choose the repository for \(project.name)."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task {
+            if await projects.reauthorize(
+                projectId: project.id,
+                repositoryId: binding.repositoryId,
+                replacing: binding.bookmarkRef,
+                with: url
+            ) {
+                await loadDetail()
             }
+        }
+    }
+
+    private func loadDetail() async {
+        do {
+            detail = try await projects.detail(for: project.id)
+            loadError = nil
+        } catch {
+            detail = nil
+            loadError = ProjectsModel.describe(error)
         }
     }
 

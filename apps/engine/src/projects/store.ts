@@ -120,6 +120,22 @@ export class ProjectStore {
     return this.db.prepare("SELECT 1 FROM projects WHERE id = ?").get(id) !== undefined;
   }
 
+  updateRepositoryBinding(
+    projectId: string,
+    repositoryPath: string,
+    bookmarkRef: string,
+  ): ProjectRow | undefined {
+    const result = this.db
+      .prepare(
+        `UPDATE project_bindings
+         SET repository_path = ?, bookmark_ref = ?
+         WHERE project_id = ?`,
+      )
+      .run(repositoryPath, bookmarkRef, projectId);
+    if (result.changes === 0) return undefined;
+    return this.findById(projectId);
+  }
+
   list(): ProjectRow[] {
     const records = this.db
       .prepare(

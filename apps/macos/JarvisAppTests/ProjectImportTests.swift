@@ -45,10 +45,111 @@ final class ProjectImportTests: XCTestCase {
             XCTAssertTrue(binding.path.hasPrefix("/"))
             XCTAssertTrue(binding.path.hasSuffix(repository.lastPathComponent))
             XCTAssertTrue(binding.accessible)
+            XCTAssertNotNil(binding.bookmarkRef)
             if let config = detail.portableConfigJSON {
                 XCTAssertFalse(String(decoding: config, as: UTF8.self).contains(repository.path()))
             }
         }
+    }
+
+    @MainActor
+    func testRelaunchRestoresTheDraftThroughItsRepositoryGrant() async throws {
+        let repository = try makeRepository()
+        let originalPath = repository.resolvingSymlinksInPath().path()
+        let movedRepository = repository.deletingLastPathComponent()
+            .appendingPathComponent("\(repository.lastPathComponent)-moved", isDirectory: true)
+        roots.append(movedRepository)
+        let dataRoot = temporaryDirectory(prefix: "jarvis-relaunch-data")
+        let grantStorage = temporaryDirectory(prefix: "jarvis-relaunch-grants")
+
+        let firstSession = EngineSessionModel(
+            supervisor: EngineSupervisor(resources: .developmentBuild(), dataRoot: dataRoot))
+        let firstProjects = ProjectsModel(
+            session: firstSession,
+            repositoryGrants: RepositoryGrantStore(storageDirectory: grantStorage))
+        await firstSession.start()
+        guard case .ready = firstSession.state else {
+            return XCTFail("the first engine did not become ready")
+        }
+        await firstProjects.inspect(at: repository)
+        let importResult = await firstProjects.confirmImport()
+        let imported = try XCTUnwrap(importResult)
+        firstProjects.releaseRepositoryAccess()
+        await firstSession.shutdown()
+
+        try FileManager.default.moveItem(at: repository, to: movedRepository)
+
+        let secondSession = EngineSessionModel(
+            supervisor: EngineSupervisor(resources: .developmentBuild(), dataRoot: dataRoot))
+        let relaunched = ProjectsModel(
+            session: secondSession,
+            repositoryGrants: RepositoryGrantStore(storageDirectory: grantStorage))
+        await secondSession.start()
+        guard case .ready = secondSession.state else {
+            return XCTFail("the relaunched engine did not become ready")
+        }
+        await relaunched.refresh()
+
+        XCTAssertEqual(relaunched.projects.map(\.id), [imported.id])
+        XCTAssertEqual(relaunched.projects.map(\.status), [.draft])
+        let detail = try await relaunched.detail(for: imported.id)
+        let binding = try XCTUnwrap(detail.bindings.first)
+        XCTAssertTrue(binding.accessible)
+        XCTAssertNotEqual(binding.path, originalPath)
+        XCTAssertEqual(
+            URL(fileURLWithPath: binding.path).resolvingSymlinksInPath().path(),
+            URL(fileURLWithPath: movedRepository.path(percentEncoded: false))
+                .resolvingSymlinksInPath().path()
+        )
+        relaunched.releaseRepositoryAccess()
+        await secondSession.shutdown()
+    }
+
+    @MainActor
+    func testRelaunchKeepsAProjectActionableWhenItsGrantIsMissing() async throws {
+        let repository = try makeRepository()
+        let dataRoot = temporaryDirectory(prefix: "jarvis-missing-data")
+        let grantStorage = temporaryDirectory(prefix: "jarvis-missing-grants")
+        let firstGrantStore = RepositoryGrantStore(storageDirectory: grantStorage)
+
+        let firstSession = EngineSessionModel(
+            supervisor: EngineSupervisor(resources: .developmentBuild(), dataRoot: dataRoot))
+        let firstProjects = ProjectsModel(session: firstSession, repositoryGrants: firstGrantStore)
+        await firstSession.start()
+        await firstProjects.inspect(at: repository)
+        let importResult = await firstProjects.confirmImport()
+        let imported = try XCTUnwrap(importResult)
+        let firstDetail = try await firstProjects.detail(for: imported.id)
+        let oldBookmarkRef = try XCTUnwrap(firstDetail.bindings.first?.bookmarkRef)
+        firstProjects.releaseRepositoryAccess()
+        await firstSession.shutdown()
+        try firstGrantStore.remove(bookmarkRef: oldBookmarkRef)
+
+        let secondSession = EngineSessionModel(
+            supervisor: EngineSupervisor(resources: .developmentBuild(), dataRoot: dataRoot))
+        let relaunched = ProjectsModel(
+            session: secondSession,
+            repositoryGrants: RepositoryGrantStore(storageDirectory: grantStorage))
+        await secondSession.start()
+        await relaunched.refresh()
+
+        XCTAssertEqual(relaunched.projects.map(\.id), [imported.id])
+        let detail = try await relaunched.detail(for: imported.id)
+        XCTAssertTrue(try XCTUnwrap(detail.bindings.first).accessible)
+        XCTAssertTrue(relaunched.repositoryGrantMessages[imported.id]?.contains("Choose") == true)
+
+        let repairedGrant = await relaunched.reauthorize(
+            projectId: imported.id,
+            repositoryId: "main",
+            replacing: oldBookmarkRef,
+            with: repository
+        )
+        XCTAssertTrue(repairedGrant)
+        XCTAssertNil(relaunched.repositoryGrantMessages[imported.id])
+        let repaired = try await relaunched.detail(for: imported.id)
+        XCTAssertNotEqual(repaired.bindings.first?.bookmarkRef, oldBookmarkRef)
+        relaunched.releaseRepositoryAccess()
+        await secondSession.shutdown()
     }
 
     @MainActor
@@ -78,7 +179,10 @@ final class ProjectImportTests: XCTestCase {
         let dataRoot = temporaryDirectory(prefix: "jarvis-swift-project-data")
         let supervisor = EngineSupervisor(resources: .developmentBuild(), dataRoot: dataRoot)
         let session = EngineSessionModel(supervisor: supervisor)
-        let projects = ProjectsModel(session: session)
+        let grantStorage = temporaryDirectory(prefix: "jarvis-swift-project-grants")
+        let projects = ProjectsModel(
+            session: session,
+            repositoryGrants: RepositoryGrantStore(storageDirectory: grantStorage))
 
         await session.start()
         guard case .ready = session.state else {
@@ -92,6 +196,7 @@ final class ProjectImportTests: XCTestCase {
             await session.shutdown()
             throw error
         }
+        projects.releaseRepositoryAccess()
         await session.shutdown()
     }
 

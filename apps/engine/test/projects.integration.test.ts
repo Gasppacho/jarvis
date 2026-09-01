@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -351,22 +352,78 @@ describe("repository discovery and project import", () => {
     }
   });
 
-  it("keeps imported projects across an engine restart", async () => {
+  it("restores a draft and reports its missing repository after an engine restart", async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-projects-"));
     const root = fixture(() => makeNodeRepositoryFixture());
     try {
       const first = await start({ dataRoot });
       const created = (await (await importProject(first, { repositoryPath: root })).json()) as {
         id: string;
+        status: string;
+        portableConfig: unknown;
+        bindingStatus: Record<string, { path: string; accessible: boolean }>;
+      };
+      await first.dispose();
+      rmSync(root, { recursive: true, force: true });
+
+      const second = await start({ dataRoot });
+      started.push(second);
+      const list = (await (await second.call("/v1/projects")).json()) as {
+        items: { id: string; status: string }[];
+      };
+      expect(list.items).toEqual([expect.objectContaining({ id: created.id, status: "draft" })]);
+
+      const detail = (await (await second.call(`/v1/projects/${created.id}`)).json()) as {
+        portableConfig: unknown;
+        bindingStatus: Record<string, { path: string; accessible: boolean }>;
+      };
+      expect(detail.portableConfig).toEqual(created.portableConfig);
+      expect(detail.bindingStatus["main"]).toEqual({
+        path: created.bindingStatus["main"]?.path,
+        accessible: false,
+        bookmarkRef: null,
+      });
+    } finally {
+      await rm(dataRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("persists a Repository Grant path resolved after the repository moves", async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-project-grant-"));
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const moved = `${root}-moved`;
+    try {
+      const first = await start({ dataRoot });
+      const created = (await (await importProject(first, { repositoryPath: root })).json()) as {
+        id: string;
+      };
+      renameSync(root, moved);
+      roots.push(moved);
+
+      const update = await first.call(`/v1/projects/${created.id}/repositories/main/binding`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          path: moved,
+          bookmarkRef: `bookmark/${created.id}/main`,
+        }),
+      });
+      expect(update.status).toBe(200);
+      const updated = (await update.json()) as {
+        bindingStatus: Record<string, { path: string; accessible: boolean; bookmarkRef: string }>;
       };
       await first.dispose();
 
       const second = await start({ dataRoot });
       started.push(second);
-      const list = (await (await second.call("/v1/projects")).json()) as {
-        items: { id: string }[];
+      const detail = (await (await second.call(`/v1/projects/${created.id}`)).json()) as {
+        bindingStatus: Record<string, { path: string; accessible: boolean }>;
       };
-      expect(list.items.map((item) => item.id)).toEqual([created.id]);
+      expect(detail.bindingStatus["main"]).toEqual({
+        path: updated.bindingStatus["main"]?.path,
+        accessible: true,
+        bookmarkRef: `bookmark/${created.id}/main`,
+      });
     } finally {
       await rm(dataRoot, { recursive: true, force: true });
     }

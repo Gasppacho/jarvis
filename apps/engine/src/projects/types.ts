@@ -66,6 +66,7 @@ export interface BindingStatus {
   readonly [repositoryId: string]: {
     readonly path: string;
     readonly accessible: boolean;
+    readonly bookmarkRef: string | null;
   };
 }
 

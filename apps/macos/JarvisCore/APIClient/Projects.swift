@@ -79,6 +79,7 @@ public struct ProjectBinding: Sendable, Equatable, Identifiable {
     public let repositoryId: String
     public let path: String
     public let accessible: Bool
+    public let bookmarkRef: String?
 
     public var id: String { repositoryId }
 }
@@ -167,25 +168,19 @@ public struct SuggestedProjectConfig: Sendable, Equatable, Decodable {
 }
 
 private extension ProjectDetail {
-    struct BindingEntry: Decodable {
-        let path: String?
-        let accessible: Bool?
-    }
-
-    static func decodeBindings(_ container: OpenAPIObjectContainer) -> [ProjectBinding] {
-        guard let data = container.jsonData,
-            let entries = try? JSONDecoder().decode([String: BindingEntry].self, from: data)
-        else {
-            return []
-        }
-        return entries
+    static func decodeBindings(
+        _ payload: Components.Schemas.ProjectDetail.bindingStatusPayload
+    ) -> [ProjectBinding] {
+        payload.additionalProperties
             .sorted { $0.key < $1.key }
             .map { repositoryId, entry in
-                guard let path = entry.path else { return nil }
-                return ProjectBinding(
-                    repositoryId: repositoryId, path: path, accessible: entry.accessible ?? false)
+                ProjectBinding(
+                    repositoryId: repositoryId,
+                    path: entry.path,
+                    accessible: entry.accessible,
+                    bookmarkRef: entry.bookmarkRef
+                )
             }
-            .compactMap { $0 }
     }
 }
 

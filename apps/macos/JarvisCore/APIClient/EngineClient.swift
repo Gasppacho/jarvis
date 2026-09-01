@@ -213,4 +213,33 @@ public struct EngineClient: Sendable {
                 operation: operation, code: payload.error.code, message: payload.error.message)
         }
     }
+
+    /// Updates the machine-local repository path after the macOS Shell resolves
+    /// its Repository Grant. Bookmark bytes remain in the shell; only their
+    /// opaque reference crosses the Local API boundary.
+    public func updateRepositoryBinding(
+        projectId: String,
+        repositoryId: String,
+        path: String,
+        bookmarkRef: String
+    ) async throws {
+        let operation = "PUT /v1/projects/\(projectId)/repositories/\(repositoryId)/binding"
+        let output = try await underlying.updateRepositoryBinding(
+            .init(
+                path: .init(projectId: projectId, repositoryId: repositoryId),
+                body: .json(.init(path: path, bookmarkRef: bookmarkRef))
+            ))
+        switch output {
+        case .ok:
+            return
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            let payload = try error.body.json
+            throw EngineClientError.engineError(
+                operation: operation, code: payload.error.code, message: payload.error.message)
+        }
+    }
 }

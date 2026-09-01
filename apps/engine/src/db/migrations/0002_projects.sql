@@ -15,7 +15,7 @@ CREATE TABLE project_bindings (
   project_id TEXT PRIMARY KEY REFERENCES projects (id) ON DELETE CASCADE,
   -- Canonical (realpath-resolved) absolute path: the repository on this machine.
   repository_path TEXT NOT NULL,
-  -- Security-scoped bookmark reference; nil until durable bookmarks land (ticket 19).
+  -- Opaque reference to bookmark bytes owned by the macOS Shell; legacy imports may be nil.
   bookmark_ref TEXT
 ) STRICT;
 
