@@ -46,9 +46,12 @@ export interface SuggestedProjectConfig {
     readonly maxConcurrentExecutions: number;
     readonly retainOnFailureDays: number;
   };
+  /** Composition starts empty, but the engine still owns the complete editable draft. */
+  readonly slots: Readonly<Record<string, never>>;
+  readonly modules: readonly [];
 }
 
-/** A discovered draft is intentionally partial until configuration replacement. */
+/** A discovered draft is complete except for user-selected composition. */
 export type PortableProjectDraft = SuggestedProjectConfig;
 
 export interface ProjectMetadata {

@@ -486,7 +486,7 @@ export interface components {
             status: "draft" | "valid" | "active" | "paused" | "invalid" | "degraded" | "archived";
             moduleCount: number;
             activeExecutions?: number;
-            portableConfig: components["schemas"]["PortableProjectConfiguration"] | Record<string, never>;
+            portableConfig: components["schemas"]["PortableProjectConfiguration"] | components["schemas"]["PortableProjectDraft"];
             bindingStatus: {
                 [key: string]: {
                     path: string;
@@ -618,6 +618,20 @@ export interface components {
             configuration?: {
                 [key: string]: unknown;
             };
+        };
+        /** @description Engine-discovered editable Project draft with empty user composition. */
+        PortableProjectDraft: {
+            /** @constant */
+            apiVersion: "jarvis.dev/project/v1";
+            /** @constant */
+            kind: "Project";
+            metadata: components["schemas"]["ProjectMetadata"];
+            repositories: components["schemas"]["ProjectRepositoryConfiguration"][];
+            slots: Record<string, never>;
+            commands: components["schemas"]["ProjectCommands"];
+            git: components["schemas"]["ProjectGitConfiguration"];
+            workspace: components["schemas"]["ProjectWorkspaceConfiguration"];
+            modules: components["schemas"]["ModuleInstanceConfiguration"][];
         };
         PortableProjectConfiguration: {
             /** @constant */

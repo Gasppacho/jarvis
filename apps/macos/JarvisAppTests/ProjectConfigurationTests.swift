@@ -85,6 +85,47 @@ final class ProjectConfigurationTests: XCTestCase {
         await secondSession.shutdown()
     }
 
+    func testSchemaDescriptorsDistinguishControlsAndApplyDefaults() throws {
+        let package = try schemaFixturePackage()
+        let fields = Dictionary(uniqueKeysWithValues: package.configurationFields.map { ($0.key, $0) })
+
+        XCTAssertEqual(fields["enabled"]?.kind, .boolean)
+        XCTAssertEqual(fields["enabled"]?.defaultValue, "true")
+        XCTAssertEqual(fields["mode"]?.kind, .choice(["safe", "fast"]))
+        XCTAssertEqual(fields["mode"]?.defaultValue, "safe")
+        XCTAssertEqual(fields["retries"]?.kind, .integer)
+        XCTAssertEqual(fields["ratio"]?.kind, .number)
+        XCTAssertEqual(fields["items"]?.kind, .json(.array))
+        XCTAssertEqual(fields["options"]?.kind, .json(.object))
+        XCTAssertEqual(fields["name"]?.description, "Human-readable rule name")
+        XCTAssertEqual(fields["name"]?.pattern, "^[a-z]+$")
+        XCTAssertTrue(fields["name"]?.required == true)
+
+        let module = ProjectModuleDraft(package: package, instanceId: "fixture")
+        XCTAssertEqual(module.configurationValues["enabled"], "true")
+        XCTAssertEqual(module.configurationValues["mode"], "safe")
+        XCTAssertEqual(module.configurationValues["items"], #"["main"]"#)
+    }
+
+    func testSchemaDescriptorsProvideLocalRequiredBoundsPatternAndJSONFeedback() throws {
+        let package = try schemaFixturePackage()
+        var module = ProjectModuleDraft(package: package, instanceId: "fixture")
+
+        XCTAssertTrue(module.validationIssues.contains { $0.contains("name is required") })
+        module.configurationValues["name"] = "NOT-LOWERCASE"
+        module.configurationValues["retries"] = "6"
+        module.configurationValues["ratio"] = "not-a-number"
+        module.configurationValues["items"] = #"["main","main"]"#
+        module.configurationValues["options"] = "[]"
+
+        let issues = module.validationIssues.joined(separator: " ")
+        XCTAssertTrue(issues.contains("required pattern"))
+        XCTAssertTrue(issues.contains("at most 5"))
+        XCTAssertTrue(issues.contains("ratio has an invalid value"))
+        XCTAssertTrue(issues.contains("items does not satisfy its schema"))
+        XCTAssertTrue(issues.contains("options has an invalid value"))
+    }
+
     func testGeneratedResourceKindsRoundTripThroughTheCentralDomainMapping() throws {
         let kinds = ["connection", "runtime", "mcp", "module-instance", "engine"]
 
@@ -114,8 +155,17 @@ final class ProjectConfigurationTests: XCTestCase {
     }
 
     @MainActor
-    func testFreshImportCanComposeBindSaveAndReopenThroughEditorActions() async throws {
+    func testFreshImportPreservesEngineDraftValuesWhileComposingSavingAndReopening() async throws {
         let repository = try makeRepository()
+        try """
+            [remote "upstream"]
+            \turl = git@github.com:QServices/swift-config.git
+            """.write(
+                to: repository.appendingPathComponent(".git/config"),
+                atomically: true,
+                encoding: .utf8)
+        try "ref: refs/heads/develop\n".write(
+            to: repository.appendingPathComponent(".git/HEAD"), atomically: true, encoding: .utf8)
         let session = EngineSessionModel(
             supervisor: EngineSupervisor(
                 resources: .developmentBuild(),
@@ -145,13 +195,43 @@ final class ProjectConfigurationTests: XCTestCase {
                 requires: "scm.change-request.manage",
                 optional: true,
                 description: "Primary source-control provider")
+            draft.modules[0].bindings["repository"] = "main"
             draft.modules[0].configurationValues["pollIntervalSeconds"] = "60"
             draft.modules[0].configurationValues["repositories"] = #"["main"]"#
         }
 
+        let editorState = configuration.state(for: imported.id)
+        let presentation = ProjectDetailPresentation(
+            detail: editorState.detail, state: editorState, packages: catalog.packages)
+        let moduleId = try XCTUnwrap(editorState.draft?.modules.first?.id)
+        XCTAssertEqual(presentation.repositories.map(\.repositoryId), ["main"])
+        XCTAssertEqual(presentation.slots.map(\.id), ["slot1"])
+        XCTAssertEqual(presentation.modules.map(\.moduleId), ["jarvis.module.github"])
+        XCTAssertTrue(presentation.actions.contains(.chooseRepository("main")))
+        XCTAssertTrue(presentation.actions.contains(.addSlot))
+        XCTAssertEqual(
+            presentation.actions.compactMap { action -> String? in
+                guard case .addModule(let packageId) = action else { return nil }
+                return packageId
+            }.sorted(),
+            catalog.packages.map(\.moduleId).sorted())
+        XCTAssertTrue(presentation.actions.contains(.removeSlot("slot1")))
+        XCTAssertTrue(presentation.actions.contains(.setLocalBinding("slot1", nil)))
+        XCTAssertTrue(presentation.actions.contains(.removeModule(moduleId)))
+        XCTAssertTrue(presentation.actions.contains(.addModuleBinding(moduleId)))
+        XCTAssertTrue(
+            presentation.actions.contains(.removeModuleBinding(moduleId, "repository")))
+        XCTAssertTrue(presentation.actions.contains(.saveLocal))
+        XCTAssertTrue(presentation.actions.contains(.saveRepository))
+        XCTAssertTrue(presentation.isSaveEnabled)
+
         let saved = await configuration.saveDraft(
             projectId: imported.id, writeToRepository: false)
         XCTAssertEqual(saved?.modules.map(\.moduleId), ["jarvis.module.github"])
+        XCTAssertEqual(saved?.portableConfiguration?.repositories.first?.defaultBranch, "develop")
+        XCTAssertEqual(saved?.portableConfiguration?.repositories.first?.remote, "upstream")
+        XCTAssertEqual(saved?.portableConfiguration?.git.pushRemote, "upstream")
+        XCTAssertEqual(saved?.portableConfiguration?.workspace.maxConcurrentExecutions, 1)
         let candidate = try XCTUnwrap(
             configuration.state(for: imported.id).candidates.first {
                 $0.capabilities.contains("scm.change-request.manage")
@@ -166,6 +246,11 @@ final class ProjectConfigurationTests: XCTestCase {
             projectId: imported.id, packages: catalog.packages)
         let reopened = try XCTUnwrap(reopenedConfiguration.state(for: imported.id).draft)
         XCTAssertEqual(reopened.modules.map(\.moduleId), ["jarvis.module.github"])
+        let roundTripped = try reopened.payload()
+        XCTAssertEqual(roundTripped.repositories.first?.defaultBranch, "develop")
+        XCTAssertEqual(roundTripped.repositories.first?.remote, "upstream")
+        XCTAssertEqual(roundTripped.git.pushRemote, "upstream")
+        XCTAssertEqual(roundTripped.workspace.maxConcurrentExecutions, 1)
         XCTAssertEqual(reopened.slotRequirements["slot1"]?.optional, true)
         XCTAssertEqual(
             reopened.slotRequirements["slot1"]?.description,
@@ -206,6 +291,31 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(
             editor.modules.first?.configurationFields.map(\.key),
             ["bootstrapLabelPolicy", "pollIntervalSeconds", "repositories"])
+        let bundledFields = Dictionary(
+            uniqueKeysWithValues: try XCTUnwrap(editor.modules.first).configurationFields.map {
+                ($0.key, $0)
+            })
+        XCTAssertEqual(bundledFields["bootstrapLabelPolicy"]?.defaultValue, "ignore-existing")
+        XCTAssertEqual(bundledFields["bootstrapLabelPolicy"]?.kind,
+                       .choice(["ignore-existing", "emit-existing"]))
+        XCTAssertEqual(bundledFields["pollIntervalSeconds"]?.kind, .integer)
+        XCTAssertEqual(bundledFields["pollIntervalSeconds"]?.minimum, 15)
+        XCTAssertEqual(bundledFields["pollIntervalSeconds"]?.maximum, 3600)
+        XCTAssertEqual(bundledFields["repositories"]?.kind, .json(.array))
+        XCTAssertNotNil(bundledFields["repositories"]?.validationIssue(for: "[]"))
+        XCTAssertNotNil(
+            bundledFields["repositories"]?.validationIssue(for: #"["main","main"]"#))
+        let development = try XCTUnwrap(
+            catalog.packages.first { $0.moduleId == "jarvis.module.development" })
+        let developmentDraft = ProjectModuleDraft(
+            package: development, instanceId: "development")
+        XCTAssertEqual(
+            developmentDraft.configurationValues["retainWorkspaceOnSuccess"],
+            "false")
+        let developmentFields = Dictionary(
+            uniqueKeysWithValues: development.configurationFields.map { ($0.key, $0) })
+        XCTAssertNotNil(
+            developmentFields["validationOrder"]?.validationIssue(for: #"["unknown"]"#))
         configuration.renameSlot(
             projectId: imported.id, from: "sourceControl", to: "provider")
         XCTAssertEqual(
@@ -275,6 +385,47 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(detail.modules, [])
         projects.releaseRepositoryAccess()
         await session.shutdown()
+    }
+
+    private func schemaFixturePackage() throws -> ModulePackage {
+        let document: [String: Any] = [
+            "moduleId": "jarvis.module.fixture",
+            "version": "1.0.0",
+            "displayName": "Fixture",
+            "description": "Schema fixture",
+            "categories": [],
+            "consumes": [],
+            "produces": [],
+            "requires": [],
+            "provides": [],
+            "configurationSchemaRef": "fixture.schema.json",
+            "configurationSchema": [
+                "type": "object",
+                "required": ["name", "items"],
+                "properties": [
+                    "enabled": ["type": "boolean", "default": true],
+                    "mode": ["enum": ["safe", "fast"], "default": "safe"],
+                    "retries": ["type": "integer", "minimum": 0, "maximum": 5],
+                    "ratio": ["type": "number", "minimum": 0.25, "maximum": 2.5],
+                    "items": [
+                        "type": "array",
+                        "default": ["main"],
+                        "minItems": 1,
+                        "uniqueItems": true,
+                        "items": ["type": "string", "enum": ["main", "secondary"]],
+                    ],
+                    "options": ["type": "object"],
+                    "name": [
+                        "type": "string",
+                        "pattern": "^[a-z]+$",
+                        "description": "Human-readable rule name",
+                    ],
+                ],
+            ],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: document)
+        return ModulePackage(
+            payload: try JSONDecoder().decode(Components.Schemas.ModulePackage.self, from: data))
     }
 
     private func projectConfiguration(

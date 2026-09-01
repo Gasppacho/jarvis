@@ -68,5 +68,7 @@ function draft(name: string): StoredPortableProjectConfiguration {
       maxConcurrentExecutions: 1,
       retainOnFailureDays: 7,
     },
+    slots: {},
+    modules: [],
   };
 }

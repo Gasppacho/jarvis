@@ -20,7 +20,9 @@ public struct ProjectModuleDraft: Identifiable, Sendable, Equatable {
         runtimeSlot = payload.runtimeSlot ?? ""
         bindings = payload.bindings?.additionalProperties ?? [:]
         configurationFields = package?.configurationFields ?? []
-        configurationValues = Self.decodeConfiguration(payload.configuration)
+        configurationValues = Dictionary(
+            uniqueKeysWithValues: configurationFields.map { ($0.key, $0.initialValue) })
+        configurationValues.merge(Self.decodeConfiguration(payload.configuration)) { _, saved in saved }
         rawConfigurationJSON = Self.encodeConfiguration(payload.configuration)
     }
 
@@ -33,8 +35,15 @@ public struct ProjectModuleDraft: Identifiable, Sendable, Equatable {
         bindings = [:]
         configurationFields = package.configurationFields
         configurationValues = Dictionary(
-            uniqueKeysWithValues: package.configurationFields.map { ($0.key, "") })
+            uniqueKeysWithValues: package.configurationFields.map { ($0.key, $0.initialValue) })
         rawConfigurationJSON = nil
+    }
+
+    public var validationIssues: [String] {
+        configurationFields.compactMap { field in
+            field.validationIssue(for: configurationValues[field.key, default: ""])
+                .map { "\(instanceId): \($0)" }
+        }
     }
 
     private static func encodeConfiguration(
@@ -108,47 +117,15 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
         slotRequirements = configuration.slots.additionalProperties.mapValues(ProjectSlotDraft.init)
     }
 
-    /// Discovery deliberately returns a partial draft. Completing its required
-    /// v1 fields here lets the first Project Wizard visit edit the same model as
-    /// a reopened configuration instead of dead-ending on the wire union.
+    /// The engine owns every discovered repository/Git/workspace value. Swift
+    /// only converts the typed empty-composition draft to the shared editor model.
     public init(
-        partialConfigurationJSON: Data,
-        project: Project,
+        partialConfiguration: Components.Schemas.PortableProjectDraft,
         packages: [ModulePackage]
     ) throws {
-        guard var document = try JSONSerialization.jsonObject(with: partialConfigurationJSON)
-            as? [String: Any]
-        else { throw ProjectEditorValidationError(issues: ["The discovered draft is invalid."]) }
-        document["apiVersion"] = document["apiVersion"] ?? "jarvis.dev/project/v1"
-        document["kind"] = document["kind"] ?? "Project"
-        var metadata = document["metadata"] as? [String: Any] ?? [:]
-        metadata["id"] = (metadata["id"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? project.id
-        metadata["name"] = (metadata["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? project.name
-        document["metadata"] = metadata
-        var repositories = document["repositories"] as? [[String: Any]] ?? []
-        if repositories.isEmpty { repositories = [["id": "main", "root": "."]] }
-        repositories[0]["id"] = "main"
-        repositories[0]["root"] = "."
-        repositories[0]["defaultBranch"] = repositories[0]["defaultBranch"] ?? "main"
-        repositories[0]["remote"] = repositories[0]["remote"] ?? "origin"
-        document["repositories"] = [repositories[0]]
-        document["commands"] = document["commands"] ?? [String: String]()
-        var git = document["git"] as? [String: Any] ?? [:]
-        git["branchPattern"] = git["branchPattern"] ?? "agent/{workItemId}-{slug}"
-        git["commitStrategy"] = git["commitStrategy"] ?? "conventional"
-        git["pushRemote"] = git["pushRemote"] ?? "origin"
-        git["allowForcePush"] = false
-        document["git"] = git
-        var workspace = document["workspace"] as? [String: Any] ?? [:]
-        workspace["strategy"] = "git-worktree"
-        workspace["maxConcurrentExecutions"] = workspace["maxConcurrentExecutions"] ?? 1
-        workspace["retainOnFailureDays"] = workspace["retainOnFailureDays"] ?? 7
-        document["workspace"] = workspace
-        document["slots"] = document["slots"] ?? [String: Any]()
-        document["modules"] = document["modules"] ?? [Any]()
-        let completed = try JSONSerialization.data(withJSONObject: document)
+        let encoded = try JSONEncoder().encode(partialConfiguration)
         let configuration = try JSONDecoder().decode(
-            Components.Schemas.PortableProjectConfiguration.self, from: completed)
+            Components.Schemas.PortableProjectConfiguration.self, from: encoded)
         self.init(configuration: configuration, packages: packages)
     }
 
@@ -160,7 +137,7 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
         modules[index].rawConfigurationJSON = nil
         modules[index].configurationValues = Dictionary(
             uniqueKeysWithValues: package.configurationFields.map { field in
-                (field.key, previousValues[field.key] ?? "")
+                (field.key, previousValues[field.key] ?? field.initialValue)
             })
     }
 
@@ -176,7 +153,7 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
         modules.append(ProjectModuleDraft(package: package, instanceId: candidate))
     }
 
-    public func payload() throws -> Components.Schemas.PortableProjectConfiguration {
+    public var validationIssues: [String] {
         var issues: [String] = []
         if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             issues.append("Project name is required.")
@@ -189,6 +166,12 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
         where module.instanceId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             issues.append("Module \(index + 1) needs an Instance ID.")
         }
+        issues.append(contentsOf: modules.flatMap(\.validationIssues))
+        return issues
+    }
+
+    public func payload() throws -> Components.Schemas.PortableProjectConfiguration {
+        var issues = validationIssues
         guard issues.isEmpty else { throw ProjectEditorValidationError(issues: issues) }
 
         let data = try JSONEncoder().encode(base)
@@ -218,12 +201,9 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
             for field in module.configurationFields {
                 let text = module.configurationValues[field.key, default: ""]
                 if text.isEmpty && !field.required { continue }
-                guard !text.isEmpty else {
-                    issues.append("\(module.instanceId): \(field.label) is required.")
-                    continue
-                }
+                guard !text.isEmpty else { continue }
                 do {
-                    configuration[field.key] = try Self.decode(text, as: field.kind)
+                    configuration[field.key] = try field.decode(text)
                 } catch {
                     issues.append("\(module.instanceId): \(field.label) has an invalid value.")
                 }
@@ -243,29 +223,9 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
         return try JSONDecoder().decode(
             Components.Schemas.PortableProjectConfiguration.self, from: updated)
     }
-
-    private static func decode(_ text: String, as kind: ModuleConfigurationField.ValueKind) throws
-        -> Any
-    {
-        switch kind {
-        case .string, .choice:
-            return text
-        case .integer:
-            guard let value = Int(text) else { throw ProjectEditorValueError.invalid }
-            return value
-        case .boolean:
-            guard let value = Bool(text) else { throw ProjectEditorValueError.invalid }
-            return value
-        case .json:
-            guard let data = text.data(using: .utf8) else { throw ProjectEditorValueError.invalid }
-            return try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
-        }
-    }
 }
 
 public struct ProjectEditorValidationError: LocalizedError, Sendable, Equatable {
     public let issues: [String]
     public var errorDescription: String? { issues.joined(separator: " ") }
 }
-
-private enum ProjectEditorValueError: Error { case invalid }

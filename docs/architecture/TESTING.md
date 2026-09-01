@@ -48,7 +48,9 @@ Pour invariants locaux difficiles à exprimer uniquement en E2E : rules matching
 
 - XCTest du Engine Supervisor, Keychain abstraction et client API.
 - View model tests avec client fake généré.
-- XCUITest du premier lancement, import fixture, activation et lecture timeline.
+- Le dépôt macOS est actuellement SwiftPM-only (`apps/macos/Package.swift`) et ne possède ni projet/workspace Xcode, ni target UI-test, ni application-launch configuration XCUITest. SwiftPM ne sait pas déclarer/exécuter un bundle XCUITest qui lance l'exécutable assemblé. De plus, `JarvisApp` reste un executable target non importable par `JarvisAppTests`; l'écran `ProjectDetailView` ne doit pas être déplacé dans `JarvisCore` pour contourner cette frontière.
+- Jusqu'à l'ajout de ce tooling, le gate le plus fort pour Project Detail teste dans `JarvisCore` le modèle complet, data-driven, de présentation et d'actions réellement consommé par `ProjectDetailView`, puis `scripts/build-app.sh` construit l'application assemblée. Un rendu `ImageRenderer` non vide n'est pas considéré comme une preuve d'interaction.
+- **Gate release futur obligatoire :** ajouter un projet/workspace Xcode et une target XCUITest qui lance l'app assemblée, importe une fixture, édite les contrôles schema-backed, sauvegarde, rouvre le projet et vérifie les Local Bindings avant toute release utilisateur.
 - Smoke test sur app signée/notariée.
 
 ## Reference E2E scenario

@@ -80,8 +80,9 @@ export class ProjectService implements ProjectRegistry<
     }
 
     const discovery = discoverRepository(repositoryPath);
-    const portableConfig = resolvePortableConfig(repositoryPath, request.portableConfig, discovery);
-    if ("modules" in portableConfig) {
+    const resolved = resolvePortableConfig(repositoryPath, request.portableConfig, discovery);
+    const portableConfig = resolved.configuration;
+    if (!resolved.isDiscoveredDraft) {
       requirePortableProjectConfiguration(portableConfig, this.modules);
     }
     const id = allocateProjectId(portableConfig, this.store);
@@ -328,14 +329,19 @@ function resolvePortableConfig(
   repositoryPath: string,
   supplied: unknown,
   discovery: ReturnType<typeof discoverRepository>,
-): StoredPortableProjectConfiguration {
+): { configuration: StoredPortableProjectConfiguration; isDiscoveredDraft: boolean } {
   const committed = readCommittedConfig(repositoryPath);
-  if (committed !== undefined) return committed;
+  if (committed !== undefined) {
+    return { configuration: committed, isDiscoveredDraft: false };
+  }
   if (supplied !== undefined) {
     validatePortableConfig(supplied);
-    return supplied as StoredPortableProjectConfiguration;
+    return {
+      configuration: supplied as PortableProjectConfiguration,
+      isDiscoveredDraft: false,
+    };
   }
-  return discovery.suggested;
+  return { configuration: discovery.suggested, isDiscoveredDraft: true };
 }
 
 function readCommittedConfig(

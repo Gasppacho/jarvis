@@ -103,27 +103,50 @@ function requireValid(
   throw new EngineError(code, 400, `The ${subject} does not satisfy its v1 schema: ${problems}`);
 }
 
-const SECRET_LITERAL_KEY = /(?:secret|token|password|credential)$|^(?:private|api).*[-_ ]?key$/i;
-const MACHINE_PATH = /^(?:file:|\/|~|[A-Za-z]:[\\/]|\\)/i;
+const SECRET_LITERAL_KEY =
+  /(?:secret|token|password|credential)$|^(?:(?:private|api).*[-_ ]?key|auth|authorization)$/i;
+const SECRET_LITERAL_VALUE =
+  /(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|(?:basic|bearer)\s+\S+|https?:\/\/[^/\s@]+@|-----BEGIN [A-Z ]*PRIVATE KEY-----)/i;
+const MACHINE_IDENTIFIER_KEY = /^(?:machine|device|host)(?:[-_ ]?(?:id|name))?$/i;
+const PATH_BEARING_KEY = /(?:path|file|directory|folder|root)$/i;
+const DOMAIN_ROUTE_KEY = /(?:route|endpoint|uri|url)$/i;
+const ALWAYS_MACHINE_PATH = /^(?:file:|~(?:[\\/]|[^\\/]+[\\/])|[A-Za-z]:[\\/]|\\\\)/i;
+const RECOGNIZABLE_POSIX_MACHINE_PATH =
+  /^\/(?:Users|home|private|Volumes|Applications|Library|System|usr|var|tmp|opt|etc|bin|sbin|dev|mnt|srv)(?:\/|$)/;
 
-function requirePortableConfigurationValues(value: unknown, path: string): void {
+function requirePortableConfigurationValues(value: unknown, path: string, key = ""): void {
   if (typeof value === "string") {
-    if (MACHINE_PATH.test(value.trim())) {
+    const trimmed = value.trim();
+    if (
+      ALWAYS_MACHINE_PATH.test(trimmed) ||
+      RECOGNIZABLE_POSIX_MACHINE_PATH.test(trimmed) ||
+      (trimmed.startsWith("/") &&
+        (PATH_BEARING_KEY.test(key.trim()) || !DOMAIN_ROUTE_KEY.test(key.trim())))
+    ) {
       invalid(`${path || "/"} must not contain a machine-absolute path`);
+    }
+    if (SECRET_LITERAL_VALUE.test(trimmed)) {
+      invalid(`${path || "/"} must not contain a secret literal`);
     }
     return;
   }
   if (Array.isArray(value)) {
-    value.forEach((entry, index) => requirePortableConfigurationValues(entry, `${path}/${index}`));
+    value.forEach((entry, index) =>
+      requirePortableConfigurationValues(entry, `${path}/${index}`, key),
+    );
     return;
   }
   if (typeof value !== "object" || value === null) return;
   for (const [key, entry] of Object.entries(value)) {
     const child = `${path}/${key}`;
-    if (SECRET_LITERAL_KEY.test(key.trim())) {
+    const normalizedKey = key.trim();
+    if (SECRET_LITERAL_KEY.test(normalizedKey)) {
       invalid(`${child} must not contain a secret literal`);
     }
-    requirePortableConfigurationValues(entry, child);
+    if (MACHINE_IDENTIFIER_KEY.test(normalizedKey)) {
+      invalid(`${child} must not contain a machine identifier`);
+    }
+    requirePortableConfigurationValues(entry, child, normalizedKey);
   }
 }
 

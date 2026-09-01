@@ -165,7 +165,18 @@ describe("repository discovery and project import", () => {
 
     const detail = (await response.json()) as Record<string, unknown>;
     expect(validateDetail(detail), explain(validateDetail)).toBe(true);
-    expect(detail).toMatchObject({ status: "draft" });
+    expect(detail).toMatchObject({
+      status: "draft",
+      portableConfig: {
+        repositories: [{ id: "main", root: "." }],
+        slots: {},
+        modules: [],
+        git: expect.any(Object),
+        workspace: expect.any(Object),
+      },
+    });
+    const validateDraft = localApiValidator("PortableProjectDraft");
+    expect(validateDraft(detail["portableConfig"]), explain(validateDraft)).toBe(true);
 
     // The portable config is committed to the user's repository: it must never
     // carry a machine-specific path (docs/architecture/PROJECTS.md).
@@ -522,6 +533,10 @@ describe("repository discovery and project import", () => {
         setNestedConfigurationValue(config, "/Users/alice/private"),
     ],
     [
+      "nested POSIX path with an uncommon machine root",
+      (config: Record<string, unknown>) => setNestedConfigurationValue(config, "/mnt/data"),
+    ],
+    [
       "nested home-relative path",
       (config: Record<string, unknown>) => setNestedConfigurationValue(config, "~/private"),
     ],
@@ -577,6 +592,10 @@ describe("repository discovery and project import", () => {
       "nested API-key literal",
       (config: Record<string, unknown>) => setNestedSecretLiteral(config, "api-key"),
     ],
+    [
+      "nested machine identifier",
+      (config: Record<string, unknown>) => setNestedSecretLiteral(config, "hostName"),
+    ],
   ])("rejects %s without replacing the last durable configuration", async (_case, mutate) => {
     const engine = await start();
     const root = fixture(() => makeNodeRepositoryFixture());
@@ -622,6 +641,67 @@ describe("repository discovery and project import", () => {
       body: JSON.stringify({ portableConfig, writeToRepository: false }),
     });
     expect(response.status).toBe(200);
+  });
+
+  it("allows API routes as domain text but rejects them in path-bearing fields", async () => {
+    const engine = await start();
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
+      id: string;
+    };
+    const portableConfig = parseYaml(
+      readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
+    ) as Record<string, unknown>;
+    const modules = portableConfig["modules"] as Record<string, unknown>[];
+    const configuration = modules[1]!["configuration"] as Record<string, unknown>;
+    const rules = configuration["rules"] as Record<string, unknown>[];
+    const emit = rules[0]!["emit"] as Record<string, unknown>;
+    emit["payload"] = { healthRoute: "/health" };
+
+    const valid = await engine.call(`/v1/projects/${created.id}/configuration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ portableConfig, writeToRepository: false }),
+    });
+    expect(valid.status).toBe(200);
+
+    emit["payload"] = { outputPath: "/health" };
+    const invalid = await engine.call(`/v1/projects/${created.id}/configuration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ portableConfig, writeToRepository: false }),
+    });
+    expect(invalid.status).toBe(400);
+    expect(((await invalid.json()) as { error: { message: string } }).error.message).not.toContain(
+      "/health",
+    );
+  });
+
+  it("rejects recognizable embedded secret values without echoing them", async () => {
+    const engine = await start();
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
+      id: string;
+    };
+    const portableConfig = parseYaml(
+      readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
+    ) as Record<string, unknown>;
+    for (const secret of [
+      "https://user:ghp_abcdefghijklmnopqrstuvwxyz1234567890@example.invalid/repo",
+      "https://user:password@example.invalid/repo",
+      "Basic dXNlcjpwYXNzd29yZA==",
+    ]) {
+      setNestedConfigurationValue(portableConfig, secret);
+      const response = await engine.call(`/v1/projects/${created.id}/configuration`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ portableConfig, writeToRepository: false }),
+      });
+      expect(response.status).toBe(400);
+      expect(
+        ((await response.json()) as { error: { message: string } }).error.message,
+      ).not.toContain(secret);
+    }
   });
 
   it("allows an explicit secret reference where the Module contract permits one", async () => {

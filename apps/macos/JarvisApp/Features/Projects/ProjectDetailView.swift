@@ -66,6 +66,18 @@ public struct ProjectDetailView: View {
         projectConfiguration.state(for: project.id)
     }
 
+    private var presentation: ProjectDetailPresentation {
+        ProjectDetailPresentation(
+            detail: state.detail, state: state, packages: moduleCatalog.packages)
+    }
+
+    private var addModuleActions: [ProjectDetailPresentation.Action] {
+        presentation.actions.filter {
+            if case .addModule = $0 { return true }
+            return false
+        }
+    }
+
     private var header: some View {
         HStack(spacing: 12) {
             Text(project.name).font(.title2.bold())
@@ -82,14 +94,16 @@ public struct ProjectDetailView: View {
     private func repositorySection(_ detail: ProjectDetail) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Repository").sectionLabel()
-            ForEach(detail.bindings) { binding in
+            ForEach(presentation.repositories) { binding in
                 Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 4) {
                     row(binding.repositoryId, binding.path)
                     row("Access", binding.accessible ? "reachable" : "not reachable")
                 }
                 .font(.callout)
                 if !binding.accessible || projects.repositoryGrantMessages[project.id] != nil {
-                    Button("Choose repository…") { chooseRepository(for: binding) }
+                    let action = ProjectDetailPresentation.Action.chooseRepository(
+                        binding.repositoryId)
+                    Button(action.label) { perform(action) }
                 }
             }
             if let message = projects.repositoryGrantMessages[project.id] {
@@ -112,15 +126,19 @@ public struct ProjectDetailView: View {
                 Text("Module Instances").font(.headline)
                 Spacer()
                 Menu("Add Module Instance") {
-                    ForEach(moduleCatalog.packages) { package in
-                        Button(package.displayName) {
-                            projectConfiguration.addModule(projectId: project.id, package: package)
+                    ForEach(addModuleActions, id: \.self) { action in
+                        if case .addModule(let packageId) = action,
+                            let package = moduleCatalog.packages.first(where: {
+                                $0.moduleId == packageId
+                            })
+                        {
+                            Button(package.displayName) { perform(action) }
                         }
                     }
                 }
             }
 
-            ForEach(state.draft?.modules ?? []) { module in
+            ForEach(presentation.modules) { module in
                 moduleEditor(
                     module,
                     projectSlots: state.draft?.slotRequirements.keys.sorted() ?? [])
@@ -131,14 +149,15 @@ public struct ProjectDetailView: View {
     private var slotRequirementsEditor: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Project slots").font(.headline)
-            ForEach((state.draft?.slotRequirements.keys.sorted() ?? []), id: \.self) { slot in
+            ForEach(presentation.slots) { slotPresentation in
+                let slot = slotPresentation.id
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
                         TextField("Slot", text: slotNameBinding(slot))
                         TextField("Required capability", text: slotRequirementBinding(slot))
                         Toggle("Optional", isOn: slotOptionalBinding(slot))
                         Button(role: .destructive) {
-                            projectConfiguration.removeSlot(projectId: project.id, slotId: slot)
+                            perform(.removeSlot(slot))
                         } label: {
                             Image(systemName: "trash")
                         }
@@ -147,9 +166,8 @@ public struct ProjectDetailView: View {
                     TextField("Description", text: slotDescriptionBinding(slot))
                 }
             }
-            Button("Add slot") {
-                projectConfiguration.addSlot(projectId: project.id)
-            }
+            let action = ProjectDetailPresentation.Action.addSlot
+            Button(action.label) { perform(action) }
         }
     }
 
@@ -165,7 +183,7 @@ public struct ProjectDetailView: View {
                 }
                 Toggle("Enabled", isOn: moduleBinding(module.id, \.enabled, default: false))
                 Button(role: .destructive) {
-                    projectConfiguration.removeModule(projectId: project.id, moduleId: module.id)
+                    perform(.removeModule(module.id))
                 } label: {
                     Image(systemName: "trash")
                 }
@@ -201,24 +219,15 @@ public struct ProjectDetailView: View {
                         ForEach(options, id: \.self) { Text($0).tag($0) }
                     }
                     Button(role: .destructive) {
-                        editModule(module.id) { $0.bindings[key] = nil }
+                        perform(.removeModuleBinding(module.id, key))
                     } label: {
                         Image(systemName: "minus.circle")
                     }
                     .buttonStyle(.borderless)
                 }
             }
-            Button("Add module binding") {
-                editModule(module.id) { draft in
-                    var index = draft.bindings.count + 1
-                    var key = "binding\(index)"
-                    while draft.bindings[key] != nil {
-                        index += 1
-                        key = "binding\(index)"
-                    }
-                    draft.bindings[key] = options.first ?? "main"
-                }
-            }
+            let action = ProjectDetailPresentation.Action.addModuleBinding(module.id)
+            Button(action.label) { perform(action, bindingOptions: options) }
         }
     }
 
@@ -252,10 +261,18 @@ public struct ProjectDetailView: View {
                                 .frame(minHeight: 54)
                                 .overlay(RoundedRectangle(cornerRadius: 5).stroke(.separator))
                         }
-                    case .integer, .string:
+                    case .integer, .number, .string:
                         TextField(
                             field.label + (field.required ? " *" : ""),
                             text: configurationBinding(module.id, field.key))
+                    }
+                    if let description = field.description {
+                        Text(description).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if let issue = field.validationIssue(
+                        for: module.configurationValues[field.key, default: ""])
+                    {
+                        Text(issue).font(.caption).foregroundStyle(.red)
                     }
                 }
             }
@@ -265,12 +282,11 @@ public struct ProjectDetailView: View {
     private var localBindingsEditor: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Local Bindings").sectionLabel()
-            ForEach(state.draft?.slotRequirements.keys.sorted() ?? [], id: \.self) { slot in
-                let requirement = state.draft?.slotRequirements[slot]?.requires ?? ""
-                let candidates = state.candidates.filter { $0.capabilities.contains(requirement) }
+            ForEach(presentation.slots) { slotPresentation in
+                let slot = slotPresentation.id
                 Picker(slot, selection: localBindingSelection(slot)) {
                     Text("Unbound").tag("")
-                    ForEach(candidates) { candidate in
+                    ForEach(slotPresentation.candidates) { candidate in
                         Text("\(candidate.displayName) · \(candidate.kind.rawValue)")
                             .tag(candidate.id)
                     }
@@ -288,20 +304,66 @@ public struct ProjectDetailView: View {
 
     private var saveActions: some View {
         HStack {
-            Button("Save locally") {
-                Task {
-                    await projectConfiguration.saveDraft(
-                        projectId: project.id, writeToRepository: false)
-                }
-            }
+            let saveLocal = ProjectDetailPresentation.Action.saveLocal
+            Button(saveLocal.label) { perform(saveLocal) }
             .keyboardShortcut("s", modifiers: [.command])
-            Button("Save and write .jarvis/project.yaml") {
-                Task {
-                    await projectConfiguration.saveDraft(
-                        projectId: project.id, writeToRepository: true)
+            let saveRepository = ProjectDetailPresentation.Action.saveRepository
+            Button(saveRepository.label) { perform(saveRepository) }
+        }
+        .disabled(!presentation.isSaveEnabled)
+    }
+
+    private func perform(
+        _ action: ProjectDetailPresentation.Action,
+        bindingOptions: [String] = []
+    ) {
+        switch action {
+        case .chooseRepository(let repositoryId):
+            guard let binding = presentation.repositories.first(where: {
+                $0.repositoryId == repositoryId
+            }) else { return }
+            chooseRepository(for: binding)
+        case .addSlot:
+            projectConfiguration.addSlot(projectId: project.id)
+        case .removeSlot(let slotId):
+            projectConfiguration.removeSlot(projectId: project.id, slotId: slotId)
+        case .addModule(let packageId):
+            guard let package = moduleCatalog.packages.first(where: {
+                $0.moduleId == packageId
+            }) else { return }
+            projectConfiguration.addModule(projectId: project.id, package: package)
+        case .removeModule(let moduleId):
+            projectConfiguration.removeModule(projectId: project.id, moduleId: moduleId)
+        case .addModuleBinding(let moduleId):
+            editModule(moduleId) { draft in
+                var index = draft.bindings.count + 1
+                var key = "binding\(index)"
+                while draft.bindings[key] != nil {
+                    index += 1
+                    key = "binding\(index)"
                 }
+                draft.bindings[key] = bindingOptions.first ?? "main"
             }
-            .disabled(state.isSaving)
+        case .removeModuleBinding(let moduleId, let key):
+            editModule(moduleId) { $0.bindings[key] = nil }
+        case .setLocalBinding(let slotId, let candidateId):
+            let candidate = candidateId.flatMap { id in
+                state.candidates.first { $0.id == id }
+            }
+            Task {
+                await projectConfiguration.setLocalBinding(
+                    projectId: project.id, slotId: slotId, candidate: candidate)
+            }
+        case .saveLocal:
+            Task {
+                await projectConfiguration.saveDraft(
+                    projectId: project.id, writeToRepository: false)
+            }
+        case .saveRepository:
+            Task {
+                await projectConfiguration.saveDraft(
+                    projectId: project.id, writeToRepository: true)
+            }
         }
     }
 
@@ -426,11 +488,7 @@ public struct ProjectDetailView: View {
                 return "\(binding.kind.rawValue)/\(binding.ref)"
             },
             set: { selection in
-                let candidate = state.candidates.first { $0.id == selection }
-                Task {
-                    await projectConfiguration.setLocalBinding(
-                        projectId: project.id, slotId: slot, candidate: candidate)
-                }
+                perform(.setLocalBinding(slot, selection.isEmpty ? nil : selection))
             })
     }
 

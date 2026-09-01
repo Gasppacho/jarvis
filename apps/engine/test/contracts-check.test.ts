@@ -170,11 +170,14 @@ describe("pnpm contracts:check", () => {
     const root = fixtureRoot();
     const path = join(root, "contracts/openapi/local-api.v1.yaml");
     const source = readFileSync(path, "utf8");
+    const componentPrefix =
+      "    PortableProjectConfiguration:\n      type: object\n      additionalProperties: false\n";
     writeFileSync(
       path,
       source.replace(
-        "      required: [apiVersion, kind, metadata, repositories, slots, commands, git, workspace, modules]\n",
-        replacement,
+        componentPrefix +
+          "      required: [apiVersion, kind, metadata, repositories, slots, commands, git, workspace, modules]\n",
+        componentPrefix + replacement,
       ),
     );
 

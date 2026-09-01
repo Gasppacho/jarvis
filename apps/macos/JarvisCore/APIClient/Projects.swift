@@ -217,7 +217,7 @@ public struct ProjectDetail: Sendable, Equatable {
     /// absolute path (docs/architecture/PROJECTS.md) — tests assert that.
     public let portableConfigJSON: Data?
     public let portableConfiguration: Components.Schemas.PortableProjectConfiguration?
-    public let partialPortableConfigurationJSON: Data?
+    public let partialPortableConfiguration: Components.Schemas.PortableProjectDraft?
     public let modules: [ProjectModuleInstance]
     public let projectSlots: [String]
 
@@ -231,7 +231,7 @@ public struct ProjectDetail: Sendable, Equatable {
         )
         bindings = ProjectDetail.decodeBindings(detail.bindingStatus)
         portableConfiguration = detail.portableConfig.value1
-        partialPortableConfigurationJSON = detail.portableConfig.value2?.jsonData
+        partialPortableConfiguration = detail.portableConfig.value2
         modules = detail.portableConfig.value1?.modules.map(ProjectModuleInstance.init(payload:)) ?? []
         projectSlots = detail.portableConfig.value1?.slots.additionalProperties.keys.sorted() ?? []
         portableConfigJSON = encodedJSON(detail.portableConfig)

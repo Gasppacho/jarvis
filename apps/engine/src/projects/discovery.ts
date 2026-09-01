@@ -319,5 +319,7 @@ function buildSuggested(
       maxConcurrentExecutions: 1,
       retainOnFailureDays: 7,
     },
+    slots: {},
+    modules: [],
   };
 }

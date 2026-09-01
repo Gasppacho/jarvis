@@ -50,10 +50,9 @@ public final class ProjectConfigurationModel {
             let draft: ProjectConfigurationDraft?
             if let configuration = detail.portableConfiguration {
                 draft = ProjectConfigurationDraft(configuration: configuration, packages: packages)
-            } else if let partial = detail.partialPortableConfigurationJSON {
+            } else if let partial = detail.partialPortableConfiguration {
                 draft = try ProjectConfigurationDraft(
-                    partialConfigurationJSON: partial,
-                    project: detail.project,
+                    partialConfiguration: partial,
                     packages: packages)
             } else {
                 draft = nil
