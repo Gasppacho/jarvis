@@ -29,6 +29,41 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         public let technicalDetails: String
     }
 
+    public struct AutomationEventOption: Identifiable, Sendable, Equatable {
+        public var id: String { "\(type).v\(version).\(kind)" }
+        public let label: String
+        public let type: String
+        public let version: Int
+        public let kind: String
+        public let detail: String
+        public let routingStatus: String
+        public let routingExplanation: String
+        public let selectedConsumerID: String?
+        public let compatibleConsumerInstanceIDs: [String]
+    }
+
+    public struct AutomationRuleRow: Identifiable, Sendable, Equatable {
+        public enum SelectionStatus: Sendable, Equatable { case known, unknown }
+
+        public let id: UUID
+        public let moduleID: UUID
+        public let ruleID: String
+        public let inputEventType: String
+        public let matchJSON: String
+        public let emissionEventType: String
+        public let target: AutomationRuleDraft.Target
+        public let targetChoices: [String]
+        public let inputChoices: [AutomationEventOption]
+        public let emissionChoices: [AutomationEventOption]
+        public let inputStatus: SelectionStatus
+        public let emissionStatus: SelectionStatus
+        public let inputHint: String
+        public let emissionHint: String
+        public let routingStatus: String
+        public let routingExplanation: String
+        public let sentence: String
+    }
+
     public struct DeletionConfirmation: Sendable, Equatable {
         public let title: String
         public let message: String
@@ -65,6 +100,13 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 case renameModuleBinding(UUID, String, String)
                 case setModuleBinding(UUID, String, String)
                 case setModuleConfiguration(UUID, String, String)
+                case addAutomationRule(UUID)
+                case removeAutomationRule(UUID, UUID)
+                case setAutomationRuleID(UUID, UUID, String)
+                case setAutomationRuleInput(UUID, UUID, String)
+                case setAutomationRuleMatch(UUID, UUID, String)
+                case setAutomationRuleEmission(UUID, UUID, String, String?)
+                case setAutomationRuleTarget(UUID, UUID, String)
             }
 
             public let operation: Operation
@@ -164,6 +206,50 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                     .setModuleConfiguration(moduleId, key, value),
                     label: "Set module configuration")
             }
+
+            public static func addAutomationRule(_ moduleID: UUID) -> Self {
+                Self(.addAutomationRule(moduleID), label: "Add Automation Rule")
+            }
+
+            public static func removeAutomationRule(_ moduleID: UUID, _ ruleID: UUID) -> Self {
+                Self(.removeAutomationRule(moduleID, ruleID), label: "Remove Automation Rule")
+            }
+
+            public static func setAutomationRuleID(
+                _ moduleID: UUID, _ ruleID: UUID, _ value: String
+            ) -> Self {
+                Self(.setAutomationRuleID(moduleID, ruleID, value), label: "Set Rule ID")
+            }
+
+            public static func setAutomationRuleInput(
+                _ moduleID: UUID, _ ruleID: UUID, _ eventType: String
+            ) -> Self {
+                Self(.setAutomationRuleInput(moduleID, ruleID, eventType), label: "Set input Fact")
+            }
+
+            public static func setAutomationRuleMatch(
+                _ moduleID: UUID, _ ruleID: UUID, _ json: String
+            ) -> Self {
+                Self(.setAutomationRuleMatch(moduleID, ruleID, json), label: "Set bounded match")
+            }
+
+            public static func setAutomationRuleEmission(
+                _ moduleID: UUID,
+                _ ruleID: UUID,
+                _ eventType: String,
+                resolvedConsumerID: String?
+            ) -> Self {
+                Self(
+                    .setAutomationRuleEmission(
+                        moduleID, ruleID, eventType, resolvedConsumerID),
+                    label: "Set emitted Request")
+            }
+
+            public static func setAutomationRuleTarget(
+                _ moduleID: UUID, _ ruleID: UUID, _ target: String
+            ) -> Self {
+                Self(.setAutomationRuleTarget(moduleID, ruleID, target), label: "Set Request target")
+            }
         }
 
         public struct Asynchronous: Sendable, Equatable, Hashable {
@@ -253,10 +339,12 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
     public let startingPoints: [StartingPoint]
     public let modules: [ProjectModuleDraft]
     public let moduleCards: [ModuleCard]
+    public let automationRuleRows: [AutomationRuleRow]
     public let slots: [Slot]
     public let actions: [Action]
     public let deletionConfirmation: DeletionConfirmation
     public let isSaveEnabled: Bool
+    public let isReadyForValidation: Bool
 
     public init(
         project: Project,
@@ -299,6 +387,46 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 compatibility: choice?.compatibility ?? "unavailable",
                 missingResources: missing.isEmpty ? "No missing resources" : missing.joined(separator: ", "),
                 technicalDetails: "Instance ID: \(module.instanceId) · Package: \(module.moduleId) · Version: \(choice?.version ?? package?.version ?? "unavailable") · Contracts: \((consumes + produces).joined(separator: ", "))")
+        }
+        let eventChoices = state.compositionGuide?.eventChoices ?? []
+        automationRuleRows = modules.flatMap { module -> [AutomationRuleRow] in
+            guard let rules = module.automationRules else { return [] }
+            let inputChoices = eventChoices.filter {
+                $0.kind == "fact"
+                    && $0.compatibleConsumerInstanceIDs.contains(module.instanceId)
+            }.map(Self.automationEventOption)
+            let emissionChoices = eventChoices.filter {
+                $0.kind == "request" && $0.producerInstanceIDs.contains(module.instanceId)
+            }.map(Self.automationEventOption)
+            return rules.map { rule in
+                let input = inputChoices.first { $0.type == rule.inputEventType }
+                let emission = emissionChoices.first { $0.type == rule.emissionEventType }
+                let targetLabel = emission?.selectedConsumerID.map(Self.instanceLabel)
+                    ?? Self.targetLabel(rule.target)
+                return AutomationRuleRow(
+                    id: rule.id,
+                    moduleID: module.id,
+                    ruleID: rule.ruleID,
+                    inputEventType: rule.inputEventType,
+                    matchJSON: rule.matchJSON,
+                    emissionEventType: rule.emissionEventType,
+                    target: rule.target,
+                    targetChoices: emission?.compatibleConsumerInstanceIDs ?? [],
+                    inputChoices: inputChoices,
+                    emissionChoices: emissionChoices,
+                    inputStatus: input == nil ? .unknown : .known,
+                    emissionStatus: emission == nil ? .unknown : .known,
+                    inputHint: input == nil
+                        ? "Advanced custom value is unknown to the Event Catalog and blocks readiness."
+                        : input?.detail ?? "",
+                    emissionHint: emission == nil
+                        ? "Advanced custom value is unknown to the Event Catalog and blocks readiness."
+                        : emission?.detail ?? "",
+                    routingStatus: emission?.routingStatus ?? "unknown",
+                    routingExplanation: emission?.routingExplanation
+                        ?? "No Engine routing explanation is available for this custom Request.",
+                    sentence: "When \(input?.label ?? rule.inputEventType) matches, emit \(emission?.label ?? rule.emissionEventType) to \(targetLabel).")
+            }
         }
         slots = (state.draft?.slotRequirements ?? [:]).keys.sorted().map { slotId in
             let slot = state.draft?.slotRequirements[slotId]
@@ -349,6 +477,29 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                         .setModuleConfiguration(
                             module.id, $0, module.configurationValues[$0] ?? ""))
                 })
+            if let rules = module.automationRules {
+                inventory.append(.edit(.addAutomationRule(module.id)))
+                for rule in rules {
+                    inventory.append(.edit(.removeAutomationRule(module.id, rule.id)))
+                    inventory.append(.edit(.setAutomationRuleID(module.id, rule.id, rule.ruleID)))
+                    inventory.append(
+                        .edit(
+                            .setAutomationRuleInput(
+                                module.id, rule.id, rule.inputEventType)))
+                    inventory.append(
+                        .edit(.setAutomationRuleMatch(module.id, rule.id, rule.matchJSON)))
+                    let consumer = eventChoices.first {
+                        $0.type == rule.emissionEventType && $0.kind == "request"
+                    }?.selectedConsumerID
+                    inventory.append(
+                        .edit(
+                            .setAutomationRuleEmission(
+                                module.id,
+                                rule.id,
+                                rule.emissionEventType,
+                                resolvedConsumerID: consumer)))
+                }
+            }
         }
         inventory.append(
             contentsOf: [
@@ -368,5 +519,41 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             cancelAction: .cancelProjectDeletion
         )
         isSaveEnabled = state.draft?.validationIssues.isEmpty == true && !state.isSaving
+        isReadyForValidation = isSaveEnabled
+            && automationRuleRows.allSatisfy {
+                $0.inputStatus == .known && $0.emissionStatus == .known
+                    && $0.routingStatus == "resolved"
+                    && $0.routingExplanation.isEmpty == false
+            }
+    }
+
+    private static func automationEventOption(
+        _ choice: ProjectCompositionEventChoice
+    ) -> AutomationEventOption {
+        let producers = choice.producerLabels.isEmpty
+            ? "No active producer" : "Producer: \(choice.producerLabels.joined(separator: ", "))"
+        let consumers = choice.consumerLabels.isEmpty
+            ? "No active consumer" : "Consumers: \(choice.consumerLabels.joined(separator: ", "))"
+        return AutomationEventOption(
+            label: choice.label,
+            type: choice.type,
+            version: choice.version,
+            kind: choice.kind,
+            detail: "\(choice.kind.capitalized) · v\(choice.version) · \(producers) · \(consumers) · \(choice.routingStatus)",
+            routingStatus: choice.routingStatus,
+            routingExplanation: choice.routingExplanation,
+            selectedConsumerID: choice.selectedConsumerID,
+            compatibleConsumerInstanceIDs: choice.compatibleConsumerInstanceIDs)
+    }
+
+    private static func instanceLabel(_ id: String) -> String {
+        ProjectCompositionEventChoice.instanceLabel(id)
+    }
+
+    private static func targetLabel(_ target: AutomationRuleDraft.Target) -> String {
+        switch target {
+        case .moduleInstance(let id): instanceLabel(id)
+        case .binding(let id): "binding \(id)"
+        }
     }
 }

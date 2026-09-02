@@ -257,6 +257,61 @@ public final class ProjectConfigurationModel {
             editModule(projectId: projectId, moduleId: moduleId) {
                 $0.configurationValues[key] = value
             }
+        case .addAutomationRule(let moduleID):
+            guard let module = state(for: projectId).draft?.modules.first(where: {
+                $0.id == moduleID
+            }),
+                let choices = state(for: projectId).compositionGuide?.eventChoices,
+                let input = choices.first(where: {
+                    $0.kind == "fact"
+                        && $0.compatibleConsumerInstanceIDs.contains(module.instanceId)
+                }),
+                let emission = choices.first(where: {
+                    $0.kind == "request"
+                        && $0.producerInstanceIDs.contains(module.instanceId)
+                })
+            else { return }
+            editDraft(projectId: projectId) {
+                $0.addAutomationRule(
+                    moduleID: moduleID,
+                    inputEventType: input.type,
+                    emissionEventType: emission.type,
+                    resolvedConsumerID: emission.selectedConsumerID
+                        ?? emission.compatibleConsumerInstanceIDs.first)
+            }
+        case .removeAutomationRule(let moduleID, let ruleID):
+            editDraft(projectId: projectId) {
+                $0.removeAutomationRule(moduleID: moduleID, ruleID: ruleID)
+            }
+        case .setAutomationRuleID(let moduleID, let ruleID, let value):
+            editDraft(projectId: projectId) {
+                $0.setAutomationRuleID(moduleID: moduleID, ruleID: ruleID, value: value)
+            }
+        case .setAutomationRuleInput(let moduleID, let ruleID, let eventType):
+            editDraft(projectId: projectId) {
+                $0.setAutomationRuleInput(
+                    moduleID: moduleID, ruleID: ruleID, eventType: eventType)
+            }
+        case .setAutomationRuleMatch(let moduleID, let ruleID, let json):
+            editDraft(projectId: projectId) {
+                $0.setAutomationRuleMatch(moduleID: moduleID, ruleID: ruleID, json: json)
+            }
+        case .setAutomationRuleEmission(
+            let moduleID, let ruleID, let eventType, let resolvedConsumerID):
+            editDraft(projectId: projectId) {
+                $0.setAutomationRuleEmission(
+                    moduleID: moduleID,
+                    ruleID: ruleID,
+                    eventType: eventType,
+                    resolvedConsumerID: resolvedConsumerID)
+            }
+        case .setAutomationRuleTarget(let moduleID, let ruleID, let target):
+            editDraft(projectId: projectId) {
+                $0.setAutomationRuleTarget(
+                    moduleID: moduleID,
+                    ruleID: ruleID,
+                    target: .moduleInstance(target))
+            }
         }
     }
 

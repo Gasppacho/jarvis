@@ -93,6 +93,21 @@ Sans `resolution`, `binding` référence un slot du projet. `resolution.kind: pr
 
 `configuration.schemaRef` pointe vers un JSON Schema du module. La configuration d'instance est stockée dans `.jarvis/project.yaml` et validée au chargement.
 
+### Guided configuration semantics
+
+A Module Configuration schema may use standard JSON Schema `$comment` annotations to
+select a specialized editor without inventing a second configuration contract:
+
+- `jarvis:automation-rule-set` marks the repeatable Rule Set array;
+- `jarvis:event-kind=fact` and `jarvis:event-kind=request` mark Event selectors;
+- `jarvis:bounded-match` marks the Rule's exact scalar match object;
+- `jarvis:request-target` marks the Engine-resolved Request target.
+
+These annotations are presentation metadata only. The canonical value remains Module
+Configuration, normal JSON Schema keywords validate custom values, and routing metadata
+comes from the project-scoped composition choices response. Unknown annotations are
+ignored so older shells retain their generic schema editor.
+
 ## Permissions
 
 Les permissions décrivent le blast radius attendu :

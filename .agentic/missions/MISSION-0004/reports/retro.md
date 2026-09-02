@@ -2,16 +2,15 @@
 
 ## What worked
 
-- Local merge history, rather than unchanged GitHub labels or open issue state, identified #36 as the frontier.
-- Extending the #34 composition-choice tracer bullet kept template, package, instance and Event guidance in one read-only Project-scoped response.
-- Application Harness and XCTest produced clear red/green evidence at the agreed seams.
-- Reusing Project Validation findings prevented the UI from inventing resource compatibility policy.
-- Revision-gated preview refresh preserves newer Draft edits when asynchronous responses arrive out of order.
-- Staging generated output before `pnpm verify` allowed `generate:check` to verify regeneration without an early ticket commit.
+- Local merge history, rather than unchanged labels or deliberately open issues, identified #37 as the frontier.
+- The existing project-scoped composition-choice tracer bullet supplied Event labels, compatibility, consumers, and routing explanations without adding UI routing policy.
+- Standard JSON Schema `$comment` annotations let the Module Configuration schema select a specialized editor while retaining compatibility with strict schema validation and generic older editors.
+- A dedicated XCTest file gave fast red/green feedback for canonical Rule decoding, repeatability, preservation, presentation metadata, unknown values, and readiness.
+- Application Harness coverage proved semantic metadata transport, bounded-match validation, and canonical save/reopen against the real Engine and SQLite.
 
 ## What to improve
 
-- The OpenAPI generator emits several untyped value containers for inline enums/unions. Future contract work should prefer named schemas where that yields stronger generated Swift enums and avoids JSON re-decoding adapters.
-- The mission material should explicitly say that the full verification gate may stage intended files before commit because `generate:check` compares generated worktree output to the index.
-- Starting-point confirmation behavior may need product refinement if later tickets make reapplying a template destructive enough to warrant a confirmation; #36 intentionally keeps it a direct editable-Draft action.
-- Engine service availability currently appears as a missing `shell.execute` resource in validation-derived cards in test fixtures. A later resource/readiness slice should ensure the user-facing explanation distinguishes built-in Engine services from user-bindable resources.
+- `pnpm test:integration -- <file>` currently executes the complete integration project, not only the named file. The mission guidance should document the repository's actual Vitest filtering syntax or explicitly describe this as an intentionally broad focused gate.
+- The composition-choice wire contract exposes Module Instance IDs but no independent human display label for Event producers/consumers. The shell currently derives a readable label from the instance ID; a future contract revision should consider returning display labels directly.
+- `$comment` semantics are valid and backward-compatible but stringly typed. If more specialized editors appear, promote these annotations to a named, schema-validated contract rather than accumulating ad hoc comment values.
+- #38 should consider extracting JSON normalization/structured-value handling shared by generic configuration fields and Automation Rules, without weakening invalid-input preservation.

@@ -33,6 +33,13 @@ Chaque payload schema versionné porte un `title` humain et une `description`. C
 champs sont la source contractuelle des libellés et aides exposés par la prévisualisation
 de composition; le moteur ne déduit jamais la sémantique d'un nom de propriété.
 
+Les schemas de Module Configuration peuvent relier explicitement un contrôle guidé à
+ces choix avec les annotations JSON Schema `$comment` documentées dans
+`MODULE_MANIFEST_V1.md`. Pour Automation Rules, l'entrée est limitée aux Facts déclarés
+compatibles et l'émission aux Requests déclarées par le Manifest. Les statuts et
+explications de routage affichés restent ceux du read model Engine; le shell ne les
+reconstruit pas.
+
 ## Ownership rule
 
 The event type belongs to the integration contract catalog, not to either producer or consumer implementation. A breaking payload change increments the event version and requires an explicit compatibility plan.
