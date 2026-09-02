@@ -9,6 +9,7 @@ public struct ProjectConfigurationState: Sendable, Equatable {
     public var resourceChoices: [ProjectResourceBindingChoice] = []
     public var compositionGuide: ProjectCompositionGuide?
     public var compositionReview: ProjectCompositionReview?
+    public var validation: ProjectValidationState = .unvalidated
     public var draft: ProjectConfigurationDraft?
     public var isDraftSaved = false
     public var isLoading = false
@@ -23,13 +24,28 @@ public struct ProjectConfigurationState: Sendable, Equatable {
 public final class ProjectConfigurationModel {
     public private(set) var states: [String: ProjectConfigurationState] = [:]
 
+    typealias ValidationReportProvider = @Sendable (String) async throws
+        -> ProjectValidationReport
+
     private let session: EngineSessionModel
     private let projects: ProjectsModel
+    private let validationReportProvider: ValidationReportProvider?
     private var compositionRevisions: [String: Int] = [:]
 
     public init(session: EngineSessionModel, projects: ProjectsModel) {
         self.session = session
         self.projects = projects
+        validationReportProvider = nil
+    }
+
+    init(
+        session: EngineSessionModel,
+        projects: ProjectsModel,
+        validationReportProvider: @escaping ValidationReportProvider
+    ) {
+        self.session = session
+        self.projects = projects
+        self.validationReportProvider = validationReportProvider
     }
 
     private var client: EngineClient? { session.client }
@@ -353,8 +369,37 @@ public final class ProjectConfigurationModel {
             _ = await saveDraft(projectId: projectId, writeToRepository: false)
         case .saveRepository:
             _ = await saveDraft(projectId: projectId, writeToRepository: true)
+        case .validate:
+            await validate(projectId: projectId)
         case .confirmProjectDeletion:
             _ = await deleteProject(projectId: projectId)
+        }
+    }
+
+    public func validate(projectId: String) async {
+        guard state(for: projectId).validation != .validating else { return }
+        let provider: ValidationReportProvider
+        if let validationReportProvider {
+            provider = validationReportProvider
+        } else if let client {
+            provider = { try await client.generateProjectValidationReport(projectId: $0) }
+        } else {
+            update(projectId) { $0.errorMessage = Self.engineUnavailable }
+            return
+        }
+
+        update(projectId) {
+            $0.validation = .validating
+            $0.errorMessage = nil
+        }
+        do {
+            let report = try await provider(projectId)
+            update(projectId) { $0.validation = .valid(report) }
+        } catch {
+            update(projectId) {
+                $0.validation = .unvalidated
+                $0.errorMessage = ProjectsModel.describe(error)
+            }
         }
     }
 
