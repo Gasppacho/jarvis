@@ -218,6 +218,45 @@ export interface ProjectValidationReport {
   readonly findings: readonly ProjectValidationFinding[];
 }
 
+export interface ProjectCompositionChoiceInstance {
+  readonly instanceId: string;
+  readonly moduleId: string;
+}
+
+export interface ProjectCompositionChoiceConsumer extends ProjectCompositionChoiceInstance {
+  readonly compatibility: "compatible" | "incompatible";
+}
+
+export type ProjectCompositionChoiceRouting =
+  | {
+      readonly status: "broadcast" | "orphaned" | "ambiguous";
+      readonly explanation: string;
+    }
+  | {
+      readonly status: "resolved";
+      readonly selectedConsumer: ProjectCompositionChoiceInstance;
+      readonly explanation: string;
+    };
+
+export interface ProjectCompositionEventChoice {
+  readonly label: string;
+  readonly type: string;
+  readonly version: number;
+  readonly kind: "request" | "fact";
+  readonly description: string;
+  readonly payloadSchema: Readonly<Record<string, unknown>>;
+  readonly producers: readonly ProjectCompositionChoiceInstance[];
+  readonly consumers: readonly ProjectCompositionChoiceConsumer[];
+  readonly routing: ProjectCompositionChoiceRouting;
+}
+
+export interface ProjectCompositionChoices {
+  readonly apiVersion: "jarvis.dev/project-composition-choices/v1";
+  readonly kind: "ProjectCompositionChoices";
+  readonly projectId: string;
+  readonly choices: readonly ProjectCompositionEventChoice[];
+}
+
 /** Live repository resolution status exposed on Project Detail. */
 export interface BindingStatus {
   readonly [repositoryId: string]: {

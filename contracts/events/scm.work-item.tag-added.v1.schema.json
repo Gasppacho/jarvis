@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "scm.work-item.tag-added v1",
+  "title": "Work item tag added",
+  "description": "A source-control work item received a tag.",
   "type": "object",
   "additionalProperties": false,
   "required": [

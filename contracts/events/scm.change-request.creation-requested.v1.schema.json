@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "scm.change-request.creation-requested v1",
+  "title": "Change Request creation requested",
+  "description": "Requests creation of a source-control Change Request.",
   "type": "object",
   "additionalProperties": false,
   "required": [

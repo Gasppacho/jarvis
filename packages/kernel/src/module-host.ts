@@ -116,6 +116,13 @@ export interface ModuleConfigurationValidation {
 export interface ModulePackageRegistry {
   discover(): readonly DiscoveredModuleManifest[];
   readConfigurationSchema(schemaRef: string): unknown;
+  readEventSchema(schemaRef: string): unknown;
+}
+
+export interface EventContractMetadata {
+  readonly label: string;
+  readonly description: string;
+  readonly payloadSchema: Readonly<Record<string, unknown>>;
 }
 
 export class ModuleManifestDiscoveryError extends Error {
@@ -187,7 +194,10 @@ export class ModuleHost {
   private readonly configurationValidators = new Map<string, ValidateFunction>();
   private readonly rejected: ModuleCatalogDiagnostic[] = [];
 
-  public constructor(registry: ModulePackageRegistry, contracts: ModuleManifestContractRegistry) {
+  public constructor(
+    private readonly registry: ModulePackageRegistry,
+    contracts: ModuleManifestContractRegistry,
+  ) {
     for (const candidate of registry.discover()) {
       try {
         const manifest = contracts.requireModuleManifestV1(candidate);
@@ -220,6 +230,20 @@ export class ModuleHost {
   /** Manifest metadata needed to validate a saved Project composition. */
   public composition(moduleId: string): ModuleCompositionMetadata | undefined {
     return this.compositionById.get(moduleId);
+  }
+
+  /** Human semantics and payload shape come from the versioned Event contract. */
+  public eventContract(schemaRef: string): EventContractMetadata {
+    const payloadSchema = requireJsonObject(this.registry.readEventSchema(schemaRef));
+    const label = payloadSchema["title"];
+    const description = payloadSchema["description"];
+    if (typeof label !== "string" || label.trim() === "") {
+      throw new Error(`Event contract ${schemaRef} must declare a non-empty title.`);
+    }
+    if (typeof description !== "string" || description.trim() === "") {
+      throw new Error(`Event contract ${schemaRef} must declare a non-empty description.`);
+    }
+    return { label, description, payloadSchema };
   }
 
   /**

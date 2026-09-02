@@ -41,12 +41,20 @@ class BundledModulePackageRegistry implements ModulePackageRegistry {
 
   public readConfigurationSchema(schemaRef: string): unknown {
     try {
-      return JSON.parse(readFileSync(join(this.runtimeRoot, schemaRef), "utf8")) as unknown;
+      return this.readJson(schemaRef);
     } catch {
       throw new InvalidModuleConfigurationSchemaError(
         "Configuration schema could not be read as JSON.",
       );
     }
+  }
+
+  public readEventSchema(schemaRef: string): unknown {
+    return this.readJson(schemaRef);
+  }
+
+  private readJson(schemaRef: string): unknown {
+    return JSON.parse(readFileSync(join(this.runtimeRoot, schemaRef), "utf8")) as unknown;
   }
 }
 

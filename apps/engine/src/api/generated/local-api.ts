@@ -127,6 +127,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{projectId}/composition-choices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["previewProjectCompositionChoicesV1"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{projectId}/activate": {
         parameters: {
             query?: never;
@@ -577,6 +595,47 @@ export interface components {
                 message: string;
                 path?: string | null;
             }[];
+        };
+        ProjectCompositionChoiceInstance: {
+            instanceId: string;
+            moduleId: string;
+        };
+        ProjectCompositionChoiceConsumer: {
+            instanceId: string;
+            moduleId: string;
+            /** @enum {unknown} */
+            compatibility: "compatible" | "incompatible";
+        };
+        ProjectCompositionEventChoice: {
+            label: string;
+            type: string;
+            version: number;
+            /** @enum {unknown} */
+            kind: "request" | "fact";
+            description: string;
+            payloadSchema: {
+                [key: string]: unknown;
+            };
+            producers: components["schemas"]["ProjectCompositionChoiceInstance"][];
+            consumers: components["schemas"]["ProjectCompositionChoiceConsumer"][];
+            routing: {
+                /** @enum {unknown} */
+                status: "broadcast" | "orphaned" | "ambiguous";
+                explanation: string;
+            } | {
+                /** @constant */
+                status: "resolved";
+                selectedConsumer: components["schemas"]["ProjectCompositionChoiceInstance"];
+                explanation: string;
+            };
+        };
+        ProjectCompositionChoicesV1: {
+            /** @constant */
+            apiVersion: "jarvis.dev/project-composition-choices/v1";
+            /** @constant */
+            kind: "ProjectCompositionChoices";
+            projectId: string;
+            choices: components["schemas"]["ProjectCompositionEventChoice"][];
         };
         ProjectValidationReportV1: {
             /** @constant */
@@ -1093,6 +1152,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectValidationReportV1"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    previewProjectCompositionChoicesV1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    portableConfig: components["schemas"]["PortableProjectDraft"] | components["schemas"]["PortableProjectConfiguration"];
+                };
+            };
+        };
+        responses: {
+            /** @description Deterministic Event choices for the saved or proposed Portable Configuration. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectCompositionChoicesV1"];
                 };
             };
             401: components["responses"]["Unauthorized"];

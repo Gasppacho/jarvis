@@ -212,6 +212,37 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /v1/projects/{projectId}/composition-choices:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      operationId: previewProjectCompositionChoicesV1
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [portableConfig]
+              properties:
+                portableConfig:
+                  oneOf:
+                    - $ref: "#/components/schemas/PortableProjectDraft"
+                    - $ref: "#/components/schemas/PortableProjectConfiguration"
+      responses:
+        "200":
+          description: Deterministic Event choices for the saved or proposed Portable Configuration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectCompositionChoicesV1"
+        default:
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/projects/{projectId}/activate:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -951,6 +982,93 @@ components:
                 type: string
               path:
                 type: [string, "null"]
+    ProjectCompositionChoiceInstance:
+      type: object
+      additionalProperties: false
+      required: [instanceId, moduleId]
+      properties:
+        instanceId:
+          type: string
+        moduleId:
+          type: string
+    ProjectCompositionChoiceConsumer:
+      type: object
+      additionalProperties: false
+      required: [instanceId, moduleId, compatibility]
+      properties:
+        instanceId:
+          type: string
+        moduleId:
+          type: string
+        compatibility:
+          enum: [compatible, incompatible]
+    ProjectCompositionEventChoice:
+      type: object
+      additionalProperties: false
+      required: [label, type, version, kind, description, payloadSchema, producers, consumers, routing]
+      properties:
+        label:
+          type: string
+          minLength: 1
+        type:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        kind:
+          enum: [request, fact]
+        description:
+          type: string
+          minLength: 1
+        payloadSchema:
+          type: object
+          additionalProperties: true
+        producers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectCompositionChoiceInstance"
+        consumers:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectCompositionChoiceConsumer"
+        routing:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [status, explanation]
+              properties:
+                status:
+                  enum: [broadcast, orphaned, ambiguous]
+                explanation:
+                  type: string
+                  minLength: 1
+            - type: object
+              additionalProperties: false
+              required: [status, selectedConsumer, explanation]
+              properties:
+                status:
+                  const: resolved
+                selectedConsumer:
+                  $ref: "#/components/schemas/ProjectCompositionChoiceInstance"
+                explanation:
+                  type: string
+                  minLength: 1
+    ProjectCompositionChoicesV1:
+      type: object
+      additionalProperties: false
+      required: [apiVersion, kind, projectId, choices]
+      properties:
+        apiVersion:
+          const: jarvis.dev/project-composition-choices/v1
+        kind:
+          const: ProjectCompositionChoices
+        projectId:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9._-]*$"
+        choices:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectCompositionEventChoice"
     ProjectValidationReportV1:
       type: object
       additionalProperties: false

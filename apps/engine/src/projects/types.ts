@@ -2,6 +2,7 @@ import type { components } from "../api/generated/local-api.js";
 import type {
   BindingStatus,
   ProjectBindings,
+  ProjectCompositionChoices,
   ProjectRequestRoute,
   ProjectValidationFindingTarget,
   ProjectValidationReport,
@@ -77,6 +78,7 @@ export type RepositoryDiscovery = Omit<
 export type {
   BindingStatus,
   ProjectBindings,
+  ProjectCompositionChoices,
   PortableProjectConfiguration,
   ProjectResourceCandidate,
   ProjectResourceCandidateRegistry,

@@ -38,6 +38,9 @@ cpSync(
   join(outDir, "contracts", "module-config"),
   { recursive: true },
 );
+cpSync(join(engineRoot, "..", "..", "contracts", "events"), join(outDir, "contracts", "events"), {
+  recursive: true,
+});
 
 // ADR 0011: production discovers only official Module Packages registered in
 // the build. Copying their declarative Manifests creates that registry without
