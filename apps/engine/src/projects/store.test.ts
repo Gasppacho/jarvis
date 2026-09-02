@@ -10,6 +10,35 @@ let db: Database.Database | undefined;
 afterEach(() => db?.close());
 
 describe("ProjectStore transactions", () => {
+  it("exposes primitive deletion and leaves the transaction invariant to its caller", () => {
+    db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    db.exec(`
+      CREATE TABLE projects (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL,
+        portable_config TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE project_bindings (
+        project_id TEXT PRIMARY KEY REFERENCES projects (id) ON DELETE CASCADE,
+        repository_path TEXT NOT NULL, bookmark_ref TEXT, slot_bindings TEXT NOT NULL DEFAULT '{}'
+      ) STRICT;
+    `);
+    const store = new ProjectStore(db, clock);
+    store.createProject({
+      id: "project",
+      name: "Project",
+      status: "active",
+      portableConfig: draft("Project"),
+      repositoryPath: "/tmp/project",
+    });
+
+    expect(store.findById("project")?.status).toBe("active");
+    expect(store.deleteById("project")).toBe(true);
+    expect(store.findById("project")).toBeUndefined();
+    expect(db.prepare("SELECT 1 FROM project_bindings").get()).toBeUndefined();
+    expect(store.deleteById("unknown")).toBe(false);
+  });
+
   it("rolls back earlier SQLite writes when a later operation fails", () => {
     db = new Database(":memory:");
     db.exec(`

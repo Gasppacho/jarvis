@@ -141,6 +141,7 @@ public final class ProjectConfigurationModel {
         packages: [ModulePackage],
         bindingOptions: [String] = []
     ) {
+        guard action.routing == .edit else { return }
         switch action {
         case .setProjectName(let name):
             editDraft(projectId: projectId) { $0.name = name }
@@ -198,7 +199,8 @@ public final class ProjectConfigurationModel {
             editModule(projectId: projectId, moduleId: moduleId) {
                 $0.configurationValues[key] = value
             }
-        case .chooseRepository, .setLocalBinding, .saveLocal, .saveRepository, .deleteProject:
+        case .chooseRepository, .setLocalBinding, .saveLocal, .saveRepository, .deleteProject,
+            .confirmProjectDeletion, .cancelProjectDeletion:
             break
         }
     }
@@ -210,32 +212,45 @@ public final class ProjectConfigurationModel {
         packages: [ModulePackage],
         bindingOptions: [String] = []
     ) async {
-        switch action {
-        case .setLocalBinding(let slotId, let candidateId):
-            let candidate = candidateId.flatMap { id in
-                state(for: projectId).candidates.first { $0.id == id }
-            }
-            _ = await setLocalBinding(projectId: projectId, slotId: slotId, candidate: candidate)
-        case .saveLocal:
-            _ = await saveDraft(projectId: projectId, writeToRepository: false)
-        case .saveRepository:
-            _ = await saveDraft(projectId: projectId, writeToRepository: true)
-        case .deleteProject:
-            _ = await deleteProject(projectId: projectId)
-        default:
+        switch action.routing {
+        case .edit:
             apply(
                 action,
                 projectId: projectId,
                 packages: packages,
                 bindingOptions: bindingOptions)
+        case .repositoryPicker, .confirmation, .noOp:
+            return
+        case .asynchronous:
+            guard let operation = action.asyncOperation else { return }
+            switch operation {
+            case .setLocalBinding(let slotId, let candidateId):
+                let candidate = candidateId.flatMap { id in
+                    state(for: projectId).candidates.first { $0.id == id }
+                }
+                _ = await setLocalBinding(
+                    projectId: projectId, slotId: slotId, candidate: candidate)
+            case .saveLocal:
+                _ = await saveDraft(projectId: projectId, writeToRepository: false)
+            case .saveRepository:
+                _ = await saveDraft(projectId: projectId, writeToRepository: true)
+            case .confirmProjectDeletion:
+                _ = await deleteProject(projectId: projectId)
+            }
         }
     }
 
     @discardableResult
-    public func deleteProject(projectId: String) async -> Bool {
-        guard await projects.deleteProject(id: projectId) else { return false }
-        states[projectId] = nil
-        return true
+    public func deleteProject(projectId: String) async -> ProjectDeletionResult {
+        guard let detail = state(for: projectId).detail, detail.project.id == projectId else {
+            let message =
+                "Project details are not loaded, so deletion was not attempted. Reload this Project and try again."
+            update(projectId) { $0.errorMessage = message }
+            return .engineFailure(message)
+        }
+        let result = await projects.deleteProject(detail: detail)
+        if result.engineDeletionSucceeded { states[projectId] = nil }
+        return result
     }
 
     @discardableResult

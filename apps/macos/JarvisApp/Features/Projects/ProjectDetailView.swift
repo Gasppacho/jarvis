@@ -49,11 +49,16 @@ public struct ProjectDetailView: View {
                         .font(.callout)
                         .foregroundStyle(.orange)
                 }
+                if let message = projects.deletionMessages[project.id] {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                }
                 deleteAction
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(24)
-            .disabled(state.isSaving)
+            .disabled(state.isSaving || isDeleting)
         }
         .task(id: refreshID) {
             await projectConfiguration.refresh(
@@ -63,9 +68,11 @@ public struct ProjectDetailView: View {
             presentation.deletionConfirmation.title,
             isPresented: $isDeleteConfirmationPresented
         ) {
-            Button(presentation.deletionConfirmation.cancelLabel, role: .cancel) {}
+            Button(presentation.deletionConfirmation.cancelLabel, role: .cancel) {
+                perform(presentation.deletionConfirmation.cancelAction)
+            }
             Button(presentation.deletionConfirmation.confirmLabel, role: .destructive) {
-                perform(.deleteProject)
+                perform(presentation.deletionConfirmation.confirmAction)
             }
         } message: {
             Text(presentation.deletionConfirmation.message)
@@ -85,7 +92,12 @@ public struct ProjectDetailView: View {
             project: project,
             detail: state.detail,
             state: state,
-            packages: moduleCatalog.packages)
+            packages: moduleCatalog.packages,
+            isDeleting: isDeleting)
+    }
+
+    private var isDeleting: Bool {
+        projects.isDeletionInProgress(projectId: project.id)
     }
 
     private var addModuleActions: [ProjectDetailPresentation.Action] {
@@ -105,6 +117,10 @@ public struct ProjectDetailView: View {
                 .background(.quaternary, in: Capsule())
             Spacer()
             if state.isSaving { ProgressView().controlSize(.small) }
+            if isDeleting {
+                ProgressView("Deleting Project…")
+                    .controlSize(.small)
+            }
         }
     }
 
@@ -325,11 +341,9 @@ public struct ProjectDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             Divider()
             let action = ProjectDetailPresentation.Action.deleteProject
-            Button(action.label, role: .destructive) {
-                isDeleteConfirmationPresented = true
-            }
+            Button(action.label, role: .destructive) { perform(action) }
             .disabled(!presentation.deletionConfirmation.isEnabled)
-            if !presentation.deletionConfirmation.isEnabled {
+            if project.status == .active {
                 Text("Pause this Project before deleting it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -352,13 +366,17 @@ public struct ProjectDetailView: View {
         _ action: ProjectDetailPresentation.Action,
         bindingOptions: [String] = []
     ) {
-        switch action {
-        case .chooseRepository(let repositoryId):
-            guard let binding = presentation.repositories.first(where: {
-                $0.repositoryId == repositoryId
-            }) else { return }
+        switch action.routing {
+        case .repositoryPicker:
+            guard case .chooseRepository(let repositoryId) = action,
+                let binding = presentation.repositories.first(where: {
+                    $0.repositoryId == repositoryId
+                })
+            else { return }
             chooseRepository(for: binding)
-        case .setLocalBinding, .saveLocal, .saveRepository, .deleteProject:
+        case .confirmation:
+            isDeleteConfirmationPresented = true
+        case .asynchronous:
             Task {
                 await projectConfiguration.perform(
                     action,
@@ -366,12 +384,20 @@ public struct ProjectDetailView: View {
                     packages: moduleCatalog.packages,
                     bindingOptions: bindingOptions)
             }
-        default:
+        case .edit:
             projectConfiguration.apply(
                 action,
                 projectId: project.id,
                 packages: moduleCatalog.packages,
                 bindingOptions: bindingOptions)
+        case .noOp:
+            Task {
+                await projectConfiguration.perform(
+                    action,
+                    projectId: project.id,
+                    packages: moduleCatalog.packages,
+                    bindingOptions: bindingOptions)
+            }
         }
     }
 

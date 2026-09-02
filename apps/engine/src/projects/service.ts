@@ -108,15 +108,18 @@ export class ProjectService implements ProjectRegistry<
 
   deleteProject(id: unknown): void {
     const projectId = typeof id === "string" ? id : "";
-    const result = this.store.deleteProject(projectId);
-    if (result === "not-found") throw notFound(projectId || "(empty)");
-    if (result === "active") {
-      throw new EngineError(
-        "project.active",
-        409,
-        `Project "${projectId}" is active and cannot be deleted. Pause it before deleting it.`,
-      );
-    }
+    this.store.transaction(() => {
+      const project = this.store.findById(projectId);
+      if (project === undefined) throw notFound(projectId || "(empty)");
+      if (project.status === "active") {
+        throw new EngineError(
+          "project.active",
+          409,
+          `Project "${projectId}" is active and cannot be deleted. Pause it before deleting it.`,
+        );
+      }
+      if (!this.store.deleteById(projectId)) throw notFound(projectId || "(empty)");
+    });
   }
 
   replaceProjectConfiguration(request: ReplaceProjectConfigurationRequest): ProjectDetail {

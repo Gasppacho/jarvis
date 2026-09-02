@@ -76,8 +76,8 @@ final class ProjectImportTests: XCTestCase {
         XCTAssertTrue(
             projects.isRepositoryAccessRetained(projectId: imported.id, repositoryId: "main"))
 
-        let deleted = await configuration.deleteProject(projectId: imported.id)
-        XCTAssertTrue(deleted)
+        let deletion = await configuration.deleteProject(projectId: imported.id)
+        XCTAssertEqual(deletion, .success)
         XCTAssertTrue(projects.projects.isEmpty)
         XCTAssertNil(configuration.states[imported.id])
         XCTAssertNil(try grantStore.resolve(bookmarkRef: bookmarkRef))
@@ -111,14 +111,30 @@ final class ProjectImportTests: XCTestCase {
         await configuration.refresh(projectId: imported.id)
         let bookmarkRef = try XCTUnwrap(
             configuration.state(for: imported.id).detail?.bindings.first?.bookmarkRef)
+        let retainedRepository = try makeRepository()
+        await projects.inspect(at: retainedRepository)
+        let retainedResult = await projects.confirmImport()
+        let retained = try XCTUnwrap(retainedResult)
+        await configuration.refresh(projectId: retained.id)
+        let retainedState = configuration.state(for: retained.id)
+        let retainedBookmarkRef = try XCTUnwrap(
+            retainedState.detail?.bindings.first?.bookmarkRef)
         try await session.client?.deleteProject(id: imported.id)
 
-        let deleted = await configuration.deleteProject(projectId: imported.id)
-        XCTAssertFalse(deleted)
-        XCTAssertEqual(projects.projects.map(\.id), [imported.id])
+        let deletion = await configuration.deleteProject(projectId: imported.id)
+        guard case .engineFailure(let message) = deletion else {
+            return XCTFail("expected an engine deletion failure, got \(deletion)")
+        }
+        XCTAssertTrue(message.contains("project.not-found"))
+        XCTAssertEqual(Set(projects.projects.map(\.id)), Set([imported.id, retained.id]))
         XCTAssertNotNil(configuration.states[imported.id])
+        XCTAssertEqual(configuration.state(for: retained.id), retainedState)
         XCTAssertNotNil(try grantStore.resolve(bookmarkRef: bookmarkRef))
-        XCTAssertTrue(projects.errorMessage?.contains("project.not-found") == true)
+        XCTAssertNotNil(try grantStore.resolve(bookmarkRef: retainedBookmarkRef))
+        XCTAssertTrue(
+            projects.isRepositoryAccessRetained(projectId: retained.id, repositoryId: "main"))
+        XCTAssertTrue(
+            projects.deletionMessages[imported.id]?.contains("project.not-found") == true)
 
         projects.releaseRepositoryAccess()
         await session.shutdown()
@@ -144,12 +160,96 @@ final class ProjectImportTests: XCTestCase {
         let bookmarkRef = try XCTUnwrap(
             configuration.state(for: imported.id).detail?.bindings.first?.bookmarkRef)
 
-        let deleted = await configuration.deleteProject(projectId: imported.id)
-        XCTAssertTrue(deleted)
+        let deletion = await configuration.deleteProject(projectId: imported.id)
+        guard case .successWithRepositoryGrantCleanupWarning(let warning) = deletion else {
+            return XCTFail("expected a Repository Grant cleanup warning, got \(deletion)")
+        }
+        XCTAssertTrue(warning.contains("Repository Grant"))
         XCTAssertTrue(projects.projects.isEmpty)
-        XCTAssertTrue(projects.errorMessage?.contains("Project was deleted") == true)
-        XCTAssertTrue(projects.errorMessage?.contains("Repository Grant") == true)
+        XCTAssertTrue(projects.deletionNotice?.contains("Project was deleted") == true)
+        XCTAssertTrue(projects.deletionNotice?.contains("Repository Grant") == true)
         XCTAssertNotNil(try backingStore.resolve(bookmarkRef: bookmarkRef))
+
+        projects.releaseRepositoryAccess()
+        await session.shutdown()
+    }
+
+    @MainActor
+    func testConcurrentDeletionIsGuardedAndExposesProgress() async throws {
+        let repository = try makeRepository()
+        let session = EngineSessionModel(
+            supervisor: EngineSupervisor(
+                resources: .developmentBuild(),
+                dataRoot: temporaryDirectory(prefix: "jarvis-concurrent-delete-data")))
+        let gate = DeletionGate()
+        let projects = ProjectsModel(
+            session: session,
+            repositoryGrants: RepositoryGrantStore(
+                storageDirectory: temporaryDirectory(prefix: "jarvis-concurrent-delete-grants")),
+            deletionOperation: { id in
+                await gate.wait()
+                guard let client = session.client else {
+                    throw EngineClientError.unexpectedResponse("The engine is not running")
+                }
+                try await client.deleteProject(id: id)
+            })
+        let configuration = ProjectConfigurationModel(session: session, projects: projects)
+
+        await session.start()
+        await projects.inspect(at: repository)
+        let importedResult = await projects.confirmImport()
+        let imported = try XCTUnwrap(importedResult)
+        await configuration.refresh(projectId: imported.id)
+        let first = Task { await configuration.deleteProject(projectId: imported.id) }
+        while !projects.isDeletionInProgress(projectId: imported.id) { await Task.yield() }
+
+        let presentation = ProjectDetailPresentation(
+            project: imported,
+            detail: configuration.state(for: imported.id).detail,
+            state: configuration.state(for: imported.id),
+            packages: [],
+            isDeleting: true)
+        XCTAssertTrue(projects.isDeletionInProgress(projectId: imported.id))
+        XCTAssertFalse(presentation.deletionConfirmation.isEnabled)
+        let concurrentResult = await configuration.deleteProject(projectId: imported.id)
+        XCTAssertEqual(concurrentResult, .inProgress)
+
+        await gate.release()
+        let firstResult = await first.value
+        XCTAssertEqual(firstResult, .success)
+        XCTAssertFalse(projects.isDeletionInProgress(projectId: imported.id))
+        projects.releaseRepositoryAccess()
+        await session.shutdown()
+    }
+
+    @MainActor
+    func testDeletionCancelActionIsANoOpForProjectConfigurationGrantAndSecurityScope() async throws {
+        let repository = try makeRepository()
+        let grantStore = RepositoryGrantStore(
+            storageDirectory: temporaryDirectory(prefix: "jarvis-cancel-delete-grants"))
+        let session = EngineSessionModel(
+            supervisor: EngineSupervisor(
+                resources: .developmentBuild(),
+                dataRoot: temporaryDirectory(prefix: "jarvis-cancel-delete-data")))
+        let projects = ProjectsModel(session: session, repositoryGrants: grantStore)
+        let configuration = ProjectConfigurationModel(session: session, projects: projects)
+
+        await session.start()
+        await projects.inspect(at: repository)
+        let importedResult = await projects.confirmImport()
+        let imported = try XCTUnwrap(importedResult)
+        await configuration.refresh(projectId: imported.id)
+        let before = configuration.state(for: imported.id)
+        let bookmarkRef = try XCTUnwrap(before.detail?.bindings.first?.bookmarkRef)
+
+        await configuration.perform(
+            .cancelProjectDeletion, projectId: imported.id, packages: [])
+
+        XCTAssertEqual(projects.projects, [imported])
+        XCTAssertEqual(configuration.state(for: imported.id), before)
+        XCTAssertNotNil(try grantStore.resolve(bookmarkRef: bookmarkRef))
+        XCTAssertTrue(
+            projects.isRepositoryAccessRetained(projectId: imported.id, repositoryId: "main"))
 
         projects.releaseRepositoryAccess()
         await session.shutdown()
@@ -326,6 +426,22 @@ final class ProjectImportTests: XCTestCase {
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         roots.append(root)
         return root
+    }
+}
+
+private actor DeletionGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isReleased = false
+
+    func wait() async {
+        guard !isReleased else { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func release() {
+        isReleased = true
+        continuation?.resume()
+        continuation = nil
     }
 }
 

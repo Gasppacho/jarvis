@@ -9,6 +9,7 @@ struct RootView: View {
     let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
 
+    private let selectionPolicy = ProjectSelectionReconciliationPolicy()
     @State private var selection: SidebarSelection?
     @State private var pendingImport: Bool = false
 
@@ -37,10 +38,11 @@ struct RootView: View {
             if case .inspecting = newState, !pendingImport { pendingImport = true }
         }
         .onChange(of: projects.projects.map(\.id)) { _, projectIds in
-            guard case .project(let projectId) = selection,
-                !projectIds.contains(projectId)
-            else { return }
-            selection = nil
+            guard case .project(let projectId) = selection else { return }
+            let reconciled = selectionPolicy.reconciledProjectID(
+                selectedProjectID: projectId,
+                availableProjectIDs: projectIds)
+            if reconciled == nil { selection = nil }
         }
     }
 
@@ -64,12 +66,13 @@ struct RootView: View {
             }
         }
         .overlay(alignment: .top) {
-            if let errorMessage = projects.errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout)
-                    .foregroundStyle(.orange)
-                    .padding(12)
-                    .background(.bar)
+            VStack(spacing: 0) {
+                if let errorMessage = projects.errorMessage {
+                    warning(errorMessage)
+                }
+                if let deletionNotice = projects.deletionNotice {
+                    warning(deletionNotice)
+                }
             }
         }
         .navigationTitle("Jarvis")
@@ -83,6 +86,14 @@ struct RootView: View {
                 .disabled(projects.isRefreshing || !importStateAllowsNewPicker)
             }
         }
+    }
+
+    private func warning(_ message: String) -> some View {
+        Label(message, systemImage: "exclamationmark.triangle.fill")
+            .font(.callout)
+            .foregroundStyle(.orange)
+            .padding(12)
+            .background(.bar)
     }
 
     private var importStateAllowsNewPicker: Bool {

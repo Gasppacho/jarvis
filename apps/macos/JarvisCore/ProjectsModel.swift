@@ -3,6 +3,20 @@ import JarvisAPI
 import OSLog
 import Observation
 
+public enum ProjectDeletionResult: Sendable, Equatable {
+    case engineFailure(String)
+    case success
+    case successWithRepositoryGrantCleanupWarning(String)
+    case inProgress
+
+    public var engineDeletionSucceeded: Bool {
+        switch self {
+        case .success, .successWithRepositoryGrantCleanupWarning: true
+        case .engineFailure, .inProgress: false
+        }
+    }
+}
+
 /// The Project Registry as the shell shows it (docs/architecture/PROJECTS.md):
 /// the sidebar list and the import flow. MACOS_APP.md: an AppModel owns this
 /// state; the views derive from it and hold none of their own.
@@ -18,6 +32,12 @@ public final class ProjectsModel {
     /// Per-project Repository Grant failures do not erase the Project Registry.
     /// The detail remains queryable and can explain how to grant access again.
     public private(set) var repositoryGrantMessages: [String: String] = [:]
+    /// Project ids with an in-flight Local API deletion request.
+    public private(set) var deletionProjectIDs: Set<String> = []
+    /// Deletion failures and cleanup warnings are scoped to their Project.
+    public private(set) var deletionMessages: [String: String] = [:]
+    /// A post-deletion cleanup warning remains visible after selection clears.
+    public private(set) var deletionNotice: String?
 
     /// Where the import flow stands. The shell never imports before the user
     /// confirms the detected configuration (UX wizard step 2), and the sheet
@@ -39,13 +59,16 @@ public final class ProjectsModel {
     private var inspectedURL: URL?
     /// Retaining these URLs retains security-scoped access for the Engine Session.
     private var activeRepositoryURLs: [String: URL] = [:]
+    private let deletionOperation: (@MainActor (String) async throws -> Void)?
 
     public init(
         session: EngineSessionModel,
-        repositoryGrants: any RepositoryGrantStoring = RepositoryGrantStore()
+        repositoryGrants: any RepositoryGrantStoring = RepositoryGrantStore(),
+        deletionOperation: (@MainActor (String) async throws -> Void)? = nil
     ) {
         self.session = session
         self.repositoryGrants = repositoryGrants
+        self.deletionOperation = deletionOperation
     }
 
     private var client: EngineClient? { session.client }
@@ -141,25 +164,38 @@ public final class ProjectsModel {
         return try await client.getProject(id: id)
     }
 
-    /// Deletes engine-owned Project state first. Shell-owned Repository Grants
-    /// and security scopes are cleaned up only after the Local API confirms it.
+    /// Deletes engine-owned Project state first. The already-loaded bindings
+    /// identify shell-owned Repository Grants, which are cleaned up only after
+    /// DELETE succeeds; no detail GET races with the destructive request.
     @discardableResult
-    public func deleteProject(id: String) async -> Bool {
-        guard let client else {
-            errorMessage = Self.engineUnavailableForDeletion
-            return false
+    public func deleteProject(detail: ProjectDetail) async -> ProjectDeletionResult {
+        let id = detail.project.id
+        guard !deletionProjectIDs.contains(id) else { return .inProgress }
+        guard deletionOperation != nil || client != nil else {
+            deletionMessages[id] = Self.engineUnavailableForDeletion
+            return .engineFailure(Self.engineUnavailableForDeletion)
         }
-        let detail: ProjectDetail
+
+        deletionMessages[id] = nil
+        deletionProjectIDs.insert(id)
+        defer { deletionProjectIDs.remove(id) }
         do {
-            detail = try await client.getProject(id: id)
-            try await client.deleteProject(id: id)
+            if let deletionOperation {
+                try await deletionOperation(id)
+            } else {
+                guard let client else {
+                    throw EngineClientError.unexpectedResponse(
+                        Self.engineUnavailableForDeletion)
+                }
+                try await client.deleteProject(id: id)
+            }
         } catch {
-            errorMessage = Self.describe(error)
-            return false
+            let message = Self.describe(error)
+            deletionMessages[id] = message
+            return .engineFailure(message)
         }
 
         projects.removeAll { $0.id == id }
-
         var cleanupFailed = false
         for binding in detail.bindings {
             if let bookmarkRef = binding.bookmarkRef {
@@ -175,12 +211,16 @@ public final class ProjectsModel {
             releaseAccess(key: grantKey(projectId: id, repositoryId: binding.repositoryId))
         }
         repositoryGrantMessages[id] = nil
-        await refresh()
-        if cleanupFailed {
-            errorMessage =
-                "The Project was deleted, but its Repository Grant could not be removed. Repository files remain untouched; restart Jarvis and remove the stale grant from Application Support."
-        }
-        return true
+        guard cleanupFailed else { return .success }
+        let warning =
+            "The Project was deleted, but its Repository Grant could not be removed. Repository files remain untouched; restart Jarvis and remove the stale grant from Application Support."
+        deletionMessages[id] = warning
+        deletionNotice = warning
+        return .successWithRepositoryGrantCleanupWarning(warning)
+    }
+
+    public func isDeletionInProgress(projectId: String) -> Bool {
+        deletionProjectIDs.contains(projectId)
     }
 
     private func restoreRepositoryGrant(for project: Project, client: EngineClient) async {

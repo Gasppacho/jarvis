@@ -303,7 +303,16 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertTrue(presentation.actions.contains(.saveLocal))
         XCTAssertTrue(presentation.actions.contains(.saveRepository))
         XCTAssertTrue(presentation.actions.contains(.deleteProject))
+        XCTAssertTrue(presentation.actions.contains(.cancelProjectDeletion))
         XCTAssertEqual(ProjectDetailPresentation.Action.deleteProject.label, "Delete Project…")
+        XCTAssertEqual(ProjectDetailPresentation.Action.cancelProjectDeletion.label, "Cancel")
+        XCTAssertEqual(ProjectDetailPresentation.Action.deleteProject.routing, .confirmation)
+        XCTAssertEqual(ProjectDetailPresentation.Action.confirmProjectDeletion.routing, .asynchronous)
+        XCTAssertEqual(ProjectDetailPresentation.Action.cancelProjectDeletion.routing, .noOp)
+        XCTAssertEqual(
+            presentation.deletionConfirmation.confirmAction, .confirmProjectDeletion)
+        XCTAssertEqual(
+            presentation.deletionConfirmation.cancelAction, .cancelProjectDeletion)
         XCTAssertEqual(presentation.deletionConfirmation.title, "Delete “\(imported.name)”?")
         XCTAssertTrue(presentation.deletionConfirmation.message.contains("Project Registry record"))
         XCTAssertTrue(
@@ -507,6 +516,22 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(detail.modules, [])
         projects.releaseRepositoryAccess()
         await session.shutdown()
+    }
+
+    func testStaleProjectSelectionReconciliationClearsOnlyAfterTheProjectDisappears() {
+        let policy = ProjectSelectionReconciliationPolicy()
+
+        XCTAssertEqual(
+            policy.reconciledProjectID(
+                selectedProjectID: "project-1", availableProjectIDs: ["project-1"]),
+            "project-1",
+            "a failed deletion leaves the project in the list and must preserve selection")
+        XCTAssertNil(
+            policy.reconciledProjectID(
+                selectedProjectID: "project-1", availableProjectIDs: ["project-2"]),
+            "selection clears only after successful deletion removes the project")
+        XCTAssertNil(
+            policy.reconciledProjectID(selectedProjectID: nil, availableProjectIDs: []))
     }
 
     private func schemaFixturePackage() throws -> ModulePackage {

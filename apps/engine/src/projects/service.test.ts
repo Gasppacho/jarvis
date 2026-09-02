@@ -246,15 +246,55 @@ describe("Project configuration replacement", () => {
   });
 });
 
+describe("Project deletion", () => {
+  it("owns status validation and deletion inside one service transaction", () => {
+    const db = projectDatabase();
+    databases.push(db);
+    const store = new ProjectStore(db, clock);
+    const configuration = exampleConfiguration();
+    const repository = mkdtempSync(join(tmpdir(), "jarvis-active-delete-"));
+    roots.push(repository);
+    store.createProject({
+      id: "active-project",
+      name: "Active",
+      status: "active",
+      portableConfig: configuration,
+      repositoryPath: repository,
+    });
+    const service = new ProjectService(
+      store,
+      moduleHost(),
+      new AtomicProjectConfigurationWriter(),
+      new EmptyProjectResourceGrants(),
+    );
+
+    expect(() => service.deleteProject("active-project")).toThrowError(
+      expect.objectContaining({ code: "project.active" }),
+    );
+    expect(store.findById("active-project")).toBeDefined();
+    expect(() => service.deleteProject("unknown")).toThrowError(
+      expect.objectContaining({ code: "project.not-found" }),
+    );
+
+    db.prepare("UPDATE projects SET status = 'paused' WHERE id = ?").run("active-project");
+    service.deleteProject("active-project");
+    expect(store.findById("active-project")).toBeUndefined();
+    expect(
+      db.prepare("SELECT 1 FROM project_bindings WHERE project_id = ?").get("active-project"),
+    ).toBeUndefined();
+  });
+});
+
 function projectDatabase(): Database.Database {
   const db = new Database(":memory:");
+  db.pragma("foreign_keys = ON");
   db.exec(`
     CREATE TABLE projects (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL,
       portable_config TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     ) STRICT;
     CREATE TABLE project_bindings (
-      project_id TEXT PRIMARY KEY REFERENCES projects (id), repository_path TEXT NOT NULL,
+      project_id TEXT PRIMARY KEY REFERENCES projects (id) ON DELETE CASCADE, repository_path TEXT NOT NULL,
       bookmark_ref TEXT, slot_bindings TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(slot_bindings))
     ) STRICT;
   `);

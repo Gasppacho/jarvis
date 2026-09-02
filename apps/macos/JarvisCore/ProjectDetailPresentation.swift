@@ -17,6 +17,8 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         public let confirmLabel: String
         public let cancelLabel: String
         public let isEnabled: Bool
+        public let confirmAction: Action
+        public let cancelAction: Action
     }
 
     public enum Action: Sendable, Equatable, Hashable {
@@ -43,6 +45,56 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         case saveLocal
         case saveRepository
         case deleteProject
+        case confirmProjectDeletion
+        case cancelProjectDeletion
+
+        public enum Routing: Sendable, Equatable {
+            case edit
+            case asynchronous
+            case repositoryPicker
+            case confirmation
+            case noOp
+        }
+
+        public enum AsyncOperation: Sendable, Equatable {
+            case setLocalBinding(String, String?)
+            case saveLocal
+            case saveRepository
+            case confirmProjectDeletion
+        }
+
+        public var asyncOperation: AsyncOperation? {
+            switch self {
+            case .setLocalBinding(let slotId, let candidateId):
+                .setLocalBinding(slotId, candidateId)
+            case .saveLocal: .saveLocal
+            case .saveRepository: .saveRepository
+            case .confirmProjectDeletion: .confirmProjectDeletion
+            case .chooseRepository, .setProjectName, .addSlot, .removeSlot, .renameSlot,
+                .setSlotRequirement, .setSlotOptional, .setSlotDescription, .addModule,
+                .removeModule, .setModulePackage, .setModuleInstanceID, .setModuleEnabled,
+                .setModuleRuntimeSlot, .addModuleBinding, .removeModuleBinding,
+                .renameModuleBinding, .setModuleBinding, .setModuleConfiguration, .deleteProject,
+                .cancelProjectDeletion:
+                nil
+            }
+        }
+
+        public var routing: Routing {
+            switch self {
+            case .chooseRepository: .repositoryPicker
+            case .setLocalBinding, .saveLocal, .saveRepository, .confirmProjectDeletion:
+                .asynchronous
+            case .deleteProject: .confirmation
+            case .cancelProjectDeletion: .noOp
+            case .setProjectName, .addSlot, .removeSlot, .renameSlot, .setSlotRequirement,
+                .setSlotOptional, .setSlotDescription, .addModule, .removeModule,
+                .setModulePackage, .setModuleInstanceID, .setModuleEnabled,
+                .setModuleRuntimeSlot, .addModuleBinding, .removeModuleBinding,
+                .renameModuleBinding, .setModuleBinding, .setModuleConfiguration:
+                .edit
+            }
+        }
 
         public var label: String {
             switch self {
@@ -69,6 +121,8 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             case .saveLocal: "Save locally"
             case .saveRepository: "Save and write .jarvis/project.yaml"
             case .deleteProject: "Delete Project…"
+            case .confirmProjectDeletion: "Delete Project"
+            case .cancelProjectDeletion: "Cancel"
             }
         }
     }
@@ -84,7 +138,8 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         project: Project,
         detail: ProjectDetail?,
         state: ProjectConfigurationState,
-        packages: [ModulePackage]
+        packages: [ModulePackage],
+        isDeleting: Bool = false
     ) {
         repositories = detail?.bindings ?? []
         modules = state.draft?.modules ?? []
@@ -134,7 +189,11 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                     .setModuleConfiguration(module.id, $0, module.configurationValues[$0] ?? "")
                 })
         }
-        inventory.append(contentsOf: [.saveLocal, .saveRepository, .deleteProject])
+        inventory.append(
+            contentsOf: [
+                .saveLocal, .saveRepository, .deleteProject, .confirmProjectDeletion,
+                .cancelProjectDeletion,
+            ])
         actions = inventory
         deletionConfirmation = DeletionConfirmation(
             title: "Delete “\(project.name)”?",
@@ -142,7 +201,9 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 "This removes the Project Registry record, project-scoped engine state, Local Bindings, and the Repository Grant from this Mac. Repository files, including .jarvis/project.yaml, remain untouched.",
             confirmLabel: "Delete Project",
             cancelLabel: "Cancel",
-            isEnabled: project.status != .active
+            isEnabled: project.status != .active && !isDeleting,
+            confirmAction: .confirmProjectDeletion,
+            cancelAction: .cancelProjectDeletion
         )
         isSaveEnabled = state.draft?.validationIssues.isEmpty == true && !state.isSaving
     }
