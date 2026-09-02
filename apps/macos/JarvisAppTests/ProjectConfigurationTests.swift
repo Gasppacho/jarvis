@@ -15,8 +15,9 @@ final class ProjectConfigurationTests: XCTestCase {
     }
 
     func testActionDescriptorsCarryTheirOperationAndLabelTogether() {
-        let edit = ProjectDetailPresentation.Action.Edit.addSlot
-        XCTAssertEqual(edit.operation, .addSlot)
+        let edit = ProjectDetailPresentation.Action.Edit.addSlot(
+            name: "sourceControl", requirement: "scm.change-request.manage")
+        XCTAssertEqual(edit.operation, .addSlot("sourceControl", "scm.change-request.manage"))
         XCTAssertEqual(edit.label, "Add slot")
 
         let asynchronous = ProjectDetailPresentation.Action.Asynchronous.saveLocal
@@ -130,9 +131,18 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(fields["mode"]?.defaultValue, "safe")
         XCTAssertEqual(fields["retries"]?.kind, .integer)
         XCTAssertEqual(fields["ratio"]?.kind, .number)
-        XCTAssertEqual(fields["items"]?.kind, .json(.array))
-        XCTAssertEqual(fields["options"]?.kind, .json(.object))
+        guard case .array(let item)? = fields["items"]?.kind else {
+            return XCTFail("items must expose a structured repeatable control")
+        }
+        XCTAssertEqual(item.kind, .choice(["main", "secondary"]))
+        guard case .object(let children)? = fields["options"]?.kind else {
+            return XCTFail("options must expose structured child controls")
+        }
+        XCTAssertEqual(children.map(\.key), ["note"])
         XCTAssertEqual(fields["name"]?.description, "Human-readable rule name")
+        XCTAssertEqual(fields["name"]?.examples, ["release"])
+        XCTAssertEqual(fields["name"]?.accessibilityLabel, "name, required, text")
+        XCTAssertTrue(fields["name"]?.accessibilityHint.contains("Human-readable rule name") == true)
         XCTAssertEqual(fields["name"]?.pattern, "^[a-z]+$")
         XCTAssertTrue(fields["name"]?.required == true)
 
@@ -159,6 +169,22 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertTrue(issues.contains("ratio has an invalid value"))
         XCTAssertTrue(issues.contains("items does not satisfy its schema"))
         XCTAssertTrue(issues.contains("options has an invalid value"))
+    }
+
+    func testChangingModulePackagePreservesInvalidInputForRepairWhenSwitchingBack() throws {
+        let github = try schemaFixturePackage(moduleId: "jarvis.module.github")
+        let development = try schemaFixturePackage(moduleId: "jarvis.module.development")
+        var draft = ProjectConfigurationDraft(
+            configuration: try projectConfiguration(projectId: "schema-switch"),
+            packages: [github])
+        let moduleID = try XCTUnwrap(draft.modules.first?.id)
+        draft.modules[0].configurationValues["name"] = "INVALID VALUE"
+
+        draft.select(package: development, for: moduleID)
+
+        XCTAssertTrue(draft.modules[0].configurationRepairExplanation?.contains("preserved") == true)
+        draft.select(package: github, for: moduleID)
+        XCTAssertEqual(draft.modules[0].configurationValues["name"], "INVALID VALUE")
     }
 
     func testGeneratedResourceKindsRoundTripThroughTheCentralDomainMapping() throws {
@@ -224,7 +250,9 @@ final class ProjectConfigurationTests: XCTestCase {
             state.draft?.modules.map(\.instanceId),
             ["github", "automation-rules", "development"])
         XCTAssertEqual(state.localBindings?.slots, [])
-        XCTAssertEqual(state.resourceChoices.map(\.slotId), [
+        XCTAssertEqual(
+            state.resourceChoices.map(\.slotId),
+            [
             "agentRuntime", "sourceControl", "tickets",
         ])
         XCTAssertEqual(
@@ -243,7 +271,9 @@ final class ProjectConfigurationTests: XCTestCase {
             detail: state.detail,
             state: state,
             packages: catalog.packages)
-        XCTAssertEqual(presentation.startingPoints.map(\.displayName), [
+        XCTAssertEqual(
+            presentation.startingPoints.map(\.displayName),
+            [
             "GitHub Development", "Custom composition",
         ])
         XCTAssertTrue(
@@ -347,22 +377,20 @@ final class ProjectConfigurationTests: XCTestCase {
         configuration.apply(
             .setProjectName("Action-edited Project"),
             projectId: imported.id, packages: catalog.packages)
-        configuration.apply(.addSlot, projectId: imported.id, packages: catalog.packages)
         configuration.apply(
-            .setSlotRequirement("slot1", "scm.change-request.manage"),
+            .addSlot(name: "sourceControl", requirement: "scm.change-request.manage"),
             projectId: imported.id, packages: catalog.packages)
         configuration.apply(
-            .setSlotOptional("slot1", true),
+            .setSlotOptional("sourceControl", true),
             projectId: imported.id, packages: catalog.packages)
         configuration.apply(
-            .setSlotDescription("slot1", "Primary source-control provider"),
+            .setSlotDescription("sourceControl", "Primary source-control provider"),
             projectId: imported.id, packages: catalog.packages)
         configuration.apply(
-            .renameSlot("slot1", "sourceControl"),
+            .addSlot(name: "temporary", requirement: "repository.read"),
             projectId: imported.id, packages: catalog.packages)
-        configuration.apply(.addSlot, projectId: imported.id, packages: catalog.packages)
         configuration.apply(
-            .removeSlot("slot2"), projectId: imported.id, packages: catalog.packages)
+            .removeSlot("temporary"), projectId: imported.id, packages: catalog.packages)
         configuration.apply(
             .addModule(development.moduleId),
             projectId: imported.id, packages: catalog.packages)
@@ -420,7 +448,9 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(presentation.slots.map(\.id), ["sourceControl"])
         XCTAssertEqual(presentation.modules.map(\.moduleId), ["jarvis.module.github"])
         XCTAssertTrue(presentation.actions.contains(.repositoryPicker(.chooseRepository("main"))))
-        XCTAssertTrue(presentation.actions.contains(.edit(.addSlot)))
+        XCTAssertTrue(
+            presentation.actions.contains(
+                .edit(.addSlot(name: "", requirement: ""))))
         XCTAssertEqual(
             presentation.actions.compactMap { action -> String? in
                 guard case .edit(let edit) = action,
@@ -591,12 +621,16 @@ final class ProjectConfigurationTests: XCTestCase {
                 ($0.key, $0)
             })
         XCTAssertEqual(bundledFields["bootstrapLabelPolicy"]?.defaultValue, "ignore-existing")
-        XCTAssertEqual(bundledFields["bootstrapLabelPolicy"]?.kind,
+        XCTAssertEqual(
+            bundledFields["bootstrapLabelPolicy"]?.kind,
                        .choice(["ignore-existing", "emit-existing"]))
         XCTAssertEqual(bundledFields["pollIntervalSeconds"]?.kind, .integer)
         XCTAssertEqual(bundledFields["pollIntervalSeconds"]?.minimum, 15)
         XCTAssertEqual(bundledFields["pollIntervalSeconds"]?.maximum, 3600)
-        XCTAssertEqual(bundledFields["repositories"]?.kind, .json(.array))
+        guard case .array(let repositoryItem)? = bundledFields["repositories"]?.kind else {
+            return XCTFail("repositories must be a structured repeatable control")
+        }
+        XCTAssertEqual(repositoryItem.kind, .string)
         XCTAssertNotNil(bundledFields["repositories"]?.validationIssue(for: "[]"))
         XCTAssertNotNil(
             bundledFields["repositories"]?.validationIssue(for: #"["main","main"]"#))
@@ -650,8 +684,7 @@ final class ProjectConfigurationTests: XCTestCase {
     }
 
     @MainActor
-    func testInvalidBundledPackageConfigurationIsActionableAndDoesNotReplaceTheDraft() async throws
-    {
+    func testInvalidBundledPackageConfigurationIsActionableAndDoesNotReplaceTheDraft() async throws {
         let repository = try makeRepository()
         let dataRoot = temporaryDirectory(prefix: "jarvis-invalid-config-data")
         let session = EngineSessionModel(
@@ -698,9 +731,11 @@ final class ProjectConfigurationTests: XCTestCase {
             policy.reconciledProjectID(selectedProjectID: nil, availableProjectIDs: []))
     }
 
-    private func schemaFixturePackage() throws -> ModulePackage {
+    private func schemaFixturePackage(
+        moduleId: String = "jarvis.module.fixture"
+    ) throws -> ModulePackage {
         let document: [String: Any] = [
-            "moduleId": "jarvis.module.fixture",
+            "moduleId": moduleId,
             "version": "1.0.0",
             "displayName": "Fixture",
             "description": "Schema fixture",
@@ -725,11 +760,17 @@ final class ProjectConfigurationTests: XCTestCase {
                         "uniqueItems": true,
                         "items": ["type": "string", "enum": ["main", "secondary"]],
                     ],
-                    "options": ["type": "object"],
+                    "options": [
+                        "type": "object",
+                        "properties": [
+                            "note": ["type": "string", "title": "Note"]
+                        ],
+                    ],
                     "name": [
                         "type": "string",
                         "pattern": "^[a-z]+$",
                         "description": "Human-readable rule name",
+                        "examples": ["release"],
                     ],
                 ],
             ],

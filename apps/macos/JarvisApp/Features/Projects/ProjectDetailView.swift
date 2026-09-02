@@ -11,6 +11,8 @@ public struct ProjectDetailView: View {
     let project: Project
 
     @State private var isDeleteConfirmationPresented = false
+    @State private var newSlotName = ""
+    @State private var newSlotRequirement = ""
 
     public init(
         projects: ProjectsModel,
@@ -185,7 +187,9 @@ public struct ProjectDetailView: View {
     private var startingPointEditor: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Starting point").font(.headline)
-            Text("Choose a canonical draft or keep a Custom composition. You can edit every choice afterward.")
+            Text(
+                "Choose a canonical draft or keep a Custom composition. You can edit every choice afterward."
+            )
                 .font(.callout)
                 .foregroundStyle(.secondary)
             ForEach(presentation.startingPoints) { startingPoint in
@@ -202,7 +206,8 @@ public struct ProjectDetailView: View {
                     }
                 }
                 .accessibilityElement(children: .contain)
-                .accessibilityHint("Creates an editable Portable Configuration Draft without Local Bindings.")
+                .accessibilityHint(
+                    "Creates an editable Portable Configuration Draft without Local Bindings.")
             }
         }
     }
@@ -227,8 +232,20 @@ public struct ProjectDetailView: View {
                     TextField("Description", text: slotDescriptionBinding(slot))
                 }
             }
-            let edit = ProjectDetailPresentation.Action.Edit.addSlot
-            Button(edit.label) { perform(.edit(edit)) }
+            HStack {
+                TextField("New slot name", text: $newSlotName)
+                TextField("Required capability", text: $newSlotRequirement)
+                Button("Add slot") {
+                    let edit = ProjectDetailPresentation.Action.Edit.addSlot(
+                        name: newSlotName, requirement: newSlotRequirement)
+                    perform(.edit(edit))
+                    newSlotName = ""
+                    newSlotRequirement = ""
+                }
+                .disabled(
+                    newSlotName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || newSlotRequirement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
         }
     }
 
@@ -253,7 +270,9 @@ public struct ProjectDetailView: View {
                 Text("Required capabilities: \(card.requiredCapabilities)").font(.caption)
                 Text("Compatibility: \(card.compatibility)").font(.caption)
                 if card.missingResources != "No missing resources" {
-                    Label("Missing resources: \(card.missingResources)", systemImage: "exclamationmark.triangle")
+                    Label(
+                        "Missing resources: \(card.missingResources)", systemImage: "exclamationmark.triangle"
+                    )
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
@@ -316,48 +335,169 @@ public struct ProjectDetailView: View {
         } else if !module.configurationFields.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Schema-backed configuration").font(.subheadline.weight(.semibold))
+                if let explanation = module.configurationRepairExplanation {
+                    Label(explanation, systemImage: "arrow.uturn.backward.circle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
                 ForEach(module.configurationFields) { field in
-                    switch field.kind {
-                    case .boolean:
-                        Toggle(
-                            field.label,
-                            isOn: Binding(
-                                get: { module.configurationValues[field.key] == "true" },
-                                set: { value in
-                                    perform(
-                                        .edit(
-                                            .setModuleConfiguration(
-                                                module.id, field.key, value ? "true" : "false")))
-                                }))
-                    case .choice(let choices):
-                        Picker(
-                            field.label,
-                            selection: configurationBinding(module.id, field.key)
-                        ) {
-                            if !field.required { Text("None").tag("") }
-                            ForEach(choices, id: \.self) { Text($0).tag($0) }
+                    configurationControl(
+                        field,
+                        value: configurationBinding(module.id, field.key))
+                }
+            }
+        }
+    }
+
+    private func configurationControl(
+        _ field: ModuleConfigurationField,
+        value: Binding<String>
+    ) -> AnyView {
+        let content: AnyView
+        switch field.kind {
+        case .boolean:
+            content = AnyView(
+                Toggle(
+                    field.label,
+                    isOn: Binding(
+                        get: { value.wrappedValue == "true" },
+                        set: { value.wrappedValue = $0 ? "true" : "false" })))
+        case .choice(let choices):
+            content = AnyView(
+                Picker(field.label, selection: value) {
+                    Text(field.required ? "Choose…" : "None").tag("")
+                    ForEach(choices, id: \.self) { Text($0).tag($0) }
+                })
+        case .integer, .number, .string:
+            content = AnyView(
+                TextField(field.label + (field.required ? " *" : ""), text: value))
+        case .array(let item):
+            content = arrayConfigurationControl(field, item: item, value: value)
+        case .object(let children):
+            content = objectConfigurationControl(field, children: children, value: value)
+        }
+        return AnyView(
+            VStack(alignment: .leading, spacing: 4) {
+                content
+                Text(field.required ? "Required" : "Optional")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                if let description = field.description {
+                    Text(description).font(.caption).foregroundStyle(.secondary)
+                }
+                if let defaultValue = field.defaultValue {
+                    Text("Default: \(defaultValue)").font(.caption).foregroundStyle(.secondary)
+                }
+                if field.minimum != nil || field.maximum != nil {
+                    Text(
+                        "Range: \(field.minimum?.formatted() ?? "unbounded") to \(field.maximum?.formatted() ?? "unbounded")"
+                    ).font(.caption).foregroundStyle(.secondary)
+                }
+                if field.minimumLength != nil || field.maximumLength != nil {
+                    Text(
+                        "Length: \(field.minimumLength.map(String.init) ?? "unbounded") to \(field.maximumLength.map(String.init) ?? "unbounded")"
+                    ).font(.caption).foregroundStyle(.secondary)
+                }
+                if !field.examples.isEmpty {
+                    Text("Example: \(field.examples.joined(separator: ", "))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if let issue = field.validationIssue(for: value.wrappedValue) {
+                    Text(issue).font(.caption).foregroundStyle(.red)
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(field.accessibilityLabel)
+            .accessibilityHint(field.accessibilityHint))
+    }
+
+    private func arrayConfigurationControl(
+        _ field: ModuleConfigurationField,
+        item: ModuleConfigurationField,
+        value: Binding<String>
+    ) -> AnyView {
+        guard let values = configurationArray(value.wrappedValue) else {
+            return AnyView(configurationRepairControl(field, value: value))
+        }
+        return AnyView(
+            VStack(alignment: .leading, spacing: 6) {
+                Text(field.label).font(.body.weight(.medium))
+                ForEach(values.indices, id: \.self) { index in
+                    HStack(alignment: .firstTextBaseline) {
+                        configurationControl(
+                            item,
+                            value: arrayItemBinding(parent: value, index: index, field: item))
+                        Button(role: .destructive) {
+                            var updated = configurationArray(value.wrappedValue) ?? []
+                            guard updated.indices.contains(index) else { return }
+                            updated.remove(at: index)
+                            value.wrappedValue = configurationText(updated)
+                        } label: {
+                            Image(systemName: "minus.circle")
                         }
-                    case .json:
-                        LabeledContent(field.label) {
-                            TextEditor(text: configurationBinding(module.id, field.key))
-                                .font(.body.monospaced())
-                                .frame(minHeight: 54)
-                                .overlay(RoundedRectangle(cornerRadius: 5).stroke(.separator))
-                        }
-                    case .integer, .number, .string:
-                        TextField(
-                            field.label + (field.required ? " *" : ""),
-                            text: configurationBinding(module.id, field.key))
-                    }
-                    if let description = field.description {
-                        Text(description).font(.caption).foregroundStyle(.secondary)
-                    }
-                    if let issue = field.validationIssue(
-                        for: module.configurationValues[field.key, default: ""])
-                    {
-                        Text(issue).font(.caption).foregroundStyle(.red)
+                        .buttonStyle(.borderless)
+                        .disabled(field.minimumItems.map { values.count <= $0 } ?? false)
                     }
                 }
+                Button("Add \(item.label)") {
+                    var updated = configurationArray(value.wrappedValue) ?? []
+                    updated.append(configurationSeed(for: item))
+                    value.wrappedValue = configurationText(updated)
+                }
+                .disabled(field.maximumItems.map { values.count >= $0 } ?? false)
+                if field.minimumItems != nil || field.maximumItems != nil {
+                    Text(
+                        "Values: \(field.minimumItems.map(String.init) ?? "unbounded") to \(field.maximumItems.map(String.init) ?? "unbounded")"
+                    ).font(.caption).foregroundStyle(.secondary)
+                }
+                DisclosureGroup("Advanced raw JSON") {
+                    TextEditor(text: value).font(.body.monospaced()).frame(minHeight: 54)
+                }
+            })
+    }
+
+    private func objectConfigurationControl(
+        _ field: ModuleConfigurationField,
+        children: [ModuleConfigurationField],
+        value: Binding<String>
+    ) -> AnyView {
+        guard configurationObject(value.wrappedValue) != nil else {
+            return AnyView(configurationRepairControl(field, value: value))
+        }
+        return AnyView(
+            GroupBox(field.label) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(children) { child in
+                        configurationControl(
+                            child,
+                            value: objectValueBinding(parent: value, field: child))
+                    }
+                    if children.isEmpty {
+                        StructuredJSONObjectEditor(
+                            title: "Custom properties",
+                            text: value,
+                            allowsScalarValuesOnly: false)
+                    }
+                    DisclosureGroup("Advanced raw JSON") {
+                        TextEditor(text: value).font(.body.monospaced()).frame(minHeight: 54)
+                    }
+                }
+            })
+    }
+
+    private func configurationRepairControl(
+        _ field: ModuleConfigurationField,
+        value: Binding<String>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label(
+                "\(field.label) cannot be shown as structured controls. Repair its JSON in Advanced; your input is preserved.",
+                systemImage: "exclamationmark.triangle.fill"
+            )
+            .font(.caption).foregroundStyle(.orange)
+            DisclosureGroup("Advanced raw JSON") {
+                TextEditor(text: value).font(.body.monospaced()).frame(minHeight: 54)
             }
         }
     }
@@ -385,12 +525,10 @@ public struct ProjectDetailView: View {
                                 .edit(
                                     .setAutomationRuleInput(row.moduleID, row.id, value)))
                         })
-                    LabeledContent("Bounded match") {
-                        TextEditor(text: automationRuleMatchBinding(row))
-                            .font(.body.monospaced())
-                            .frame(minHeight: 48)
-                            .overlay(RoundedRectangle(cornerRadius: 5).stroke(.separator))
-                    }
+                    StructuredJSONObjectEditor(
+                        title: "Bounded match",
+                        text: automationRuleMatchBinding(row),
+                        allowsScalarValuesOnly: true)
                     AutomationEventSelector(
                         title: "Emitted Request",
                         currentType: row.emissionEventType,
@@ -414,6 +552,10 @@ public struct ProjectDetailView: View {
                                         value,
                                         resolvedConsumerID: nil)))
                         })
+                    StructuredJSONObjectEditor(
+                        title: "Request payload",
+                        text: automationRulePayloadBinding(row),
+                        allowsScalarValuesOnly: false)
                     if !row.targetChoices.isEmpty {
                         Picker("Resolved consumer", selection: automationRuleTargetBinding(row)) {
                             ForEach(row.targetChoices, id: \.self) { consumer in
@@ -446,7 +588,9 @@ public struct ProjectDetailView: View {
     private var localBindingsEditor: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Local Bindings").sectionLabel()
-            Text("Portable Configuration declares what is needed. These choices update only this Mac's Local Bindings.")
+            Text(
+                "Portable Configuration declares what is needed. These choices update only this Mac's Local Bindings."
+            )
                 .font(.callout)
                 .foregroundStyle(.secondary)
             ForEach(presentation.resourceBindings) { resource in
@@ -522,9 +666,11 @@ public struct ProjectDetailView: View {
         case .repositoryPicker(let picker):
             switch picker.operation {
             case .chooseRepository(let repositoryId):
-                guard let binding = presentation.repositories.first(where: {
+                guard
+                    let binding = presentation.repositories.first(where: {
                     $0.repositoryId == repositoryId
-                }) else { return }
+                    })
+                else { return }
                 chooseRepository(for: binding)
             }
         case .confirmation:
@@ -582,6 +728,14 @@ public struct ProjectDetailView: View {
             set: { perform(.edit(.setAutomationRuleID(row.moduleID, row.id, $0))) })
     }
 
+    private func automationRulePayloadBinding(
+        _ row: ProjectDetailPresentation.AutomationRuleRow
+    ) -> Binding<String> {
+        Binding(
+            get: { row.payloadJSON },
+            set: { perform(.edit(.setAutomationRulePayload(row.moduleID, row.id, $0))) })
+    }
+
     private func automationRuleTargetBinding(
         _ row: ProjectDetailPresentation.AutomationRuleRow
     ) -> Binding<String> {
@@ -599,6 +753,70 @@ public struct ProjectDetailView: View {
         Binding(
             get: { row.matchJSON },
             set: { perform(.edit(.setAutomationRuleMatch(row.moduleID, row.id, $0))) })
+    }
+
+    private func configurationArray(_ text: String) -> [Any]? {
+        guard let data = text.data(using: .utf8) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [Any]
+    }
+
+    private func configurationObject(_ text: String) -> [String: Any]? {
+        guard let data = text.data(using: .utf8) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    private func configurationText(_ value: Any) -> String {
+        if let string = value as? String { return string }
+        if let boolean = value as? Bool { return boolean ? "true" : "false" }
+        if let number = value as? NSNumber { return number.stringValue }
+        guard JSONSerialization.isValidJSONObject(value),
+            let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+        else { return "" }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    private func configurationSeed(for field: ModuleConfigurationField) -> Any {
+        guard !field.initialValue.isEmpty else { return "" }
+        return (try? field.decode(field.initialValue)) ?? field.initialValue
+    }
+
+    private func arrayItemBinding(
+        parent: Binding<String>,
+        index: Int,
+        field: ModuleConfigurationField
+    ) -> Binding<String> {
+        Binding(
+            get: {
+                let values = configurationArray(parent.wrappedValue) ?? []
+                guard values.indices.contains(index) else { return "" }
+                return configurationText(values[index])
+            },
+            set: { text in
+                var values = configurationArray(parent.wrappedValue) ?? []
+                guard values.indices.contains(index) else { return }
+                values[index] = (try? field.decode(text)) ?? text
+                parent.wrappedValue = configurationText(values)
+            })
+    }
+
+    private func objectValueBinding(
+        parent: Binding<String>,
+        field: ModuleConfigurationField
+    ) -> Binding<String> {
+        Binding(
+            get: {
+                let object = configurationObject(parent.wrappedValue) ?? [:]
+                return object[field.key].map(configurationText) ?? field.initialValue
+            },
+            set: { text in
+                var object = configurationObject(parent.wrappedValue) ?? [:]
+                if text.isEmpty && !field.required {
+                    object.removeValue(forKey: field.key)
+                } else {
+                    object[field.key] = (try? field.decode(text)) ?? text
+                }
+                parent.wrappedValue = configurationText(object)
+            })
     }
 
     private func configurationBinding(_ id: UUID, _ key: String) -> Binding<String> {
@@ -721,7 +939,8 @@ private struct AutomationEventSelector: View {
             DisclosureGroup("Advanced custom value") {
                 TextField(
                     "Custom Event type",
-                    text: Binding(get: { currentType }, set: { custom($0) }))
+                    text: Binding(get: { currentType }, set: { custom($0) })
+                )
                     .textFieldStyle(.roundedBorder)
                 if !choices.contains(where: { $0.type == currentType }) {
                     Label(
@@ -740,6 +959,93 @@ private struct AutomationEventSelector: View {
 
     private var selectedLabel: String {
         choices.first { $0.type == currentType }?.label ?? "Unknown: \(currentType)"
+    }
+}
+
+@MainActor
+private struct StructuredJSONObjectEditor: View {
+    let title: String
+    @Binding var text: String
+    let allowsScalarValuesOnly: Bool
+
+    @State private var newKey = ""
+    @State private var newValue = ""
+
+    private var object: [String: Any]? {
+        guard let data = text.data(using: .utf8) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.body.weight(.medium))
+            if let object {
+                ForEach(object.keys.sorted(), id: \.self) { key in
+                    HStack {
+                        Text(key).frame(minWidth: 100, alignment: .leading)
+                        TextField("JSON value", text: valueBinding(key))
+                        Button(role: .destructive) {
+                            update { $0.removeValue(forKey: key) }
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+                HStack {
+                    TextField("New property", text: $newKey)
+                    TextField("JSON value", text: $newValue)
+                    Button("Add") {
+                        let key = newKey
+                        update { $0[key] = decodedValue(newValue) }
+                        newKey = ""
+                        newValue = ""
+                    }
+                    .disabled(newKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            } else {
+                Label(
+                    "This object is invalid. Repair it in Advanced; your input is preserved.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption).foregroundStyle(.orange)
+            }
+            DisclosureGroup("Advanced raw JSON") {
+                TextEditor(text: $text).font(.body.monospaced()).frame(minHeight: 54)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(title)
+    }
+
+    private func valueBinding(_ key: String) -> Binding<String> {
+        Binding(
+            get: { object?[key].map(encodedValue) ?? "" },
+            set: { replacement in update { $0[key] = decodedValue(replacement) } })
+    }
+
+    private func decodedValue(_ value: String) -> Any {
+        guard let data = value.data(using: .utf8),
+            let decoded = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
+            !allowsScalarValuesOnly || decoded is String || decoded is NSNumber || decoded is NSNull
+        else { return value }
+        return decoded
+    }
+
+    private func encodedValue(_ value: Any) -> String {
+        guard
+            let data = try? JSONSerialization.data(
+                withJSONObject: value, options: [.fragmentsAllowed, .sortedKeys])
+        else { return String(describing: value) }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    private func update(_ change: (inout [String: Any]) -> Void) {
+        guard var object else { return }
+        change(&object)
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        else { return }
+        text = String(data: data, encoding: .utf8) ?? text
     }
 }
 

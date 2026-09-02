@@ -349,6 +349,20 @@ describe("project composition choices", () => {
       }>;
     };
     configuration.rules[0]!.when.equals = { "payload.tag": "agent:queued" };
+    const github = modules.find((module) => module["moduleId"] === "jarvis.module.github")!;
+    github["configuration"] = {
+      pollIntervalSeconds: 75,
+      repositories: ["main"],
+      bootstrapLabelPolicy: "emit-existing",
+    };
+    const development = modules.find(
+      (module) => module["moduleId"] === "jarvis.module.development",
+    )!;
+    development["configuration"] = {
+      validationOrder: ["typecheck", "test", "build"],
+      maxRepairCycles: 3,
+      retainWorkspaceOnSuccess: true,
+    };
 
     const saved = await engine.call(`/v1/projects/${project.id}/configuration`, {
       method: "PUT",
@@ -363,6 +377,7 @@ describe("project composition choices", () => {
       reopened.portableConfig["modules"] as Array<Record<string, unknown>>
     ).find((module) => module["moduleId"] === "jarvis.module.automation-rules")!;
     expect(reopenedAutomation["configuration"]).toEqual(automation["configuration"]);
+    expect(reopened.portableConfig["modules"]).toEqual(modules);
 
     configuration.rules[0]!.when.equals = {
       "payload.tag": { nested: "values are not a bounded scalar match" },

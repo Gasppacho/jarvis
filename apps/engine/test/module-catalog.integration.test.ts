@@ -173,6 +173,52 @@ describe("bundled Module Package catalogue", () => {
     ]);
   });
 
+  it("serves schema-owned guidance for every bundled Module Configuration control", async () => {
+    const engine = await startEngine();
+    started.push(engine);
+
+    const response = await engine.call("/v1/module-catalog");
+    const body = (await response.json()) as { items: CatalogItem[] };
+    const schemas = Object.fromEntries(
+      body.items.flatMap((item) =>
+        item.configurationSchema === null ? [] : [[item.moduleId, item.configurationSchema]],
+      ),
+    );
+
+    expect(schemas["jarvis.module.github"]).toMatchObject({
+      properties: {
+        pollIntervalSeconds: {
+          title: "Polling interval",
+          description: expect.any(String),
+          examples: [60],
+          minimum: 15,
+          maximum: 3600,
+        },
+        repositories: {
+          title: "Repositories",
+          description: expect.any(String),
+          examples: [["main"]],
+          minItems: 1,
+        },
+      },
+    });
+    expect(schemas["jarvis.module.development"]).toMatchObject({
+      properties: {
+        validationOrder: {
+          title: "Validation order",
+          examples: [["lint", "typecheck", "test", "build"]],
+        },
+        maxRepairCycles: { title: "Maximum repair cycles", default: 2 },
+        retainWorkspaceOnSuccess: { title: "Retain successful workspace", default: false },
+      },
+    });
+    expect(schemas["jarvis.module.automation-rules"]).toMatchObject({
+      properties: {
+        rules: { title: "Automation Rules", description: expect.any(String), minItems: 1 },
+      },
+    });
+  });
+
   it("rejects a Manifest whose schemaRef identifies another versioned event", async () => {
     const runtimeRoot = copiedRuntime();
     const manifestPath = join(runtimeRoot, "modules/github/module.manifest.yaml");

@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Automation Rules Module Config v1",
+  "description": "Fact matching and targeted Request emission for one Automation Rules Module Instance.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -8,10 +9,14 @@
   ],
   "properties": {
     "rules": {
+      "title": "Automation Rules",
+      "description": "Ordered, repeatable Fact-to-Request rules.",
       "type": "array",
       "minItems": 1,
       "$comment": "jarvis:automation-rule-set",
       "items": {
+        "title": "Automation Rule",
+        "description": "When a Fact matches, emit one targeted Request.",
         "type": "object",
         "additionalProperties": false,
         "required": [
@@ -21,10 +26,17 @@
         ],
         "properties": {
           "id": {
+            "title": "Rule ID",
+            "description": "Stable identifier for this Rule within the Rule Set.",
             "type": "string",
+            "examples": [
+              "agent-ready"
+            ],
             "pattern": "^[a-z0-9][a-z0-9._-]*$"
           },
           "when": {
+            "title": "When",
+            "description": "The input Fact and optional bounded payload match.",
             "type": "object",
             "additionalProperties": false,
             "required": [
@@ -35,6 +47,9 @@
                 "title": "Input Fact",
                 "description": "Versioned Fact selected from project-scoped composition choices.",
                 "type": "string",
+                "examples": [
+                  "scm.work-item.tag-added"
+                ],
                 "minLength": 3,
                 "$comment": "jarvis:event-kind=fact"
               },
@@ -42,6 +57,11 @@
                 "title": "Bounded match",
                 "description": "Exact scalar payload fields that must match before emission.",
                 "type": "object",
+                "examples": [
+                  {
+                    "payload.tag": "agent:ready"
+                  }
+                ],
                 "$comment": "jarvis:bounded-match",
                 "additionalProperties": {
                   "type": [
@@ -55,6 +75,8 @@
             }
           },
           "emit": {
+            "title": "Emit",
+            "description": "The Request, target, and optional payload emitted by this Rule.",
             "type": "object",
             "additionalProperties": false,
             "required": [
@@ -66,6 +88,9 @@
                 "title": "Emitted Request",
                 "description": "Versioned Request selected from project-scoped composition choices.",
                 "type": "string",
+                "examples": [
+                  "development.implementation.requested"
+                ],
                 "minLength": 3,
                 "$comment": "jarvis:event-kind=request"
               },
@@ -77,11 +102,21 @@
                 "additionalProperties": false,
                 "properties": {
                   "binding": {
+                    "title": "Binding",
+                    "description": "Project binding that resolves the Request consumer.",
                     "type": "string",
+                    "examples": [
+                      "development"
+                    ],
                     "minLength": 1
                   },
                   "moduleInstanceId": {
+                    "title": "Module Instance",
+                    "description": "Explicit compatible consumer Module Instance ID.",
                     "type": "string",
+                    "examples": [
+                      "development"
+                    ],
                     "minLength": 1
                   }
                 },
@@ -99,7 +134,12 @@
                 ]
               },
               "payload": {
-                "type": "object"
+                "title": "Request payload",
+                "description": "Static JSON object merged into the emitted Request payload.",
+                "type": "object",
+                "examples": [
+                  {}
+                ]
               }
             }
           }

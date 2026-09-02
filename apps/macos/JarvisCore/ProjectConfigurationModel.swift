@@ -157,15 +157,19 @@ public final class ProjectConfigurationModel {
         editDraft(projectId: projectId) { $0.modules.removeAll { $0.id == moduleId } }
     }
 
-    public func addSlot(projectId: String) {
-        editDraft(projectId: projectId) { draft in
-            var index = draft.slotRequirements.count + 1
-            var name = "slot\(index)"
-            while draft.slotRequirements[name] != nil {
-                index += 1
-                name = "slot\(index)"
+    public func addSlot(projectId: String, name: String, requirement: String) {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedRequirement = requirement.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty, !trimmedRequirement.isEmpty else {
+            update(projectId) {
+                $0.errorMessage =
+                    "Name the Project slot and choose its required capability before adding it."
             }
-            draft.slotRequirements[name] = ProjectSlotDraft(requires: "capability.required")
+            return
+        }
+        editDraft(projectId: projectId) { draft in
+            guard draft.slotRequirements[trimmedName] == nil else { return }
+            draft.slotRequirements[trimmedName] = ProjectSlotDraft(requires: trimmedRequirement)
         }
     }
 
@@ -211,8 +215,8 @@ public final class ProjectConfigurationModel {
             editDraft(projectId: projectId) { $0.name = name }
         case .chooseStartingPoint(let id):
             chooseStartingPoint(projectId: projectId, startingPointId: id)
-        case .addSlot:
-            addSlot(projectId: projectId)
+        case .addSlot(let name, let requirement):
+            addSlot(projectId: projectId, name: name, requirement: requirement)
         case .removeSlot(let slotId):
             removeSlot(projectId: projectId, slotId: slotId)
         case .renameSlot(let oldName, let newName):
@@ -223,7 +227,8 @@ public final class ProjectConfigurationModel {
             editDraft(projectId: projectId) { $0.slotRequirements[slotId]?.optional = optional }
         case .setSlotDescription(let slotId, let description):
             editDraft(projectId: projectId) {
-                $0.slotRequirements[slotId]?.description = description?.isEmpty == true
+                $0.slotRequirements[slotId]?.description =
+                    description?.isEmpty == true
                     ? nil : description
             }
         case .addModule(let packageId):
@@ -266,7 +271,8 @@ public final class ProjectConfigurationModel {
                 $0.configurationValues[key] = value
             }
         case .addAutomationRule(let moduleID):
-            guard let module = state(for: projectId).draft?.modules.first(where: {
+            guard
+                let module = state(for: projectId).draft?.modules.first(where: {
                 $0.id == moduleID
             }),
                 let choices = state(for: projectId).compositionGuide?.eventChoices,
@@ -312,6 +318,10 @@ public final class ProjectConfigurationModel {
                     ruleID: ruleID,
                     eventType: eventType,
                     resolvedConsumerID: resolvedConsumerID)
+            }
+        case .setAutomationRulePayload(let moduleID, let ruleID, let json):
+            editDraft(projectId: projectId) {
+                $0.setAutomationRulePayload(moduleID: moduleID, ruleID: ruleID, json: json)
             }
         case .setAutomationRuleTarget(let moduleID, let ruleID, let target):
             editDraft(projectId: projectId) {

@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "GitHub Module Config v1",
+  "description": "Polling and bootstrap behavior for one GitHub Module Instance.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -9,25 +10,51 @@
   ],
   "properties": {
     "pollIntervalSeconds": {
+      "title": "Polling interval",
+      "description": "Seconds between checks for new GitHub activity.",
       "type": "integer",
+      "default": 60,
+      "examples": [
+        60
+      ],
       "minimum": 15,
       "maximum": 3600
     },
     "repositories": {
+      "title": "Repositories",
+      "description": "Portable Project repository IDs observed by this Module Instance.",
       "type": "array",
+      "default": [
+        "main"
+      ],
+      "examples": [
+        [
+          "main"
+        ]
+      ],
       "minItems": 1,
       "uniqueItems": true,
       "items": {
+        "title": "Repository",
+        "description": "A repository ID declared by the Portable Configuration.",
         "type": "string",
+        "examples": [
+          "main"
+        ],
         "minLength": 1
       }
     },
     "bootstrapLabelPolicy": {
+      "title": "Existing label policy",
+      "description": "Whether existing matching labels emit Facts when polling starts.",
       "enum": [
         "ignore-existing",
         "emit-existing"
       ],
-      "default": "ignore-existing"
+      "default": "ignore-existing",
+      "examples": [
+        "ignore-existing"
+      ]
     }
   }
 }
