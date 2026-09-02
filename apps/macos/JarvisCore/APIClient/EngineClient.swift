@@ -252,6 +252,33 @@ public struct EngineClient: Sendable {
         }
     }
 
+    public func reviewProjectComposition(
+        projectId: String,
+        portableConfig: Components.Schemas.PortableProjectConfiguration? = nil
+    ) async throws -> ProjectCompositionReview {
+        let operation = "POST /v1/projects/\(projectId)/composition-review"
+        let body: Operations.reviewProjectCompositionV1.Input.Body?
+        if let portableConfig {
+            let payload: Operations.reviewProjectCompositionV1.Input.Body.jsonPayload.portableConfigPayload =
+                .PortableProjectConfiguration(portableConfig)
+            body = .json(.init(portableConfig: payload))
+        } else {
+            body = nil
+        }
+        let output = try await underlying.reviewProjectCompositionV1(
+            .init(path: .init(projectId: projectId), body: body))
+        switch output {
+        case .ok(let ok):
+            return ProjectCompositionReview(payload: try ok.body.json)
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
     public func deleteProject(id: String) async throws {
         let operation = "DELETE /v1/projects/\(id)"
         let output = try await underlying.deleteProject(
@@ -283,7 +310,7 @@ public struct EngineClient: Sendable {
             .init(
                 path: .init(projectId: projectId),
                 body: .json(.init(
-                    portableConfig: portableConfig,
+                    portableConfig: .PortableProjectConfiguration(portableConfig),
                     writeToRepository: writeToRepository
                 ))
             ))

@@ -8,7 +8,9 @@ public struct ProjectConfigurationState: Sendable, Equatable {
     public var candidates: [ProjectResourceCandidate] = []
     public var resourceChoices: [ProjectResourceBindingChoice] = []
     public var compositionGuide: ProjectCompositionGuide?
+    public var compositionReview: ProjectCompositionReview?
     public var draft: ProjectConfigurationDraft?
+    public var isDraftSaved = false
     public var isLoading = false
     public var isSaving = false
     public var errorMessage: String?
@@ -50,12 +52,11 @@ public final class ProjectConfigurationModel {
         do {
             let detail = try await client.getProject(id: projectId)
             let bindings = try await client.getProjectBindings(projectId: projectId)
-            let resources = try await client.listProjectBindingCandidates(projectId: projectId)
             let previewConfiguration = detail.portableConfiguration.flatMap { configuration in
                 configuration.modules.isEmpty && configuration.slots.additionalProperties.isEmpty
                     ? nil : configuration
             }
-            let compositionGuide = try await client.previewProjectCompositionChoices(
+            let compositionReview = try await client.reviewProjectComposition(
                 projectId: projectId,
                 portableConfig: previewConfiguration)
             let draft: ProjectConfigurationDraft?
@@ -71,10 +72,12 @@ public final class ProjectConfigurationModel {
             update(projectId) {
                 $0.detail = detail
                 $0.localBindings = bindings
-                $0.candidates = resources.candidates
-                $0.resourceChoices = resources.slots
-                $0.compositionGuide = compositionGuide
+                $0.candidates = compositionReview.resourceChoices.candidates
+                $0.resourceChoices = compositionReview.resourceChoices.slots
+                $0.compositionGuide = compositionReview.compositionGuide
+                $0.compositionReview = compositionReview
                 $0.draft = draft
+                $0.isDraftSaved = true
                 $0.errorMessage = nil
             }
         } catch {
@@ -95,6 +98,8 @@ public final class ProjectConfigurationModel {
             guard var draft = state.draft else { return }
             edit(&draft)
             state.draft = draft
+            state.compositionReview = nil
+            state.isDraftSaved = false
             state.errorMessage = nil
             didEdit = true
         }
@@ -129,15 +134,14 @@ public final class ProjectConfigurationModel {
         else { return }
         let revision = compositionRevisions[projectId, default: 0]
         do {
-            let guide = try await client.previewProjectCompositionChoices(
-                projectId: projectId, portableConfig: portableConfig)
-            let resources = try await client.previewProjectBindingCandidates(
+            let review = try await client.reviewProjectComposition(
                 projectId: projectId, portableConfig: portableConfig)
             guard revision == compositionRevisions[projectId, default: 0] else { return }
             update(projectId) {
-                $0.compositionGuide = guide
-                $0.candidates = resources.candidates
-                $0.resourceChoices = resources.slots
+                $0.compositionGuide = review.compositionGuide
+                $0.compositionReview = review
+                $0.candidates = review.resourceChoices.candidates
+                $0.resourceChoices = review.resourceChoices.slots
                 $0.errorMessage = nil
             }
         } catch {
@@ -405,21 +409,24 @@ public final class ProjectConfigurationModel {
                 projectId: projectId,
                 portableConfig: portableConfig,
                 writeToRepository: writeToRepository)
-            let resources: ProjectResourceChoices?
-            let candidateError: String?
+            let review: ProjectCompositionReview?
+            let reviewError: String?
             do {
-                resources = try await client.listProjectBindingCandidates(projectId: projectId)
-                candidateError = nil
+                review = try await client.reviewProjectComposition(projectId: projectId)
+                reviewError = nil
             } catch {
-                resources = nil
-                candidateError =
-                    "Configuration was saved, but eligible Local Binding candidates could not be refreshed. Reload this Project before binding a slot."
+                review = nil
+                reviewError =
+                    "The Draft was saved, but its Engine review could not be refreshed. Reload this Project before validation."
             }
             update(projectId) {
                 $0.detail = detail
-                $0.candidates = resources?.candidates ?? []
-                $0.resourceChoices = resources?.slots ?? []
-                $0.errorMessage = candidateError
+                $0.compositionGuide = review?.compositionGuide ?? $0.compositionGuide
+                $0.compositionReview = review
+                $0.candidates = review?.resourceChoices.candidates ?? []
+                $0.resourceChoices = review?.resourceChoices.slots ?? []
+                $0.isDraftSaved = true
+                $0.errorMessage = reviewError
             }
             await projects.refresh()
             return detail
@@ -470,24 +477,16 @@ public final class ProjectConfigurationModel {
                 $0.errorMessage = nil
             }
             do {
-                let resources: ProjectResourceChoices
-                let guide: ProjectCompositionGuide?
-                if let draft = state(for: projectId).draft,
-                    let portableConfig = try? draft.payload()
-                {
-                    resources = try await client.previewProjectBindingCandidates(
-                        projectId: projectId, portableConfig: portableConfig)
-                    guide = try await client.previewProjectCompositionChoices(
-                        projectId: projectId, portableConfig: portableConfig)
-                } else {
-                    resources = try await client.listProjectBindingCandidates(
-                        projectId: projectId)
-                    guide = nil
-                }
+                let current = state(for: projectId)
+                let portableConfig = current.draft.flatMap { try? $0.payload() }
+                let review = try await client.reviewProjectComposition(
+                    projectId: projectId,
+                    portableConfig: current.isDraftSaved ? nil : portableConfig)
                 update(projectId) {
-                    $0.candidates = resources.candidates
-                    $0.resourceChoices = resources.slots
-                    if let guide { $0.compositionGuide = guide }
+                    $0.candidates = review.resourceChoices.candidates
+                    $0.resourceChoices = review.resourceChoices.slots
+                    $0.compositionGuide = review.compositionGuide
+                    $0.compositionReview = review
                 }
             } catch {
                 update(projectId) {

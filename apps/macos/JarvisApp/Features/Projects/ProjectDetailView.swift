@@ -27,40 +27,43 @@ public struct ProjectDetailView: View {
     }
 
     public var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                header
-                if let detail = state.detail {
-                    repositorySection(detail)
-                    if state.draft != nil {
-                        portableConfigurationEditor(detail)
-                        localBindingsEditor
-                        saveActions
-                    } else {
-                        Label(
-                            "Complete the imported draft before configuring Module Instances.",
-                            systemImage: "info.circle"
-                        )
-                        .foregroundStyle(.secondary)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    header
+                    if let detail = state.detail {
+                        repositorySection(detail)
+                        if state.draft != nil {
+                            portableConfigurationEditor(detail)
+                            localBindingsEditor
+                            compositionReview(proxy)
+                            saveActions
+                        } else {
+                            Label(
+                                "Complete the imported draft before configuring Module Instances.",
+                                systemImage: "info.circle"
+                            )
+                            .foregroundStyle(.secondary)
+                        }
+                    } else if state.isLoading {
+                        ProgressView("Loading Project Configuration…")
                     }
-                } else if state.isLoading {
-                    ProgressView("Loading Project Configuration…")
+                    if let message = state.errorMessage {
+                        Label(message, systemImage: "exclamationmark.triangle.fill")
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                    }
+                    if let message = projects.deletionMessages[project.id] {
+                        Label(message, systemImage: "exclamationmark.triangle.fill")
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                    }
+                    deleteAction
                 }
-                if let message = state.errorMessage {
-                    Label(message, systemImage: "exclamationmark.triangle.fill")
-                        .font(.callout)
-                        .foregroundStyle(.orange)
-                }
-                if let message = projects.deletionMessages[project.id] {
-                    Label(message, systemImage: "exclamationmark.triangle.fill")
-                        .font(.callout)
-                        .foregroundStyle(.orange)
-                }
-                deleteAction
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(24)
+                .disabled(state.isSaving || isDeleting)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(24)
-            .disabled(state.isSaving || isDeleting)
         }
         .task(id: refreshID) {
             await projectConfiguration.refresh(
@@ -210,6 +213,7 @@ public struct ProjectDetailView: View {
                     "Creates an editable Portable Configuration Draft without Local Bindings.")
             }
         }
+        .id("starting-point")
     }
 
     private var slotRequirementsEditor: some View {
@@ -251,6 +255,7 @@ public struct ProjectDetailView: View {
 
     private func moduleEditor(_ module: ProjectModuleDraft, projectSlots: [String]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            Color.clear.frame(height: 0).id("module-\(module.id)")
             if let card = presentation.moduleCards.first(where: { $0.id == module.id }) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -304,6 +309,7 @@ public struct ProjectDetailView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+        .id("module-instance-\(module.instanceId)")
     }
 
     private func bindingRows(_ module: ProjectModuleDraft, options: [String]) -> some View {
@@ -583,6 +589,7 @@ public struct ProjectDetailView: View {
                 perform(.edit(.addAutomationRule(module.id)))
             }
         }
+        .id("automation-rules")
     }
 
     private var localBindingsEditor: some View {
@@ -616,6 +623,7 @@ public struct ProjectDetailView: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel(resource.accessibilityLabel)
                 .accessibilityHint(resource.accessibilityHint)
+                .id("resource-\(resource.id)")
             }
             if presentation.resourceBindings.isEmpty {
                 Text("This Portable Configuration declares no project resource Slots.")
@@ -629,6 +637,53 @@ public struct ProjectDetailView: View {
                 }
             }
         }
+    }
+
+    private func compositionReview(_ proxy: ScrollViewProxy) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Review").sectionLabel()
+            Label(
+                presentation.isReadyForValidation
+                    ? "Ready to validate — the saved Draft and Local Bindings passed Engine review."
+                    : "Draft save is available separately. Ready to validate remains false while Engine findings exist or edits are unsaved.",
+                systemImage: presentation.isReadyForValidation
+                    ? "checkmark.seal.fill" : "exclamationmark.triangle.fill"
+            )
+            .foregroundStyle(presentation.isReadyForValidation ? .green : .orange)
+            .accessibilityLabel(
+                presentation.isReadyForValidation ? "Ready to validate" : "Not ready to validate")
+
+            ForEach(ProjectDetailPresentation.ReviewRow.Category.allCases, id: \.rawValue) { category in
+                let rows = presentation.reviewRows.filter { $0.category == category }
+                if !rows.isEmpty {
+                    Text(category.rawValue).font(.headline)
+                    ForEach(rows) { row in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(row.title).font(.body.weight(.medium))
+                                Spacer()
+                                Text(row.status.rawValue).font(.caption.weight(.semibold))
+                            }
+                            Text(row.detail).font(.caption).foregroundStyle(.secondary)
+                            if let repair = row.repairAction,
+                                let target = row.navigationTarget
+                            {
+                                Button("Repair: \(repair)") {
+                                    withAnimation { proxy.scrollTo(target, anchor: .center) }
+                                }
+                                .buttonStyle(.link)
+                            }
+                        }
+                        .padding(8)
+                        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
+                        .accessibilityElement(children: .contain)
+                        .accessibilityLabel(row.accessibilityLabel)
+                        .accessibilityHint(row.accessibilityHint)
+                    }
+                }
+            }
+        }
+        .id("composition-review")
     }
 
     private var deleteAction: some View {
@@ -650,7 +705,7 @@ public struct ProjectDetailView: View {
     private var saveActions: some View {
         HStack {
             let saveLocal = ProjectDetailPresentation.Action.Asynchronous.saveLocal
-            Button(saveLocal.label) { perform(.asynchronous(saveLocal)) }
+            Button("Save Draft locally") { perform(.asynchronous(saveLocal)) }
             .keyboardShortcut("s", modifiers: [.command])
             let saveRepository = ProjectDetailPresentation.Action.Asynchronous.saveRepository
             Button(saveRepository.label) { perform(.asynchronous(saveRepository)) }

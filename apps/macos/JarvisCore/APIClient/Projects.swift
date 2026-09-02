@@ -223,6 +223,16 @@ public struct ProjectResourceBindingChoice: Identifiable, Sendable, Equatable {
 public struct ProjectResourceChoices: Sendable, Equatable {
     public let candidates: [ProjectResourceCandidate]
     public let slots: [ProjectResourceBindingChoice]
+
+    init(candidates: [ProjectResourceCandidate], slots: [ProjectResourceBindingChoice]) {
+        self.candidates = candidates
+        self.slots = slots
+    }
+
+    init(payload: Components.Schemas.ProjectResourceChoices) {
+        candidates = payload.items.map(ProjectResourceCandidate.init(payload:))
+        slots = payload.slots.map(ProjectResourceBindingChoice.init(payload:))
+    }
 }
 
 public struct ProjectCompositionStartingPoint: Identifiable, Sendable, Equatable {
@@ -322,6 +332,72 @@ public struct ProjectCompositionGuide: Sendable, Equatable {
         modulePackages = payload.modulePackages.map(ModulePackage.init(payload:))
         moduleInstances = payload.moduleInstances.map(ProjectCompositionModuleInstance.init(payload:))
         eventChoices = payload.choices.map(ProjectCompositionEventChoice.init(payload:))
+    }
+}
+
+public struct ProjectCompositionReview: Sendable, Equatable {
+    public struct Finding: Sendable, Equatable {
+        public let code: String
+        public let severity: String
+        public let message: String
+        public let targetKind: String
+        public let instanceId: String?
+        public let slot: String?
+        public let field: String?
+        public let capability: String?
+    }
+
+    public struct RequestRoute: Sendable, Equatable {
+        public let eventType: String
+        public let version: Int
+        public let producerInstanceId: String
+        public let consumerInstanceId: String
+    }
+
+    public struct SatisfiedCapability: Sendable, Equatable {
+        public let capability: String
+        public let target: String
+        public let source: String
+    }
+
+    public let readyToValidate: Bool
+    public let compositionGuide: ProjectCompositionGuide
+    public let resourceChoices: ProjectResourceChoices
+    public let findings: [Finding]
+    public let requestRoutes: [RequestRoute]
+    public let satisfiedCapabilities: [SatisfiedCapability]
+
+    init(payload: Components.Schemas.ProjectCompositionReviewV1) {
+        guard let data = try? JSONEncoder().encode(payload),
+            let wire = try? JSONDecoder().decode(WireProjectCompositionReview.self, from: data)
+        else { preconditionFailure("Generated Project composition review drifted") }
+        readyToValidate = wire.readyToValidate
+        compositionGuide = ProjectCompositionGuide(payload: payload.composition)
+        resourceChoices = ProjectResourceChoices(payload: payload.resources)
+        findings = wire.validation.findings.map {
+            Finding(
+                code: $0.code,
+                severity: $0.severity,
+                message: $0.message,
+                targetKind: $0.target.kind,
+                instanceId: $0.target.instanceId ?? $0.target.producer?.instanceId,
+                slot: $0.target.slot,
+                field: $0.target.field,
+                capability: $0.target.capability)
+        }
+        requestRoutes = wire.validation.requestRoutes.map {
+            RequestRoute(
+                eventType: $0.contract.type,
+                version: $0.contract.version,
+                producerInstanceId: $0.producer.instanceId,
+                consumerInstanceId: $0.consumer.instanceId)
+        }
+        satisfiedCapabilities = wire.validation.satisfiedCapabilities.map {
+            SatisfiedCapability(
+                capability: $0.capability,
+                target: $0.target.instanceId ?? $0.target.slot ?? $0.target.kind,
+                source: "\($0.source.kind)/\($0.source.ref)")
+        }
     }
 }
 
@@ -466,6 +542,50 @@ private extension ProjectDetail {
                 )
             }
     }
+}
+
+private struct WireProjectCompositionReview: Decodable {
+    struct Validation: Decodable {
+        struct Instance: Decodable { let instanceId: String }
+        struct Contract: Decodable { let type: String; let version: Int }
+        struct Route: Decodable {
+            let contract: Contract
+            let producer: Instance
+            let consumer: Instance
+        }
+        struct Target: Decodable {
+            let kind: String
+            let instanceId: String?
+            let slot: String?
+            let field: String?
+            let capability: String?
+            let producer: Instance?
+        }
+        struct Finding: Decodable {
+            let code: String
+            let severity: String
+            let message: String
+            let target: Target
+        }
+        struct CapabilityTarget: Decodable {
+            let kind: String
+            let instanceId: String?
+            let slot: String?
+        }
+        struct CapabilitySource: Decodable { let kind: String; let ref: String }
+        struct Capability: Decodable {
+            let capability: String
+            let target: CapabilityTarget
+            let source: CapabilitySource
+        }
+
+        let requestRoutes: [Route]
+        let satisfiedCapabilities: [Capability]
+        let findings: [Finding]
+    }
+
+    let readyToValidate: Bool
+    let validation: Validation
 }
 
 private struct WireProjectCompositionEventChoice: Decodable {

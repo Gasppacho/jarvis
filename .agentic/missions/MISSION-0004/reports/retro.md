@@ -2,16 +2,17 @@
 
 ## What worked
 
-- Local merge ancestry, rather than stale labels or open issue states, correctly selected #38 after #37 and #39.
-- The existing Local API schema payload allowed the slice to focus on synchronized schema annotations, Swift model decoding, structured controls, and end-to-end round trips without inventing another contract.
-- TDD at both agreed seams caught missing recursive descriptors, accessibility metadata, package-preservation behavior, fake Slot defaults, and Automation Rule payload editing.
-- Storing per-package Draft values made switching reversible without persisting UI-only state.
-- Two-axis review found a real spec gap—the optional emitted Request payload was not structured—and it was fixed before commit.
-- The complete app build and all Swift tests ran successfully both before and after the local merge.
+- Local merge ancestry correctly selected #40 after both #38 and #39, without trusting stale labels or deliberately open issue states.
+- A single Engine-owned composition review response kept routing, compatibility, validation, capability, and binding policy out of SwiftUI.
+- TDD found two important gaps: the missing review route and the inability to save/reopen the canonical empty Project Draft.
+- The second full-suite pass caught an older presentation test that still treated Event choices as readiness; updating it enforced the new Engine-owned boundary.
+- Application Harness and XCTest covered the slice without filesystem or SQLite mocks, and the packaged app built successfully.
+- Manual two-axis review found and fixed omitted unknown-Event rows and incorrect fresh-Draft readiness before commit.
 
 ## What to improve
 
-- Running `swift format` directly reformats whole files to a different indentation style than their existing style, creating review noise. Future runs should format only newly edited regions or preserve local file style from the start.
-- `ProjectDetailView.swift` is now large because recursive schema controls and structured JSON object controls live beside the rest of Project Detail. A future ticket may extract presentation-only controls, but #38 avoided unrelated prefactoring.
-- The `implement` slash command was not exposed in this environment. The mission fallback was sufficient, but an installed local `implement` skill would make the expected sequencing and reporting less manual.
-- GitHub child issues intentionally remain open, so future runs must continue using local merge ancestry and explicit blocker edges rather than issue state or labels.
+- `pnpm generate:check` compares generated output against the unstaged worktree, so generated files must be staged before the pre-commit full gate. The mission material should state this explicitly.
+- Running Engine integration tests and Swift tests concurrently can race on the shared `dist/engine` bundle. Focused checks should run sequentially when both launch/rebuild the Engine.
+- `ProjectDetailView.swift` and `ProjectDetailPresentation.swift` are now large. A future, separately scoped refactor could extract Review-only presentation/rendering without moving Engine policy into UI code.
+- The `implement` slash command was not exposed in this environment. The documented fallback worked, but local installation would make sequencing and evidence capture less manual.
+- Child issues intentionally remain open, so reruns must continue to use local merge ancestry and explicit blocker edges rather than labels or issue state.

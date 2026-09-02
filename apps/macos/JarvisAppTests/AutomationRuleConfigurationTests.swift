@@ -86,7 +86,9 @@ final class AutomationRuleConfigurationTests: XCTestCase {
         XCTAssertEqual(row.targetChoices, ["development"])
         XCTAssertEqual(row.payloadJSON, "{}")
         XCTAssertTrue(row.routingExplanation.contains("exactly one compatible consumer"))
-        XCTAssertTrue(presentation.isReadyForValidation)
+        XCTAssertFalse(
+            presentation.isReadyForValidation,
+            "Event choices alone cannot replace Engine-owned saved-Draft readiness")
 
         var unknownDraft = draft
         let moduleID = try XCTUnwrap(unknownDraft.modules.first?.id)

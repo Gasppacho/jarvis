@@ -70,6 +70,15 @@ export class SavedProjectCompositionValidator implements ProjectCompositionValid
     const requestRoutes: ProjectValidationReport["requestRoutes"][number][] = [];
     const satisfiedCapabilities: ProjectValidationReport["satisfiedCapabilities"][number][] = [];
 
+    if (allInstances.length === 0 || Object.keys(configuration.slots).length === 0) {
+      findings.push({
+        code: "project.composition-incomplete",
+        severity: "error",
+        message: "The Project Draft needs at least one Module Instance and one Project Slot.",
+        target: { kind: "project", field: "/modules" },
+      });
+    }
+
     for (const instance of allInstances) {
       if (modules.package(instance.moduleId) === undefined) {
         findings.push({

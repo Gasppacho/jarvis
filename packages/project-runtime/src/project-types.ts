@@ -30,6 +30,17 @@ export interface ProjectResourceChoices {
   readonly slots: readonly ProjectResourceBindingChoice[];
 }
 
+/** Read-only review assembled by the Engine; no review or graph state is persisted. */
+export interface ProjectCompositionReview {
+  readonly apiVersion: "jarvis.dev/project-composition-review/v1";
+  readonly kind: "ProjectCompositionReview";
+  readonly projectId: string;
+  readonly readyToValidate: boolean;
+  readonly composition: ProjectCompositionChoices;
+  readonly validation: ProjectValidationReport;
+  readonly resources: ProjectResourceChoices;
+}
+
 export interface ProjectResourceCandidateRegistry {
   listProjectResourceCandidates(projectId: unknown): readonly ProjectResourceCandidate[];
   getProjectResourceChoices(projectId: unknown): ProjectResourceChoices;
@@ -187,6 +198,7 @@ export interface ProjectSatisfiedCapability {
 }
 
 export type ProjectValidationFindingTarget =
+  | { readonly kind: "project"; readonly field: string }
   | {
       readonly kind: "request-edge";
       readonly contract: ProjectValidationContract;
@@ -217,6 +229,7 @@ export type ProjectValidationFindingTarget =
     };
 
 export type ProjectValidationFindingCode =
+  | "project.composition-incomplete"
   | "project.binding-missing"
   | "project.capability-unresolved"
   | "project.contract-incompatible"

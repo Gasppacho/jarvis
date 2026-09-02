@@ -78,6 +78,32 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         public let sentence: String
     }
 
+    public struct ReviewRow: Identifiable, Sendable, Equatable {
+        public enum Category: String, CaseIterable, Sendable, Equatable {
+            case module = "Module Instances"
+            case eventPath = "Event paths"
+            case capability = "Capabilities"
+            case binding = "Local Bindings"
+            case finding = "Needs repair"
+        }
+
+        public enum Status: String, Sendable, Equatable {
+            case ready = "Ready"
+            case informational = "Information"
+            case needsAttention = "Needs attention"
+        }
+
+        public let id: String
+        public let category: Category
+        public let title: String
+        public let detail: String
+        public let status: Status
+        public let repairAction: String?
+        public let navigationTarget: String?
+        public let accessibilityLabel: String
+        public let accessibilityHint: String
+    }
+
     public struct DeletionConfirmation: Sendable, Equatable {
         public let title: String
         public let message: String
@@ -367,6 +393,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
     public let resourceBindings: [ResourceBinding]
     public let actions: [Action]
     public let deletionConfirmation: DeletionConfirmation
+    public let reviewRows: [ReviewRow]
     public let isSaveEnabled: Bool
     public let isReadyForValidation: Bool
 
@@ -580,6 +607,9 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 .noOp(.cancelProjectDeletion),
             ])
         actions = inventory
+        reviewRows = Self.reviewRows(
+            review: state.compositionReview,
+            automationRules: automationRuleRows)
         deletionConfirmation = DeletionConfirmation(
             title: "Delete “\(project.name)”?",
             message:
@@ -590,12 +620,137 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         )
         isSaveEnabled = state.draft?.validationIssues.isEmpty == true && !state.isSaving
         isReadyForValidation =
-            isSaveEnabled
-            && automationRuleRows.allSatisfy {
-                $0.inputStatus == .known && $0.emissionStatus == .known
-                    && $0.routingStatus == "resolved"
-                    && $0.routingExplanation.isEmpty == false
+            state.isDraftSaved
+            && state.compositionReview?.readyToValidate == true
+            && !state.isSaving
+    }
+
+    private static func reviewRows(
+        review: ProjectCompositionReview?,
+        automationRules: [AutomationRuleRow]
+    ) -> [ReviewRow] {
+        let unknownEventRows = automationRules.compactMap { rule -> ReviewRow? in
+            guard rule.inputStatus == .unknown || rule.emissionStatus == .unknown else {
+                return nil
             }
+            return makeReviewRow(
+                id: "unknown-event-\(rule.id)",
+                category: .finding,
+                title: "Unknown Advanced Event value",
+                detail: rule.inputStatus == .unknown ? rule.inputHint : rule.emissionHint,
+                status: .needsAttention,
+                repairAction: "Choose a validated Event from the searchable selector.",
+                navigationTarget: "module-\(rule.moduleID)")
+        }
+        guard let review else { return unknownEventRows }
+
+        var rows = review.compositionGuide.moduleInstances.map { module in
+            makeReviewRow(
+                id: "module-\(module.instanceId)",
+                category: .module,
+                title: module.displayName,
+                detail: "\(module.instanceId) · \(module.compatibility) · requires \(module.requiredCapabilities.isEmpty ? "no capabilities" : module.requiredCapabilities.joined(separator: ", "))",
+                status: module.compatibility == "compatible" && module.missingResources.isEmpty
+                    ? .ready : .needsAttention,
+                repairAction: module.missingResources.isEmpty
+                    ? nil : "Resolve: \(module.missingResources.joined(separator: ", ")).",
+                navigationTarget: "module-instance-\(module.instanceId)")
+        }
+        rows += review.compositionGuide.eventChoices.map { event in
+            let needsRepair = event.routingStatus == "orphaned" || event.routingStatus == "ambiguous"
+                || event.consumerLabels.contains { $0.contains("incompatible") }
+            return makeReviewRow(
+                id: "event-\(event.id)",
+                category: .eventPath,
+                title: "\(event.label) · \(event.kind.capitalized)",
+                detail: "Producers: \(event.producerLabels.joined(separator: ", ")). Consumers: \(event.consumerLabels.joined(separator: ", ")). \(event.routingExplanation)",
+                status: needsRepair ? .needsAttention : .informational,
+                repairAction: needsRepair
+                    ? "Return to Module Instances or Automation Rules and repair this Event path."
+                    : nil,
+                navigationTarget: needsRepair
+                    ? event.producerInstanceIDs.first.map { "module-instance-\($0)" }
+                        ?? "automation-rules"
+                    : nil)
+        }
+        rows += review.satisfiedCapabilities.map { capability in
+            makeReviewRow(
+                id: "capability-\(capability.capability)-\(capability.target)",
+                category: .capability,
+                title: capability.capability,
+                detail: "\(capability.target) is satisfied by \(capability.source).",
+                status: .ready,
+                repairAction: nil,
+                navigationTarget: nil)
+        }
+        rows += review.resourceChoices.slots.map { binding in
+            let ready = binding.status == .bound
+            return makeReviewRow(
+                id: "binding-\(binding.slotId)",
+                category: .binding,
+                title: binding.slotId,
+                detail: "\(binding.status.rawValue.capitalized). \(binding.impact)",
+                status: ready ? .ready : .needsAttention,
+                repairAction: ready ? nil : binding.repairAction,
+                navigationTarget: ready ? nil : "resource-\(binding.slotId)")
+        }
+        rows += unknownEventRows
+        rows += review.findings.map { finding in
+            let target = finding.targetKind == "project"
+                ? "starting-point"
+                : finding.slot.map { "resource-\($0)" }
+                    ?? finding.instanceId.map { "module-instance-\($0)" }
+                    ?? "automation-rules"
+            return makeReviewRow(
+                id: "finding-\(finding.code)-\(finding.message)",
+                category: .finding,
+                title: finding.code,
+                detail: finding.message,
+                status: .needsAttention,
+                repairAction: repairAction(for: finding),
+                navigationTarget: target)
+        }
+        return rows
+    }
+
+    private static func repairAction(for finding: ProjectCompositionReview.Finding) -> String {
+        switch finding.code {
+        case "project.request-orphaned":
+            return "Enable exactly one compatible consumer or choose another Request."
+        case "project.request-ambiguous":
+            return "Choose a target or disable extra consumers."
+        case "project.contract-incompatible":
+            return "Choose Module Packages with compatible Event contract versions."
+        case "project.binding-missing", "project.capability-unresolved":
+            return "Choose or grant a compatible Project resource in Local Bindings."
+        case "project.composition-incomplete":
+            return "Choose a starting point or add the first Module Instance and Project Slot."
+        case "project.module-package-unavailable":
+            return "Choose an available bundled Module Package."
+        default:
+            return "Repair the affected Module Configuration field."
+        }
+    }
+
+    private static func makeReviewRow(
+        id: String,
+        category: ReviewRow.Category,
+        title: String,
+        detail: String,
+        status: ReviewRow.Status,
+        repairAction: String?,
+        navigationTarget: String?
+    ) -> ReviewRow {
+        ReviewRow(
+            id: id,
+            category: category,
+            title: title,
+            detail: detail,
+            status: status,
+            repairAction: repairAction,
+            navigationTarget: navigationTarget,
+            accessibilityLabel: "\(category.rawValue), \(title), \(status.rawValue)",
+            accessibilityHint: [detail, repairAction].compactMap { $0 }.joined(separator: " "))
     }
 
     private static func automationEventOption(

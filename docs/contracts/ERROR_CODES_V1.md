@@ -23,6 +23,7 @@ Errors crossing the Local API or stored as terminal Execution errors use stable 
 | `project.already-imported` | No | The canonical repository path is already bound to a Project |
 | `project.config-invalid` | No | Portable configuration fails schema/semantic validation |
 | `project.bindings-invalid` | No | Local Bindings fail schema, project identity or declared-slot validation |
+| `project.composition-incomplete` | No | Draft has no Module Instance or Project Slot yet |
 | `project.repository-write-failed` | Maybe | Atomic `.jarvis/project.yaml` replacement failed before SQLite was changed |
 | `project.repository-compensation-failed` | No | SQLite rejected a replacement and the previous repository file could not be restored; manual inspection is required |
 | `project.not-found` | No | No Project with the requested ID exists in this installation |
