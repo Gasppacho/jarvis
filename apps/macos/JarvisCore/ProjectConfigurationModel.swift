@@ -31,6 +31,8 @@ public final class ProjectConfigurationModel {
     private let projects: ProjectsModel
     private let validationReportProvider: ValidationReportProvider?
     private var compositionRevisions: [String: Int] = [:]
+    private var validationRevisions: [String: Int] = [:]
+    private var lastValidationReports: [String: ProjectValidationReport] = [:]
 
     public init(session: EngineSessionModel, projects: ProjectsModel) {
         self.session = session
@@ -55,17 +57,39 @@ public final class ProjectConfigurationModel {
     }
 
     public func refresh(projectId: String, packages: [ModulePackage] = []) async {
+        await refresh(projectId: projectId, packages: packages, preservingStaleValidation: false)
+    }
+
+    public func refreshAfterRepositoryBindingChange(
+        projectId: String,
+        packages: [ModulePackage] = []
+    ) async {
+        markValidationStale(projectId: projectId)
+        await refresh(projectId: projectId, packages: packages, preservingStaleValidation: true)
+    }
+
+    private func refresh(
+        projectId: String,
+        packages: [ModulePackage],
+        preservingStaleValidation: Bool
+    ) async {
         guard let client else {
             update(projectId) { $0.errorMessage = Self.engineUnavailable }
             return
+        }
+        validationRevisions[projectId, default: 0] += 1
+        if !preservingStaleValidation {
+            lastValidationReports[projectId] = nil
         }
         update(projectId) {
             $0.isLoading = true
             $0.candidates = []
             $0.resourceChoices = []
-            // A report evaluates the previously loaded snapshot. Reopening or
-            // reloading requires a fresh engine evaluation before it is current.
-            $0.validation = .unvalidated
+            if !preservingStaleValidation {
+                // A report evaluates the previously loaded snapshot. Reopening or
+                // reloading requires a fresh engine evaluation before it is current.
+                $0.validation = .unvalidated
+            }
         }
         defer { update(projectId) { $0.isLoading = false } }
         do {
@@ -124,6 +148,7 @@ public final class ProjectConfigurationModel {
         }
         guard didEdit else { return }
         compositionRevisions[projectId, default: 0] += 1
+        markValidationStale(projectId: projectId)
         Task { await refreshCompositionChoices(projectId: projectId) }
     }
 
@@ -135,9 +160,12 @@ public final class ProjectConfigurationModel {
             update(projectId) {
                 $0.draft = ProjectConfigurationDraft(
                     configuration: template, packages: guide.modulePackages)
+                $0.compositionReview = nil
+                $0.isDraftSaved = false
                 $0.errorMessage = nil
             }
             compositionRevisions[projectId, default: 0] += 1
+            markValidationStale(projectId: projectId)
             Task { await refreshCompositionChoices(projectId: projectId) }
         } else {
             editDraft(projectId: projectId) {
@@ -380,7 +408,8 @@ public final class ProjectConfigurationModel {
     }
 
     public func validate(projectId: String) async {
-        guard state(for: projectId).validation != .validating else { return }
+        let previousValidation = state(for: projectId).validation
+        guard previousValidation != .validating else { return }
         let provider: ValidationReportProvider
         if let validationReportProvider {
             provider = validationReportProvider
@@ -391,18 +420,30 @@ public final class ProjectConfigurationModel {
             return
         }
 
+        let revision = validationRevisions[projectId, default: 0]
         update(projectId) {
             $0.validation = .validating
             $0.errorMessage = nil
         }
         do {
             let report = try await provider(projectId)
+            guard revision == validationRevisions[projectId, default: 0] else { return }
+            guard report.projectId == projectId else {
+                update(projectId) {
+                    $0.validation = .failed(
+                        "The validation response belongs to a different Project. Reload this Project and validate again.")
+                }
+                return
+            }
+            lastValidationReports[projectId] = report
             update(projectId) {
                 $0.validation = report.valid ? .valid(report) : .invalid(report)
             }
         } catch is CancellationError {
-            update(projectId) { $0.validation = .unvalidated }
+            guard revision == validationRevisions[projectId, default: 0] else { return }
+            update(projectId) { $0.validation = previousValidation }
         } catch {
+            guard revision == validationRevisions[projectId, default: 0] else { return }
             let cause = ProjectsModel.describe(error)
             update(projectId) {
                 $0.validation = .failed(
@@ -463,6 +504,7 @@ public final class ProjectConfigurationModel {
                 projectId: projectId,
                 portableConfig: portableConfig,
                 writeToRepository: writeToRepository)
+            markValidationStale(projectId: projectId)
             let review: ProjectCompositionReview?
             let reviewError: String?
             do {
@@ -526,6 +568,7 @@ public final class ProjectConfigurationModel {
         do {
             let saved = try await client.replaceProjectBindings(
                 projectId: projectId, bindings: bindings)
+            markValidationStale(projectId: projectId)
             update(projectId) {
                 $0.localBindings = saved
                 $0.errorMessage = nil
@@ -552,6 +595,26 @@ public final class ProjectConfigurationModel {
         } catch {
             update(projectId) { $0.errorMessage = ProjectsModel.describe(error) }
             return nil
+        }
+    }
+
+    private func markValidationStale(projectId: String) {
+        validationRevisions[projectId, default: 0] += 1
+        let current = state(for: projectId).validation
+        let report: ProjectValidationReport?
+        switch current {
+        case .valid(let value), .invalid(let value), .stale(let value):
+            report = value
+        case .validating:
+            report = lastValidationReports[projectId]
+        case .unvalidated, .failed:
+            report = nil
+        }
+        if let report {
+            lastValidationReports[projectId] = report
+            update(projectId) { $0.validation = .stale(report) }
+        } else {
+            update(projectId) { $0.validation = .unvalidated }
         }
     }
 

@@ -212,6 +212,23 @@ final class ProjectValidationTests: XCTestCase {
     }
 
     @MainActor
+    func testValidationResponseForAnotherProjectCannotBecomeCurrent() async throws {
+        let report = try decodeReport(fixture(valid: true))
+        let session = EngineSessionModel(supervisor: EngineSupervisor(resources: .developmentBuild()))
+        let projects = ProjectsModel(session: session)
+        let configuration = ProjectConfigurationModel(
+            session: session,
+            projects: projects,
+            validationReportProvider: { _ in report })
+
+        await configuration.validate(projectId: "new-selection")
+
+        guard case .failed(let message) = configuration.state(for: "new-selection").validation
+        else { return XCTFail("a response for another Project must not become current") }
+        XCTAssertTrue(message.contains("different Project"))
+    }
+
+    @MainActor
     func testValidationRequestPublishesValidatingBeforeApplyingControlledReport() async throws {
         let report = try decodeReport(fixture(valid: true))
         let gate = ValidationGate(report: report)

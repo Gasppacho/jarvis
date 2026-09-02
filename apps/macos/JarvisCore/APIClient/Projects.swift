@@ -707,6 +707,7 @@ public enum ProjectValidationState: Sendable, Equatable {
     case validating
     case valid(ProjectValidationReport)
     case invalid(ProjectValidationReport)
+    case stale(ProjectValidationReport)
     case failed(String)
 }
 

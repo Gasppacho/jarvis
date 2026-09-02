@@ -753,6 +753,7 @@ public struct ProjectDetailView: View {
         case .valid: "checkmark.seal.fill"
         case .invalid: "exclamationmark.triangle.fill"
         case .failed: "network.slash"
+        case .stale: "clock.arrow.circlepath"
         case .unvalidated, .validating: "checkmark.seal"
         }
     }
@@ -762,6 +763,7 @@ public struct ProjectDetailView: View {
         case .valid: .green
         case .invalid: .red
         case .failed: .orange
+        case .stale: .orange
         case .unvalidated, .validating: .secondary
         }
     }
@@ -1027,7 +1029,7 @@ public struct ProjectDetailView: View {
                 replacing: binding.bookmarkRef,
                 with: url
             ) {
-                await projectConfiguration.refresh(
+                await projectConfiguration.refreshAfterRepositoryBindingChange(
                     projectId: project.id, packages: moduleCatalog.packages)
             }
         }
