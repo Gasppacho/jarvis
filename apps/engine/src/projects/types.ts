@@ -2,6 +2,9 @@ import type { components } from "../api/generated/local-api.js";
 import type {
   BindingStatus,
   ProjectBindings,
+  ProjectRequestRoute,
+  ProjectValidationFindingTarget,
+  ProjectValidationReport,
   PortableProjectConfiguration,
   StoredPortableProjectConfiguration,
   SuggestedProjectConfig,
@@ -9,6 +12,47 @@ import type {
 
 /** The Local API contract is the source of truth for exposed lifecycle values. */
 export type ProjectStatus = components["schemas"]["ProjectSummary"]["status"];
+
+type Assert<T extends true> = T;
+type MutuallyAssignable<Left, Right> = [Left] extends [Right]
+  ? [Right] extends [Left]
+    ? true
+    : false
+  : false;
+type Mutable<T> = T extends readonly (infer Item)[]
+  ? Mutable<Item>[]
+  : T extends object
+    ? { -readonly [Key in keyof T]: Mutable<T[Key]> }
+    : T;
+
+type ApiValidationReport = components["schemas"]["ProjectValidationReportV1"];
+export type LegacyProjectValidationIssue =
+  components["schemas"]["ValidationReport"]["issues"][number];
+type DomainContractEdge = Extract<ProjectValidationFindingTarget, { kind: "contract-edge" }>;
+type ApiContractEdge = Extract<
+  ApiValidationReport["findings"][number]["target"],
+  { producer: { contract: unknown }; consumer: { contract: unknown } }
+>;
+
+/** Compile-time guards against generated Local API and Project Runtime report drift. */
+export type ProjectRequestRouteContractParity = Assert<
+  MutuallyAssignable<ProjectRequestRoute, ApiValidationReport["requestRoutes"][number]>
+>;
+export type ProjectContractEdgeContractParity = Assert<
+  MutuallyAssignable<
+    Pick<DomainContractEdge, "producer" | "consumer">,
+    Pick<ApiContractEdge, "producer" | "consumer">
+  >
+>;
+export type ProjectValidationFindingTargetContractParity = Assert<
+  MutuallyAssignable<
+    Mutable<ProjectValidationFindingTarget>,
+    ApiValidationReport["findings"][number]["target"]
+  >
+>;
+export type LocalApiProjectValidationReportContractParity = Assert<
+  MutuallyAssignable<Mutable<ProjectValidationReport>, ApiValidationReport>
+>;
 
 export interface ProjectSummary {
   readonly id: string;
@@ -37,6 +81,8 @@ export type {
   ProjectResourceCandidate,
   ProjectResourceCandidateRegistry,
   ProjectResourceGrantPort,
+  ProjectValidationFinding,
+  ProjectValidationReport,
   StoredPortableProjectConfiguration,
   SuggestedProjectConfig,
 } from "../../../../packages/project-runtime/src/project-types.js";

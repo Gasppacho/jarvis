@@ -101,7 +101,26 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** @deprecated */
         post: operations["validateProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{projectId}/validation-report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["generateProjectValidationReportV1"];
         delete?: never;
         options?: never;
         head?: never;
@@ -497,6 +516,58 @@ export interface components {
                 };
             };
         };
+        ValidationContract: {
+            type: string;
+            version: number;
+            /** @enum {unknown} */
+            kind: "request" | "fact";
+        };
+        ValidationInstanceTarget: {
+            instanceId: string;
+            moduleId: string;
+        };
+        ValidationContractEndpoint: {
+            instanceId: string;
+            moduleId: string;
+            contract: components["schemas"]["ValidationContract"];
+        };
+        RequestEdgeFindingTarget: {
+            /** @constant */
+            kind: "request-edge";
+            contract: components["schemas"]["ValidationContract"];
+            producer: components["schemas"]["ValidationInstanceTarget"];
+            candidates?: components["schemas"]["ValidationInstanceTarget"][];
+        };
+        ContractEdgeFindingTarget: {
+            /** @constant */
+            kind: "contract-edge";
+            producer: components["schemas"]["ValidationContractEndpoint"];
+            consumer: components["schemas"]["ValidationContractEndpoint"];
+        };
+        ModuleInstanceFindingTarget: {
+            /** @constant */
+            kind: "module-instance";
+            instanceId: string;
+            field: string;
+        };
+        SlotFindingTarget: {
+            /** @constant */
+            kind: "slot";
+            slot: string;
+        };
+        ModuleCapabilityFindingTarget: {
+            /** @constant */
+            kind: "capability";
+            capability: string;
+            instanceId: string;
+            binding?: string;
+        };
+        SlotCapabilityFindingTarget: {
+            /** @constant */
+            kind: "capability";
+            capability: string;
+            slot: string;
+        };
         ValidationReport: {
             valid: boolean;
             issues: {
@@ -505,6 +576,55 @@ export interface components {
                 severity: "error" | "warning";
                 message: string;
                 path?: string | null;
+            }[];
+        };
+        ProjectValidationReportV1: {
+            /** @constant */
+            apiVersion: "jarvis.dev/project-validation/v1";
+            /** @constant */
+            kind: "ProjectValidationReport";
+            projectId: string;
+            valid: boolean;
+            requestRoutes: {
+                contract: {
+                    type: string;
+                    version: number;
+                    /** @constant */
+                    kind: "request";
+                };
+                producer: {
+                    instanceId: string;
+                    moduleId: string;
+                };
+                consumer: {
+                    instanceId: string;
+                    moduleId: string;
+                };
+            }[];
+            satisfiedCapabilities: {
+                capability: string;
+                target: {
+                    /** @constant */
+                    kind: "module-instance";
+                    instanceId: string;
+                } | {
+                    /** @constant */
+                    kind: "slot";
+                    slot: string;
+                };
+                source: {
+                    /** @enum {unknown} */
+                    kind: "connection" | "runtime" | "mcp" | "module-instance" | "engine" | "repository";
+                    ref: string;
+                };
+            }[];
+            findings: {
+                /** @enum {unknown} */
+                code: "project.binding-missing" | "project.capability-unresolved" | "project.contract-incompatible" | "project.instance-config-invalid" | "project.module-package-unavailable" | "project.request-ambiguous" | "project.request-orphaned";
+                /** @enum {unknown} */
+                severity: "error" | "warning";
+                message: string;
+                target: components["schemas"]["RequestEdgeFindingTarget"] | components["schemas"]["ContractEdgeFindingTarget"] | components["schemas"]["ModuleInstanceFindingTarget"] | components["schemas"]["SlotFindingTarget"] | components["schemas"]["ModuleCapabilityFindingTarget"] | components["schemas"]["SlotCapabilityFindingTarget"];
             }[];
         };
         ModuleInstance: {
@@ -941,13 +1061,38 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Composition validation report. */
+            /** @description Legacy composition validation result. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ValidationReport"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    generateProjectValidationReportV1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Versioned composition validation report. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectValidationReportV1"];
                 };
             };
             401: components["responses"]["Unauthorized"];

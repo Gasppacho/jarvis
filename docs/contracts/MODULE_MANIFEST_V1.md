@@ -57,9 +57,13 @@ Producer :
   version: 1
   kind: request
   schemaRef: contracts/events/scm.change-request.creation-requested.v1.schema.json
+  targeting:
+    configurationPath: /rules/*/emit
 ```
 
-Le code ne peut enregistrer un handler ou publier un type absent du manifeste.
+Pour une Request configurée, `targeting.configurationPath` sélectionne les descriptors d'émission `{type, target}` avec un JSON Pointer contenant un segment wildcard `*`. Le Kernel peut ainsi résoudre les targets de composition sans interpréter le modèle métier du module. Le chemin est optionnel pour les producers dont la target n'est pas issue de la configuration.
+
+Le code ne peut enregistrer un handler ou publier un type absent du manifeste. `schemaRef` doit identifier exactement le contrat versionné déclaré, selon la forme canonique `contracts/events/<type>.v<version>.schema.json` ; il documente et résout le payload, mais ne constitue jamais une identité d'événement alternative.
 
 ## Capabilities
 
@@ -70,6 +74,12 @@ capabilities:
   requires:
     - id: repository.write
       binding: repository
+      resolution:
+        kind: project-repository
+    - id: shell.execute
+      resolution:
+        kind: engine
+        ref: engine/local
     - id: agent.execute
       binding: agentRuntime
     - id: work-items.read
@@ -77,7 +87,7 @@ capabilities:
   provides: []
 ```
 
-`binding` référence un slot du projet ou une capability moteur. Le runtime vérifie la résolution avant activation.
+Sans `resolution`, `binding` référence un slot du projet. `resolution.kind: project-repository` rend `binding` obligatoire ; il doit référencer un repository déclaré par le Project, doté d'un Local Binding sauvegardé et actuellement accessible. `resolution.kind: engine` désigne un service partagé du moteur par son `ref` ; sa capability doit être présente dans la source de candidats disponibles du Project. Le manifeste seul ne prouve jamais la disponibilité. Le runtime vérifie la résolution avant activation.
 
 ## Configuration
 
@@ -106,6 +116,6 @@ Le Kernel refuse :
 - un `apiVersion` inconnu ;
 - un module dupliqué avec contenu différent ;
 - une version incompatible avec le moteur ;
-- un schemaRef manquant ;
+- un schemaRef manquant ou incohérent avec le type et la version déclarés ;
 - un event produced non autorisé ;
 - une configuration invalide.

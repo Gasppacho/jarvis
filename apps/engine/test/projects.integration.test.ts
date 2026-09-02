@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -16,6 +17,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import Database from "better-sqlite3";
 import { parse as parseYaml } from "yaml";
 import { explain, localApiValidator } from "./contract.js";
@@ -66,11 +68,24 @@ describe("repository discovery and project import", () => {
   let validateDiscovery: ReturnType<typeof localApiValidator>;
   let validateSummary: ReturnType<typeof localApiValidator>;
   let validateDetail: ReturnType<typeof localApiValidator>;
+  let validateLegacyReport: ReturnType<typeof localApiValidator>;
+  let validateReport: ReturnType<typeof localApiValidator>;
+  let validateJsonReport: ReturnType<Ajv2020["compile"]>;
 
   beforeAll(() => {
     validateDiscovery = localApiValidator("RepositoryDiscovery");
     validateSummary = localApiValidator("ProjectSummary");
     validateDetail = localApiValidator("ProjectDetail");
+    validateLegacyReport = localApiValidator("ValidationReport");
+    validateReport = localApiValidator("ProjectValidationReportV1");
+    validateJsonReport = new Ajv2020({ strict: true, strictRequired: false }).compile(
+      JSON.parse(
+        readFileSync(
+          join(REPO_ROOT, "contracts/schemas/project-validation-report.v1.schema.json"),
+          "utf8",
+        ),
+      ) as object,
+    );
   });
 
   afterEach(async () => {
@@ -103,6 +118,85 @@ describe("repository discovery and project import", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
+
+  function embeddedPortableConfig(
+    modules: readonly Record<string, unknown>[],
+    slots: Record<string, unknown> = { tickets: { requires: "work-items.read", optional: true } },
+  ): Record<string, unknown> {
+    const portableConfig = parseYaml(
+      readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
+    ) as Record<string, unknown>;
+    portableConfig["slots"] = slots;
+    portableConfig["modules"] = modules;
+    return portableConfig;
+  }
+
+  const automationInstance = (
+    target: Record<string, string> = { moduleInstanceId: "request-worker" },
+  ) => ({
+    instanceId: "automation-rules",
+    moduleId: "jarvis.module.automation-rules",
+    enabled: true,
+    configuration: {
+      rules: [
+        {
+          id: "emit-request",
+          when: { eventType: "scm.work-item.tag-added" },
+          emit: {
+            type: "development.implementation.requested",
+            target,
+          },
+        },
+      ],
+    },
+  });
+
+  const workerInstance = (instanceId = "request-worker") => ({
+    instanceId,
+    moduleId: "jarvis.module.change-request-review",
+    enabled: true,
+  });
+
+  function asUntargetedFactProducer(manifest: string): string {
+    return manifest
+      .replace("      kind: request", "      kind: fact")
+      .replace("      targeting:\n        configurationPath: /rules/*/emit\n", "");
+  }
+
+  function runtimeWithEmbeddedValidComposition(): string {
+    const fixtureRoot = fixture(() => mkdtempSync(join(tmpdir(), "jarvis-validation-runtime-")));
+    const runtimeRoot = join(fixtureRoot, "engine");
+    cpSync(join(REPO_ROOT, "dist/engine"), runtimeRoot, { recursive: true });
+    writeFileSync(
+      join(runtimeRoot, "modules/change-request-review/module.manifest.yaml"),
+      `apiVersion: jarvis.dev/module/v1
+kind: Module
+metadata:
+  id: jarvis.module.change-request-review
+  version: 1.0.0
+  displayName: Request Worker
+  description: Test worker for an embedded valid composition.
+  categories: [automation]
+runtime:
+  entrypoint: dist/index.mjs
+contracts:
+  consumes:
+    - type: development.implementation.requested
+      version: 1
+      kind: request
+      schemaRef: contracts/events/development.implementation.requested.v1.schema.json
+      handler: handleImplementationRequested
+  produces: []
+capabilities:
+  requires: []
+  provides:
+    - id: work-items.read
+      description: Embedded work item access.
+`,
+      "utf8",
+    );
+    return runtimeRoot;
+  }
 
   it("detects git, remote, provider, branch, package manager and scripts", async () => {
     const engine = await start();
@@ -249,6 +343,1068 @@ describe("repository discovery and project import", () => {
     const detail = await engine.call(`/v1/projects/${created.id}`);
     expect(detail.status).toBe(200);
     expect(((await detail.json()) as { id: string }).id).toBe(created.id);
+  });
+
+  it("validates a saved embedded composition deterministically without mutating it", async () => {
+    const runtimeRoot = runtimeWithEmbeddedValidComposition();
+    const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const portableConfig = embeddedPortableConfig(
+      [
+        {
+          ...automationInstance({ binding: "workItems" }),
+          bindings: { workItems: "tickets" },
+        },
+        workerInstance(),
+      ],
+      { tickets: { requires: "work-items.read" } },
+    );
+
+    const created = (await (
+      await importProject(engine, { repositoryPath: root, portableConfig })
+    ).json()) as { id: string };
+    const bindings = await (await engine.call(`/v1/projects/${created.id}/bindings`)).json();
+    expect(
+      (
+        await engine.call(`/v1/projects/${created.id}/bindings`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            ...(bindings as Record<string, unknown>),
+            slots: { tickets: { kind: "module-instance", ref: "request-worker" } },
+          }),
+        })
+      ).status,
+    ).toBe(200);
+    const beforeProject = await (await engine.call(`/v1/projects/${created.id}`)).json();
+    const beforeBindings = await (await engine.call(`/v1/projects/${created.id}/bindings`)).json();
+
+    const first = await engine.call(`/v1/projects/${created.id}/validation-report`, {
+      method: "POST",
+    });
+    expect(first.status).toBe(200);
+    const report = await first.json();
+    expect(validateReport(report), explain(validateReport)).toBe(true);
+    expect(report).toEqual({
+      apiVersion: "jarvis.dev/project-validation/v1",
+      kind: "ProjectValidationReport",
+      projectId: created.id,
+      valid: true,
+      requestRoutes: [
+        {
+          contract: {
+            type: "development.implementation.requested",
+            version: 1,
+            kind: "request",
+          },
+          producer: {
+            instanceId: "automation-rules",
+            moduleId: "jarvis.module.automation-rules",
+          },
+          consumer: {
+            instanceId: "request-worker",
+            moduleId: "jarvis.module.change-request-review",
+          },
+        },
+      ],
+      satisfiedCapabilities: [
+        {
+          capability: "work-items.read",
+          target: { kind: "slot", slot: "tickets" },
+          source: { kind: "module-instance", ref: "request-worker" },
+        },
+      ],
+      findings: [],
+    });
+    expect(
+      await (
+        await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+      ).json(),
+    ).toEqual(report);
+    expect(await (await engine.call(`/v1/projects/${created.id}`)).json()).toEqual(beforeProject);
+    expect(await (await engine.call(`/v1/projects/${created.id}/bindings`)).json()).toEqual(
+      beforeBindings,
+    );
+  });
+
+  it("retains the legacy closed validation response during report migration", async () => {
+    const runtimeRoot = runtimeWithEmbeddedValidComposition();
+    const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const portableConfig = embeddedPortableConfig([automationInstance()]);
+    const created = (await (
+      await importProject(engine, { repositoryPath: root, portableConfig })
+    ).json()) as { id: string };
+
+    const response = await engine.call(`/v1/projects/${created.id}/validate`, {
+      method: "POST",
+    });
+
+    expect(response.status).toBe(200);
+    const legacyReport = await response.json();
+    expect(validateLegacyReport(legacyReport), explain(validateLegacyReport)).toBe(true);
+    expect(legacyReport).toEqual({
+      valid: false,
+      issues: [
+        {
+          code: "project.request-orphaned",
+          severity: "error",
+          message:
+            "Request development.implementation.requested.v1 from automation-rules has no consumer.",
+        },
+      ],
+    });
+  });
+
+  it.each([
+    [
+      "request-edge",
+      {
+        kind: "request-edge",
+        contract: { type: "example.requested", version: 1, kind: "request" },
+        producer: { instanceId: "producer", moduleId: "jarvis.module.producer" },
+        slot: "foreign",
+      },
+    ],
+    [
+      "contract-edge",
+      {
+        kind: "contract-edge",
+        producer: {
+          instanceId: "producer",
+          moduleId: "jarvis.module.producer",
+          contract: { type: "example.requested", version: 1, kind: "request" },
+        },
+        consumer: {
+          instanceId: "consumer",
+          moduleId: "jarvis.module.consumer",
+          contract: { type: "example.requested", version: 2, kind: "request" },
+        },
+        slot: "foreign",
+      },
+    ],
+    [
+      "module-instance",
+      { kind: "module-instance", instanceId: "worker", field: "/configuration", slot: "foreign" },
+    ],
+    ["slot", { kind: "slot", slot: "tickets", field: "/foreign" }],
+    [
+      "capability",
+      {
+        kind: "capability",
+        capability: "work-items.read",
+        instanceId: "worker",
+        producer: { instanceId: "producer", moduleId: "jarvis.module.producer" },
+      },
+    ],
+  ])("rejects foreign properties on the %s finding target", (_kind, target) => {
+    const candidate = {
+      apiVersion: "jarvis.dev/project-validation/v1",
+      kind: "ProjectValidationReport",
+      projectId: "example",
+      valid: false,
+      requestRoutes: [],
+      satisfiedCapabilities: [],
+      findings: [
+        {
+          code: "project.binding-missing",
+          severity: "error",
+          message: "Example invalid finding.",
+          target,
+        },
+      ],
+    };
+
+    expect(validateJsonReport(candidate)).toBe(false);
+    expect(validateReport(candidate)).toBe(false);
+  });
+
+  it("reports an orphan request with its producer and edge", async () => {
+    const engine = await start();
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const portableConfig = embeddedPortableConfig([automationInstance()]);
+    const created = (await (
+      await importProject(engine, { repositoryPath: root, portableConfig })
+    ).json()) as { id: string };
+
+    const report = (await (
+      await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+    ).json()) as {
+      valid: boolean;
+      findings: Record<string, unknown>[];
+    };
+    expect(report.valid).toBe(false);
+    expect(report.findings).toContainEqual({
+      code: "project.request-orphaned",
+      severity: "error",
+      message:
+        "Request development.implementation.requested.v1 from automation-rules has no consumer.",
+      target: {
+        kind: "request-edge",
+        contract: {
+          type: "development.implementation.requested",
+          version: 1,
+          kind: "request",
+        },
+        producer: {
+          instanceId: "automation-rules",
+          moduleId: "jarvis.module.automation-rules",
+        },
+      },
+    });
+  });
+
+  it("reports every candidate for an ambiguous untargeted request in stable order", async () => {
+    const runtimeRoot = runtimeWithEmbeddedValidComposition();
+    const producerManifest = join(runtimeRoot, "modules/automation-rules/module.manifest.yaml");
+    writeFileSync(
+      producerManifest,
+      readFileSync(producerManifest, "utf8")
+        .replace("      targeting:\n        configurationPath: /rules/*/emit\n", "")
+        .replace(
+          "configuration:\n  schemaRef: contracts/module-config/automation-rules.v1.schema.json\n",
+          "",
+        ),
+      "utf8",
+    );
+    const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const portableConfig = embeddedPortableConfig([
+      {
+        instanceId: "automation-rules",
+        moduleId: "jarvis.module.automation-rules",
+        enabled: true,
+      },
+      workerInstance("worker-b"),
+      workerInstance("worker-a"),
+    ]);
+    const created = (await (
+      await importProject(engine, { repositoryPath: root, portableConfig })
+    ).json()) as { id: string };
+
+    const report = (await (
+      await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+    ).json()) as { findings: { code: string; target: Record<string, unknown> }[] };
+    const finding = report.findings.find((item) => item.code === "project.request-ambiguous");
+    expect(finding?.target["candidates"]).toEqual([
+      {
+        instanceId: "worker-a",
+        moduleId: "jarvis.module.change-request-review",
+      },
+      {
+        instanceId: "worker-b",
+        moduleId: "jarvis.module.change-request-review",
+      },
+    ]);
+  });
+
+  it("does not invent a route when a targeted producer has no configured emissions", async () => {
+    const runtimeRoot = runtimeWithEmbeddedValidComposition();
+    const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const producer = {
+      instanceId: "automation-rules",
+      moduleId: "jarvis.module.automation-rules",
+      enabled: true,
+      configuration: {
+        rules: [
+          {
+            id: "emit-other-request",
+            when: { eventType: "scm.work-item.tag-added" },
+            emit: {
+              type: "development.other.requested",
+              target: { moduleInstanceId: "request-worker" },
+            },
+          },
+        ],
+      },
+    };
+    const created = (await (
+      await importProject(engine, {
+        repositoryPath: root,
+        portableConfig: embeddedPortableConfig([producer, workerInstance()]),
+      })
+    ).json()) as { id: string };
+
+    const report = (await (
+      await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+    ).json()) as { requestRoutes: unknown[]; findings: { code: string }[] };
+    expect(report.requestRoutes).toEqual([]);
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "project.request-orphaned",
+    );
+  });
+
+  it("resolves a direct request target instead of treating compatible consumers as ambiguous", async () => {
+    const runtimeRoot = runtimeWithEmbeddedValidComposition();
+    const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (
+      await importProject(engine, {
+        repositoryPath: root,
+        portableConfig: embeddedPortableConfig([
+          automationInstance(),
+          workerInstance(),
+          workerInstance("other-worker"),
+        ]),
+      })
+    ).json()) as { id: string };
+
+    const report = (await (
+      await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+    ).json()) as {
+      requestRoutes: { consumer: { instanceId: string } }[];
+      findings: { code: string }[];
+    };
+    expect(report.requestRoutes.map((route) => route.consumer.instanceId)).toEqual([
+      "request-worker",
+    ]);
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "project.request-ambiguous",
+    );
+  });
+
+  it("resolves request targets through manifest-declared composition metadata", async () => {
+    const runtimeRoot = runtimeWithEmbeddedValidComposition();
+    const manifestPath = join(runtimeRoot, "modules/automation-rules/module.manifest.yaml");
+    writeFileSync(
+      manifestPath,
+      readFileSync(manifestPath, "utf8").replace(
+        "        configurationPath: /rules/*/emit",
+        "        configurationPath: /emissions/*",
+      ),
+      "utf8",
+    );
+    writeFileSync(
+      join(runtimeRoot, "contracts/module-config/automation-rules.v1.schema.json"),
+      JSON.stringify({
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        required: ["emissions"],
+        properties: {
+          emissions: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["type", "target"],
+              properties: { type: { type: "string" }, target: { type: "object" } },
+            },
+          },
+        },
+      }),
+      "utf8",
+    );
+    const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const producer = {
+      instanceId: "automation-rules",
+      moduleId: "jarvis.module.automation-rules",
+      enabled: true,
+      configuration: {
+        emissions: [
+          {
+            type: "development.implementation.requested",
+            target: { moduleInstanceId: "request-worker" },
+          },
+        ],
+      },
+    };
+    const created = (await (
+      await importProject(engine, {
+        repositoryPath: root,
+        portableConfig: embeddedPortableConfig([
+          producer,
+          workerInstance(),
+          workerInstance("other-worker"),
+        ]),
+      })
+    ).json()) as { id: string };
+
+    const report = (await (
+      await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+    ).json()) as {
+      requestRoutes: { consumer: { instanceId: string } }[];
+      findings: { code: string }[];
+    };
+    expect(report.requestRoutes.map((route) => route.consumer.instanceId)).toEqual([
+      "request-worker",
+    ]);
+    expect(report.findings.map((finding) => finding.code)).not.toContain(
+      "project.request-ambiguous",
+    );
+  });
+
+  it("reports an engine capability unresolved when its declared service is unavailable", async () => {
+    const runtimeRoot = runtimeWithEmbeddedValidComposition();
+    const manifestPath = join(runtimeRoot, "modules/change-request-review/module.manifest.yaml");
+    writeFileSync(
+      manifestPath,
+      readFileSync(manifestPath, "utf8").replace(
+        "  requires: []",
+        "  requires:\n    - id: custom.engine\n      resolution:\n        kind: engine\n        ref: engine/local",
+      ),
+      "utf8",
+    );
+    const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (
+      await importProject(engine, {
+        repositoryPath: root,
+        portableConfig: embeddedPortableConfig([automationInstance(), workerInstance()]),
+      })
+    ).json()) as { id: string };
+
+    const report = (await (
+      await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+    ).json()) as {
+      satisfiedCapabilities: Record<string, unknown>[];
+      findings: Record<string, unknown>[];
+    };
+    expect(report.satisfiedCapabilities).not.toContainEqual(
+      expect.objectContaining({ capability: "custom.engine" }),
+    );
+    expect(report.findings).toContainEqual({
+      code: "project.capability-unresolved",
+      severity: "error",
+      message:
+        "Module Instance request-worker cannot resolve capability custom.engine because Engine service engine/local is unavailable.",
+      target: {
+        kind: "capability",
+        instanceId: "request-worker",
+        capability: "custom.engine",
+      },
+    });
+  });
+
+  it("requires a saved accessible Local Binding for a project repository capability", async () => {
+    const runtimeRoot = runtimeWithEmbeddedValidComposition();
+    const manifestPath = join(runtimeRoot, "modules/change-request-review/module.manifest.yaml");
+    writeFileSync(
+      manifestPath,
+      readFileSync(manifestPath, "utf8").replace(
+        "  requires: []",
+        "  requires:\n    - id: repository.write\n      binding: repository\n      resolution:\n        kind: project-repository",
+      ),
+      "utf8",
+    );
+    const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (
+      await importProject(engine, {
+        repositoryPath: root,
+        portableConfig: embeddedPortableConfig([
+          automationInstance(),
+          { ...workerInstance(), bindings: { repository: "main" } },
+        ]),
+      })
+    ).json()) as { id: string };
+
+    const beforeBinding = (await (
+      await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+    ).json()) as { findings: Record<string, unknown>[] };
+    expect(beforeBinding.findings).toContainEqual(
+      expect.objectContaining({
+        code: "project.capability-unresolved",
+        message: expect.stringContaining("has no saved Local Binding"),
+      }),
+    );
+
+    expect(
+      (
+        await engine.call(`/v1/projects/${created.id}/repositories/main/binding`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ path: root, bookmarkRef: `bookmark/${created.id}/main` }),
+        })
+      ).status,
+    ).toBe(200);
+    const available = (await (
+      await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+    ).json()) as { satisfiedCapabilities: Record<string, unknown>[] };
+    expect(available.satisfiedCapabilities).toContainEqual({
+      capability: "repository.write",
+      target: { kind: "module-instance", instanceId: "request-worker" },
+      source: { kind: "repository", ref: "repository/main" },
+    });
+
+    rmSync(root, { recursive: true, force: true });
+    const inaccessible = (await (
+      await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+    ).json()) as { findings: Record<string, unknown>[] };
+    expect(inaccessible.findings).toContainEqual(
+      expect.objectContaining({
+        code: "project.capability-unresolved",
+        message: expect.stringContaining("is not accessible"),
+      }),
+    );
+  });
+
+  it("resolves optional capabilities and omits findings only when resolution fails", async () => {
+    const runtimeRoot = runtimeWithEmbeddedValidComposition();
+    const manifestPath = join(runtimeRoot, "modules/change-request-review/module.manifest.yaml");
+    writeFileSync(
+      manifestPath,
+      readFileSync(manifestPath, "utf8").replace(
+        "  requires: []",
+        `  requires:
+    - id: repository.write
+      binding: repository
+      optional: true
+      resolution:
+        kind: project-repository
+    - id: custom.engine
+      optional: true
+      resolution:
+        kind: engine
+        ref: engine/unavailable`,
+      ),
+      "utf8",
+    );
+    const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (
+      await importProject(engine, {
+        repositoryPath: root,
+        portableConfig: embeddedPortableConfig([
+          automationInstance(),
+          { ...workerInstance(), bindings: { repository: "main" } },
+        ]),
+      })
+    ).json()) as { id: string };
+    expect(
+      (
+        await engine.call(`/v1/projects/${created.id}/repositories/main/binding`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ path: root, bookmarkRef: `bookmark/${created.id}/main` }),
+        })
+      ).status,
+    ).toBe(200);
+
+    const report = (await (
+      await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+    ).json()) as {
+      satisfiedCapabilities: Record<string, unknown>[];
+      findings: { code: string; target: { capability?: string } }[];
+    };
+    expect(report.satisfiedCapabilities).toContainEqual({
+      capability: "repository.write",
+      target: { kind: "module-instance", instanceId: "request-worker" },
+      source: { kind: "repository", ref: "repository/main" },
+    });
+    expect(report.findings).not.toContainEqual(
+      expect.objectContaining({
+        code: "project.capability-unresolved",
+        target: expect.objectContaining({ capability: "custom.engine" }),
+      }),
+    );
+  });
+
+  it("reports a missing Module Instance capability", async () => {
+    const runtimeRoot = runtimeWithEmbeddedValidComposition();
+    const manifestPath = join(runtimeRoot, "modules/change-request-review/module.manifest.yaml");
+    writeFileSync(
+      manifestPath,
+      readFileSync(manifestPath, "utf8").replace(
+        "  requires: []",
+        "  requires:\n    - id: agent.execute",
+      ),
+      "utf8",
+    );
+    const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (
+      await importProject(engine, {
+        repositoryPath: root,
+        portableConfig: embeddedPortableConfig([automationInstance(), workerInstance()]),
+      })
+    ).json()) as { id: string };
+
+    const report = (await (
+      await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+    ).json()) as { findings: Record<string, unknown>[] };
+    expect(report.findings).toContainEqual({
+      code: "project.capability-unresolved",
+      severity: "error",
+      message: "Module Instance request-worker cannot resolve capability agent.execute.",
+      target: {
+        kind: "capability",
+        instanceId: "request-worker",
+        capability: "agent.execute",
+      },
+    });
+  });
+
+  it("reports a required unbound slot", async () => {
+    const runtimeRoot = runtimeWithEmbeddedValidComposition();
+    const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (
+      await importProject(engine, {
+        repositoryPath: root,
+        portableConfig: embeddedPortableConfig([automationInstance(), workerInstance()], {
+          tickets: { requires: "work-items.read" },
+        }),
+      })
+    ).json()) as { id: string };
+
+    const report = (await (
+      await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+    ).json()) as { findings: Record<string, unknown>[] };
+    expect(report.findings).toContainEqual({
+      code: "project.binding-missing",
+      severity: "error",
+      message: "Required slot tickets has no Local Binding.",
+      target: { kind: "slot", slot: "tickets" },
+    });
+  });
+
+  it.each([true, false])(
+    "targets invalid saved configuration when instance enabled is %s",
+    async (enabled) => {
+      const dataRoot = fixture(() => mkdtempSync(join(tmpdir(), "jarvis-validation-config-")));
+      const runtimeRoot = runtimeWithEmbeddedValidComposition();
+      const root = fixture(() => makeNodeRepositoryFixture());
+      const first = await start({ dataRoot, enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+      const created = (await (
+        await importProject(first, {
+          repositoryPath: root,
+          portableConfig: embeddedPortableConfig([
+            { ...automationInstance(), enabled },
+            workerInstance(),
+          ]),
+        })
+      ).json()) as { id: string };
+      await first.dispose();
+
+      writeFileSync(
+        join(runtimeRoot, "contracts/module-config/automation-rules.v1.schema.json"),
+        JSON.stringify({
+          $schema: "https://json-schema.org/draft/2020-12/schema",
+          type: "object",
+          required: ["mode"],
+          properties: { mode: { type: "string" } },
+        }),
+        "utf8",
+      );
+      const second = await start({ dataRoot, enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+      const report = (await (
+        await second.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+      ).json()) as { findings: { code: string; target: Record<string, unknown> }[] };
+      expect(report.findings).toContainEqual(
+        expect.objectContaining({
+          code: "project.instance-config-invalid",
+          target: {
+            kind: "module-instance",
+            instanceId: "automation-rules",
+            field: "/configuration/mode",
+          },
+        }),
+      );
+    },
+  );
+
+  it("targets both ends of an incompatible contract edge", async () => {
+    const runtimeRoot = runtimeWithEmbeddedValidComposition();
+    const manifestPath = join(runtimeRoot, "modules/change-request-review/module.manifest.yaml");
+    writeFileSync(
+      manifestPath,
+      readFileSync(manifestPath, "utf8")
+        .replace("      version: 1\n      kind: request", "      version: 2\n      kind: request")
+        .replace(
+          "development.implementation.requested.v1.schema.json",
+          "development.implementation.requested.v2.schema.json",
+        ),
+      "utf8",
+    );
+    const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (
+      await importProject(engine, {
+        repositoryPath: root,
+        portableConfig: embeddedPortableConfig([automationInstance(), workerInstance()]),
+      })
+    ).json()) as { id: string };
+
+    const report = (await (
+      await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+    ).json()) as { findings: { code: string; target: Record<string, unknown> }[] };
+    expect(report.findings).toContainEqual({
+      code: "project.contract-incompatible",
+      severity: "error",
+      message:
+        "The produced and consumed contracts between automation-rules and request-worker are incompatible.",
+      target: {
+        kind: "contract-edge",
+        producer: {
+          instanceId: "automation-rules",
+          moduleId: "jarvis.module.automation-rules",
+          contract: {
+            type: "development.implementation.requested",
+            version: 1,
+            kind: "request",
+          },
+        },
+        consumer: {
+          instanceId: "request-worker",
+          moduleId: "jarvis.module.change-request-review",
+          contract: {
+            type: "development.implementation.requested",
+            version: 2,
+            kind: "request",
+          },
+        },
+      },
+    });
+  });
+
+  it("does not connect an unrelated untargeted request type through schemaRef", async () => {
+    const runtimeRoot = runtimeWithEmbeddedValidComposition();
+    const producerManifest = join(runtimeRoot, "modules/automation-rules/module.manifest.yaml");
+    writeFileSync(
+      producerManifest,
+      readFileSync(producerManifest, "utf8").replace(
+        "      targeting:\n        configurationPath: /rules/*/emit\n",
+        "",
+      ),
+      "utf8",
+    );
+    const manifestPath = join(runtimeRoot, "modules/change-request-review/module.manifest.yaml");
+    writeFileSync(
+      manifestPath,
+      readFileSync(manifestPath, "utf8")
+        .replace(
+          "    - type: development.implementation.requested",
+          "    - type: development.other.requested",
+        )
+        .replace(
+          "development.implementation.requested.v1.schema.json",
+          "development.other.requested.v1.schema.json",
+        ),
+      "utf8",
+    );
+    const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (
+      await importProject(engine, {
+        repositoryPath: root,
+        portableConfig: embeddedPortableConfig([automationInstance(), workerInstance()]),
+      })
+    ).json()) as { id: string };
+
+    const report = (await (
+      await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+    ).json()) as { findings: { code: string }[] };
+    expect(report.findings).toContainEqual(
+      expect.objectContaining({ code: "project.request-orphaned" }),
+    );
+    expect(report.findings).not.toContainEqual(
+      expect.objectContaining({ code: "project.contract-incompatible" }),
+    );
+  });
+
+  it("diagnoses every incompatible contract on an explicitly targeted consumer", async () => {
+    const runtimeRoot = runtimeWithEmbeddedValidComposition();
+    const manifestPath = join(runtimeRoot, "modules/change-request-review/module.manifest.yaml");
+    writeFileSync(
+      manifestPath,
+      readFileSync(manifestPath, "utf8").replace(
+        `    - type: development.implementation.requested
+      version: 1
+      kind: request
+      schemaRef: contracts/events/development.implementation.requested.v1.schema.json
+      handler: handleImplementationRequested`,
+        `    - type: development.other-a.requested
+      version: 1
+      kind: request
+      schemaRef: contracts/events/development.other-a.requested.v1.schema.json
+      handler: handleOtherA
+    - type: development.other-b.requested
+      version: 1
+      kind: request
+      schemaRef: contracts/events/development.other-b.requested.v1.schema.json
+      handler: handleOtherB`,
+      ),
+      "utf8",
+    );
+    const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (
+      await importProject(engine, {
+        repositoryPath: root,
+        portableConfig: embeddedPortableConfig([automationInstance(), workerInstance()]),
+      })
+    ).json()) as { id: string };
+
+    const report = (await (
+      await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+    ).json()) as { findings: { code: string }[] };
+    expect(
+      report.findings.filter((finding) => finding.code === "project.contract-incompatible"),
+    ).toHaveLength(2);
+    expect(report.findings).not.toContainEqual(
+      expect.objectContaining({ code: "project.request-orphaned" }),
+    );
+  });
+
+  it("reports an incompatible contract kind at both edge ends", async () => {
+    const from = "      kind: request";
+    const to = "      kind: fact";
+    const consumed = { type: "development.implementation.requested", version: 1, kind: "fact" };
+    const runtimeRoot = runtimeWithEmbeddedValidComposition();
+    const manifestPath = join(runtimeRoot, "modules/change-request-review/module.manifest.yaml");
+    writeFileSync(manifestPath, readFileSync(manifestPath, "utf8").replace(from, to), "utf8");
+    const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (
+      await importProject(engine, {
+        repositoryPath: root,
+        portableConfig: embeddedPortableConfig([automationInstance(), workerInstance()]),
+      })
+    ).json()) as { id: string };
+    const report = (await (
+      await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+    ).json()) as { findings: { code: string; target: Record<string, unknown> }[] };
+    const finding = report.findings.find((item) => item.code === "project.contract-incompatible");
+    expect(finding?.target).toMatchObject({
+      producer: {
+        instanceId: "automation-rules",
+        contract: {
+          type: "development.implementation.requested",
+          version: 1,
+          kind: "request",
+        },
+      },
+      consumer: { instanceId: "request-worker", contract: consumed },
+    });
+  });
+
+  it("reports incompatible fact contracts at both edge ends", async () => {
+    const runtimeRoot = runtimeWithEmbeddedValidComposition();
+    const producerManifest = join(runtimeRoot, "modules/automation-rules/module.manifest.yaml");
+    writeFileSync(
+      producerManifest,
+      asUntargetedFactProducer(readFileSync(producerManifest, "utf8")),
+      "utf8",
+    );
+    const consumerManifest = join(
+      runtimeRoot,
+      "modules/change-request-review/module.manifest.yaml",
+    );
+    writeFileSync(
+      consumerManifest,
+      readFileSync(consumerManifest, "utf8")
+        .replace("      version: 1", "      version: 2")
+        .replace("      kind: request", "      kind: fact")
+        .replace(
+          "development.implementation.requested.v1.schema.json",
+          "development.implementation.requested.v2.schema.json",
+        ),
+      "utf8",
+    );
+    const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (
+      await importProject(engine, {
+        repositoryPath: root,
+        portableConfig: embeddedPortableConfig([automationInstance(), workerInstance()]),
+      })
+    ).json()) as { id: string };
+
+    const report = (await (
+      await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+    ).json()) as { findings: { code: string; target: Record<string, unknown> }[] };
+    expect(report.findings).toContainEqual({
+      code: "project.contract-incompatible",
+      severity: "error",
+      message:
+        "The produced and consumed contracts between automation-rules and request-worker are incompatible.",
+      target: {
+        kind: "contract-edge",
+        producer: {
+          instanceId: "automation-rules",
+          moduleId: "jarvis.module.automation-rules",
+          contract: {
+            type: "development.implementation.requested",
+            version: 1,
+            kind: "fact",
+          },
+        },
+        consumer: {
+          instanceId: "request-worker",
+          moduleId: "jarvis.module.change-request-review",
+          contract: {
+            type: "development.implementation.requested",
+            version: 2,
+            kind: "fact",
+          },
+        },
+      },
+    });
+  });
+
+  it("ignores an unrelated fact type instead of connecting it through schemaRef", async () => {
+    const runtimeRoot = runtimeWithEmbeddedValidComposition();
+    const producerManifest = join(runtimeRoot, "modules/automation-rules/module.manifest.yaml");
+    writeFileSync(
+      producerManifest,
+      asUntargetedFactProducer(readFileSync(producerManifest, "utf8")),
+      "utf8",
+    );
+    const consumerManifest = join(
+      runtimeRoot,
+      "modules/change-request-review/module.manifest.yaml",
+    );
+    writeFileSync(
+      consumerManifest,
+      readFileSync(consumerManifest, "utf8")
+        .replace(
+          "    - type: development.implementation.requested",
+          "    - type: development.other.requested",
+        )
+        .replace("      kind: request", "      kind: fact")
+        .replace(
+          "development.implementation.requested.v1.schema.json",
+          "development.other.requested.v1.schema.json",
+        ),
+      "utf8",
+    );
+    const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (
+      await importProject(engine, {
+        repositoryPath: root,
+        portableConfig: embeddedPortableConfig([automationInstance(), workerInstance()]),
+      })
+    ).json()) as { id: string };
+
+    const report = (await (
+      await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+    ).json()) as { valid: boolean; findings: unknown[] };
+    expect(report.valid).toBe(true);
+    expect(report.findings).toEqual([]);
+  });
+
+  it("reports an incompatible fact contract kind at both edge ends", async () => {
+    const consumed = {
+      type: "development.implementation.requested",
+      version: 1,
+      kind: "request",
+    };
+    const runtimeRoot = runtimeWithEmbeddedValidComposition();
+    const producerManifest = join(runtimeRoot, "modules/automation-rules/module.manifest.yaml");
+    writeFileSync(
+      producerManifest,
+      asUntargetedFactProducer(readFileSync(producerManifest, "utf8")),
+      "utf8",
+    );
+    const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (
+      await importProject(engine, {
+        repositoryPath: root,
+        portableConfig: embeddedPortableConfig([automationInstance(), workerInstance()]),
+      })
+    ).json()) as { id: string };
+
+    const report = (await (
+      await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+    ).json()) as { findings: { code: string; target: Record<string, unknown> }[] };
+    const finding = report.findings.find((item) => item.code === "project.contract-incompatible");
+    expect(finding?.target).toMatchObject({
+      producer: {
+        instanceId: "automation-rules",
+        contract: {
+          type: "development.implementation.requested",
+          version: 1,
+          kind: "fact",
+        },
+      },
+      consumer: { instanceId: "request-worker", contract: consumed },
+    });
+  });
+
+  it("allows a produced fact with no consumer", async () => {
+    const runtimeRoot = runtimeWithEmbeddedValidComposition();
+    const producerManifest = join(runtimeRoot, "modules/automation-rules/module.manifest.yaml");
+    writeFileSync(
+      producerManifest,
+      asUntargetedFactProducer(readFileSync(producerManifest, "utf8")),
+      "utf8",
+    );
+    const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+    const root = fixture(() => makeNodeRepositoryFixture());
+    const created = (await (
+      await importProject(engine, {
+        repositoryPath: root,
+        portableConfig: embeddedPortableConfig([automationInstance()]),
+      })
+    ).json()) as { id: string };
+
+    const report = (await (
+      await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+    ).json()) as { valid: boolean; findings: { code: string }[] };
+    expect(report.valid).toBe(true);
+    expect(report.findings).toEqual([]);
+  });
+
+  it("reports an unavailable saved Module Package at the moduleId field", async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-project-package-unavailable-"));
+    const root = fixture(() => makeNodeRepositoryFixture());
+    try {
+      const first = await start({ dataRoot });
+      const created = (await (
+        await importProject(first, {
+          repositoryPath: root,
+          portableConfig: embeddedPortableConfig([automationInstance()]),
+        })
+      ).json()) as { id: string };
+      await first.dispose();
+
+      const database = new Database(join(dataRoot, "jarvis.sqlite"));
+      const saved = database
+        .prepare("SELECT portable_config FROM projects WHERE id = ?")
+        .get(created.id) as { portable_config: string };
+      const portableConfig = JSON.parse(saved.portable_config) as Record<string, unknown>;
+      const modules = portableConfig["modules"] as Record<string, unknown>[];
+      modules[0]!["moduleId"] = "jarvis.module.unavailable";
+      database
+        .prepare("UPDATE projects SET portable_config = ? WHERE id = ?")
+        .run(JSON.stringify(portableConfig), created.id);
+      database.close();
+
+      const second = await start({ dataRoot });
+      const report = (await (
+        await second.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+      ).json()) as { findings: unknown[] };
+      expect(report.findings).toContainEqual({
+        code: "project.module-package-unavailable",
+        severity: "error",
+        message:
+          "Module Package jarvis.module.unavailable for Module Instance automation-rules is unavailable.",
+        target: {
+          kind: "module-instance",
+          instanceId: "automation-rules",
+          field: "/moduleId",
+        },
+      });
+      expect(report.findings).not.toContainEqual(
+        expect.objectContaining({ code: "project.instance-config-invalid" }),
+      );
+    } finally {
+      await rm(dataRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("returns the stable not-found error when reporting on an unknown project", async () => {
+    const engine = await start();
+    const response = await engine.call("/v1/projects/does-not-exist/validation-report", {
+      method: "POST",
+    });
+    expect(response.status).toBe(404);
+    expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
+      "project.not-found",
+    );
   });
 
   it("returns a 404 envelope for an unknown project", async () => {

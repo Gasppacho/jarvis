@@ -20,7 +20,16 @@ A stable project name for a required capability, resolved by Local Bindings.
 The immutable validated composition used while a Project is active.
 
 ### Project Validation
-The report determining whether the composition may be activated.
+The read-only evaluation determining whether a saved Project composition may be activated. Project Runtime owns this policy behind `ProjectCompositionValidationPort`; adapters supply a `SavedProjectCompositionValidationInput` loaded from persisted Portable Configuration, Local Bindings, project grants and local repository availability.
+
+### Project Request Route
+The unique producer-to-consumer edge resolved for one versioned Request Event in a Project.
+
+### Project Satisfied Capability
+A capability requirement, optional or required, whose target (Project slot or Module Instance) resolves to an eligible project-scoped resource. A Project repository is reported with the distinct `repository` source kind.
+
+### Project Validation Finding
+A stable, actionable result identifying why a saved composition cannot be activated and the affected instance, slot or event edge. An unknown, rejected or unavailable Module Package is distinct from invalid instance configuration and targets the instance's `/moduleId` field.
 
 ### Active Project
 A Project whose Module Instances and event sources are running.

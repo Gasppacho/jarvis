@@ -34,10 +34,11 @@ export interface RepositoryDiscoveryPort<Discovery> {
 }
 
 /** Registry operations that require durable Project persistence. */
-export interface ProjectRegistry<Summary, Detail, Bindings> {
+export interface ProjectRegistry<Summary, Detail, Bindings, ValidationReport> {
   importProject(request: ImportProjectRequest): Detail;
   listProjects(): Summary[];
   getProject(id: unknown): Detail;
+  validateProject(id: unknown): ValidationReport;
   deleteProject(id: unknown): void;
   updateRepositoryBinding(request: UpdateRepositoryBindingRequest): Detail;
   replaceProjectConfiguration(request: ReplaceProjectConfigurationRequest): Detail;

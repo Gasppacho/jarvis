@@ -128,6 +128,96 @@ export interface ProjectBindings {
   readonly slots: Readonly<Record<string, ProjectSlotBinding>>;
 }
 
+export interface ProjectValidationContract {
+  readonly type: string;
+  readonly version: number;
+  readonly kind: "request" | "fact";
+}
+
+export interface ProjectRequestContract extends ProjectValidationContract {
+  readonly kind: "request";
+}
+
+export interface ProjectValidationInstanceTarget {
+  readonly instanceId: string;
+  readonly moduleId: string;
+}
+
+export interface ProjectRequestRoute {
+  readonly contract: ProjectRequestContract;
+  readonly producer: ProjectValidationInstanceTarget;
+  readonly consumer: ProjectValidationInstanceTarget;
+}
+
+export type ProjectSatisfiedCapabilityTarget =
+  | { readonly kind: "module-instance"; readonly instanceId: string }
+  | { readonly kind: "slot"; readonly slot: string };
+
+export interface ProjectSatisfiedCapability {
+  readonly capability: string;
+  readonly target: ProjectSatisfiedCapabilityTarget;
+  readonly source: {
+    readonly kind: ProjectResourceKind | "repository";
+    readonly ref: string;
+  };
+}
+
+export type ProjectValidationFindingTarget =
+  | {
+      readonly kind: "request-edge";
+      readonly contract: ProjectValidationContract;
+      readonly producer: ProjectValidationInstanceTarget;
+      readonly candidates?: readonly ProjectValidationInstanceTarget[];
+    }
+  | {
+      readonly kind: "contract-edge";
+      readonly producer: ProjectValidationInstanceTarget & {
+        readonly contract: ProjectValidationContract;
+      };
+      readonly consumer: ProjectValidationInstanceTarget & {
+        readonly contract: ProjectValidationContract;
+      };
+    }
+  | { readonly kind: "module-instance"; readonly instanceId: string; readonly field: string }
+  | { readonly kind: "slot"; readonly slot: string }
+  | {
+      readonly kind: "capability";
+      readonly capability: string;
+      readonly instanceId: string;
+      readonly binding?: string;
+    }
+  | {
+      readonly kind: "capability";
+      readonly capability: string;
+      readonly slot: string;
+    };
+
+export type ProjectValidationFindingCode =
+  | "project.binding-missing"
+  | "project.capability-unresolved"
+  | "project.contract-incompatible"
+  | "project.instance-config-invalid"
+  | "project.module-package-unavailable"
+  | "project.request-ambiguous"
+  | "project.request-orphaned";
+
+export interface ProjectValidationFinding {
+  readonly code: ProjectValidationFindingCode;
+  readonly severity: "error" | "warning";
+  readonly message: string;
+  readonly target: ProjectValidationFindingTarget;
+}
+
+export interface ProjectValidationReport {
+  readonly apiVersion: "jarvis.dev/project-validation/v1";
+  readonly kind: "ProjectValidationReport";
+  readonly projectId: string;
+  readonly valid: boolean;
+  readonly requestRoutes: readonly ProjectRequestRoute[];
+  readonly satisfiedCapabilities: readonly ProjectSatisfiedCapability[];
+  readonly findings: readonly ProjectValidationFinding[];
+}
+
 /** Live repository resolution status exposed on Project Detail. */
 export interface BindingStatus {
   readonly [repositoryId: string]: {

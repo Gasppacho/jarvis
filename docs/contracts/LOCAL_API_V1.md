@@ -31,6 +31,17 @@ Inspection read-only d'un repository et détection des runtimes/connexions.
 
 Import, liste, détail, validation, activation, pause et configuration locale.
 
+`POST /v1/projects/{projectId}/validate` est conservé pour compatibilité et sa réponse
+fermée reste exactement `{valid, issues}`. `issues` projette les `findings` avec
+`code`, `severity` et `message` (l'ancien `path` optionnel reste accepté par le contrat).
+
+Les nouveaux clients appellent `POST /v1/projects/{projectId}/validation-report`. Cette
+opération distincte évite d'élargir silencieusement la réponse historique et renvoie le
+schéma explicite `ProjectValidationReportV1`, identifié dans le document par
+`apiVersion: jarvis.dev/project-validation/v1` et `kind: ProjectValidationReport`. Le
+nom de ressource reste sous le préfixe Local API `/v1`, conformément à la pratique de
+versioning de cette API.
+
 ### Modules
 
 Catalogue global et instances par projet.

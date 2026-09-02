@@ -1,4 +1,12 @@
-import { copyFileSync, cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  copyFileSync,
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -163,6 +171,26 @@ describe("bundled Module Package catalogue", () => {
         configurationSchemaTitle: "GitHub Module Config v1",
       },
     ]);
+  });
+
+  it("rejects a Manifest whose schemaRef identifies another versioned event", async () => {
+    const runtimeRoot = copiedRuntime();
+    const manifestPath = join(runtimeRoot, "modules/github/module.manifest.yaml");
+    writeFileSync(
+      manifestPath,
+      readFileSync(manifestPath, "utf8").replace(
+        "type: scm.work-item.tag-added",
+        "type: scm.work-item.tag-removed",
+      ),
+    );
+    const engine = await startEngine({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+    started.push(engine);
+
+    await expectOnlyValidPackages(engine);
+    await engine.waitForStderr("rejected bundled Module Package github");
+    expect(engine.stderr()).toContain(
+      "/contracts/produces/0/schemaRef must identify contracts/events/scm.work-item.tag-removed.v1.schema.json",
+    );
   });
 
   it("rejects a schema-invalid Manifest without hiding valid packages", async () => {

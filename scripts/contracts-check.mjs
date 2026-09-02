@@ -123,7 +123,15 @@ for (const file of moduleManifestFiles) {
     ...(manifest.contracts?.produces ?? []),
   ];
   for (const contract of declared) {
-    // 5. every schemaRef resolves to a file that exists.
+    // 5. schemaRef describes this exact versioned event identity and resolves.
+    const expectedSchemaRef = `contracts/events/${contract.type}.v${contract.version}.schema.json`;
+    if (contract.schemaRef !== expectedSchemaRef) {
+      fail(
+        "manifest-schemaref-inconsistent",
+        rel(file),
+        `${contract.type} v${contract.version} must use ${expectedSchemaRef}`,
+      );
+    }
     if (contract.schemaRef !== undefined && !existsSync(join(repoRoot, contract.schemaRef))) {
       fail("manifest-schemaref-missing", rel(file), `${contract.type}: ${contract.schemaRef}`);
     }
@@ -213,12 +221,29 @@ function dereferenceOpenApiSchema(value, seen = new Set()) {
   );
 }
 
+function dereferenceJsonSchema(value, root, seen = new Set()) {
+  if (Array.isArray(value)) {
+    return value.map((item) => dereferenceJsonSchema(item, root, seen));
+  }
+  if (typeof value !== "object" || value === null) return value;
+  if (typeof value.$ref === "string" && value.$ref.startsWith("#/$defs/")) {
+    if (seen.has(value.$ref)) throw new Error(`cyclic JSON Schema reference ${value.$ref}`);
+    const name = value.$ref.slice("#/$defs/".length);
+    const target = root.$defs?.[name];
+    if (target === undefined) throw new Error(`missing JSON Schema reference ${value.$ref}`);
+    return dereferenceJsonSchema(target, root, new Set([...seen, value.$ref]));
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [key, dereferenceJsonSchema(child, root, seen)]),
+  );
+}
+
 function normalizedContractSchema(value) {
   if (Array.isArray(value)) return value.map(normalizedContractSchema);
   if (typeof value !== "object" || value === null) return value;
   return Object.fromEntries(
     Object.entries(value)
-      .filter(([key]) => !["$schema", "$id", "title"].includes(key))
+      .filter(([key]) => !["$schema", "$id", "$defs", "title"].includes(key))
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, child]) => [key, normalizedContractSchema(child)]),
   );
@@ -240,9 +265,16 @@ function enforceOpenApiParity({ componentName, schemaKey, example, parityRule, e
     return;
   }
   const jsonSchema = readJson(schemaPath);
+  let resolvedJsonSchema;
+  try {
+    resolvedJsonSchema = dereferenceJsonSchema(jsonSchema, jsonSchema);
+  } catch (error) {
+    fail(parityRule, rel(schemaPath), String(error));
+    return;
+  }
   if (
     JSON.stringify(normalizedContractSchema(resolved)) !==
-    JSON.stringify(normalizedContractSchema(jsonSchema))
+    JSON.stringify(normalizedContractSchema(resolvedJsonSchema))
   ) {
     fail(
       parityRule,
@@ -276,6 +308,79 @@ if (existsSync(bindingsFile)) {
     parityRule: "project-bindings-openapi-parity",
     exampleRule: "project-bindings-openapi-invalid",
   });
+}
+const validationReportFile = join(repoRoot, "examples/project/validation-report.json");
+if (existsSync(validationReportFile)) {
+  enforceOpenApiParity({
+    componentName: "ProjectValidationReportV1",
+    schemaKey: "contracts/schemas/project-validation-report.v1.schema.json",
+    example: readJson(validationReportFile),
+    parityRule: "project-validation-report-openapi-parity",
+    exampleRule: "project-validation-report-openapi-invalid",
+  });
+
+  const jsonValidator = compiled.get("contracts/schemas/project-validation-report.v1.schema.json");
+  let openApiValidator;
+  try {
+    openApiValidator = new Ajv2020({ strict: false, allErrors: true }).compile(
+      dereferenceOpenApiSchema(openApi.components?.schemas?.ProjectValidationReportV1),
+    );
+  } catch (error) {
+    fail(
+      "project-validation-report-shape",
+      rel(openApiFile),
+      `could not compile ProjectValidationReportV1: ${String(error)}`,
+    );
+  }
+
+  for (const [where, validate] of [
+    ["JSON Schema", jsonValidator],
+    ["OpenAPI", openApiValidator],
+  ]) {
+    if (validate === undefined) continue;
+    const factRoute = structuredClone(readJson(validationReportFile));
+    factRoute.requestRoutes[0].contract.kind = "fact";
+    if (validate(factRoute)) {
+      fail(
+        "project-validation-report-request-route-shape",
+        rel(openApiFile),
+        `${where} accepts a fact contract in requestRoutes`,
+      );
+    }
+
+    for (const missingEndpoint of ["producer", "consumer"]) {
+      const missingEndpointContract = structuredClone(readJson(validationReportFile));
+      missingEndpointContract.valid = false;
+      const contract = { type: "example.requested", version: 1, kind: "request" };
+      missingEndpointContract.findings = [
+        {
+          code: "project.contract-incompatible",
+          severity: "error",
+          message: "The edge contracts are incompatible.",
+          target: {
+            kind: "contract-edge",
+            producer: {
+              instanceId: "producer",
+              moduleId: "jarvis.module.producer",
+              ...(missingEndpoint === "producer" ? {} : { contract }),
+            },
+            consumer: {
+              instanceId: "consumer",
+              moduleId: "jarvis.module.consumer",
+              ...(missingEndpoint === "consumer" ? {} : { contract }),
+            },
+          },
+        },
+      ];
+      if (validate(missingEndpointContract)) {
+        fail(
+          "project-validation-report-contract-edge-shape",
+          rel(openApiFile),
+          `${where} accepts a contract-edge without its ${missingEndpoint} contract`,
+        );
+      }
+    }
+  }
 }
 
 if (openApi.openapi === undefined || !String(openApi.openapi).startsWith("3.1")) {

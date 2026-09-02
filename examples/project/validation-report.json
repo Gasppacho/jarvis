@@ -1,0 +1,48 @@
+{
+  "apiVersion": "jarvis.dev/project-validation/v1",
+  "kind": "ProjectValidationReport",
+  "projectId": "token-warehouse",
+  "valid": true,
+  "requestRoutes": [
+    {
+      "contract": {
+        "type": "development.implementation.requested",
+        "version": 1,
+        "kind": "request"
+      },
+      "producer": {
+        "instanceId": "automation-rules",
+        "moduleId": "jarvis.module.automation-rules"
+      },
+      "consumer": {
+        "instanceId": "development",
+        "moduleId": "jarvis.module.development"
+      }
+    }
+  ],
+  "satisfiedCapabilities": [
+    {
+      "capability": "work-items.read",
+      "target": {
+        "kind": "slot",
+        "slot": "tickets"
+      },
+      "source": {
+        "kind": "module-instance",
+        "ref": "github"
+      }
+    },
+    {
+      "capability": "repository.write",
+      "target": {
+        "kind": "module-instance",
+        "instanceId": "development"
+      },
+      "source": {
+        "kind": "repository",
+        "ref": "repository/main"
+      }
+    }
+  ],
+  "findings": []
+}

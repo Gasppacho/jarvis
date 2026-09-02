@@ -86,6 +86,53 @@ describe("pnpm contracts:check", () => {
     expect(stderr).toContain("event-payload-invalid");
   });
 
+  it("accepts targeting for a produced request contract", async () => {
+    const root = fixtureRoot();
+    const path = join(root, "packages/modules/development/module.manifest.yaml");
+    writeFileSync(
+      path,
+      readFileSync(path, "utf8").replace(
+        "      schemaRef: contracts/events/scm.change-request.creation-requested.v1.schema.json",
+        "      schemaRef: contracts/events/scm.change-request.creation-requested.v1.schema.json\n      targeting:\n        configurationPath: /emissions/*",
+      ),
+    );
+
+    const { code, stderr } = await runChecker(root);
+    expect(code, stderr).toBe(0);
+  });
+
+  it("rejects targeting for a produced fact contract", async () => {
+    const root = fixtureRoot();
+    const path = join(root, "packages/modules/automation-rules/module.manifest.yaml");
+    writeFileSync(
+      path,
+      readFileSync(path, "utf8").replace(
+        "      kind: request\n      schemaRef: contracts/events/development.implementation.requested.v1.schema.json\n      targeting:",
+        "      kind: fact\n      schemaRef: contracts/events/development.implementation.requested.v1.schema.json\n      targeting:",
+      ),
+    );
+
+    const { code, stderr } = await runChecker(root);
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("manifest-invalid");
+  });
+
+  it("requires a binding for project-repository capability resolution", async () => {
+    const root = fixtureRoot();
+    const path = join(root, "packages/modules/development/module.manifest.yaml");
+    writeFileSync(
+      path,
+      readFileSync(path, "utf8").replace(
+        "    - id: repository.write\n      binding: repository\n      resolution:\n        kind: project-repository",
+        "    - id: repository.write\n      resolution:\n        kind: project-repository",
+      ),
+    );
+
+    const { code, stderr } = await runChecker(root);
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("manifest-invalid");
+  });
+
   it("rejects an event type that no registered schema covers", async () => {
     const root = fixtureRoot();
     editJson(join(root, "examples/events/01-work-item-tag-added.json"), (event) => {
@@ -95,6 +142,22 @@ describe("pnpm contracts:check", () => {
     const { code, stderr } = await runChecker(root);
     expect(code).not.toBe(0);
     expect(stderr).toContain("event-contract-unregistered");
+  });
+
+  it("rejects a manifest whose schemaRef identifies a different event contract", async () => {
+    const root = fixtureRoot();
+    const path = join(root, "packages/modules/development/module.manifest.yaml");
+    writeFileSync(
+      path,
+      readFileSync(path, "utf8").replace(
+        "type: development.implementation.completed",
+        "type: development.implementation.failed",
+      ),
+    );
+
+    const { code, stderr } = await runChecker(root);
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("manifest-schemaref-inconsistent");
   });
 
   it("rejects a manifest whose schemaRef points nowhere", async () => {
@@ -251,6 +314,75 @@ describe("pnpm contracts:check", () => {
     const { code, stderr } = await runChecker(root);
     expect(code).not.toBe(0);
     expect(stderr).toContain("project-bindings-openapi-parity");
+  });
+
+  it("rejects an undocumented Project Validation finding code", async () => {
+    const root = fixtureRoot();
+    const path = join(root, "examples/project/validation-report.json");
+    editJson(path, (report) => {
+      report["valid"] = false;
+      report["findings"] = [
+        {
+          code: "project.undocumented",
+          severity: "error",
+          message: "Undocumented finding.",
+          target: { kind: "module-instance", instanceId: "development", field: "/moduleId" },
+        },
+      ];
+    });
+
+    const { code, stderr } = await runChecker(root);
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("project-validation-report-openapi-invalid");
+  });
+
+  it("rejects validation report schemas that allow fact contracts in request routes", async () => {
+    const root = fixtureRoot();
+    const jsonPath = join(root, "contracts/schemas/project-validation-report.v1.schema.json");
+    writeFileSync(
+      jsonPath,
+      readFileSync(jsonPath, "utf8").replace(
+        '"kind": { "const": "request" }',
+        '"kind": { "enum": ["request", "fact"] }',
+      ),
+    );
+    const openApiPath = join(root, "contracts/openapi/local-api.v1.yaml");
+    writeFileSync(
+      openApiPath,
+      readFileSync(openApiPath, "utf8").replace(
+        "                  kind:\n                    const: request\n",
+        "                  kind:\n                    enum: [request, fact]\n",
+      ),
+    );
+
+    const { code, stderr } = await runChecker(root);
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("project-validation-report-request-route-shape");
+  });
+
+  it("rejects validation report schemas that make contract-edge endpoint contracts optional", async () => {
+    const root = fixtureRoot();
+    const replacements = [
+      {
+        path: join(root, "contracts/schemas/project-validation-report.v1.schema.json"),
+        from: '"required": ["instanceId", "moduleId", "contract"]',
+        to: '"required": ["instanceId", "moduleId"]',
+      },
+      {
+        path: join(root, "contracts/openapi/local-api.v1.yaml"),
+        from: "required: [instanceId, moduleId, contract]",
+        to: "required: [instanceId, moduleId]",
+      },
+    ];
+    for (const replacement of replacements) {
+      const source = readFileSync(replacement.path, "utf8");
+      if (!source.includes(replacement.from)) throw new Error("missing endpoint contract shape");
+      writeFileSync(replacement.path, source.replaceAll(replacement.from, replacement.to));
+    }
+
+    const { code, stderr } = await runChecker(root);
+    expect(code).not.toBe(0);
+    expect(stderr).toContain("project-validation-report-contract-edge-shape");
   });
 
   it("rejects a protected operation that does not document how it refuses callers", async () => {

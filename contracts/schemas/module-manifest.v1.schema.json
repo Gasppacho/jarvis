@@ -150,6 +150,27 @@
               "kind",
               "schemaRef"
             ],
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "fact"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ]
+                },
+                "then": {
+                  "not": {
+                    "required": [
+                      "targeting"
+                    ]
+                  }
+                }
+              }
+            ],
             "properties": {
               "type": {
                 "type": "string",
@@ -168,6 +189,17 @@
               "schemaRef": {
                 "type": "string",
                 "minLength": 1
+              },
+              "targeting": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["configurationPath"],
+                "properties": {
+                  "configurationPath": {
+                    "type": "string",
+                    "pattern": "^/(?:[^/]+/)*\\*(?:/[^/]+)*$"
+                  }
+                }
               }
             }
           }
@@ -190,6 +222,21 @@
             "required": [
               "id"
             ],
+            "allOf": [
+              {
+                "if": {
+                  "required": ["resolution"],
+                  "properties": {
+                    "resolution": {
+                      "type": "object",
+                      "required": ["kind"],
+                      "properties": { "kind": { "const": "project-repository" } }
+                    }
+                  }
+                },
+                "then": { "required": ["binding"] }
+              }
+            ],
             "properties": {
               "id": {
                 "type": "string",
@@ -201,6 +248,27 @@
               },
               "optional": {
                 "type": "boolean"
+              },
+              "resolution": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["kind", "ref"],
+                    "properties": {
+                      "kind": { "const": "engine" },
+                      "ref": { "type": "string", "minLength": 1 }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["kind"],
+                    "properties": {
+                      "kind": { "const": "project-repository" }
+                    }
+                  }
+                ]
               }
             }
           }

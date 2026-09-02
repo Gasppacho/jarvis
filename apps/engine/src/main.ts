@@ -4,12 +4,14 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 import { SystemClock } from "../../../packages/kernel/src/clock.js";
+import { SavedProjectCompositionValidator } from "../../../packages/project-runtime/src/composition-validator.js";
 import { ConfigError, loadConfig } from "./config.js";
 import { openDatabase, type DatabaseState, type OpenedDatabase } from "./db/open.js";
 import { buildServer } from "./http/server.js";
 import { watchParentProcess } from "./parent-watch.js";
 import { API_VERSION } from "./version.js";
 import { AtomicProjectConfigurationWriter } from "./projects/repository-config-writer.js";
+import { LocalRepositoryAccessibility } from "./projects/repository-accessibility.js";
 import { ProjectService, RepositoryDiscoveryService } from "./projects/service.js";
 import { EmptyProjectResourceGrants } from "./projects/resource-grants.js";
 import { ProjectStore } from "./projects/store.js";
@@ -146,6 +148,7 @@ async function main(): Promise<void> {
   }
   const database = opened;
   const repositoryDiscovery = new RepositoryDiscoveryService();
+  const resourceGrants = new EmptyProjectResourceGrants();
   const projects =
     database === undefined
       ? undefined
@@ -153,7 +156,9 @@ async function main(): Promise<void> {
           new ProjectStore(database.db, new SystemClock()),
           modules,
           new AtomicProjectConfigurationWriter(),
-          new EmptyProjectResourceGrants(),
+          resourceGrants,
+          new SavedProjectCompositionValidator(modules),
+          new LocalRepositoryAccessibility(),
         );
 
   app = buildServer({

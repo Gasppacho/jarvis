@@ -2,6 +2,10 @@ import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { ModuleHost } from "../../../../packages/kernel/src/module-host.js";
+import {
+  projectResourceCandidates,
+  type ProjectCompositionValidationPort,
+} from "../../../../packages/project-runtime/src/composition-validator.js";
 import type {
   ImportProjectRequest,
   ProjectRegistry,
@@ -23,6 +27,7 @@ import {
   validatePortableConfig,
 } from "./contracts.js";
 import type { ProjectConfigurationWriter } from "./repository-config-writer.js";
+import type { RepositoryAccessibilityPort } from "./repository-accessibility.js";
 import type { ProjectRow, ProjectStore } from "./store.js";
 import type {
   BindingStatus,
@@ -30,6 +35,7 @@ import type {
   ProjectBindings,
   ProjectResourceCandidate,
   ProjectResourceGrantPort,
+  ProjectValidationReport,
   ProjectDetail,
   ProjectSummary,
   StoredPortableProjectConfiguration,
@@ -53,13 +59,16 @@ export class RepositoryDiscoveryService implements RepositoryDiscoveryPort<Repos
 export class ProjectService implements ProjectRegistry<
   ProjectSummary,
   ProjectDetail,
-  ProjectBindings
+  ProjectBindings,
+  ProjectValidationReport
 > {
   constructor(
     private readonly store: ProjectStore,
     private readonly modules: ModuleHost,
     private readonly repositoryWriter: ProjectConfigurationWriter,
     private readonly resourceGrants: ProjectResourceGrantPort,
+    private readonly compositionValidator: ProjectCompositionValidationPort,
+    private readonly repositoryAccessibility: RepositoryAccessibilityPort,
   ) {}
 
   importProject(request: ImportProjectRequest): ProjectDetail {
@@ -95,6 +104,7 @@ export class ProjectService implements ProjectRegistry<
         portableConfig,
         repositoryPath,
       }),
+      this.repositoryAccessibility,
     );
   }
 
@@ -103,7 +113,21 @@ export class ProjectService implements ProjectRegistry<
   }
 
   getProject(id: unknown): ProjectDetail {
-    return toDetail(this.requireProject(id));
+    return toDetail(this.requireProject(id), this.repositoryAccessibility);
+  }
+
+  validateProject(id: unknown): ProjectValidationReport {
+    const project = this.requireProject(id);
+    return this.compositionValidator.validate({
+      projectId: project.id,
+      configuration: project.portableConfig,
+      slotBindings: project.slotBindings,
+      repositoryBinding: {
+        saved: project.bookmarkRef !== null,
+        accessible: this.repositoryAccessibility.isAccessibleDirectory(project.repositoryPath),
+      },
+      grantedResources: this.resourceGrants.grantedToProject(project.id),
+    });
   }
 
   deleteProject(id: unknown): void {
@@ -154,7 +178,7 @@ export class ProjectService implements ProjectRegistry<
         this.store.replaceConfiguration(current.id, configuration, configuration.metadata.name),
       );
       if (updated === undefined) throw notFound(current.id);
-      return toDetail(updated);
+      return toDetail(updated, this.repositoryAccessibility);
     } catch (error) {
       try {
         compensation?.restore();
@@ -259,7 +283,7 @@ export class ProjectService implements ProjectRegistry<
     }
     const updated = this.store.updateRepositoryBinding(current.id, repositoryPath, bookmarkRef);
     if (updated === undefined) throw notFound(current.id);
-    return toDetail(updated);
+    return toDetail(updated, this.repositoryAccessibility);
   }
 
   private requireProject(id: unknown): ProjectRow {
@@ -317,28 +341,7 @@ function eligibleCandidates(
   modules: ModuleHost,
   grants: ProjectResourceGrantPort,
 ): readonly ProjectResourceCandidate[] {
-  const selected =
-    "modules" in configuration
-      ? configuration.modules.flatMap((instance) => {
-          const packageEntry = modules.package(instance.moduleId);
-          if (
-            !instance.enabled ||
-            packageEntry === undefined ||
-            packageEntry.provides.length === 0
-          ) {
-            return [];
-          }
-          return [
-            {
-              ref: instance.instanceId,
-              kind: "module-instance" as const,
-              displayName: instance.instanceId,
-              capabilities: packageEntry.provides,
-            },
-          ];
-        })
-      : [];
-  return [...selected, ...grants.grantedToProject(projectId)];
+  return projectResourceCandidates(configuration, modules, grants.grantedToProject(projectId));
 }
 
 function resolvePortableConfig(
@@ -430,12 +433,15 @@ function toSummary(row: ProjectRow): ProjectSummary {
   };
 }
 
-function toDetail(row: ProjectRow): ProjectDetail {
+function toDetail(
+  row: ProjectRow,
+  repositoryAccessibility: RepositoryAccessibilityPort,
+): ProjectDetail {
   const repositoryId = row.portableConfig.repositories[0]?.id ?? "main";
   const bindingStatus: BindingStatus = {
     [repositoryId]: {
       path: row.repositoryPath,
-      accessible: isAccessibleDirectory(row.repositoryPath),
+      accessible: repositoryAccessibility.isAccessibleDirectory(row.repositoryPath),
       bookmarkRef: row.bookmarkRef,
     },
   };
@@ -453,12 +459,4 @@ function toBindings(row: ProjectRow): ProjectBindings {
     },
     slots: row.slotBindings,
   };
-}
-
-function isAccessibleDirectory(path: string): boolean {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
 }

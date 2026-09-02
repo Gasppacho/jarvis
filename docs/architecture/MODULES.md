@@ -77,7 +77,8 @@ Le manifeste déclare :
 - identité et version ;
 - entrypoint ;
 - événements consommés et produits ;
-- capabilities requises et fournies ;
+- pour une Request produite depuis une collection de configuration, le chemin de composition permettant au Project Runtime de lire ses targets sans connaître le modèle interne du module ;
+- capabilities requises et fournies, y compris leur résolution par le moteur ou le repository du projet lorsqu'elle ne passe pas par un slot ;
 - schéma de configuration ;
 - assets agentiques éventuels ;
 - permissions attendues ;
@@ -98,7 +99,7 @@ contracts:
       handler: handleImplementationRequested
 ```
 
-Le Project Runtime active la subscription uniquement si l'instance est activée et valide. Le handler ne reçoit que des événements du même `projectId`.
+Le Project Runtime active la subscription uniquement si l'instance est activée et valide. Le handler ne reçoit que des événements du même `projectId`. Une edge contractuelle est identifiée par `type + version + kind` (ou par un targeting explicitement déclaré) ; partager un `schemaRef` ne relie jamais deux types d'événement différents. Le Kernel rejette séparément un manifeste dont `schemaRef` n'identifie pas le type et la version déclarés.
 
 ## Produced events
 

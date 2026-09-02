@@ -24,6 +24,8 @@ contracts:
       version: 1
       kind: request
       schemaRef: contracts/events/development.implementation.requested.v1.schema.json
+      targeting:
+        configurationPath: /rules/*/emit
 capabilities:
   requires: []
   provides: []

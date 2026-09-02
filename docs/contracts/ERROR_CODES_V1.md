@@ -31,6 +31,9 @@ Errors crossing the Local API or stored as terminal Execution errors use stable 
 | `project.capability-unresolved` | No | Bound resource does not provide the required capability |
 | `project.request-orphaned` | No | Request contract has no active consumer |
 | `project.request-ambiguous` | No | Request contract resolves to multiple consumers |
+| `project.module-package-unavailable` | No | A saved Module Instance references a Module Package that is unknown, rejected or no longer bundled; the finding targets its `/moduleId` field |
+| `project.instance-config-invalid` | No | Saved Module Instance configuration no longer satisfies its available bundled package schema |
+| `project.contract-incompatible` | No | Producer and consumer edge declarations disagree on event type, version or kind |
 | `project.repository-unavailable` | Maybe | Repository grant/path cannot be resolved |
 | `project.resource-degraded` | Maybe | Runtime/connection/MCP became unavailable |
 

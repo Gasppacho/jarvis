@@ -140,12 +140,16 @@ Draft → Valid → Active → Paused → Archived
 
 ## Validation report
 
+Le rapport `jarvis.dev/project-validation/v1` est calculé par le Project Runtime, derrière son port de validation et son input explicite, uniquement depuis la Portable Configuration et les Local Bindings sauvegardés, avec les métadonnées des Module Packages embarqués. L'adapter Engine charge cet état, fournit les grants et l'accessibilité locale, puis adapte le résultat à la Local API sans posséder la politique de composition. Il contient les routes de requests résolues, les capabilities satisfaites et des findings actionnables ciblant slots, instances ou extrémités d'une edge. Une Request dotée de métadonnées de targeting mais sans émission configurée ne crée ni route ni finding ; une déclaration sans targeting reste soumise à la résolution normale. Toute capability, optionnelle ou requise, est résolue : une optionnelle résolue apparaît dans `satisfiedCapabilities`, tandis que seule son absence de résolution est silencieuse. Chaque capability satisfaite nomme séparément sa cible (`slot` ou `module-instance`) et la ressource source qui la fournit ; un repository utilise le source kind `repository`, et un identifiant de binding ou de candidate n'est jamais présenté comme un `instanceId`. Les routes, capabilities, candidats et findings sont triés par leurs identifiants contractuels ; aucun timestamp ni identifiant aléatoire n'est ajouté. `valid` vaut `true` seulement en l'absence de finding `error`.
+
+`POST /v1/projects/{projectId}/validation-report` est strictement read-only : il ne remplace ni configuration ni bindings, ne change pas l'état du Project et ne crée aucune subscription. L'ancien `POST /v1/projects/{projectId}/validate` reste une projection fermée `{valid, issues}` pour les clients existants. Les codes stables incluent `project.request-orphaned`, `project.request-ambiguous`, `project.capability-unresolved`, `project.binding-missing`, `project.module-package-unavailable`, `project.instance-config-invalid` et `project.contract-incompatible`. Un package inconnu ou rejeté produit `project.module-package-unavailable` sur le champ `/moduleId`, jamais un faux finding de configuration sous `/configuration/moduleId`.
+
 Le rapport vérifie :
 
 - JSON Schema du projet ;
 - packages et versions de modules présents ;
 - schémas de configuration de chaque instance ;
-- compatibilité event type/version ;
+- compatibilité event type/version/kind, sans utiliser `schemaRef` comme identité alternative ;
 - unicité des consumers de requests ;
 - capabilities requises ;
 - bindings et secret refs ;

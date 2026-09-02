@@ -15,13 +15,61 @@ export interface ModuleCatalogEntry {
   readonly configurationSchema: Readonly<Record<string, unknown>> | null;
 }
 
-interface ContractDescriptor {
+interface ContractDescriptorBase {
   readonly type: string;
   readonly version: number;
+  readonly schemaRef: string;
+}
+
+interface ModuleConsumedContractDescriptor extends ContractDescriptorBase {
+  readonly kind: "request" | "fact";
+}
+
+export type ModuleContractDescriptor = ContractDescriptorBase &
+  (
+    | {
+        readonly kind: "request";
+        readonly targeting?: { readonly configurationPath: string };
+      }
+    | {
+        readonly kind: "fact";
+        readonly targeting?: never;
+      }
+  );
+
+interface ModuleCapabilityRequirementBase {
+  readonly id: string;
+  readonly optional?: boolean;
+}
+
+export type ModuleCapabilityRequirement =
+  | (ModuleCapabilityRequirementBase & {
+      readonly binding?: string;
+      readonly resolution?: undefined;
+    })
+  | (ModuleCapabilityRequirementBase & {
+      readonly binding?: string;
+      readonly resolution: { readonly kind: "engine"; readonly ref: string };
+    })
+  | (ModuleCapabilityRequirementBase & {
+      readonly binding: string;
+      readonly resolution: { readonly kind: "project-repository" };
+    });
+
+export interface ModuleRequestTarget {
+  readonly moduleInstanceId?: string;
+  readonly binding?: string;
 }
 
 interface CapabilityDescriptor {
   readonly id: string;
+}
+
+export interface ModuleCompositionMetadata {
+  readonly consumes: readonly ModuleConsumedContractDescriptor[];
+  readonly produces: readonly ModuleContractDescriptor[];
+  readonly requires: readonly ModuleCapabilityRequirement[];
+  readonly provides: readonly string[];
 }
 
 interface ModuleManifest {
@@ -33,11 +81,11 @@ interface ModuleManifest {
     readonly categories: readonly string[];
   };
   readonly contracts: {
-    readonly consumes: readonly ContractDescriptor[];
-    readonly produces: readonly ContractDescriptor[];
+    readonly consumes: readonly ModuleConsumedContractDescriptor[];
+    readonly produces: readonly ModuleContractDescriptor[];
   };
   readonly capabilities: {
-    readonly requires: readonly CapabilityDescriptor[];
+    readonly requires: readonly ModuleCapabilityRequirement[];
     readonly provides: readonly CapabilityDescriptor[];
   };
   readonly configuration?: {
@@ -60,6 +108,8 @@ export interface ModuleConfigurationValidation {
   readonly valid: boolean;
   /** JSON Pointer paths and schema messages only; configuration values are never echoed. */
   readonly issues: readonly string[];
+  /** Stable JSON Pointer target for each issue at the same index. */
+  readonly fields: readonly string[];
 }
 
 /** Filesystem-backed discovery is an adapter injected through this port. */
@@ -111,13 +161,17 @@ export class ModuleManifestContractRegistry {
 
   public requireModuleManifestV1(candidate: DiscoveredModuleManifest): ModuleManifest {
     const document = candidate.document;
-    if (this.validateModuleManifestV1(document)) return document;
+    if (!this.validateModuleManifestV1(document)) {
+      const issues = (this.validateModuleManifestV1.errors ?? []).map(
+        (error) =>
+          `${error.instancePath === "" ? "/" : error.instancePath} ${error.message ?? "is invalid"}`,
+      );
+      throw new InvalidModuleManifestError(candidate.source, issues);
+    }
 
-    const issues = (this.validateModuleManifestV1.errors ?? []).map(
-      (error) =>
-        `${error.instancePath === "" ? "/" : error.instancePath} ${error.message ?? "is invalid"}`,
-    );
-    throw new InvalidModuleManifestError(candidate.source, issues);
+    const issues = contractSchemaRefIssues(document);
+    if (issues.length > 0) throw new InvalidModuleManifestError(candidate.source, issues);
+    return document;
   }
 }
 
@@ -129,6 +183,7 @@ export class ModuleManifestContractRegistry {
 export class ModuleHost {
   private readonly entries: ModuleCatalogEntry[] = [];
   private readonly entriesById = new Map<string, ModuleCatalogEntry>();
+  private readonly compositionById = new Map<string, ModuleCompositionMetadata>();
   private readonly configurationValidators = new Map<string, ValidateFunction>();
   private readonly rejected: ModuleCatalogDiagnostic[] = [];
 
@@ -140,6 +195,12 @@ export class ModuleHost {
         const validator = configurationValidator(entry.configurationSchema);
         this.entries.push(entry);
         this.entriesById.set(entry.moduleId, entry);
+        this.compositionById.set(manifest.metadata.id, {
+          consumes: manifest.contracts.consumes,
+          produces: manifest.contracts.produces,
+          requires: manifest.capabilities.requires,
+          provides: manifest.capabilities.provides.map((capability) => capability.id),
+        });
         if (validator !== undefined) this.configurationValidators.set(entry.moduleId, validator);
       } catch (error) {
         this.rejected.push(toDiagnostic(candidate, error));
@@ -156,27 +217,123 @@ export class ModuleHost {
     return this.entriesById.get(moduleId);
   }
 
+  /** Manifest metadata needed to validate a saved Project composition. */
+  public composition(moduleId: string): ModuleCompositionMetadata | undefined {
+    return this.compositionById.get(moduleId);
+  }
+
+  /**
+   * Reads request targets only through the producer's declared composition path.
+   * Undefined means the contract is untargeted; an empty array means it is targeted
+   * but the saved configuration declares no emissions of this contract.
+   */
+  public configuredRequestTargets(
+    moduleId: string,
+    configuration: Readonly<Record<string, unknown>> | undefined,
+    producedContract: Pick<ModuleContractDescriptor, "type" | "version" | "kind">,
+  ): readonly ModuleRequestTarget[] | undefined {
+    const produced = this.compositionById
+      .get(moduleId)
+      ?.produces.find(
+        (contract) =>
+          contract.type === producedContract.type &&
+          contract.version === producedContract.version &&
+          contract.kind === producedContract.kind,
+      );
+    const path = produced?.targeting?.configurationPath;
+    if (path === undefined) return undefined;
+    if (configuration === undefined) return [];
+    return valuesAtConfigurationPath(configuration, path).flatMap(
+      toRequestTargetFor(producedContract.type),
+    );
+  }
+
   public validateConfiguration(
     moduleId: string,
     configuration: Readonly<Record<string, unknown>>,
   ): ModuleConfigurationValidation {
     if (!this.entriesById.has(moduleId)) {
-      return { valid: false, issues: ["/moduleId is not an accepted bundled Module Package"] };
+      return {
+        valid: false,
+        issues: ["/moduleId is not an accepted bundled Module Package"],
+        fields: ["/moduleId"],
+      };
     }
     const validate = this.configurationValidators.get(moduleId);
-    if (validate === undefined || validate(configuration)) return { valid: true, issues: [] };
+    if (validate === undefined || validate(configuration)) {
+      return { valid: true, issues: [], fields: [] };
+    }
+    const errors = validate.errors ?? [];
     return {
       valid: false,
-      issues: (validate.errors ?? []).map(
+      issues: errors.map(
         (error) =>
           `${error.instancePath === "" ? "/" : error.instancePath} ${error.message ?? "is invalid"}`,
       ),
+      fields: errors.map((error) => {
+        const base = error.instancePath === "" ? "" : error.instancePath;
+        if (error.keyword === "required") {
+          const missing = (error.params as { missingProperty?: unknown }).missingProperty;
+          if (typeof missing === "string") return `${base}/${missing}`;
+        }
+        return base === "" ? "/" : base;
+      }),
     };
   }
 
   public diagnostics(): readonly ModuleCatalogDiagnostic[] {
     return this.rejected;
   }
+}
+
+function contractSchemaRefIssues(manifest: ModuleManifest): string[] {
+  const groups = [
+    ["consumes", manifest.contracts.consumes] as const,
+    ["produces", manifest.contracts.produces] as const,
+  ];
+  return groups.flatMap(([group, contracts]) =>
+    contracts.flatMap((contract, index) => {
+      const expected = `contracts/events/${contract.type}.v${contract.version}.schema.json`;
+      return contract.schemaRef === expected
+        ? []
+        : [`/contracts/${group}/${index}/schemaRef must identify ${expected}`];
+    }),
+  );
+}
+
+function valuesAtConfigurationPath(
+  configuration: Readonly<Record<string, unknown>>,
+  path: string,
+): readonly unknown[] {
+  const segments = path
+    .slice(1)
+    .split("/")
+    .map((segment) => segment.replaceAll("~1", "/").replaceAll("~0", "~"));
+  let values: readonly unknown[] = [configuration];
+  for (const segment of segments) {
+    values = values.flatMap((value) => {
+      if (segment === "*") return Array.isArray(value) ? value : [];
+      if (typeof value !== "object" || value === null || Array.isArray(value)) return [];
+      const child = (value as Readonly<Record<string, unknown>>)[segment];
+      return child === undefined ? [] : [child];
+    });
+  }
+  return values;
+}
+
+function toRequestTargetFor(eventType: string) {
+  return (value: unknown): ModuleRequestTarget[] => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return [];
+    const emission = value as Readonly<Record<string, unknown>>;
+    if (emission["type"] !== eventType) return [];
+    const target = emission["target"];
+    if (typeof target !== "object" || target === null || Array.isArray(target)) return [];
+    const descriptor = target as Readonly<Record<string, unknown>>;
+    const moduleInstanceId = descriptor["moduleInstanceId"];
+    if (typeof moduleInstanceId === "string") return [{ moduleInstanceId }];
+    const binding = descriptor["binding"];
+    return typeof binding === "string" ? [{ binding }] : [];
+  };
 }
 
 function toDiagnostic(
@@ -205,7 +362,7 @@ function toCatalogEntry(
   manifest: ModuleManifest,
   registry: ModulePackageRegistry,
 ): ModuleCatalogEntry {
-  const eventId = (descriptor: ContractDescriptor): string =>
+  const eventId = (descriptor: ContractDescriptorBase): string =>
     `${descriptor.type}.v${descriptor.version}`;
   const configurationSchemaRef = manifest.configuration?.schemaRef ?? null;
   const configurationSchema =

@@ -14,6 +14,8 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Clock } from "../../../../packages/kernel/src/clock.js";
+import { SavedProjectCompositionValidator } from "../../../../packages/project-runtime/src/composition-validator.js";
+import { LocalRepositoryAccessibility } from "./repository-accessibility.js";
 import type { ProjectResourceGrantPort } from "../../../../packages/project-runtime/src/project-types.js";
 import {
   ModuleHost,
@@ -83,6 +85,8 @@ describe("Project configuration replacement", () => {
       moduleHost(),
       new AtomicProjectConfigurationWriter(),
       grants,
+      new SavedProjectCompositionValidator(moduleHost()),
+      new LocalRepositoryAccessibility(),
     );
 
     expect(service.listProjectResourceCandidates("token-warehouse")).toContainEqual(
@@ -128,6 +132,8 @@ describe("Project configuration replacement", () => {
       moduleHost(),
       new AtomicProjectConfigurationWriter(),
       new EmptyProjectResourceGrants(),
+      new SavedProjectCompositionValidator(moduleHost()),
+      new LocalRepositoryAccessibility(),
     );
 
     expect(() =>
@@ -172,6 +178,8 @@ describe("Project configuration replacement", () => {
       moduleHost(),
       cleanupFailure,
       new EmptyProjectResourceGrants(),
+      new SavedProjectCompositionValidator(moduleHost()),
+      new LocalRepositoryAccessibility(),
     );
 
     expect(() =>
@@ -210,6 +218,8 @@ describe("Project configuration replacement", () => {
       moduleHost(),
       new AtomicProjectConfigurationWriter(),
       new EmptyProjectResourceGrants(),
+      new SavedProjectCompositionValidator(moduleHost()),
+      new LocalRepositoryAccessibility(),
     );
 
     expect(() =>
@@ -235,6 +245,8 @@ describe("Project configuration replacement", () => {
       moduleHost(),
       failedCompensation,
       new EmptyProjectResourceGrants(),
+      new SavedProjectCompositionValidator(moduleHost()),
+      new LocalRepositoryAccessibility(),
     );
     expect(() =>
       unsafeService.replaceProjectConfiguration({
@@ -266,6 +278,8 @@ describe("Project deletion", () => {
       moduleHost(),
       new AtomicProjectConfigurationWriter(),
       new EmptyProjectResourceGrants(),
+      new SavedProjectCompositionValidator(moduleHost()),
+      new LocalRepositoryAccessibility(),
     );
 
     expect(() => service.deleteProject("active-project")).toThrowError(

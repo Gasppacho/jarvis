@@ -36,13 +36,24 @@ capabilities:
   requires:
     - id: repository.write
       binding: repository
+      resolution:
+        kind: project-repository
     - id: git.branch
       binding: repository
+      resolution:
+        kind: project-repository
     - id: git.commit
       binding: repository
+      resolution:
+        kind: project-repository
     - id: git.push
       binding: repository
+      resolution:
+        kind: project-repository
     - id: shell.execute
+      resolution:
+        kind: engine
+        ref: engine/local
     - id: work-items.read
       binding: tickets
     - id: agent.execute

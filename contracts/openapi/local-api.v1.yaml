@@ -180,13 +180,32 @@ paths:
       - $ref: "#/components/parameters/ProjectId"
     post:
       operationId: validateProject
+      deprecated: true
       responses:
         "200":
-          description: Composition validation report.
+          description: Legacy composition validation result.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ValidationReport"
+        default:
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /v1/projects/{projectId}/validation-report:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      operationId: generateProjectValidationReportV1
+      responses:
+        "200":
+          description: Versioned composition validation report.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectValidationReportV1"
         default:
           $ref: "#/components/responses/Error"
         "401":
@@ -808,6 +827,108 @@ components:
               bookmarkRef:
                 type: [string, "null"]
                 description: Opaque reference to bookmark bytes owned by the macOS Shell.
+    ValidationContract:
+      type: object
+      additionalProperties: false
+      required: [type, version, kind]
+      properties:
+        type:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        kind:
+          enum: [request, fact]
+    ValidationInstanceTarget:
+      type: object
+      additionalProperties: false
+      required: [instanceId, moduleId]
+      properties:
+        instanceId:
+          type: string
+        moduleId:
+          type: string
+    ValidationContractEndpoint:
+      type: object
+      additionalProperties: false
+      required: [instanceId, moduleId, contract]
+      properties:
+        instanceId:
+          type: string
+        moduleId:
+          type: string
+        contract:
+          $ref: "#/components/schemas/ValidationContract"
+    RequestEdgeFindingTarget:
+      type: object
+      additionalProperties: false
+      required: [kind, contract, producer]
+      properties:
+        kind:
+          const: request-edge
+        contract:
+          $ref: "#/components/schemas/ValidationContract"
+        producer:
+          $ref: "#/components/schemas/ValidationInstanceTarget"
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidationInstanceTarget"
+    ContractEdgeFindingTarget:
+      type: object
+      additionalProperties: false
+      required: [kind, producer, consumer]
+      properties:
+        kind:
+          const: contract-edge
+        producer:
+          $ref: "#/components/schemas/ValidationContractEndpoint"
+        consumer:
+          $ref: "#/components/schemas/ValidationContractEndpoint"
+    ModuleInstanceFindingTarget:
+      type: object
+      additionalProperties: false
+      required: [kind, instanceId, field]
+      properties:
+        kind:
+          const: module-instance
+        instanceId:
+          type: string
+        field:
+          type: string
+    SlotFindingTarget:
+      type: object
+      additionalProperties: false
+      required: [kind, slot]
+      properties:
+        kind:
+          const: slot
+        slot:
+          type: string
+    ModuleCapabilityFindingTarget:
+      type: object
+      additionalProperties: false
+      required: [kind, capability, instanceId]
+      properties:
+        kind:
+          const: capability
+        capability:
+          type: string
+        instanceId:
+          type: string
+        binding:
+          type: string
+    SlotCapabilityFindingTarget:
+      type: object
+      additionalProperties: false
+      required: [kind, capability, slot]
+      properties:
+        kind:
+          const: capability
+        capability:
+          type: string
+        slot:
+          type: string
     ValidationReport:
       type: object
       additionalProperties: false
@@ -830,6 +951,122 @@ components:
                 type: string
               path:
                 type: [string, "null"]
+    ProjectValidationReportV1:
+      type: object
+      additionalProperties: false
+      required: [apiVersion, kind, projectId, valid, requestRoutes, satisfiedCapabilities, findings]
+      properties:
+        apiVersion:
+          const: jarvis.dev/project-validation/v1
+        kind:
+          const: ProjectValidationReport
+        projectId:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9._-]*$"
+        valid:
+          type: boolean
+        requestRoutes:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [contract, producer, consumer]
+            properties:
+              contract:
+                type: object
+                additionalProperties: false
+                required: [type, version, kind]
+                properties:
+                  type:
+                    type: string
+                  version:
+                    type: integer
+                    minimum: 1
+                  kind:
+                    const: request
+              producer:
+                type: object
+                additionalProperties: false
+                required: [instanceId, moduleId]
+                properties:
+                  instanceId:
+                    type: string
+                  moduleId:
+                    type: string
+              consumer:
+                type: object
+                additionalProperties: false
+                required: [instanceId, moduleId]
+                properties:
+                  instanceId:
+                    type: string
+                  moduleId:
+                    type: string
+        satisfiedCapabilities:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [capability, target, source]
+            properties:
+              capability:
+                type: string
+              target:
+                oneOf:
+                  - type: object
+                    additionalProperties: false
+                    required: [kind, instanceId]
+                    properties:
+                      kind:
+                        const: module-instance
+                      instanceId:
+                        type: string
+                  - type: object
+                    additionalProperties: false
+                    required: [kind, slot]
+                    properties:
+                      kind:
+                        const: slot
+                      slot:
+                        type: string
+              source:
+                type: object
+                additionalProperties: false
+                required: [kind, ref]
+                properties:
+                  kind:
+                    enum: [connection, runtime, mcp, module-instance, engine, repository]
+                  ref:
+                    type: string
+        findings:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [code, severity, message, target]
+            properties:
+              code:
+                enum:
+                  - project.binding-missing
+                  - project.capability-unresolved
+                  - project.contract-incompatible
+                  - project.instance-config-invalid
+                  - project.module-package-unavailable
+                  - project.request-ambiguous
+                  - project.request-orphaned
+              severity:
+                enum: [error, warning]
+              message:
+                type: string
+                minLength: 1
+              target:
+                oneOf:
+                  - $ref: "#/components/schemas/RequestEdgeFindingTarget"
+                  - $ref: "#/components/schemas/ContractEdgeFindingTarget"
+                  - $ref: "#/components/schemas/ModuleInstanceFindingTarget"
+                  - $ref: "#/components/schemas/SlotFindingTarget"
+                  - $ref: "#/components/schemas/ModuleCapabilityFindingTarget"
+                  - $ref: "#/components/schemas/SlotCapabilityFindingTarget"
     ModuleInstance:
       type: object
       required: [instanceId, moduleId, version, enabled, status]

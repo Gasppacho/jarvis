@@ -10,10 +10,16 @@ import type {
   ProjectDetail,
   ProjectResourceCandidateRegistry,
   ProjectSummary,
+  ProjectValidationReport,
   RepositoryDiscovery,
 } from "./types.js";
 
-export type LocalProjectRegistry = ProjectRegistry<ProjectSummary, ProjectDetail, ProjectBindings> &
+export type LocalProjectRegistry = ProjectRegistry<
+  ProjectSummary,
+  ProjectDetail,
+  ProjectBindings,
+  ProjectValidationReport
+> &
   ProjectResourceCandidateRegistry;
 export type LocalRepositoryDiscovery = RepositoryDiscoveryPort<RepositoryDiscovery>;
 
@@ -57,6 +63,24 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
     const params = request.params as { projectId?: unknown } | undefined;
     const detail = service.getProject(params?.projectId);
     return reply.code(200).send(detail);
+  });
+
+  app.post("/v1/projects/:projectId/validate", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    const report = service.validateProject(params?.projectId);
+    const issues = report.findings.map(({ code, severity, message }) => ({
+      code,
+      severity,
+      message,
+    }));
+    return reply.code(200).send({ valid: report.valid, issues });
+  });
+
+  app.post("/v1/projects/:projectId/validation-report", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    return reply.code(200).send(service.validateProject(params?.projectId));
   });
 
   app.delete("/v1/projects/:projectId", async (request, reply) => {
