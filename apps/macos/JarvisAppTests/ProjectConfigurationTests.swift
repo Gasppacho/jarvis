@@ -265,54 +265,62 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(presentation.repositories.map(\.repositoryId), ["main"])
         XCTAssertEqual(presentation.slots.map(\.id), ["sourceControl"])
         XCTAssertEqual(presentation.modules.map(\.moduleId), ["jarvis.module.github"])
-        XCTAssertTrue(presentation.actions.contains(.chooseRepository("main")))
-        XCTAssertTrue(presentation.actions.contains(.addSlot))
+        XCTAssertTrue(presentation.actions.contains(.repositoryPicker(.chooseRepository("main"))))
+        XCTAssertTrue(presentation.actions.contains(.edit(.addSlot)))
         XCTAssertEqual(
             presentation.actions.compactMap { action -> String? in
-                guard case .addModule(let packageId) = action else { return nil }
+                guard case .edit(.addModule(let packageId)) = action else { return nil }
                 return packageId
             }.sorted(),
             catalog.packages.map(\.moduleId).sorted())
-        XCTAssertTrue(presentation.actions.contains(.setProjectName("Action-edited Project")))
-        XCTAssertTrue(presentation.actions.contains(.removeSlot("sourceControl")))
+        XCTAssertTrue(
+            presentation.actions.contains(.edit(.setProjectName("Action-edited Project"))))
+        XCTAssertTrue(presentation.actions.contains(.edit(.removeSlot("sourceControl"))))
         XCTAssertTrue(
             presentation.actions.contains(
-                .setSlotRequirement("sourceControl", "scm.change-request.manage")))
-        XCTAssertTrue(presentation.actions.contains(.setSlotOptional("sourceControl", true)))
+                .edit(.setSlotRequirement("sourceControl", "scm.change-request.manage"))))
+        XCTAssertTrue(
+            presentation.actions.contains(.edit(.setSlotOptional("sourceControl", true))))
         XCTAssertTrue(
             presentation.actions.contains(
-                .setSlotDescription("sourceControl", "Primary source-control provider")))
-        XCTAssertTrue(presentation.actions.contains(.setLocalBinding("sourceControl", nil)))
-        XCTAssertTrue(presentation.actions.contains(.removeModule(moduleId)))
+                .edit(
+                    .setSlotDescription("sourceControl", "Primary source-control provider"))))
         XCTAssertTrue(
-            presentation.actions.contains(.setModulePackage(moduleId, github.moduleId)))
+            presentation.actions.contains(.asynchronous(.setLocalBinding("sourceControl", nil))))
+        XCTAssertTrue(presentation.actions.contains(.edit(.removeModule(moduleId))))
         XCTAssertTrue(
-            presentation.actions.contains(.setModuleInstanceID(moduleId, "github-primary")))
-        XCTAssertTrue(presentation.actions.contains(.setModuleEnabled(moduleId, true)))
+            presentation.actions.contains(.edit(.setModulePackage(moduleId, github.moduleId))))
         XCTAssertTrue(
-            presentation.actions.contains(.setModuleRuntimeSlot(moduleId, "sourceControl")))
-        XCTAssertTrue(presentation.actions.contains(.addModuleBinding(moduleId)))
-        XCTAssertTrue(
-            presentation.actions.contains(.removeModuleBinding(moduleId, "repository")))
+            presentation.actions.contains(.edit(.setModuleInstanceID(moduleId, "github-primary"))))
+        XCTAssertTrue(presentation.actions.contains(.edit(.setModuleEnabled(moduleId, true))))
         XCTAssertTrue(
             presentation.actions.contains(
-                .setModuleBinding(moduleId, "repository", "main")))
+                .edit(.setModuleRuntimeSlot(moduleId, "sourceControl"))))
+        XCTAssertTrue(presentation.actions.contains(.edit(.addModuleBinding(moduleId))))
+        XCTAssertTrue(
+            presentation.actions.contains(.edit(.removeModuleBinding(moduleId, "repository"))))
         XCTAssertTrue(
             presentation.actions.contains(
-                .setModuleConfiguration(moduleId, "pollIntervalSeconds", "60")))
-        XCTAssertTrue(presentation.actions.contains(.saveLocal))
-        XCTAssertTrue(presentation.actions.contains(.saveRepository))
-        XCTAssertTrue(presentation.actions.contains(.deleteProject))
-        XCTAssertTrue(presentation.actions.contains(.cancelProjectDeletion))
-        XCTAssertEqual(ProjectDetailPresentation.Action.deleteProject.label, "Delete Project…")
-        XCTAssertEqual(ProjectDetailPresentation.Action.cancelProjectDeletion.label, "Cancel")
-        XCTAssertEqual(ProjectDetailPresentation.Action.deleteProject.routing, .confirmation)
-        XCTAssertEqual(ProjectDetailPresentation.Action.confirmProjectDeletion.routing, .asynchronous)
-        XCTAssertEqual(ProjectDetailPresentation.Action.cancelProjectDeletion.routing, .noOp)
+                .edit(.setModuleBinding(moduleId, "repository", "main"))))
+        XCTAssertTrue(
+            presentation.actions.contains(
+                .edit(.setModuleConfiguration(moduleId, "pollIntervalSeconds", "60"))))
+        XCTAssertTrue(presentation.actions.contains(.asynchronous(.saveLocal)))
+        XCTAssertTrue(presentation.actions.contains(.asynchronous(.saveRepository)))
+        XCTAssertTrue(presentation.actions.contains(.confirmation(.deleteProject)))
+        XCTAssertTrue(presentation.actions.contains(.noOp(.cancelProjectDeletion)))
         XCTAssertEqual(
-            presentation.deletionConfirmation.confirmAction, .confirmProjectDeletion)
+            ProjectDetailPresentation.Action.Confirmation.deleteProject.label,
+            "Delete Project…")
         XCTAssertEqual(
-            presentation.deletionConfirmation.cancelAction, .cancelProjectDeletion)
+            ProjectDetailPresentation.Action.NoOp.cancelProjectDeletion.label,
+            "Cancel")
+        XCTAssertEqual(
+            presentation.deletionConfirmation.confirmAction,
+            .confirmProjectDeletion)
+        XCTAssertEqual(
+            presentation.deletionConfirmation.cancelAction,
+            .cancelProjectDeletion)
         XCTAssertEqual(presentation.deletionConfirmation.title, "Delete “\(imported.name)”?")
         XCTAssertTrue(presentation.deletionConfirmation.message.contains("Project Registry record"))
         XCTAssertTrue(
@@ -320,7 +328,8 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertTrue(presentation.deletionConfirmation.message.contains("Local Bindings"))
         XCTAssertTrue(presentation.deletionConfirmation.message.contains("Repository Grant"))
         XCTAssertTrue(presentation.deletionConfirmation.message.contains("remain untouched"))
-        XCTAssertEqual(presentation.deletionConfirmation.cancelLabel, "Cancel")
+        XCTAssertEqual(presentation.deletionConfirmation.cancelAction.label, "Cancel")
+        XCTAssertEqual(presentation.deletionConfirmation.confirmAction.label, "Delete Project")
         XCTAssertTrue(presentation.deletionConfirmation.isEnabled)
         let activeProject = Project(
             id: imported.id,
@@ -337,8 +346,7 @@ final class ProjectConfigurationTests: XCTestCase {
             ).deletionConfirmation.isEnabled)
         XCTAssertTrue(presentation.isSaveEnabled)
 
-        await configuration.perform(
-            .saveLocal, projectId: imported.id, packages: catalog.packages)
+        await configuration.perform(.saveLocal, projectId: imported.id)
         let saved = configuration.state(for: imported.id).detail
         XCTAssertEqual(saved?.portableConfiguration?.metadata.name, "Action-edited Project")
         XCTAssertEqual(saved?.modules.map(\.moduleId), ["jarvis.module.github"])
@@ -355,7 +363,7 @@ final class ProjectConfigurationTests: XCTestCase {
             })
         await configuration.perform(
             .setLocalBinding("sourceControl", candidate.id),
-            projectId: imported.id, packages: catalog.packages)
+            projectId: imported.id)
         XCTAssertEqual(
             configuration.state(for: imported.id).localBindings?.slots.map(\.slotId),
             ["sourceControl"])

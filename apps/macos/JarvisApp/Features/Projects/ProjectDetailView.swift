@@ -68,11 +68,11 @@ public struct ProjectDetailView: View {
             presentation.deletionConfirmation.title,
             isPresented: $isDeleteConfirmationPresented
         ) {
-            Button(presentation.deletionConfirmation.cancelLabel, role: .cancel) {
-                perform(presentation.deletionConfirmation.cancelAction)
+            Button(presentation.deletionConfirmation.cancelAction.label, role: .cancel) {
+                perform(.noOp(presentation.deletionConfirmation.cancelAction))
             }
-            Button(presentation.deletionConfirmation.confirmLabel, role: .destructive) {
-                perform(presentation.deletionConfirmation.confirmAction)
+            Button(presentation.deletionConfirmation.confirmAction.label, role: .destructive) {
+                perform(.asynchronous(presentation.deletionConfirmation.confirmAction))
             }
         } message: {
             Text(presentation.deletionConfirmation.message)
@@ -100,10 +100,12 @@ public struct ProjectDetailView: View {
         projects.isDeletionInProgress(projectId: project.id)
     }
 
-    private var addModuleActions: [ProjectDetailPresentation.Action] {
-        presentation.actions.filter {
-            if case .addModule = $0 { return true }
-            return false
+    private var addModuleActions: [ProjectDetailPresentation.Action.Edit] {
+        presentation.actions.compactMap { action in
+            guard case .edit(let edit) = action,
+                case .addModule = edit
+            else { return nil }
+            return edit
         }
     }
 
@@ -134,9 +136,9 @@ public struct ProjectDetailView: View {
                 }
                 .font(.callout)
                 if !binding.accessible || projects.repositoryGrantMessages[project.id] != nil {
-                    let action = ProjectDetailPresentation.Action.chooseRepository(
-                        binding.repositoryId)
-                    Button(action.label) { perform(action) }
+                    let picker = ProjectDetailPresentation.Action.RepositoryPicker
+                        .chooseRepository(binding.repositoryId)
+                    Button(picker.label) { perform(.repositoryPicker(picker)) }
                 }
             }
             if let message = projects.repositoryGrantMessages[project.id] {
@@ -159,13 +161,13 @@ public struct ProjectDetailView: View {
                 Text("Module Instances").font(.headline)
                 Spacer()
                 Menu("Add Module Instance") {
-                    ForEach(addModuleActions, id: \.self) { action in
-                        if case .addModule(let packageId) = action,
+                    ForEach(addModuleActions, id: \.self) { edit in
+                        if case .addModule(let packageId) = edit,
                             let package = moduleCatalog.packages.first(where: {
                                 $0.moduleId == packageId
                             })
                         {
-                            Button(package.displayName) { perform(action) }
+                            Button(package.displayName) { perform(.edit(edit)) }
                         }
                     }
                 }
@@ -190,7 +192,7 @@ public struct ProjectDetailView: View {
                         TextField("Required capability", text: slotRequirementBinding(slot))
                         Toggle("Optional", isOn: slotOptionalBinding(slot))
                         Button(role: .destructive) {
-                            perform(.removeSlot(slot))
+                            perform(.edit(.removeSlot(slot)))
                         } label: {
                             Image(systemName: "trash")
                         }
@@ -199,8 +201,8 @@ public struct ProjectDetailView: View {
                     TextField("Description", text: slotDescriptionBinding(slot))
                 }
             }
-            let action = ProjectDetailPresentation.Action.addSlot
-            Button(action.label) { perform(action) }
+            let edit = ProjectDetailPresentation.Action.Edit.addSlot
+            Button(edit.label) { perform(.edit(edit)) }
         }
     }
 
@@ -216,7 +218,7 @@ public struct ProjectDetailView: View {
                 }
                 Toggle("Enabled", isOn: moduleEnabledBinding(module.id))
                 Button(role: .destructive) {
-                    perform(.removeModule(module.id))
+                    perform(.edit(.removeModule(module.id)))
                 } label: {
                     Image(systemName: "trash")
                 }
@@ -252,15 +254,15 @@ public struct ProjectDetailView: View {
                         ForEach(options, id: \.self) { Text($0).tag($0) }
                     }
                     Button(role: .destructive) {
-                        perform(.removeModuleBinding(module.id, key))
+                        perform(.edit(.removeModuleBinding(module.id, key)))
                     } label: {
                         Image(systemName: "minus.circle")
                     }
                     .buttonStyle(.borderless)
                 }
             }
-            let action = ProjectDetailPresentation.Action.addModuleBinding(module.id)
-            Button(action.label) { perform(action, bindingOptions: options) }
+            let edit = ProjectDetailPresentation.Action.Edit.addModuleBinding(module.id)
+            Button(edit.label) { perform(.edit(edit), bindingOptions: options) }
         }
     }
 
@@ -278,8 +280,9 @@ public struct ProjectDetailView: View {
                                 get: { module.configurationValues[field.key] == "true" },
                                 set: { value in
                                     perform(
-                                        .setModuleConfiguration(
-                                            module.id, field.key, value ? "true" : "false"))
+                                        .edit(
+                                            .setModuleConfiguration(
+                                                module.id, field.key, value ? "true" : "false")))
                                 }))
                     case .choice(let choices):
                         Picker(
@@ -340,8 +343,10 @@ public struct ProjectDetailView: View {
     private var deleteAction: some View {
         VStack(alignment: .leading, spacing: 8) {
             Divider()
-            let action = ProjectDetailPresentation.Action.deleteProject
-            Button(action.label, role: .destructive) { perform(action) }
+            let confirmation = ProjectDetailPresentation.Action.Confirmation.deleteProject
+            Button(confirmation.label, role: .destructive) {
+                perform(.confirmation(confirmation))
+            }
             .disabled(!presentation.deletionConfirmation.isEnabled)
             if project.status == .active {
                 Text("Pause this Project before deleting it.")
@@ -353,11 +358,11 @@ public struct ProjectDetailView: View {
 
     private var saveActions: some View {
         HStack {
-            let saveLocal = ProjectDetailPresentation.Action.saveLocal
-            Button(saveLocal.label) { perform(saveLocal) }
+            let saveLocal = ProjectDetailPresentation.Action.Asynchronous.saveLocal
+            Button(saveLocal.label) { perform(.asynchronous(saveLocal)) }
             .keyboardShortcut("s", modifiers: [.command])
-            let saveRepository = ProjectDetailPresentation.Action.saveRepository
-            Button(saveRepository.label) { perform(saveRepository) }
+            let saveRepository = ProjectDetailPresentation.Action.Asynchronous.saveRepository
+            Button(saveRepository.label) { perform(.asynchronous(saveRepository)) }
         }
         .disabled(!presentation.isSaveEnabled)
     }
@@ -366,69 +371,60 @@ public struct ProjectDetailView: View {
         _ action: ProjectDetailPresentation.Action,
         bindingOptions: [String] = []
     ) {
-        switch action.routing {
-        case .repositoryPicker:
-            guard case .chooseRepository(let repositoryId) = action,
-                let binding = presentation.repositories.first(where: {
+        switch action {
+        case .repositoryPicker(let picker):
+            switch picker {
+            case .chooseRepository(let repositoryId):
+                guard let binding = presentation.repositories.first(where: {
                     $0.repositoryId == repositoryId
-                })
-            else { return }
-            chooseRepository(for: binding)
+                }) else { return }
+                chooseRepository(for: binding)
+            }
         case .confirmation:
             isDeleteConfirmationPresented = true
-        case .asynchronous:
+        case .asynchronous(let operation):
             Task {
-                await projectConfiguration.perform(
-                    action,
-                    projectId: project.id,
-                    packages: moduleCatalog.packages,
-                    bindingOptions: bindingOptions)
+                await projectConfiguration.perform(operation, projectId: project.id)
             }
-        case .edit:
+        case .edit(let edit):
             projectConfiguration.apply(
-                action,
+                edit,
                 projectId: project.id,
                 packages: moduleCatalog.packages,
                 bindingOptions: bindingOptions)
         case .noOp:
-            Task {
-                await projectConfiguration.perform(
-                    action,
-                    projectId: project.id,
-                    packages: moduleCatalog.packages,
-                    bindingOptions: bindingOptions)
-            }
+            return
         }
     }
 
     private var projectNameBinding: Binding<String> {
         Binding(
             get: { state.draft?.name ?? "" },
-            set: { perform(.setProjectName($0)) })
+            set: { perform(.edit(.setProjectName($0))) })
     }
 
     private func moduleInstanceIDBinding(_ id: UUID) -> Binding<String> {
         Binding(
             get: { state.draft?.modules.first(where: { $0.id == id })?.instanceId ?? "" },
-            set: { perform(.setModuleInstanceID(id, $0)) })
+            set: { perform(.edit(.setModuleInstanceID(id, $0))) })
     }
 
     private func moduleEnabledBinding(_ id: UUID) -> Binding<Bool> {
         Binding(
             get: { state.draft?.modules.first(where: { $0.id == id })?.enabled ?? false },
-            set: { perform(.setModuleEnabled(id, $0)) })
+            set: { perform(.edit(.setModuleEnabled(id, $0))) })
     }
 
     private func moduleRuntimeSlotBinding(_ id: UUID) -> Binding<String> {
         Binding(
             get: { state.draft?.modules.first(where: { $0.id == id })?.runtimeSlot ?? "" },
-            set: { perform(.setModuleRuntimeSlot(id, $0)) })
+            set: { perform(.edit(.setModuleRuntimeSlot(id, $0))) })
     }
 
     private func modulePackageBinding(_ id: UUID, _ fallback: String) -> Binding<String> {
         Binding(
             get: { state.draft?.modules.first(where: { $0.id == id })?.moduleId ?? fallback },
-            set: { perform(.setModulePackage(id, $0)) })
+            set: { perform(.edit(.setModulePackage(id, $0))) })
     }
 
     private func configurationBinding(_ id: UUID, _ key: String) -> Binding<String> {
@@ -436,43 +432,43 @@ public struct ProjectDetailView: View {
             get: {
                 state.draft?.modules.first(where: { $0.id == id })?.configurationValues[key] ?? ""
             },
-            set: { perform(.setModuleConfiguration(id, key, $0)) })
+            set: { perform(.edit(.setModuleConfiguration(id, key, $0))) })
     }
 
     private func moduleBindingValue(_ id: UUID, _ key: String) -> Binding<String> {
         Binding(
             get: { state.draft?.modules.first(where: { $0.id == id })?.bindings[key] ?? "" },
-            set: { perform(.setModuleBinding(id, key, $0)) })
+            set: { perform(.edit(.setModuleBinding(id, key, $0))) })
     }
 
     private func moduleBindingName(_ id: UUID, _ oldKey: String) -> Binding<String> {
         Binding(
             get: { oldKey },
-            set: { perform(.renameModuleBinding(id, oldKey, $0)) })
+            set: { perform(.edit(.renameModuleBinding(id, oldKey, $0))) })
     }
 
     private func slotRequirementBinding(_ slot: String) -> Binding<String> {
         Binding(
             get: { state.draft?.slotRequirements[slot]?.requires ?? "" },
-            set: { perform(.setSlotRequirement(slot, $0)) })
+            set: { perform(.edit(.setSlotRequirement(slot, $0))) })
     }
 
     private func slotOptionalBinding(_ slot: String) -> Binding<Bool> {
         Binding(
             get: { state.draft?.slotRequirements[slot]?.optional ?? false },
-            set: { perform(.setSlotOptional(slot, $0)) })
+            set: { perform(.edit(.setSlotOptional(slot, $0))) })
     }
 
     private func slotDescriptionBinding(_ slot: String) -> Binding<String> {
         Binding(
             get: { state.draft?.slotRequirements[slot]?.description ?? "" },
-            set: { perform(.setSlotDescription(slot, $0)) })
+            set: { perform(.edit(.setSlotDescription(slot, $0))) })
     }
 
     private func slotNameBinding(_ oldName: String) -> Binding<String> {
         Binding(
             get: { oldName },
-            set: { perform(.renameSlot(oldName, $0)) })
+            set: { perform(.edit(.renameSlot(oldName, $0))) })
     }
 
     private func localBindingSelection(_ slot: String) -> Binding<String> {
@@ -483,7 +479,9 @@ public struct ProjectDetailView: View {
                 return "\(binding.kind.rawValue)/\(binding.ref)"
             },
             set: { selection in
-                perform(.setLocalBinding(slot, selection.isEmpty ? nil : selection))
+                perform(
+                    .asynchronous(
+                        .setLocalBinding(slot, selection.isEmpty ? nil : selection)))
             })
     }
 

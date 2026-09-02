@@ -136,13 +136,12 @@ public final class ProjectConfigurationModel {
 
     /// Applies synchronous Project Wizard edits through the presentation's action seam.
     public func apply(
-        _ action: ProjectDetailPresentation.Action,
+        _ edit: ProjectDetailPresentation.Action.Edit,
         projectId: String,
         packages: [ModulePackage],
         bindingOptions: [String] = []
     ) {
-        guard action.routing == .edit else { return }
-        switch action {
+        switch edit {
         case .setProjectName(let name):
             editDraft(projectId: projectId) { $0.name = name }
         case .addSlot:
@@ -199,44 +198,27 @@ public final class ProjectConfigurationModel {
             editModule(projectId: projectId, moduleId: moduleId) {
                 $0.configurationValues[key] = value
             }
-        case .chooseRepository, .setLocalBinding, .saveLocal, .saveRepository, .deleteProject,
-            .confirmProjectDeletion, .cancelProjectDeletion:
-            break
         }
     }
 
-    /// Performs asynchronous binding and save actions; edit actions are delegated to `apply`.
+    /// Performs asynchronous Project Configuration actions.
     public func perform(
-        _ action: ProjectDetailPresentation.Action,
-        projectId: String,
-        packages: [ModulePackage],
-        bindingOptions: [String] = []
+        _ operation: ProjectDetailPresentation.Action.Asynchronous,
+        projectId: String
     ) async {
-        switch action.routing {
-        case .edit:
-            apply(
-                action,
-                projectId: projectId,
-                packages: packages,
-                bindingOptions: bindingOptions)
-        case .repositoryPicker, .confirmation, .noOp:
-            return
-        case .asynchronous:
-            guard let operation = action.asyncOperation else { return }
-            switch operation {
-            case .setLocalBinding(let slotId, let candidateId):
-                let candidate = candidateId.flatMap { id in
-                    state(for: projectId).candidates.first { $0.id == id }
-                }
-                _ = await setLocalBinding(
-                    projectId: projectId, slotId: slotId, candidate: candidate)
-            case .saveLocal:
-                _ = await saveDraft(projectId: projectId, writeToRepository: false)
-            case .saveRepository:
-                _ = await saveDraft(projectId: projectId, writeToRepository: true)
-            case .confirmProjectDeletion:
-                _ = await deleteProject(projectId: projectId)
+        switch operation {
+        case .setLocalBinding(let slotId, let candidateId):
+            let candidate = candidateId.flatMap { id in
+                state(for: projectId).candidates.first { $0.id == id }
             }
+            _ = await setLocalBinding(
+                projectId: projectId, slotId: slotId, candidate: candidate)
+        case .saveLocal:
+            _ = await saveDraft(projectId: projectId, writeToRepository: false)
+        case .saveRepository:
+            _ = await saveDraft(projectId: projectId, writeToRepository: true)
+        case .confirmProjectDeletion:
+            _ = await deleteProject(projectId: projectId)
         }
     }
 

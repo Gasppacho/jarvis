@@ -76,8 +76,17 @@ final class ProjectImportTests: XCTestCase {
         XCTAssertTrue(
             projects.isRepositoryAccessRetained(projectId: imported.id, repositoryId: "main"))
 
-        let deletion = await configuration.deleteProject(projectId: imported.id)
-        XCTAssertEqual(deletion, .success)
+        let presentation = ProjectDetailPresentation(
+            project: imported,
+            detail: configuration.state(for: imported.id).detail,
+            state: configuration.state(for: imported.id),
+            packages: [])
+        XCTAssertTrue(presentation.actions.contains(.confirmation(.deleteProject)))
+        XCTAssertEqual(presentation.deletionConfirmation.confirmAction, .confirmProjectDeletion)
+
+        await configuration.perform(
+            presentation.deletionConfirmation.confirmAction,
+            projectId: imported.id)
         XCTAssertTrue(projects.projects.isEmpty)
         XCTAssertNil(configuration.states[imported.id])
         XCTAssertNil(try grantStore.resolve(bookmarkRef: bookmarkRef))
@@ -242,8 +251,16 @@ final class ProjectImportTests: XCTestCase {
         let before = configuration.state(for: imported.id)
         let bookmarkRef = try XCTUnwrap(before.detail?.bindings.first?.bookmarkRef)
 
-        await configuration.perform(
-            .cancelProjectDeletion, projectId: imported.id, packages: [])
+        let presentation = ProjectDetailPresentation(
+            project: imported,
+            detail: before.detail,
+            state: before,
+            packages: [])
+        XCTAssertTrue(presentation.actions.contains(.confirmation(.deleteProject)))
+        XCTAssertTrue(presentation.actions.contains(.noOp(.cancelProjectDeletion)))
+        guard case .cancelProjectDeletion = presentation.deletionConfirmation.cancelAction else {
+            return XCTFail("deletion cancellation must route as a no-op")
+        }
 
         XCTAssertEqual(projects.projects, [imported])
         XCTAssertEqual(configuration.state(for: imported.id), before)
