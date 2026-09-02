@@ -92,6 +92,29 @@ Jarvis affiche :
 
 Un projet invalide peut être sauvegardé mais pas activé.
 
+### Grammaire de composition guidée
+
+La grammaire retenue est un **parcours par étapes persistantes dans un split view natif** : `Starting point`, `Module Instances`, `Automation Rules`, `Resources`, puis `Review`. La liste d'étapes reste visible et signale les éléments complets, incomplets ou bloqués ; le panneau de détail édite une étape à la fois. L'utilisateur peut revenir à toute étape sans perdre les valeurs du Draft. La divulgation est progressive, mais `Review` reste toujours accessible et distingue un Draft sauvegardable de l'état de validation détenu par l'Engine.
+
+Cette décision vient d'une comparaison de trois prototypes SwiftUI structurellement différents, tous alimentés par les mêmes quatre fixtures en mémoire, de forme `jarvis.dev/project-composition-choices/v1` :
+
+- **Fresh** : aucun starting point, aucune Module Instance et aucun Event choisi ;
+- **Valid** : GitHub Development, une Request résolue et une ressource éligible liée ;
+- **Orphaned** : la phrase de Rule est conservée, mais l'Engine explique qu'aucun consumer actif n'est disponible et qu'aucune ressource éligible n'existe ;
+- **Ambiguous** : deux consumers actifs sont présentés avec l'explication de routage de l'Engine.
+
+| Prototype | Structure | Utilisabilité et divulgation | Préservation / états vides | Clavier, VoiceOver et texte accessible |
+|---|---|---|---|---|
+| Assistant modal linéaire | Une séquence `Back` / `Next` qui verrouille les étapes futures | Très clair pour Fresh, mais masque trop longtemps les conflits Orphaned/Ambiguous et rend la correction transversale lente | Les valeurs survivent à `Back`, mais la validation par page encourage à bloquer un Draft incomplet ; les états vides sont actionnables mais isolés | Ordre clavier simple ; VoiceOver perd le contexte global et annonce mal la relation entre erreur et étape masquée |
+| Canevas de composition | Colonnes Module Instance → Event → consumer/resource, avec Review en panneau | Excellent pour lire Valid et Ambiguous, mais dense, peu progressif et trop proche d'un éditeur de graphe impératif | La phrase reste visible lors d'un conflit ; Fresh devient un grand canevas vide dont l'action initiale est peu évidente | Navigation bidimensionnelle coûteuse ; ordre VoiceOver et représentation texte/liste fragiles |
+| Étapes persistantes en split view | Liste d'étapes avec état, détail de l'étape sélectionnée et Review toujours accessible | Bon point de départ pour Fresh, correction directe d'Orphaned/Ambiguous, et vue globale sans prétendre persister un graphe | Le même Draft alimente toutes les étapes ; chaque vide nomme l'indisponibilité, son impact et l'action de réparation | Ordre clavier stable liste puis détail ; chaque ligne expose label, valeur, état et hint ; le contenu possède une représentation textuelle/liste complète |
+
+Le troisième prototype est retenu : il combine la progression du wizard avec la navigation de réparation nécessaire aux Drafts réouverts, respecte le split view macOS existant et ne transforme pas les Events en graphe éditable. Les prototypes et leurs assets ont été supprimés après comparaison ; aucun `View` prototype n'est une surface de production.
+
+L'inventaire de présentation retenu est piloté par les données : cinq sections ordonnées, des lignes avec état et action, un ordre clavier stable, puis pour chaque ligne un rôle, un label, une valeur et un hint accessibles. Les phrases saisies sont distinctes des explications de routage. Les statuts `resolved`, `broadcast`, `orphaned` et `ambiguous` ainsi que leurs explications viennent de la réponse de l'Engine ; Swift ne recalcule ni consumer ni compatibilité.
+
+La comparaison native utilise le build de l'app empaquetée pour vérifier structure, tailles et navigation, et XCTest vérifie l'inventaire observable sur les quatre fixtures. SwiftPM ne fournit pas de target XCUITest pour l'exécutable SwiftPM macOS ; l'automatisation UI/VoiceOver de bout en bout reste donc une vérification manuelle de l'app empaquetée, et non un test `swift test` prétendument équivalent.
+
 ## Overview projet
 
 Affiche :
