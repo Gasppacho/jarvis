@@ -37,6 +37,7 @@ public struct ProjectDetailView: View {
                             portableConfigurationEditor(detail)
                             localBindingsEditor
                             compositionReview(proxy)
+                            validationReport
                             saveActions
                         } else {
                             Label(
@@ -684,6 +685,42 @@ public struct ProjectDetailView: View {
             }
         }
         .id("composition-review")
+    }
+
+    private var validationReport: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Validation Report").sectionLabel()
+            Label(
+                presentation.validation.title,
+                systemImage: presentation.validation.status == .valid
+                    ? "checkmark.seal.fill" : "checkmark.seal")
+                .foregroundStyle(
+                    presentation.validation.status == .valid ? .green : .secondary)
+
+            if presentation.validation.status == .validating {
+                ProgressView("Checking saved Project composition…")
+            }
+
+            ForEach(presentation.validation.requestRoutes) { route in
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(route.contractIdentity).font(.body.monospaced())
+                    Text(route.route).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            ForEach(presentation.validation.satisfiedCapabilities) { capability in
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(capability.capability).font(.body.monospaced())
+                    Text(capability.detail).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            let validate = ProjectDetailPresentation.Action.Asynchronous.validate
+            Button(validate.label) { perform(.asynchronous(validate)) }
+                .disabled(
+                    !presentation.isReadyForValidation
+                        || presentation.validation.status == .validating)
+        }
+        .id("validation-report")
     }
 
     private var deleteAction: some View {

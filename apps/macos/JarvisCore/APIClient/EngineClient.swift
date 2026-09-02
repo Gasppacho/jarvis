@@ -279,6 +279,24 @@ public struct EngineClient: Sendable {
         }
     }
 
+    public func generateProjectValidationReport(projectId: String) async throws
+        -> ProjectValidationReport
+    {
+        let operation = "POST /v1/projects/\(projectId)/validation-report"
+        let output = try await underlying.generateProjectValidationReportV1(
+            .init(path: .init(projectId: projectId)))
+        switch output {
+        case .ok(let ok):
+            return try ProjectValidationReport(payload: ok.body.json)
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
     public func deleteProject(id: String) async throws {
         let operation = "DELETE /v1/projects/\(id)"
         let output = try await underlying.deleteProject(

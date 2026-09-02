@@ -401,6 +401,285 @@ public struct ProjectCompositionReview: Sendable, Equatable {
     }
 }
 
+public struct ProjectValidationContract: Sendable, Equatable {
+    public enum Kind: String, Sendable, Equatable { case request, fact }
+
+    public let type: String
+    public let version: Int
+    public let kind: Kind
+
+    public var identity: String { "\(type).v\(version).\(kind.rawValue)" }
+}
+
+public struct ProjectValidationInstanceTarget: Sendable, Equatable {
+    public let instanceId: String
+    public let moduleId: String
+}
+
+public struct ProjectValidationContractEndpoint: Sendable, Equatable {
+    public let instance: ProjectValidationInstanceTarget
+    public let contract: ProjectValidationContract
+}
+
+public struct ProjectRequestRoute: Sendable, Equatable {
+    public let contract: ProjectValidationContract
+    public let producer: ProjectValidationInstanceTarget
+    public let consumer: ProjectValidationInstanceTarget
+}
+
+public struct ProjectSatisfiedCapability: Sendable, Equatable {
+    public enum Target: Sendable, Equatable {
+        case moduleInstance(String)
+        case slot(String)
+
+        public var reference: String {
+            switch self {
+            case .moduleInstance(let instanceId): "module-instance/\(instanceId)"
+            case .slot(let slot): "slot/\(slot)"
+            }
+        }
+    }
+
+    public struct Source: Sendable, Equatable {
+        public enum Kind: String, Sendable, Equatable {
+            case connection, runtime, mcp, moduleInstance = "module-instance", engine, repository
+        }
+
+        public let kind: Kind
+        public let ref: String
+        public var reference: String { "\(kind.rawValue)/\(ref)" }
+    }
+
+    public let capability: String
+    public let target: Target
+    public let source: Source
+}
+
+public struct ProjectValidationFinding: Sendable, Equatable {
+    public enum Code: String, Sendable, Equatable {
+        case compositionIncomplete = "project.composition-incomplete"
+        case bindingMissing = "project.binding-missing"
+        case capabilityUnresolved = "project.capability-unresolved"
+        case contractIncompatible = "project.contract-incompatible"
+        case instanceConfigInvalid = "project.instance-config-invalid"
+        case modulePackageUnavailable = "project.module-package-unavailable"
+        case requestAmbiguous = "project.request-ambiguous"
+        case requestOrphaned = "project.request-orphaned"
+    }
+
+    public enum Severity: String, Sendable, Equatable { case error, warning }
+
+    public enum Target: Sendable, Equatable {
+        public enum Kind: String, Sendable, Equatable, Hashable {
+            case project
+            case requestEdge = "request-edge"
+            case contractEdge = "contract-edge"
+            case moduleInstance = "module-instance"
+            case slot
+            case capability
+        }
+
+        public enum CapabilityTarget: Sendable, Equatable {
+            case moduleInstance(String)
+            case slot(String)
+        }
+
+        case project(String)
+        case requestEdge(
+            ProjectValidationContract,
+            ProjectValidationInstanceTarget,
+            [ProjectValidationInstanceTarget])
+        case contractEdge(
+            ProjectValidationContractEndpoint,
+            ProjectValidationContractEndpoint)
+        case moduleInstance(String, String)
+        case slot(String)
+        case capability(String, CapabilityTarget, String?)
+
+        public var kind: Kind {
+            switch self {
+            case .project: .project
+            case .requestEdge: .requestEdge
+            case .contractEdge: .contractEdge
+            case .moduleInstance: .moduleInstance
+            case .slot: .slot
+            case .capability: .capability
+            }
+        }
+    }
+
+    public let code: Code
+    public let severity: Severity
+    public let message: String
+    public let target: Target
+}
+
+public struct ProjectValidationReport: Sendable, Equatable {
+    public enum MappingError: Error, Sendable, Equatable {
+        case generatedContractDrifted
+        case unexpectedConstant(field: String, value: String)
+        case unsupportedValue(field: String, value: String)
+        case missingTargetField(kind: String, field: String)
+    }
+
+    public let apiVersion: String
+    public let kind: String
+    public let projectId: String
+    public let valid: Bool
+    public let requestRoutes: [ProjectRequestRoute]
+    public let satisfiedCapabilities: [ProjectSatisfiedCapability]
+    public let findings: [ProjectValidationFinding]
+
+    init(payload: Components.Schemas.ProjectValidationReportV1) throws {
+        guard let data = try? JSONEncoder().encode(payload),
+            let wire = try? JSONDecoder().decode(WireProjectValidationReport.self, from: data)
+        else { throw MappingError.generatedContractDrifted }
+        guard wire.apiVersion == "jarvis.dev/project-validation/v1" else {
+            throw MappingError.unexpectedConstant(field: "apiVersion", value: wire.apiVersion)
+        }
+        guard wire.kind == "ProjectValidationReport" else {
+            throw MappingError.unexpectedConstant(field: "kind", value: wire.kind)
+        }
+        apiVersion = wire.apiVersion
+        kind = wire.kind
+        projectId = wire.projectId
+        valid = wire.valid
+        requestRoutes = try wire.requestRoutes.map { route in
+            ProjectRequestRoute(
+                contract: try Self.contract(route.contract),
+                producer: Self.instance(route.producer),
+                consumer: Self.instance(route.consumer))
+        }
+        satisfiedCapabilities = try wire.satisfiedCapabilities.map { item in
+            let target: ProjectSatisfiedCapability.Target
+            switch item.target.kind {
+            case "module-instance":
+                guard let instanceId = item.target.instanceId else {
+                    throw MappingError.missingTargetField(
+                        kind: item.target.kind, field: "instanceId")
+                }
+                target = .moduleInstance(instanceId)
+            case "slot":
+                guard let slot = item.target.slot else {
+                    throw MappingError.missingTargetField(kind: item.target.kind, field: "slot")
+                }
+                target = .slot(slot)
+            default:
+                throw MappingError.unsupportedValue(field: "target.kind", value: item.target.kind)
+            }
+            guard let sourceKind = ProjectSatisfiedCapability.Source.Kind(rawValue: item.source.kind)
+            else {
+                throw MappingError.unsupportedValue(field: "source.kind", value: item.source.kind)
+            }
+            return ProjectSatisfiedCapability(
+                capability: item.capability,
+                target: target,
+                source: .init(kind: sourceKind, ref: item.source.ref))
+        }
+        findings = try wire.findings.map { finding in
+            guard let code = ProjectValidationFinding.Code(rawValue: finding.code) else {
+                throw MappingError.unsupportedValue(field: "finding.code", value: finding.code)
+            }
+            guard let severity = ProjectValidationFinding.Severity(rawValue: finding.severity) else {
+                throw MappingError.unsupportedValue(
+                    field: "finding.severity", value: finding.severity)
+            }
+            return ProjectValidationFinding(
+                code: code,
+                severity: severity,
+                message: finding.message,
+                target: try Self.findingTarget(finding.target))
+        }
+    }
+
+    private static func contract(
+        _ wire: WireProjectValidationReport.Contract
+    ) throws -> ProjectValidationContract {
+        guard let kind = ProjectValidationContract.Kind(rawValue: wire.kind) else {
+            throw MappingError.unsupportedValue(field: "contract.kind", value: wire.kind)
+        }
+        return ProjectValidationContract(type: wire.type, version: wire.version, kind: kind)
+    }
+
+    private static func instance(
+        _ wire: WireProjectValidationReport.Instance
+    ) -> ProjectValidationInstanceTarget {
+        ProjectValidationInstanceTarget(instanceId: wire.instanceId, moduleId: wire.moduleId)
+    }
+
+    private static func endpoint(
+        _ wire: WireProjectValidationReport.Endpoint
+    ) throws -> ProjectValidationContractEndpoint {
+        ProjectValidationContractEndpoint(
+            instance: ProjectValidationInstanceTarget(
+                instanceId: wire.instanceId, moduleId: wire.moduleId),
+            contract: try contract(wire.contract))
+    }
+
+    private static func findingTarget(
+        _ target: WireProjectValidationReport.FindingTarget
+    ) throws -> ProjectValidationFinding.Target {
+        switch target.kind {
+        case "project":
+            guard let field = target.field else {
+                throw MappingError.missingTargetField(kind: target.kind, field: "field")
+            }
+            return .project(field)
+        case "request-edge":
+            guard let requestContract = target.contract, let producer = target.producer else {
+                throw MappingError.missingTargetField(kind: target.kind, field: "contract/producer")
+            }
+            return .requestEdge(
+                try contract(requestContract), instance(producer.instance),
+                target.candidates?.map(instance) ?? [])
+        case "contract-edge":
+            guard let producer = target.producer, let producerContract = producer.contract,
+                let consumer = target.consumer, let consumerContract = consumer.contract
+            else {
+                throw MappingError.missingTargetField(kind: target.kind, field: "producer/consumer")
+            }
+            return .contractEdge(
+                try endpoint(.init(
+                    instanceId: producer.instance.instanceId,
+                    moduleId: producer.instance.moduleId,
+                    contract: producerContract)),
+                try endpoint(.init(
+                    instanceId: consumer.instance.instanceId,
+                    moduleId: consumer.instance.moduleId,
+                    contract: consumerContract)))
+        case "module-instance":
+            guard let instanceId = target.instanceId, let field = target.field else {
+                throw MappingError.missingTargetField(kind: target.kind, field: "instanceId/field")
+            }
+            return .moduleInstance(instanceId, field)
+        case "slot":
+            guard let slot = target.slot else {
+                throw MappingError.missingTargetField(kind: target.kind, field: "slot")
+            }
+            return .slot(slot)
+        case "capability":
+            guard let capability = target.capability else {
+                throw MappingError.missingTargetField(kind: target.kind, field: "capability")
+            }
+            if let instanceId = target.instanceId {
+                return .capability(capability, .moduleInstance(instanceId), target.binding)
+            }
+            guard let slot = target.slot else {
+                throw MappingError.missingTargetField(kind: target.kind, field: "instanceId/slot")
+            }
+            return .capability(capability, .slot(slot), nil)
+        default:
+            throw MappingError.unsupportedValue(field: "finding.target.kind", value: target.kind)
+        }
+    }
+}
+
+public enum ProjectValidationState: Sendable, Equatable {
+    case unvalidated
+    case validating
+    case valid(ProjectValidationReport)
+}
+
 public struct LocalRepositoryBinding: Identifiable, Sendable, Equatable {
     public var id: String { repositoryId }
     public let repositoryId: String
@@ -542,6 +821,83 @@ private extension ProjectDetail {
                 )
             }
     }
+}
+
+private struct WireProjectValidationReport: Decodable {
+    struct Contract: Decodable {
+        let type: String
+        let version: Int
+        let kind: String
+    }
+
+    struct Instance: Decodable {
+        let instanceId: String
+        let moduleId: String
+    }
+
+    struct Endpoint: Decodable {
+        let instanceId: String
+        let moduleId: String
+        let contract: Contract
+    }
+
+    struct FindingEndpoint: Decodable {
+        let instanceId: String
+        let moduleId: String
+        let contract: Contract?
+        var instance: Instance { Instance(instanceId: instanceId, moduleId: moduleId) }
+    }
+
+    struct Route: Decodable {
+        let contract: Contract
+        let producer: Instance
+        let consumer: Instance
+    }
+
+    struct CapabilityTarget: Decodable {
+        let kind: String
+        let instanceId: String?
+        let slot: String?
+    }
+
+    struct CapabilitySource: Decodable {
+        let kind: String
+        let ref: String
+    }
+
+    struct SatisfiedCapability: Decodable {
+        let capability: String
+        let target: CapabilityTarget
+        let source: CapabilitySource
+    }
+
+    struct FindingTarget: Decodable {
+        let kind: String
+        let field: String?
+        let contract: Contract?
+        let producer: FindingEndpoint?
+        let consumer: FindingEndpoint?
+        let candidates: [Instance]?
+        let instanceId: String?
+        let slot: String?
+        let capability: String?
+        let binding: String?
+    }
+
+    struct Finding: Decodable {
+        let code: String
+        let severity: String
+        let message: String
+        let target: FindingTarget
+    }
+
+    let apiVersion: String
+    let kind: String
+    let projectId: String
+    let valid: Bool
+    let requestRoutes: [Route]
+    let satisfiedCapabilities: [SatisfiedCapability]
+    let findings: [Finding]
 }
 
 private struct WireProjectCompositionReview: Decodable {

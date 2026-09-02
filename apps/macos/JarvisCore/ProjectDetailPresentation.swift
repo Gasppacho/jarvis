@@ -104,6 +104,27 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         public let accessibilityHint: String
     }
 
+    public struct Validation: Sendable, Equatable {
+        public enum Status: Sendable, Equatable { case unvalidated, validating, valid }
+
+        public struct RequestRoute: Identifiable, Sendable, Equatable {
+            public let id: String
+            public let contractIdentity: String
+            public let route: String
+        }
+
+        public struct SatisfiedCapability: Identifiable, Sendable, Equatable {
+            public let id: String
+            public let capability: String
+            public let detail: String
+        }
+
+        public let status: Status
+        public let title: String
+        public let requestRoutes: [RequestRoute]
+        public let satisfiedCapabilities: [SatisfiedCapability]
+    }
+
     public struct DeletionConfirmation: Sendable, Equatable {
         public let title: String
         public let message: String
@@ -306,6 +327,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 case setLocalBinding(String, String?)
                 case saveLocal
                 case saveRepository
+                case validate
                 case confirmProjectDeletion
             }
 
@@ -325,6 +347,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             public static let saveRepository = Self(
                 .saveRepository,
                 label: "Save and write .jarvis/project.yaml")
+            public static let validate = Self(.validate, label: "Validate Project")
             public static let confirmProjectDeletion = Self(
                 .confirmProjectDeletion,
                 label: "Delete Project")
@@ -394,6 +417,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
     public let actions: [Action]
     public let deletionConfirmation: DeletionConfirmation
     public let reviewRows: [ReviewRow]
+    public let validation: Validation
     public let isSaveEnabled: Bool
     public let isReadyForValidation: Bool
 
@@ -602,6 +626,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             contentsOf: [
                 .asynchronous(.saveLocal),
                 .asynchronous(.saveRepository),
+                .asynchronous(.validate),
                 .confirmation(.deleteProject),
                 .asynchronous(.confirmProjectDeletion),
                 .noOp(.cancelProjectDeletion),
@@ -610,6 +635,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         reviewRows = Self.reviewRows(
             review: state.compositionReview,
             automationRules: automationRuleRows)
+        validation = Self.validation(from: state.validation)
         deletionConfirmation = DeletionConfirmation(
             title: "Delete “\(project.name)”?",
             message:
@@ -623,6 +649,39 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             state.isDraftSaved
             && state.compositionReview?.readyToValidate == true
             && !state.isSaving
+    }
+
+    private static func validation(from state: ProjectValidationState) -> Validation {
+        switch state {
+        case .unvalidated:
+            return Validation(
+                status: .unvalidated,
+                title: "Not validated",
+                requestRoutes: [],
+                satisfiedCapabilities: [])
+        case .validating:
+            return Validation(
+                status: .validating,
+                title: "Validating Project…",
+                requestRoutes: [],
+                satisfiedCapabilities: [])
+        case .valid(let report):
+            return Validation(
+                status: .valid,
+                title: "Project validation passed",
+                requestRoutes: report.requestRoutes.map { route in
+                    Validation.RequestRoute(
+                        id: "\(route.contract.identity)-\(route.producer.instanceId)-\(route.consumer.instanceId)",
+                        contractIdentity: route.contract.identity,
+                        route: "\(route.producer.instanceId) (\(route.producer.moduleId)) → \(route.consumer.instanceId) (\(route.consumer.moduleId))")
+                },
+                satisfiedCapabilities: report.satisfiedCapabilities.map { capability in
+                    Validation.SatisfiedCapability(
+                        id: "\(capability.capability)-\(capability.target.reference)-\(capability.source.reference)",
+                        capability: capability.capability,
+                        detail: "\(capability.target.reference) ← \(capability.source.reference)")
+                })
+        }
     }
 
     private static func reviewRows(
