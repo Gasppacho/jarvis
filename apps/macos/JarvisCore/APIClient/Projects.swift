@@ -506,6 +506,34 @@ public struct ProjectValidationFinding: Sendable, Equatable {
             case .capability: .capability
             }
         }
+
+        /// Contract-derived identity used for stable ordering and support copy.
+        public var stableReference: String {
+            func fieldReference(_ field: String) -> String {
+                field.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            }
+
+            switch self {
+            case .project(let field):
+                return "project/field/\(fieldReference(field))"
+            case .requestEdge(let contract, let producer, let candidates):
+                let candidateIDs = candidates.map(\.instanceId).sorted().joined(separator: ",")
+                return "request-edge/\(contract.identity)/producer/\(producer.instanceId)/candidates/\(candidateIDs.isEmpty ? "none" : candidateIDs)"
+            case .contractEdge(let producer, let consumer):
+                return "contract-edge/producer/\(producer.instance.instanceId)/\(producer.contract.identity)/consumer/\(consumer.instance.instanceId)/\(consumer.contract.identity)"
+            case .moduleInstance(let instanceId, let field):
+                return "module-instance/\(instanceId)/field/\(fieldReference(field))"
+            case .slot(let slot):
+                return "slot/\(slot)"
+            case .capability(let capability, let target, let binding):
+                let targetReference = switch target {
+                case .moduleInstance(let instanceId): "module-instance/\(instanceId)"
+                case .slot(let slot): "slot/\(slot)"
+                }
+                let bindingReference = binding.map { "/binding/\($0)" } ?? ""
+                return "capability/\(capability)/\(targetReference)\(bindingReference)"
+            }
+        }
     }
 
     public let code: Code
@@ -678,6 +706,8 @@ public enum ProjectValidationState: Sendable, Equatable {
     case unvalidated
     case validating
     case valid(ProjectValidationReport)
+    case invalid(ProjectValidationReport)
+    case failed(String)
 }
 
 public struct LocalRepositoryBinding: Identifiable, Sendable, Equatable {

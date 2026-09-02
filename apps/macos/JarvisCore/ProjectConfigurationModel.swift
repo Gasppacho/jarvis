@@ -394,11 +394,17 @@ public final class ProjectConfigurationModel {
         }
         do {
             let report = try await provider(projectId)
-            update(projectId) { $0.validation = .valid(report) }
-        } catch {
             update(projectId) {
-                $0.validation = .unvalidated
-                $0.errorMessage = ProjectsModel.describe(error)
+                $0.validation = report.valid ? .valid(report) : .invalid(report)
+            }
+        } catch is CancellationError {
+            update(projectId) { $0.validation = .unvalidated }
+        } catch {
+            let cause = ProjectsModel.describe(error)
+            update(projectId) {
+                $0.validation = .failed(
+                    "Validation report is unavailable, so Project readiness cannot be determined. \(cause) Retry validation after correcting the problem.")
+                $0.errorMessage = nil
             }
         }
     }

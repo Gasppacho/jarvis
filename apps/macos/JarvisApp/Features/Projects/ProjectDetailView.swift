@@ -692,13 +692,34 @@ public struct ProjectDetailView: View {
             Text("Validation Report").sectionLabel()
             Label(
                 presentation.validation.title,
-                systemImage: presentation.validation.status == .valid
-                    ? "checkmark.seal.fill" : "checkmark.seal")
-                .foregroundStyle(
-                    presentation.validation.status == .valid ? .green : .secondary)
+                systemImage: validationStatusIcon)
+                .foregroundStyle(validationStatusColor)
 
             if presentation.validation.status == .validating {
                 ProgressView("Checking saved Project composition…")
+            }
+
+            if let message = presentation.validation.errorMessage {
+                Label(message, systemImage: "network.slash")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+            }
+
+            ForEach(presentation.validation.findings) { finding in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(finding.code).font(.body.monospaced())
+                    Text(finding.reference)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                    Text(finding.unavailable).font(.callout.weight(.semibold))
+                    Text(finding.impact).font(.callout)
+                    Text(finding.correctiveAction).font(.callout)
+                    Text("Engine detail: \(finding.diagnostic)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(finding.accessibilityLabel)
             }
 
             ForEach(presentation.validation.requestRoutes) { route in
@@ -715,12 +736,34 @@ public struct ProjectDetailView: View {
             }
 
             let validate = ProjectDetailPresentation.Action.Asynchronous.validate
-            Button(validate.label) { perform(.asynchronous(validate)) }
-                .disabled(
-                    !presentation.isReadyForValidation
-                        || presentation.validation.status == .validating)
+            Button(
+                presentation.validation.status == .failed ? "Retry validation" : validate.label
+            ) {
+                perform(.asynchronous(validate))
+            }
+            .disabled(
+                !presentation.isReadyForValidation
+                    || presentation.validation.status == .validating)
         }
         .id("validation-report")
+    }
+
+    private var validationStatusIcon: String {
+        switch presentation.validation.status {
+        case .valid: "checkmark.seal.fill"
+        case .invalid: "exclamationmark.triangle.fill"
+        case .failed: "network.slash"
+        case .unvalidated, .validating: "checkmark.seal"
+        }
+    }
+
+    private var validationStatusColor: Color {
+        switch presentation.validation.status {
+        case .valid: .green
+        case .invalid: .red
+        case .failed: .orange
+        case .unvalidated, .validating: .secondary
+        }
     }
 
     private var deleteAction: some View {

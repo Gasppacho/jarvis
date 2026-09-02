@@ -13,8 +13,9 @@ final class ProjectValidationTests: XCTestCase {
         XCTAssertEqual(report.projectId, "validation-fixture")
         XCTAssertFalse(report.valid)
         XCTAssertEqual(
-            report.findings.map(\.code.rawValue),
-            [
+            Set(report.findings.map(\.code.rawValue)),
+            Set([
+                "project.composition-incomplete",
                 "project.binding-missing",
                 "project.capability-unresolved",
                 "project.contract-incompatible",
@@ -22,10 +23,10 @@ final class ProjectValidationTests: XCTestCase {
                 "project.module-package-unavailable",
                 "project.request-ambiguous",
                 "project.request-orphaned",
-            ])
+            ]))
         XCTAssertEqual(
             Set(report.findings.map(\.target.kind)),
-            Set([.requestEdge, .contractEdge, .moduleInstance, .slot, .capability]))
+            Set([.project, .requestEdge, .contractEdge, .moduleInstance, .slot, .capability]))
         XCTAssertTrue(report.findings.contains { finding in
             guard case .capability(_, .moduleInstance(let instanceId), let binding) = finding.target
             else { return false }
@@ -105,6 +106,111 @@ final class ProjectValidationTests: XCTestCase {
             ])
     }
 
+    func testStepFivePresentsInvalidFindingsInStableContractOrderWithActionableCopy() throws {
+        let project = Project(
+            id: "validation-fixture",
+            name: "Validation Fixture",
+            status: .draft,
+            moduleCount: 2,
+            activeExecutions: nil)
+        var state = ProjectConfigurationState()
+        state.validation = .invalid(try decodeReport(fixture(valid: false, includesFindings: true)))
+
+        let presentation = ProjectDetailPresentation(
+            project: project, detail: nil, state: state, packages: [])
+
+        XCTAssertEqual(presentation.validation.status, .invalid)
+        XCTAssertEqual(presentation.validation.title, "Project validation needs attention")
+        XCTAssertEqual(
+            presentation.validation.findings.map(\.code),
+            [
+                "project.binding-missing",
+                "project.capability-unresolved",
+                "project.capability-unresolved",
+                "project.composition-incomplete",
+                "project.contract-incompatible",
+                "project.instance-config-invalid",
+                "project.module-package-unavailable",
+                "project.request-ambiguous",
+                "project.request-orphaned",
+            ])
+        XCTAssertEqual(
+            Set(presentation.validation.findings.map(\.targetKind)),
+            Set([.project, .requestEdge, .contractEdge, .moduleInstance, .slot, .capability]))
+        XCTAssertTrue(
+            presentation.validation.findings.contains {
+                $0.reference.contains("work.requested.v1.request")
+                    && $0.reference.contains("producer/rules")
+                    && $0.reference.contains("candidates/one,two")
+            })
+        XCTAssertTrue(
+            presentation.validation.findings.contains {
+                $0.reference.contains("producer/rules/work.requested.v1.request")
+                    && $0.reference.contains("consumer/development/work.requested.v2.request")
+            })
+        let references = Set(presentation.validation.findings.map(\.reference))
+        XCTAssertTrue(
+            references.contains("request-edge/deploy.requested.v1.request/producer/automation/candidates/none"))
+        XCTAssertTrue(references.contains("module-instance/development/field/configuration"))
+        XCTAssertTrue(references.contains("module-instance/missing/field/moduleId"))
+        XCTAssertTrue(references.contains("slot/sourceControl"))
+        XCTAssertTrue(
+            references.contains(
+                "capability/repository.write/module-instance/development/binding/repository"))
+        XCTAssertTrue(references.contains("capability/work-items.read/slot/tickets"))
+        XCTAssertTrue(references.contains("project/field/modules"))
+        XCTAssertTrue(
+            presentation.validation.findings.allSatisfy {
+                $0.unavailable.contains("unavailable")
+                    && $0.impact.contains("behaviour")
+                    && !$0.correctiveAction.isEmpty
+                    && $0.accessibilityLabel.contains($0.reference)
+            })
+    }
+
+    @MainActor
+    func testActionableValidationErrorRetriesAndTransitionsToInvalidReport() async throws {
+        let report = try decodeReport(fixture(valid: false, includesFindings: true))
+        let sequence = ValidationSequence(report: report)
+        let session = EngineSessionModel(supervisor: EngineSupervisor(resources: .developmentBuild()))
+        let projects = ProjectsModel(session: session)
+        let configuration = ProjectConfigurationModel(
+            session: session,
+            projects: projects,
+            validationReportProvider: { _ in try await sequence.load() })
+
+        await configuration.validate(projectId: "validation-fixture")
+
+        guard case .failed(let message) = configuration.state(for: "validation-fixture").validation
+        else { return XCTFail("a Local API failure must not look invalid or unvalidated") }
+        XCTAssertTrue(message.contains("Validation report is unavailable"))
+        XCTAssertTrue(message.contains("readiness cannot be determined"))
+        XCTAssertTrue(message.contains("Retry validation"))
+        XCTAssertNil(configuration.state(for: "validation-fixture").errorMessage)
+        let failedPresentation = ProjectDetailPresentation(
+            project: Project(
+                id: "validation-fixture",
+                name: "Validation Fixture",
+                status: .draft,
+                moduleCount: 2,
+                activeExecutions: nil),
+            detail: nil,
+            state: configuration.state(for: "validation-fixture"),
+            packages: [])
+        XCTAssertEqual(failedPresentation.validation.status, .failed)
+        XCTAssertEqual(failedPresentation.validation.title, "Validation report unavailable")
+        XCTAssertEqual(failedPresentation.validation.errorMessage, message)
+        XCTAssertTrue(failedPresentation.actions.contains(.asynchronous(.validate)))
+
+        await configuration.validate(projectId: "validation-fixture")
+
+        XCTAssertEqual(
+            configuration.state(for: "validation-fixture").validation,
+            .invalid(report))
+        let attempts = await sequence.attemptCount()
+        XCTAssertEqual(attempts, 2)
+    }
+
     @MainActor
     func testValidationRequestPublishesValidatingBeforeApplyingControlledReport() async throws {
         let report = try decodeReport(fixture(valid: true))
@@ -161,15 +267,37 @@ final class ProjectValidationTests: XCTestCase {
 
     private static let findings = """
         [
-          {"code":"project.binding-missing","severity":"error","message":"binding","target":{"kind":"slot","slot":"sourceControl"}},
-          {"code":"project.capability-unresolved","severity":"error","message":"slot capability","target":{"kind":"capability","capability":"work-items.read","slot":"tickets"}},
-          {"code":"project.contract-incompatible","severity":"error","message":"contract","target":{"kind":"contract-edge","producer":{"instanceId":"rules","moduleId":"jarvis.module.automation-rules","contract":{"type":"work.requested","version":1,"kind":"request"}},"consumer":{"instanceId":"development","moduleId":"jarvis.module.development","contract":{"type":"work.requested","version":2,"kind":"request"}}}},
-          {"code":"project.instance-config-invalid","severity":"error","message":"config","target":{"kind":"module-instance","instanceId":"development","field":"/configuration"}},
+          {"code":"project.request-orphaned","severity":"error","message":"orphaned","target":{"kind":"request-edge","contract":{"type":"deploy.requested","version":1,"kind":"request"},"producer":{"instanceId":"automation","moduleId":"jarvis.module.automation-rules"}}},
           {"code":"project.module-package-unavailable","severity":"error","message":"package","target":{"kind":"module-instance","instanceId":"missing","field":"/moduleId"}},
-          {"code":"project.request-ambiguous","severity":"error","message":"ambiguous","target":{"kind":"request-edge","contract":{"type":"work.requested","version":1,"kind":"request"},"producer":{"instanceId":"rules","moduleId":"jarvis.module.automation-rules"},"candidates":[{"instanceId":"one","moduleId":"jarvis.module.development"},{"instanceId":"two","moduleId":"jarvis.module.development"}]}},
-          {"code":"project.request-orphaned","severity":"error","message":"module capability","target":{"kind":"capability","capability":"repository.write","instanceId":"development","binding":"repository"}}
+          {"code":"project.capability-unresolved","severity":"error","message":"module capability","target":{"kind":"capability","capability":"repository.write","instanceId":"development","binding":"repository"}},
+          {"code":"project.binding-missing","severity":"error","message":"binding","target":{"kind":"slot","slot":"sourceControl"}},
+          {"code":"project.composition-incomplete","severity":"error","message":"composition","target":{"kind":"project","field":"/modules"}},
+          {"code":"project.request-ambiguous","severity":"error","message":"ambiguous","target":{"kind":"request-edge","contract":{"type":"work.requested","version":1,"kind":"request"},"producer":{"instanceId":"rules","moduleId":"jarvis.module.automation-rules"},"candidates":[{"instanceId":"two","moduleId":"jarvis.module.development"},{"instanceId":"one","moduleId":"jarvis.module.development"}]}},
+          {"code":"project.instance-config-invalid","severity":"error","message":"config","target":{"kind":"module-instance","instanceId":"development","field":"/configuration"}},
+          {"code":"project.contract-incompatible","severity":"error","message":"contract","target":{"kind":"contract-edge","producer":{"instanceId":"rules","moduleId":"jarvis.module.automation-rules","contract":{"type":"work.requested","version":1,"kind":"request"}},"consumer":{"instanceId":"development","moduleId":"jarvis.module.development","contract":{"type":"work.requested","version":2,"kind":"request"}}}},
+          {"code":"project.capability-unresolved","severity":"error","message":"slot capability","target":{"kind":"capability","capability":"work-items.read","slot":"tickets"}}
         ]
         """
+}
+
+private actor ValidationSequence {
+    let report: ProjectValidationReport
+    var attempts = 0
+
+    init(report: ProjectValidationReport) {
+        self.report = report
+    }
+
+    func load() throws -> ProjectValidationReport {
+        attempts += 1
+        if attempts == 1 {
+            throw EngineClientError.unexpectedResponse(
+                "POST /v1/projects/validation-fixture/validation-report returned 503")
+        }
+        return report
+    }
+
+    func attemptCount() -> Int { attempts }
 }
 
 private actor ValidationGate {
