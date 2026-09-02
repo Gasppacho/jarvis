@@ -106,7 +106,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
 
     public struct Validation: Sendable, Equatable {
         public enum Status: Sendable, Equatable {
-            case unvalidated, validating, valid, invalid, failed
+            case unvalidated, validating, valid, invalid, stale, failed
         }
 
         public struct Finding: Identifiable, Sendable, Equatable {
@@ -691,6 +691,15 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         case .invalid(let report):
             return validationReport(
                 report, status: .invalid, title: "Project validation needs attention")
+        case .stale:
+            return Validation(
+                status: .stale,
+                title: "Validation report is stale",
+                errorMessage:
+                    "The Project composition changed after this report was generated. Save the change and revalidate before relying on readiness, routes, capabilities, or findings.",
+                findings: [],
+                requestRoutes: [],
+                satisfiedCapabilities: [])
         case .failed(let message):
             return Validation(
                 status: .failed,

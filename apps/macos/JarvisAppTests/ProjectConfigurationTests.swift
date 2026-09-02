@@ -216,6 +216,125 @@ final class ProjectConfigurationTests: XCTestCase {
         await session.shutdown()
     }
 
+    @MainActor
+    func testCompositionAndBindingEditsMakeValidationStaleAndRejectLateReports() async throws {
+        let repository = try makeRepository()
+        let session = EngineSessionModel(
+            supervisor: EngineSupervisor(
+                resources: .developmentBuild(),
+                dataRoot: temporaryDirectory(prefix: "jarvis-stale-validation-data")))
+        let projects = ProjectsModel(
+            session: session,
+            repositoryGrants: RepositoryGrantStore(
+                storageDirectory: temporaryDirectory(prefix: "jarvis-stale-validation-grants")))
+        let report = try validationReportFixture()
+        let reports = DelayedValidationSequence(report: report)
+        let configuration = ProjectConfigurationModel(
+            session: session,
+            projects: projects,
+            validationReportProvider: { _ in try await reports.load() })
+
+        await session.start()
+        await projects.inspect(at: repository)
+        let importResult = await projects.confirmImport()
+        let imported = try XCTUnwrap(importResult)
+        let saved = await configuration.saveConfiguration(
+            projectId: imported.id,
+            portableConfig: try projectConfiguration(
+                projectId: imported.id, mapsSourceControlRequirement: false),
+            writeToRepository: false)
+        XCTAssertNotNil(saved)
+        await configuration.refresh(projectId: imported.id)
+        let candidate = try XCTUnwrap(
+            configuration.state(for: imported.id).candidates.first {
+                $0.capabilities.contains("scm.change-request.manage")
+            })
+        let initialBinding = await configuration.setLocalBinding(
+            projectId: imported.id,
+            slotId: "sourceControl",
+            candidate: candidate)
+        XCTAssertNotNil(initialBinding)
+
+        await configuration.validate(projectId: imported.id)
+        let currentValidation = configuration.state(for: imported.id).validation
+        guard case .invalid = currentValidation else {
+            return XCTFail("the controlled report must be current before editing")
+        }
+
+        configuration.renameSlot(
+            projectId: imported.id, from: "sourceControl", to: "renamed")
+        XCTAssertEqual(
+            configuration.state(for: imported.id).validation,
+            currentValidation,
+            "a rejected edit must preserve the report for the unchanged durable composition")
+        var rejectedBindings = try XCTUnwrap(
+            configuration.state(for: imported.id).localBindings?.wirePayload)
+        rejectedBindings.projectId = "different-project"
+        let rejectedBindingSave = await configuration.saveBindings(
+            projectId: imported.id, bindings: rejectedBindings)
+        XCTAssertNil(rejectedBindingSave)
+        XCTAssertEqual(
+            configuration.state(for: imported.id).validation,
+            currentValidation,
+            "a failed binding write must not stale the report for unchanged durable bindings")
+
+        configuration.editDraft(projectId: imported.id) { $0.name = "Edited composition" }
+        guard case .stale(let historicalReport) =
+            configuration.state(for: imported.id).validation
+        else { return XCTFail("a Portable Configuration edit must make the report stale") }
+        XCTAssertEqual(historicalReport, report)
+        let stalePresentation = ProjectDetailPresentation(
+            project: imported,
+            detail: configuration.state(for: imported.id).detail,
+            state: configuration.state(for: imported.id),
+            packages: [])
+        XCTAssertEqual(stalePresentation.validation.status, .stale)
+        XCTAssertEqual(stalePresentation.validation.title, "Validation report is stale")
+        XCTAssertTrue(stalePresentation.validation.errorMessage?.contains("revalidate") == true)
+        XCTAssertTrue(stalePresentation.validation.requestRoutes.isEmpty)
+        XCTAssertTrue(stalePresentation.validation.satisfiedCapabilities.isEmpty)
+        XCTAssertTrue(stalePresentation.validation.findings.isEmpty)
+
+        let lateValidation = Task { await configuration.validate(projectId: imported.id) }
+        await reports.waitUntilSecondRequestStarts()
+        configuration.editDraft(projectId: imported.id) { $0.name = "Newer composition" }
+        await reports.resumeSecondRequest()
+        await lateValidation.value
+        guard case .stale = configuration.state(for: imported.id).validation else {
+            return XCTFail("a superseded validation response must not become current")
+        }
+
+        await configuration.validate(projectId: imported.id)
+        guard case .invalid = configuration.state(for: imported.id).validation else {
+            return XCTFail("fresh validation must replace stale state")
+        }
+        let removedBinding = await configuration.setLocalBinding(
+            projectId: imported.id,
+            slotId: "sourceControl",
+            candidate: nil)
+        XCTAssertNotNil(removedBinding)
+        guard case .stale = configuration.state(for: imported.id).validation else {
+            return XCTFail("a successful Local Binding edit must make the report stale")
+        }
+
+        await configuration.validate(projectId: imported.id)
+        let repositoryBinding = try XCTUnwrap(
+            configuration.state(for: imported.id).detail?.bindings.first)
+        let repositoryBindingSaved = await projects.reauthorize(
+            projectId: imported.id,
+            repositoryId: repositoryBinding.repositoryId,
+            replacing: repositoryBinding.bookmarkRef,
+            with: repository)
+        XCTAssertTrue(repositoryBindingSaved)
+        await configuration.refreshAfterRepositoryBindingChange(projectId: imported.id)
+        guard case .stale = configuration.state(for: imported.id).validation else {
+            return XCTFail("a successful repository Local Binding edit must remain stale after reload")
+        }
+
+        projects.releaseRepositoryAccess()
+        await session.shutdown()
+    }
+
     func testSchemaDescriptorsDistinguishControlsAndApplyDefaults() throws {
         let package = try schemaFixturePackage()
         let fields = Dictionary(uniqueKeysWithValues: package.configurationFields.map { ($0.key, $0) })
@@ -1074,6 +1193,37 @@ final class ProjectConfigurationTests: XCTestCase {
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         roots.append(root)
         return root
+    }
+}
+
+private actor DelayedValidationSequence {
+    let report: ProjectValidationReport
+    var attempts = 0
+    var secondRequestStarted: CheckedContinuation<Void, Never>?
+    var secondRequestRelease: CheckedContinuation<Void, Never>?
+
+    init(report: ProjectValidationReport) {
+        self.report = report
+    }
+
+    func load() async throws -> ProjectValidationReport {
+        attempts += 1
+        if attempts == 2 {
+            secondRequestStarted?.resume()
+            secondRequestStarted = nil
+            await withCheckedContinuation { secondRequestRelease = $0 }
+        }
+        return report
+    }
+
+    func waitUntilSecondRequestStarts() async {
+        guard attempts < 2 else { return }
+        await withCheckedContinuation { secondRequestStarted = $0 }
+    }
+
+    func resumeSecondRequest() {
+        secondRequestRelease?.resume()
+        secondRequestRelease = nil
     }
 }
 
