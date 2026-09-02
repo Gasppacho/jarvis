@@ -64,6 +64,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         public let inputEventType: String
         public let matchJSON: String
         public let emissionEventType: String
+        public let payloadJSON: String
         public let target: AutomationRuleDraft.Target
         public let targetChoices: [String]
         public let inputChoices: [AutomationEventOption]
@@ -96,7 +97,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             public enum Operation: Sendable, Equatable, Hashable {
                 case setProjectName(String)
                 case chooseStartingPoint(String)
-                case addSlot
+                case addSlot(String, String)
                 case removeSlot(String)
                 case renameSlot(String, String)
                 case setSlotRequirement(String, String)
@@ -119,6 +120,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 case setAutomationRuleInput(UUID, UUID, String)
                 case setAutomationRuleMatch(UUID, UUID, String)
                 case setAutomationRuleEmission(UUID, UUID, String, String?)
+                case setAutomationRulePayload(UUID, UUID, String)
                 case setAutomationRuleTarget(UUID, UUID, String)
             }
 
@@ -138,7 +140,9 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 Self(.chooseStartingPoint(id), label: "Use \(displayName)")
             }
 
-            public static let addSlot = Self(.addSlot, label: "Add slot")
+            public static func addSlot(name: String, requirement: String) -> Self {
+                Self(.addSlot(name, requirement), label: "Add slot")
+            }
 
             public static func removeSlot(_ slotId: String) -> Self {
                 Self(.removeSlot(slotId), label: "Remove slot")
@@ -256,6 +260,12 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                     .setAutomationRuleEmission(
                         moduleID, ruleID, eventType, resolvedConsumerID),
                     label: "Set emitted Request")
+            }
+
+            public static func setAutomationRulePayload(
+                _ moduleID: UUID, _ ruleID: UUID, _ json: String
+            ) -> Self {
+                Self(.setAutomationRulePayload(moduleID, ruleID, json), label: "Set Request payload")
             }
 
             public static func setAutomationRuleTarget(
@@ -395,12 +405,18 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             return ModuleCard(
                 id: module.id,
                 displayName: choice?.displayName ?? package?.displayName ?? "Unavailable Module Package",
-                description: choice?.description ?? package?.description ?? "Choose an available Module Package.",
-                eventSummary: "Consumes: \(consumedLabels.isEmpty ? "None" : consumedLabels.joined(separator: ", ")). Emits: \(producedLabels.isEmpty ? "None" : producedLabels.joined(separator: ", ")).",
-                requiredCapabilities: required.isEmpty ? "No required capabilities" : required.joined(separator: ", "),
+                description: choice?.description ?? package?.description
+                    ?? "Choose an available Module Package.",
+                eventSummary:
+                    "Consumes: \(consumedLabels.isEmpty ? "None" : consumedLabels.joined(separator: ", ")). Emits: \(producedLabels.isEmpty ? "None" : producedLabels.joined(separator: ", ")).",
+                requiredCapabilities: required.isEmpty
+                    ? "No required capabilities" : required.joined(separator: ", "),
                 compatibility: choice?.compatibility ?? "unavailable",
-                missingResources: missing.isEmpty ? "No missing resources" : missing.joined(separator: ", "),
-                technicalDetails: "Instance ID: \(module.instanceId) · Package: \(module.moduleId) · Version: \(choice?.version ?? package?.version ?? "unavailable") · Contracts: \((consumes + produces).joined(separator: ", "))")
+                missingResources: missing.isEmpty
+                    ? "No missing resources" : missing.joined(separator: ", "),
+                technicalDetails:
+                    "Instance ID: \(module.instanceId) · Package: \(module.moduleId) · Version: \(choice?.version ?? package?.version ?? "unavailable") · Contracts: \((consumes + produces).joined(separator: ", "))"
+            )
         }
         let eventChoices = state.compositionGuide?.eventChoices ?? []
         automationRuleRows = modules.flatMap { module -> [AutomationRuleRow] in
@@ -415,7 +431,8 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             return rules.map { rule in
                 let input = inputChoices.first { $0.type == rule.inputEventType }
                 let emission = emissionChoices.first { $0.type == rule.emissionEventType }
-                let targetLabel = emission?.selectedConsumerID.map(Self.instanceLabel)
+                let targetLabel =
+                    emission?.selectedConsumerID.map(Self.instanceLabel)
                     ?? Self.targetLabel(rule.target)
                 return AutomationRuleRow(
                     id: rule.id,
@@ -424,6 +441,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                     inputEventType: rule.inputEventType,
                     matchJSON: rule.matchJSON,
                     emissionEventType: rule.emissionEventType,
+                    payloadJSON: rule.payloadJSON ?? "{}",
                     target: rule.target,
                     targetChoices: emission?.compatibleConsumerInstanceIDs ?? [],
                     inputChoices: inputChoices,
@@ -439,7 +457,9 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                     routingStatus: emission?.routingStatus ?? "unknown",
                     routingExplanation: emission?.routingExplanation
                         ?? "No Engine routing explanation is available for this custom Request.",
-                    sentence: "When \(input?.label ?? rule.inputEventType) matches, emit \(emission?.label ?? rule.emissionEventType) to \(targetLabel).")
+                    sentence:
+                        "When \(input?.label ?? rule.inputEventType) matches, emit \(emission?.label ?? rule.emissionEventType) to \(targetLabel)."
+                )
             }
         }
         let choicesBySlot = Dictionary(
@@ -463,11 +483,13 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             case .bound, .available:
                 unavailable = "Eligible Project resources are available for \(capabilities)."
             case .missing:
-                unavailable = "No Project-granted resource provides every required capability: \(capabilities)."
+                unavailable =
+                    "No Project-granted resource provides every required capability: \(capabilities)."
             case .inaccessible:
                 unavailable = "The bound resource is no longer accessible to this Project."
             case .incompatible:
-                unavailable = "Project resources exist, but none provides every required capability: \(capabilities)."
+                unavailable =
+                    "Project resources exist, but none provides every required capability: \(capabilities)."
             }
             return ResourceBinding(
                 id: choice.slotId,
@@ -489,9 +511,10 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             inventory.append(.edit(.setProjectName(name)))
         }
         inventory.append(contentsOf: startingPoints.map { .edit($0.action) })
-        inventory.append(.edit(.addSlot))
+        inventory.append(.edit(.addSlot(name: "", requirement: "")))
         inventory.append(contentsOf: packages.map { .edit(.addModule($0.moduleId)) })
-        inventory.append(contentsOf: slots.flatMap { slot in
+        inventory.append(
+            contentsOf: slots.flatMap { slot in
             [
                 .edit(.removeSlot(slot.id)),
                 .edit(.renameSlot(slot.id, slot.id)),
@@ -531,6 +554,10 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                                 module.id, rule.id, rule.inputEventType)))
                     inventory.append(
                         .edit(.setAutomationRuleMatch(module.id, rule.id, rule.matchJSON)))
+                    inventory.append(
+                        .edit(
+                            .setAutomationRulePayload(
+                                module.id, rule.id, rule.payloadJSON ?? "{}")))
                     let consumer = eventChoices.first {
                         $0.type == rule.emissionEventType && $0.kind == "request"
                     }?.selectedConsumerID
@@ -562,7 +589,8 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             cancelAction: .cancelProjectDeletion
         )
         isSaveEnabled = state.draft?.validationIssues.isEmpty == true && !state.isSaving
-        isReadyForValidation = isSaveEnabled
+        isReadyForValidation =
+            isSaveEnabled
             && automationRuleRows.allSatisfy {
                 $0.inputStatus == .known && $0.emissionStatus == .known
                     && $0.routingStatus == "resolved"
@@ -573,16 +601,19 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
     private static func automationEventOption(
         _ choice: ProjectCompositionEventChoice
     ) -> AutomationEventOption {
-        let producers = choice.producerLabels.isEmpty
+        let producers =
+            choice.producerLabels.isEmpty
             ? "No active producer" : "Producer: \(choice.producerLabels.joined(separator: ", "))"
-        let consumers = choice.consumerLabels.isEmpty
+        let consumers =
+            choice.consumerLabels.isEmpty
             ? "No active consumer" : "Consumers: \(choice.consumerLabels.joined(separator: ", "))"
         return AutomationEventOption(
             label: choice.label,
             type: choice.type,
             version: choice.version,
             kind: choice.kind,
-            detail: "\(choice.kind.capitalized) · v\(choice.version) · \(producers) · \(consumers) · \(choice.routingStatus)",
+            detail:
+                "\(choice.kind.capitalized) · v\(choice.version) · \(producers) · \(consumers) · \(choice.routingStatus)",
             routingStatus: choice.routingStatus,
             routingExplanation: choice.routingExplanation,
             selectedConsumerID: choice.selectedConsumerID,

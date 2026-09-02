@@ -64,7 +64,8 @@ public struct AutomationRuleDraft: Identifiable, Sendable, Equatable {
         if inputEventType.count < 3 || emissionEventType.count < 3 {
             issues.append("Rule \(ruleID) Event types must contain at least three characters.")
         }
-        let targetValue = switch target {
+        let targetValue =
+            switch target {
         case .moduleInstance(let value), .binding(let value): value
         }
         if targetValue.isEmpty {
@@ -85,7 +86,8 @@ public struct AutomationRuleDraft: Identifiable, Sendable, Equatable {
         }
         var when: [String: Any] = ["eventType": inputEventType]
         if !equals.isEmpty { when["equals"] = equals }
-        let targetDocument: [String: String] = switch target {
+        let targetDocument: [String: String] =
+            switch target {
         case .moduleInstance(let id): ["moduleInstanceId": id]
         case .binding(let id): ["binding": id]
         }
@@ -135,6 +137,10 @@ public struct ProjectModuleDraft: Identifiable, Sendable, Equatable {
     public var configurationFields: [ModuleConfigurationField]
     public var automationRules: [AutomationRuleDraft]?
     public var rawConfigurationJSON: String?
+    public var preservedConfigurationValues: [String: [String: String]]
+    public var preservedAutomationRules: [String: [AutomationRuleDraft]]
+    public var preservedRawConfigurations: [String: String]
+    public var configurationRepairExplanation: String?
 
     init(payload: Components.Schemas.ModuleInstanceConfiguration, package: ModulePackage?) {
         id = UUID()
@@ -150,6 +156,16 @@ public struct ProjectModuleDraft: Identifiable, Sendable, Equatable {
         automationRules = Self.decodeAutomationRules(
             payload.configuration, semantics: package?.automationRuleSemantics)
         rawConfigurationJSON = Self.encodeConfiguration(payload.configuration)
+        preservedConfigurationValues = [moduleId: configurationValues]
+        preservedAutomationRules = [:]
+        if let automationRules {
+            preservedAutomationRules[moduleId] = automationRules
+        }
+        preservedRawConfigurations = [:]
+        if let rawConfigurationJSON {
+            preservedRawConfigurations[moduleId] = rawConfigurationJSON
+        }
+        configurationRepairExplanation = nil
     }
 
     init(package: ModulePackage, instanceId: String) {
@@ -164,6 +180,10 @@ public struct ProjectModuleDraft: Identifiable, Sendable, Equatable {
             uniqueKeysWithValues: package.configurationFields.map { ($0.key, $0.initialValue) })
         automationRules = package.automationRuleSemantics == nil ? nil : []
         rawConfigurationJSON = nil
+        preservedConfigurationValues = [moduleId: configurationValues]
+        preservedAutomationRules = [:]
+        preservedRawConfigurations = [:]
+        configurationRepairExplanation = nil
     }
 
     public var validationIssues: [String] {
@@ -175,7 +195,8 @@ public struct ProjectModuleDraft: Identifiable, Sendable, Equatable {
         let ruleIssues = (automationRules ?? []).flatMap(\.validationIssues).map {
             "\(instanceId): \($0)"
         }
-        let emptyRuleIssue = automationRules?.isEmpty == true
+        let emptyRuleIssue =
+            automationRules?.isEmpty == true
             ? ["\(instanceId): At least one Automation Rule is required."] : []
         return fieldIssues + ruleIssues + emptyRuleIssue
     }
@@ -277,15 +298,33 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
 
     public mutating func select(package: ModulePackage, for moduleId: UUID) {
         guard let index = modules.firstIndex(where: { $0.id == moduleId }) else { return }
-        let previousValues = modules[index].configurationValues
+        let previousModuleID = modules[index].moduleId
+        modules[index].preservedConfigurationValues[previousModuleID] =
+            modules[index].configurationValues
+        if let rules = modules[index].automationRules {
+            modules[index].preservedAutomationRules[previousModuleID] = rules
+        }
+        if let raw = modules[index].rawConfigurationJSON {
+            modules[index].preservedRawConfigurations[previousModuleID] = raw
+        }
+        var restoredValues = modules[index].preservedConfigurationValues[package.moduleId] ?? [:]
+        for field in package.configurationFields where restoredValues[field.key] == nil {
+            restoredValues[field.key] = field.initialValue
+        }
         modules[index].moduleId = package.moduleId
         modules[index].configurationFields = package.configurationFields
-        modules[index].automationRules = package.automationRuleSemantics == nil ? nil : []
-        modules[index].rawConfigurationJSON = nil
-        modules[index].configurationValues = Dictionary(
-            uniqueKeysWithValues: package.configurationFields.map { field in
-                (field.key, previousValues[field.key] ?? field.initialValue)
-            })
+        modules[index].automationRules =
+            package.automationRuleSemantics == nil
+            ? nil : modules[index].preservedAutomationRules[package.moduleId] ?? []
+        modules[index].rawConfigurationJSON =
+            modules[index].preservedRawConfigurations[package.moduleId]
+        modules[index].configurationValues = restoredValues
+        modules[index].preservedConfigurationValues[package.moduleId] =
+            modules[index].configurationValues
+        modules[index].configurationRepairExplanation =
+            previousModuleID == package.moduleId
+            ? nil
+            : "Configuration input for \(previousModuleID) was preserved. Switch back to repair or reuse it; review the fields required by \(package.displayName)."
     }
 
     public mutating func add(package: ModulePackage) {
@@ -343,6 +382,16 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
 
     public mutating func setAutomationRuleMatch(moduleID: UUID, ruleID: UUID, json: String) {
         editAutomationRule(moduleID: moduleID, ruleID: ruleID) { $0.matchJSON = json }
+    }
+
+    public mutating func setAutomationRulePayload(
+        moduleID: UUID,
+        ruleID: UUID,
+        json: String
+    ) {
+        editAutomationRule(moduleID: moduleID, ruleID: ruleID) {
+            $0.payloadJSON = json == "{}" ? nil : json
+        }
     }
 
     public mutating func setAutomationRuleEmission(

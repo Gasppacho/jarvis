@@ -20,7 +20,8 @@ public struct ModulePackage: Identifiable, Sendable, Equatable {
     public let automationRuleSemantics: AutomationRuleSchemaSemantics?
 
     init(payload: Components.Schemas.ModulePackage) {
-        let configurationSchema: String? = if let schema = payload.configurationSchema,
+        let configurationSchema: String? =
+            if let schema = payload.configurationSchema,
             let compactJSON = schema.additionalProperties.jsonData,
             let object = try? JSONSerialization.jsonObject(with: compactJSON),
             let prettyJSON = try? JSONSerialization.data(
@@ -89,15 +90,14 @@ public struct AutomationRuleSchemaSemantics: Sendable, Equatable {
 }
 
 public struct ModuleConfigurationField: Identifiable, Sendable, Equatable {
-    public enum JSONContainer: Sendable, Equatable { case object, array }
-
-    public enum ValueKind: Sendable, Equatable {
+    public indirect enum ValueKind: Sendable, Equatable {
         case string
         case integer
         case number
         case boolean
         case choice([String])
-        case json(JSONContainer)
+        case object([ModuleConfigurationField])
+        case array(ModuleConfigurationField)
     }
 
     public var id: String { key }
@@ -108,11 +108,50 @@ public struct ModuleConfigurationField: Identifiable, Sendable, Equatable {
     public let defaultValue: String?
     public let minimum: Double?
     public let maximum: Double?
+    public let minimumLength: Int?
+    public let maximumLength: Int?
     public let pattern: String?
     public let description: String?
+    public let examples: [String]
+    public let minimumItems: Int?
+    public let maximumItems: Int?
     private let schemaJSON: Data?
 
-    public var initialValue: String { defaultValue ?? "" }
+    public var initialValue: String {
+        if let defaultValue { return defaultValue }
+        return switch kind {
+        case .array: "[]"
+        case .object: "{}"
+        default: ""
+        }
+    }
+
+    public var accessibilityLabel: String {
+        "\(label), \(required ? "required" : "optional"), \(controlName)"
+    }
+
+    public var accessibilityHint: String {
+        var parts = description.map { [$0] } ?? []
+        if let defaultValue { parts.append("Default: \(defaultValue).") }
+        if !examples.isEmpty { parts.append("Example: \(examples.joined(separator: ", ")).") }
+        if minimum != nil || maximum != nil {
+            parts.append(
+                "Range: \(minimum?.formatted() ?? "unbounded") to \(maximum?.formatted() ?? "unbounded").")
+        }
+        return parts.joined(separator: " ")
+    }
+
+    private var controlName: String {
+        switch kind {
+        case .string: "text"
+        case .integer: "integer"
+        case .number: "number"
+        case .boolean: "toggle"
+        case .choice: "choice"
+        case .object: "object"
+        case .array: "repeatable"
+        }
+    }
 
     public func validationIssue(for text: String) -> String? {
         if text.isEmpty {
@@ -146,7 +185,7 @@ public struct ModuleConfigurationField: Identifiable, Sendable, Equatable {
         }
     }
 
-    func decode(_ text: String) throws -> Any {
+    public func decode(_ text: String) throws -> Any {
         switch kind {
         case .string:
             return text
@@ -166,13 +205,14 @@ public struct ModuleConfigurationField: Identifiable, Sendable, Equatable {
                 throw ModuleConfigurationValueError.invalid
             }
             return text == "true"
-        case .json(let container):
-            guard let data = text.data(using: .utf8) else {
-                throw ModuleConfigurationValueError.invalid
-            }
-            let value = try JSONSerialization.jsonObject(with: data)
-            guard (container == .array && value is [Any])
-                || (container == .object && value is [String: Any])
+        case .array:
+            guard let data = text.data(using: .utf8),
+                let value = try JSONSerialization.jsonObject(with: data) as? [Any]
+            else { throw ModuleConfigurationValueError.invalid }
+            return value
+        case .object:
+            guard let data = text.data(using: .utf8),
+                let value = try JSONSerialization.jsonObject(with: data) as? [String: Any]
             else { throw ModuleConfigurationValueError.invalid }
             return value
         }
@@ -185,32 +225,59 @@ public struct ModuleConfigurationField: Identifiable, Sendable, Equatable {
         else { return [] }
         let required = Set(object["required"] as? [String] ?? [])
         return properties.keys.sorted().map { key in
-            let property = properties[key] ?? [:]
+            decodeField(key: key, schema: properties[key] ?? [:], required: required.contains(key))
+        }
+    }
+
+    private static func decodeField(
+        key: String,
+        schema: [String: Any],
+        required: Bool
+    ) -> ModuleConfigurationField {
             let kind: ValueKind
-            if let choices = property["enum"] as? [String] {
+        if let choices = schema["enum"] as? [String] {
                 kind = .choice(choices)
             } else {
-                kind = switch property["type"] as? String {
+            kind =
+                switch schema["type"] as? String {
                 case "string": .string
                 case "integer": .integer
                 case "number": .number
                 case "boolean": .boolean
-                case "array": .json(.array)
-                default: .json(.object)
+                case "array":
+                    .array(
+                        decodeField(
+                            key: "item",
+                            schema: schema["items"] as? [String: Any] ?? [:],
+                            required: true))
+                default:
+                    .object(decodeObjectFields(schema))
                 }
             }
             return .init(
                 key: key,
-                label: property["title"] as? String ?? key,
-                required: required.contains(key),
+            label: schema["title"] as? String ?? key,
+            required: required,
                 kind: kind,
-                defaultValue: encodeDefault(property["default"]),
-                minimum: (property["minimum"] as? NSNumber)?.doubleValue,
-                maximum: (property["maximum"] as? NSNumber)?.doubleValue,
-                pattern: property["pattern"] as? String,
-                description: property["description"] as? String,
+            defaultValue: encodeDefault(schema["default"]),
+            minimum: (schema["minimum"] as? NSNumber)?.doubleValue,
+            maximum: (schema["maximum"] as? NSNumber)?.doubleValue,
+            minimumLength: schema["minLength"] as? Int,
+            maximumLength: schema["maxLength"] as? Int,
+            pattern: schema["pattern"] as? String,
+            description: schema["description"] as? String,
+            examples: (schema["examples"] as? [Any] ?? []).compactMap(encodeDefault),
+            minimumItems: schema["minItems"] as? Int,
+            maximumItems: schema["maxItems"] as? Int,
                 schemaJSON: try? JSONSerialization.data(
-                    withJSONObject: property, options: [.sortedKeys]))
+                withJSONObject: schema, options: [.sortedKeys]))
+    }
+
+    private static func decodeObjectFields(_ schema: [String: Any]) -> [ModuleConfigurationField] {
+        let properties = schema["properties"] as? [String: [String: Any]] ?? [:]
+        let required = Set(schema["required"] as? [String] ?? [])
+        return properties.keys.sorted().map { key in
+            decodeField(key: key, schema: properties[key] ?? [:], required: required.contains(key))
         }
     }
 
@@ -227,6 +294,7 @@ public struct ModuleConfigurationField: Identifiable, Sendable, Equatable {
         }
         if let string = value as? String {
             if let minimum = schema["minLength"] as? Int, string.count < minimum { return false }
+            if let maximum = schema["maxLength"] as? Int, string.count > maximum { return false }
             if let pattern = schema["pattern"] as? String,
                 string.range(of: pattern, options: .regularExpression) == nil
             {
@@ -235,14 +303,22 @@ public struct ModuleConfigurationField: Identifiable, Sendable, Equatable {
         }
         if let number = value as? NSNumber, !(value is Bool) {
             if let minimum = schema["minimum"] as? NSNumber,
-                number.doubleValue < minimum.doubleValue { return false }
+                number.doubleValue < minimum.doubleValue
+            {
+                return false
+            }
             if let maximum = schema["maximum"] as? NSNumber,
-                number.doubleValue > maximum.doubleValue { return false }
+                number.doubleValue > maximum.doubleValue
+            {
+                return false
+            }
         }
         if let array = value as? [Any] {
             if let minimum = schema["minItems"] as? Int, array.count < minimum { return false }
+            if let maximum = schema["maxItems"] as? Int, array.count > maximum { return false }
             if schema["uniqueItems"] as? Bool == true {
-                for index in array.indices where array[(index + 1)...].contains(where: {
+                for index in array.indices
+                where array[(index + 1)...].contains(where: {
                     jsonEqual(array[index], $0)
                 }) { return false }
             }

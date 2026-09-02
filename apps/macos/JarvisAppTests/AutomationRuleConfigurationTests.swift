@@ -36,11 +36,14 @@ final class AutomationRuleConfigurationTests: XCTestCase {
             ruleID: rule.id,
             eventType: "development.implementation.requested",
             resolvedConsumerID: "development")
+        draft.setAutomationRulePayload(
+            moduleID: moduleID, ruleID: rule.id, json: #"{"priority":"high"}"#)
 
         let payload = try draft.payload()
         let reopened = ProjectConfigurationDraft(configuration: payload, packages: [package])
         let reopenedRule = try XCTUnwrap(reopened.modules.first?.automationRules?.first)
         XCTAssertEqual(reopenedRule.matchJSON, #"{"payload.tag":"agent:queued"}"#)
+        XCTAssertEqual(reopenedRule.payloadJSON, #"{"priority":"high"}"#)
         XCTAssertEqual(reopenedRule.target, .moduleInstance("development"))
         XCTAssertEqual(reopened.modules.first?.automationRules?.count, 2)
         XCTAssertEqual(reopened.modules.count, 2, "editing a Rule preserves unrelated Project input")
@@ -81,6 +84,7 @@ final class AutomationRuleConfigurationTests: XCTestCase {
         XCTAssertTrue(row.emissionChoices[0].detail.contains("Development"))
         XCTAssertTrue(row.emissionChoices[0].detail.contains("compatible"))
         XCTAssertEqual(row.targetChoices, ["development"])
+        XCTAssertEqual(row.payloadJSON, "{}")
         XCTAssertTrue(row.routingExplanation.contains("exactly one compatible consumer"))
         XCTAssertTrue(presentation.isReadyForValidation)
 

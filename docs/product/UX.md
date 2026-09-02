@@ -147,6 +147,21 @@ réparer, la signale explicitement et bloque l'état Ready-to-validate jusqu'à 
 contrat du Module Package la valide. Modifier ou supprimer une Rule ne remplace jamais
 les autres Rules ni les autres champs du Draft.
 
+### Module Configuration structurée
+
+Chaque Module Configuration embarquée est éditée récursivement depuis son JSON Schema :
+contrôles scalaires, enums, objets, collections et valeurs répétables. Le contrôle montre
+le `title`, la `description`, les exemples, l'état requis ou optionnel, le défaut et les
+bornes appartenant au schema. Le JSON brut reste sous `Advanced` pour la réparation et
+n'est jamais le chemin principal.
+
+Changer de Module Package conserve en mémoire les entrées valides ou invalides du package
+précédent, indique comment les réparer ou les retrouver, et restaure ces valeurs si
+l'utilisateur revient au package. Le wizard ne déduit aucune sémantique du nom d'une
+propriété et ne crée ni nom de Slot ni capability factice : ces deux valeurs sont saisies
+avant l'ajout. La sauvegarde sérialise uniquement la Module Configuration canonique, sans
+état de contrôle propre au shell.
+
 ## Overview projet
 
 Affiche :

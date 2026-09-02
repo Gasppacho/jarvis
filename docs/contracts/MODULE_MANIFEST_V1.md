@@ -108,6 +108,13 @@ Configuration, normal JSON Schema keywords validate custom values, and routing m
 comes from the project-scoped composition choices response. Unknown annotations are
 ignored so older shells retain their generic schema editor.
 
+The Project Wizard also derives its generic controls recursively from standard JSON
+Schema keywords; it never infers meaning from property names. Schema authors provide
+`title`, `description`, `examples`, `default`, required membership, enum choices and
+applicable string, numeric and collection bounds. Objects and arrays are structured and
+repeatable in the normal path. Raw JSON is an Advanced repair path that preserves input
+which cannot currently be represented as valid structured values.
+
 ## Permissions
 
 Les permissions décrivent le blast radius attendu :
