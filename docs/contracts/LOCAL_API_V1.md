@@ -43,10 +43,18 @@ schéma explicite `ProjectValidationReportV1`, identifié dans le document par
 `POST /v1/projects/{projectId}/composition-choices` prévisualise, sans mutation, les
 Events déclarés par la configuration sauvegardée ou par une `portableConfig` proposée.
 La réponse `ProjectCompositionChoicesV1` est déterministe et explique la diffusion des
-Facts ainsi que les Requests orphelines, résolues ou ambiguës. Labels, descriptions et
-payload schemas viennent des contrats Event versionnés; les producteurs, consumers et
-routes viennent des Manifests des Module Instances activées. Aucun graphe impératif
-n'est persisté.
+Facts ainsi que les Requests orphelines, résolues ou ambiguës. Elle expose aussi les
+starting points `github-development` et `custom`, le catalogue des Module Packages
+validés et les cartes des Module Instances de la proposition. Le template transporte
+une Portable Configuration complète; `custom` n'en transporte aucune et conserve le
+draft importé. Les cartes mènent par nom et description humains, puis donnent Events,
+capabilities requises, compatibilité et ressources manquantes; IDs, versions et
+références de schéma restent des détails techniques.
+
+Labels, descriptions et payload schemas viennent des contrats Event versionnés; les
+producteurs, consumers et routes viennent des Manifests des Module Instances activées.
+Prévisualiser ou choisir un template ne crée aucun Local Binding, grant ou graphe
+impératif persistant.
 
 Ces ressources restent sous le préfixe Local API `/v1`, conformément à la pratique de
 versioning de cette API.

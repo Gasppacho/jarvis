@@ -177,4 +177,4 @@ GitHub Development
   - sourceControl/tickets/agentRuntime slots
 ```
 
-Le template produit un draft modifiable. Il n'est ni un workflow central ni un nouveau type de module.
+Le template produit un draft modifiable à partir des métadonnées, du repository, des commandes et des conventions détectées. Le Local API le sert avec le starting point `Custom composition`, les Module Packages validés et les choix Event recalculés pour toute proposition. Les valeurs initiales de configuration sont sûres et canoniques (`ignore-existing`, deux cycles de réparation, suppression du workspace après succès). Le template ne crée aucun grant ni Local Binding : les slots `sourceControl`, `tickets` et `agentRuntime` restent explicitement non résolus jusqu'au choix de l'utilisateur. Il n'est ni un workflow central ni un nouveau type de module.

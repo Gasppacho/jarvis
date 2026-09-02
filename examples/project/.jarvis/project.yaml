@@ -39,6 +39,7 @@ modules:
       sourceControl: sourceControl
       tickets: tickets
     configuration:
+      bootstrapLabelPolicy: ignore-existing
       pollIntervalSeconds: 60
       repositories:
         - main
@@ -71,3 +72,4 @@ modules:
         - test
         - build
       maxRepairCycles: 2
+      retainWorkspaceOnSuccess: false

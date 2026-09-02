@@ -1,8 +1,12 @@
 import type {
+  PortableProjectConfiguration,
   ProjectCompositionChoices,
   ProjectCompositionChoiceInstance,
+  ProjectCompositionModuleInstance,
+  ProjectCompositionModulePackage,
   ProjectModuleInstanceConfiguration,
   ProjectSlotBinding,
+  ProjectValidationFinding,
   StoredPortableProjectConfiguration,
 } from "./project-types.js";
 import type {
@@ -18,12 +22,14 @@ interface EventContractMetadata {
 
 export interface ProjectCompositionChoicePackagePort extends ProjectModulePackageValidationPort {
   eventContract(schemaRef: string): EventContractMetadata;
+  catalog(): readonly ProjectCompositionModulePackage[];
 }
 
 export interface ProjectCompositionChoiceInput {
   readonly projectId: string;
   readonly configuration: StoredPortableProjectConfiguration;
   readonly slotBindings: Readonly<Record<string, ProjectSlotBinding>>;
+  readonly validationFindings?: readonly ProjectValidationFinding[];
 }
 
 interface Declaration {
@@ -80,8 +86,154 @@ export function previewProjectCompositionChoices(
     apiVersion: "jarvis.dev/project-composition-choices/v1",
     kind: "ProjectCompositionChoices",
     projectId: input.projectId,
+    startingPoints: startingPoints(input.configuration),
+    modulePackages: [...modules.catalog()].sort(compareJson),
+    moduleInstances: moduleInstances(input.configuration, input.validationFindings ?? [], modules),
     choices,
   };
+}
+
+function startingPoints(configuration: StoredPortableProjectConfiguration) {
+  return [
+    {
+      id: "github-development" as const,
+      displayName: "GitHub Development",
+      description:
+        "Start from GitHub intake, Automation Rules, and an isolated Development Module Instance.",
+      template: githubDevelopmentTemplate(configuration),
+    },
+    {
+      id: "custom" as const,
+      displayName: "Custom composition",
+      description: "Keep the imported Project details and choose each Module Instance yourself.",
+    },
+  ];
+}
+
+function githubDevelopmentTemplate(
+  base: StoredPortableProjectConfiguration,
+): PortableProjectConfiguration {
+  const repository = base.repositories[0];
+  return {
+    ...base,
+    repositories: [
+      {
+        id: "main",
+        root: ".",
+        defaultBranch: repository?.defaultBranch ?? "main",
+        remote: repository?.remote ?? "origin",
+      },
+    ],
+    slots: {
+      agentRuntime: { requires: "agent.execute" },
+      sourceControl: { requires: "scm.change-request.manage" },
+      tickets: { requires: "work-items.read" },
+    },
+    modules: [
+      {
+        instanceId: "github",
+        moduleId: "jarvis.module.github",
+        enabled: true,
+        bindings: { sourceControl: "sourceControl", tickets: "tickets" },
+        configuration: {
+          bootstrapLabelPolicy: "ignore-existing",
+          pollIntervalSeconds: 60,
+          repositories: ["main"],
+        },
+      },
+      {
+        instanceId: "automation-rules",
+        moduleId: "jarvis.module.automation-rules",
+        enabled: true,
+        configuration: {
+          rules: [
+            {
+              id: "ready-label-starts-development",
+              when: {
+                eventType: "scm.work-item.tag-added",
+                equals: { "payload.tag": "agent:ready" },
+              },
+              emit: {
+                type: "development.implementation.requested",
+                target: { moduleInstanceId: "development" },
+              },
+            },
+          ],
+        },
+      },
+      {
+        instanceId: "development",
+        moduleId: "jarvis.module.development",
+        enabled: true,
+        runtimeSlot: "agentRuntime",
+        bindings: {
+          tickets: "tickets",
+          repository: "main",
+          sourceControl: "sourceControl",
+        },
+        configuration: {
+          validationOrder: ["lint", "typecheck", "test", "build"],
+          maxRepairCycles: 2,
+          retainWorkspaceOnSuccess: false,
+        },
+      },
+    ],
+  };
+}
+
+function moduleInstances(
+  configuration: StoredPortableProjectConfiguration,
+  validationFindings: readonly ProjectValidationFinding[],
+  modules: ProjectCompositionChoicePackagePort,
+): ProjectCompositionModuleInstance[] {
+  return configuration.modules
+    .map((instance) => {
+      const modulePackage = modules.package(instance.moduleId) as
+        ProjectCompositionModulePackage | undefined;
+      if (modulePackage === undefined) {
+        return {
+          instanceId: instance.instanceId,
+          moduleId: instance.moduleId,
+          enabled: instance.enabled,
+          version: "Unavailable",
+          displayName: "Unavailable Module Package",
+          description: "This Module Package is not available in the bundled catalogue.",
+          consumes: [],
+          produces: [],
+          requiredCapabilities: [],
+          compatibility: "incompatible" as const,
+          missingResources: [],
+        };
+      }
+      const validation = modules.validateConfiguration(
+        instance.moduleId,
+        instance.configuration ?? {},
+      );
+      const missingResources = validationFindings
+        .flatMap((finding) =>
+          finding.target.kind === "capability" &&
+          "instanceId" in finding.target &&
+          finding.target.instanceId === instance.instanceId
+            ? [finding.target.capability]
+            : [],
+        )
+        .sort();
+      return {
+        instanceId: instance.instanceId,
+        moduleId: instance.moduleId,
+        enabled: instance.enabled,
+        version: modulePackage.version,
+        displayName: modulePackage.displayName,
+        description: modulePackage.description,
+        consumes: modulePackage.consumes,
+        produces: modulePackage.produces,
+        requiredCapabilities: modulePackage.requires,
+        compatibility:
+          validation.issues.length === 0 ? ("compatible" as const) : ("incompatible" as const),
+        missingResources,
+      };
+    })
+    .sort(compareJson);
 }
 
 function declarations(

@@ -250,10 +250,49 @@ export interface ProjectCompositionEventChoice {
   readonly routing: ProjectCompositionChoiceRouting;
 }
 
+export interface ProjectCompositionStartingPoint {
+  readonly id: "github-development" | "custom";
+  readonly displayName: string;
+  readonly description: string;
+  /** Custom keeps the imported draft; templates replace only its composition fields. */
+  readonly template?: PortableProjectConfiguration;
+}
+
+export interface ProjectCompositionModulePackage {
+  readonly moduleId: string;
+  readonly version: string;
+  readonly displayName: string;
+  readonly description: string;
+  readonly categories: readonly string[];
+  readonly consumes: readonly string[];
+  readonly produces: readonly string[];
+  readonly requires: readonly string[];
+  readonly provides: readonly string[];
+  readonly configurationSchemaRef: string | null;
+  readonly configurationSchema: Readonly<Record<string, unknown>> | null;
+}
+
+export interface ProjectCompositionModuleInstance {
+  readonly instanceId: string;
+  readonly moduleId: string;
+  readonly enabled: boolean;
+  readonly version: string;
+  readonly displayName: string;
+  readonly description: string;
+  readonly consumes: readonly string[];
+  readonly produces: readonly string[];
+  readonly requiredCapabilities: readonly string[];
+  readonly compatibility: "compatible" | "incompatible";
+  readonly missingResources: readonly string[];
+}
+
 export interface ProjectCompositionChoices {
   readonly apiVersion: "jarvis.dev/project-composition-choices/v1";
   readonly kind: "ProjectCompositionChoices";
   readonly projectId: string;
+  readonly startingPoints: readonly ProjectCompositionStartingPoint[];
+  readonly modulePackages: readonly ProjectCompositionModulePackage[];
+  readonly moduleInstances: readonly ProjectCompositionModuleInstance[];
   readonly choices: readonly ProjectCompositionEventChoice[];
 }
 

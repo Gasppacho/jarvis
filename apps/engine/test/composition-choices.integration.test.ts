@@ -73,12 +73,138 @@ describe("project composition choices", () => {
 
     const response = await preview(engine, project.id);
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
-      apiVersion: "jarvis.dev/project-composition-choices/v1",
-      kind: "ProjectCompositionChoices",
-      projectId: project.id,
-      choices: [],
+    expect(await response.json()).toEqual(
+      expect.objectContaining({
+        apiVersion: "jarvis.dev/project-composition-choices/v1",
+        kind: "ProjectCompositionChoices",
+        projectId: project.id,
+        moduleInstances: [],
+        choices: [],
+      }),
+    );
+  });
+
+  it("offers canonical starting points and human Module Instance choices without implicit local grants", async () => {
+    const engine = await startEngine();
+    engines.push(engine);
+    const repositoryPath = makeNodeRepositoryFixture();
+    repositories.push(repositoryPath);
+    const imported = await engine.call("/v1/projects", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ repositoryPath }),
     });
+    const project = (await imported.json()) as { id: string };
+
+    const fresh = (await (await preview(engine, project.id)).json()) as {
+      startingPoints: Array<{
+        id: string;
+        displayName: string;
+        description: string;
+        template?: Record<string, unknown>;
+      }>;
+      modulePackages: Array<{
+        moduleId: string;
+        displayName: string;
+        description: string;
+        consumes: string[];
+        produces: string[];
+        requires: string[];
+      }>;
+      moduleInstances: unknown[];
+    };
+    expect(fresh.startingPoints.map(({ id }) => id)).toEqual(["github-development", "custom"]);
+    expect(fresh.startingPoints[0]).toEqual(
+      expect.objectContaining({
+        displayName: "GitHub Development",
+        description: expect.stringContaining("GitHub"),
+      }),
+    );
+    expect(fresh.startingPoints[1]).toEqual(
+      expect.objectContaining({
+        displayName: "Custom composition",
+      }),
+    );
+    expect(fresh.modulePackages).toContainEqual(
+      expect.objectContaining({
+        moduleId: "jarvis.module.development",
+        displayName: "Development",
+        description: "Implements a requested work item in an isolated Git workspace.",
+        consumes: ["development.implementation.requested.v1"],
+        requires: expect.arrayContaining(["agent.execute", "repository.write"]),
+      }),
+    );
+    expect(fresh.moduleInstances).toEqual([]);
+
+    const template = fresh.startingPoints[0]?.template as {
+      slots: Record<string, unknown>;
+      modules: Array<Record<string, unknown>>;
+    };
+    expect(Object.keys(template.slots)).toEqual(["agentRuntime", "sourceControl", "tickets"]);
+    expect(template.modules.map(({ instanceId }) => instanceId)).toEqual([
+      "github",
+      "automation-rules",
+      "development",
+    ]);
+    expect(template.modules[0]?.["configuration"]).toEqual({
+      bootstrapLabelPolicy: "ignore-existing",
+      pollIntervalSeconds: 60,
+      repositories: ["main"],
+    });
+
+    const guidedResponse = await preview(engine, project.id, template);
+    expect(guidedResponse.status, await guidedResponse.clone().text()).toBe(200);
+    const guided = (await guidedResponse.json()) as {
+      moduleInstances: Array<{
+        instanceId: string;
+        displayName: string;
+        compatibility: string;
+        missingResources: string[];
+      }>;
+      choices: Array<{ type: string; routing: { status: string } }>;
+    };
+    expect(guided.moduleInstances).toEqual([
+      expect.objectContaining({
+        instanceId: "automation-rules",
+        displayName: "Automation Rules",
+        compatibility: "compatible",
+        missingResources: [],
+      }),
+      expect.objectContaining({
+        instanceId: "development",
+        displayName: "Development",
+        compatibility: "compatible",
+        missingResources: [
+          "agent.execute",
+          "git.branch",
+          "git.commit",
+          "git.push",
+          "repository.write",
+          "shell.execute",
+          "work-items.read",
+        ],
+      }),
+      expect.objectContaining({
+        instanceId: "github",
+        displayName: "GitHub",
+        compatibility: "compatible",
+        missingResources: ["github.api"],
+      }),
+    ]);
+    expect(
+      guided.choices.find(({ type }) => type === "development.implementation.requested")?.routing
+        .status,
+    ).toBe("resolved");
+
+    const bindings = (await (await engine.call(`/v1/projects/${project.id}/bindings`)).json()) as {
+      slots: Record<string, unknown>;
+    };
+    expect(bindings.slots).toEqual({});
+    const unchanged = (await (await engine.call(`/v1/projects/${project.id}`)).json()) as {
+      portableConfig: { modules: unknown[]; slots: Record<string, unknown> };
+    };
+    expect(unchanged.portableConfig.modules).toEqual([]);
+    expect(unchanged.portableConfig.slots).toEqual({});
   });
 
   it("previews deterministic contract-owned choices for the canonical composition without mutation", async () => {

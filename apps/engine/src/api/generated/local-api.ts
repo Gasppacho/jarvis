@@ -629,12 +629,36 @@ export interface components {
                 explanation: string;
             };
         };
+        ProjectCompositionStartingPoint: {
+            /** @enum {unknown} */
+            id: "github-development" | "custom";
+            displayName: string;
+            description: string;
+            template?: components["schemas"]["PortableProjectConfiguration"];
+        };
+        ProjectCompositionModuleInstance: {
+            instanceId: string;
+            moduleId: string;
+            enabled: boolean;
+            version: string;
+            displayName: string;
+            description: string;
+            consumes: string[];
+            produces: string[];
+            requiredCapabilities: string[];
+            /** @enum {unknown} */
+            compatibility: "compatible" | "incompatible";
+            missingResources: string[];
+        };
         ProjectCompositionChoicesV1: {
             /** @constant */
             apiVersion: "jarvis.dev/project-composition-choices/v1";
             /** @constant */
             kind: "ProjectCompositionChoices";
             projectId: string;
+            startingPoints: components["schemas"]["ProjectCompositionStartingPoint"][];
+            modulePackages: components["schemas"]["ModulePackage"][];
+            moduleInstances: components["schemas"]["ProjectCompositionModuleInstance"][];
             choices: components["schemas"]["ProjectCompositionEventChoice"][];
         };
         ProjectValidationReportV1: {

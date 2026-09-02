@@ -225,6 +225,33 @@ public struct EngineClient: Sendable {
         }
     }
 
+    public func previewProjectCompositionChoices(
+        projectId: String,
+        portableConfig: Components.Schemas.PortableProjectConfiguration? = nil
+    ) async throws -> ProjectCompositionGuide {
+        let operation = "POST /v1/projects/\(projectId)/composition-choices"
+        let body: Operations.previewProjectCompositionChoicesV1.Input.Body?
+        if let portableConfig {
+            let payload: Operations.previewProjectCompositionChoicesV1.Input.Body.jsonPayload.portableConfigPayload =
+                .PortableProjectConfiguration(portableConfig)
+            body = .json(.init(portableConfig: payload))
+        } else {
+            body = nil
+        }
+        let output = try await underlying.previewProjectCompositionChoicesV1(
+            .init(path: .init(projectId: projectId), body: body))
+        switch output {
+        case .ok(let ok):
+            return ProjectCompositionGuide(payload: try ok.body.json)
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
     public func deleteProject(id: String) async throws {
         let operation = "DELETE /v1/projects/\(id)"
         let output = try await underlying.deleteProject(
