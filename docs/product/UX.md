@@ -68,6 +68,11 @@ Une ressource globale n'est pas visible des agents du projet sans ce binding.
 
 ### Étape 4 — Modules
 
+Un Project fraîchement importé commence par deux choix nommés : `GitHub Development`
+ou `Custom composition`. Le premier remplit un Draft canonique; le second conserve les
+valeurs détectées et laisse la composition vide. Aucun choix ne lie ni n'autorise une
+ressource locale.
+
 Pour le template GitHub Development :
 
 ```text
@@ -77,6 +82,14 @@ Pour le template GitHub Development :
 [ ] Change Request Review
 [ ] Auto Merge
 ```
+
+Chaque carte mène par le nom et la description du Module Package. Elle affiche les
+Events consommés et émis, les capabilities requises, la compatibilité et les ressources
+manquantes provenant de la prévisualisation Engine. `Advanced` révèle seulement ensuite
+l'Instance ID, le Package ID, la version et les détails contractuels. Ajouter, retirer,
+activer, désactiver ou changer un package redemande immédiatement les choix au Local API;
+une réponse devenue obsolète ne remplace jamais un Draft plus récent et les autres
+valeurs saisies restent intactes.
 
 ### Étape 5 — Validation
 

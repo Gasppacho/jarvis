@@ -141,10 +141,21 @@ export class ProjectService implements ProjectRegistry<
       proposedConfiguration === undefined
         ? project.portableConfig
         : requirePortableProjectConfiguration(proposedConfiguration, this.modules);
+    const validation = this.compositionValidator.validate({
+      projectId: project.id,
+      configuration,
+      slotBindings: project.slotBindings,
+      repositoryBinding: {
+        saved: project.bookmarkRef !== null,
+        accessible: this.repositoryAccessibility.isAccessibleDirectory(project.repositoryPath),
+      },
+      grantedResources: this.resourceGrants.grantedToProject(project.id),
+    });
     return previewProjectCompositionChoices(this.modules, {
       projectId: project.id,
       configuration,
       slotBindings: project.slotBindings,
+      validationFindings: validation.findings,
     });
   }
 

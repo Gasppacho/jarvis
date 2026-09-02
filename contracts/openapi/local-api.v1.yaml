@@ -1053,10 +1053,76 @@ components:
                 explanation:
                   type: string
                   minLength: 1
+    ProjectCompositionStartingPoint:
+      type: object
+      additionalProperties: false
+      required: [id, displayName, description]
+      properties:
+        id:
+          enum: [github-development, custom]
+        displayName:
+          type: string
+          minLength: 1
+        description:
+          type: string
+          minLength: 1
+        template:
+          $ref: "#/components/schemas/PortableProjectConfiguration"
+    ProjectCompositionModuleInstance:
+      type: object
+      additionalProperties: false
+      required:
+        - instanceId
+        - moduleId
+        - enabled
+        - version
+        - displayName
+        - description
+        - consumes
+        - produces
+        - requiredCapabilities
+        - compatibility
+        - missingResources
+      properties:
+        instanceId:
+          type: string
+        moduleId:
+          type: string
+        enabled:
+          type: boolean
+        version:
+          type: string
+        displayName:
+          type: string
+          minLength: 1
+        description:
+          type: string
+          minLength: 1
+        consumes:
+          type: array
+          items: { type: string }
+        produces:
+          type: array
+          items: { type: string }
+        requiredCapabilities:
+          type: array
+          items: { type: string }
+        compatibility:
+          enum: [compatible, incompatible]
+        missingResources:
+          type: array
+          items: { type: string }
     ProjectCompositionChoicesV1:
       type: object
       additionalProperties: false
-      required: [apiVersion, kind, projectId, choices]
+      required:
+        - apiVersion
+        - kind
+        - projectId
+        - startingPoints
+        - modulePackages
+        - moduleInstances
+        - choices
       properties:
         apiVersion:
           const: jarvis.dev/project-composition-choices/v1
@@ -1065,6 +1131,18 @@ components:
         projectId:
           type: string
           pattern: "^[a-z0-9][a-z0-9._-]*$"
+        startingPoints:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectCompositionStartingPoint"
+        modulePackages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModulePackage"
+        moduleInstances:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectCompositionModuleInstance"
         choices:
           type: array
           items:

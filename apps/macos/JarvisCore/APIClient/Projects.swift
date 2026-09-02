@@ -173,6 +173,87 @@ public struct ProjectResourceCandidate: Identifiable, Sendable, Equatable {
     }
 }
 
+public struct ProjectCompositionStartingPoint: Identifiable, Sendable, Equatable {
+    public let id: String
+    public let displayName: String
+    public let description: String
+    let template: Components.Schemas.PortableProjectConfiguration?
+
+    init(payload: Components.Schemas.ProjectCompositionStartingPoint) {
+        id = wireString(payload.id)
+        displayName = payload.displayName
+        description = payload.description
+        template = payload.template
+    }
+}
+
+public struct ProjectCompositionModuleInstance: Identifiable, Sendable, Equatable {
+    public var id: String { instanceId }
+    public let instanceId: String
+    public let moduleId: String
+    public let enabled: Bool
+    public let version: String
+    public let displayName: String
+    public let description: String
+    public let consumes: [String]
+    public let produces: [String]
+    public let requiredCapabilities: [String]
+    public let compatibility: String
+    public let missingResources: [String]
+
+    init(payload: Components.Schemas.ProjectCompositionModuleInstance) {
+        instanceId = payload.instanceId
+        moduleId = payload.moduleId
+        enabled = payload.enabled
+        version = payload.version
+        displayName = payload.displayName
+        description = payload.description
+        consumes = payload.consumes
+        produces = payload.produces
+        requiredCapabilities = payload.requiredCapabilities
+        compatibility = wireString(payload.compatibility)
+        missingResources = payload.missingResources
+    }
+}
+
+public struct ProjectCompositionEventChoice: Identifiable, Sendable, Equatable {
+    public var id: String { "\(type).v\(version).\(kind)" }
+    public let label: String
+    public let type: String
+    public let version: Int
+    public let kind: String
+    public let description: String
+    public let routingStatus: String
+    public let routingExplanation: String
+
+    init(payload: Components.Schemas.ProjectCompositionEventChoice) {
+        guard let data = try? JSONEncoder().encode(payload),
+            let wire = try? JSONDecoder().decode(WireProjectCompositionEventChoice.self, from: data)
+        else { preconditionFailure("Generated composition Event choice drifted") }
+        label = wire.label
+        type = wire.type
+        version = wire.version
+        kind = wire.kind
+        description = wire.description
+        routingStatus = wire.routing.status
+        routingExplanation = wire.routing.explanation
+    }
+}
+
+public struct ProjectCompositionGuide: Sendable, Equatable {
+    public let startingPoints: [ProjectCompositionStartingPoint]
+    public let modulePackages: [ModulePackage]
+    public let moduleInstances: [ProjectCompositionModuleInstance]
+    public let eventChoices: [ProjectCompositionEventChoice]
+
+    init(payload: Components.Schemas.ProjectCompositionChoicesV1) {
+        startingPoints = payload.startingPoints.map(ProjectCompositionStartingPoint.init(payload:))
+        modulePackages = payload.modulePackages.map(ModulePackage.init(payload:))
+        moduleInstances = payload.moduleInstances.map(ProjectCompositionModuleInstance.init(payload:))
+        eventChoices = payload.choices.map(ProjectCompositionEventChoice.init(payload:))
+    }
+}
+
 public struct LocalRepositoryBinding: Identifiable, Sendable, Equatable {
     public var id: String { repositoryId }
     public let repositoryId: String
@@ -314,6 +395,27 @@ private extension ProjectDetail {
                 )
             }
     }
+}
+
+private struct WireProjectCompositionEventChoice: Decodable {
+    struct Routing: Decodable {
+        let status: String
+        let explanation: String
+    }
+
+    let label: String
+    let type: String
+    let version: Int
+    let kind: String
+    let description: String
+    let routing: Routing
+}
+
+private func wireString<Value: Encodable>(_ value: Value) -> String {
+    guard let data = try? JSONEncoder().encode(value),
+        let decoded = try? JSONDecoder().decode(String.self, from: data)
+    else { preconditionFailure("Generated string value drifted") }
+    return decoded
 }
 
 private func encodedJSON<Value: Encodable>(_ value: Value) -> Data? {

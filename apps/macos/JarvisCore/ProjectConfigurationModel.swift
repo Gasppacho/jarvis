@@ -6,6 +6,7 @@ public struct ProjectConfigurationState: Sendable, Equatable {
     public var detail: ProjectDetail?
     public var localBindings: LocalProjectBindings?
     public var candidates: [ProjectResourceCandidate] = []
+    public var compositionGuide: ProjectCompositionGuide?
     public var draft: ProjectConfigurationDraft?
     public var isLoading = false
     public var isSaving = false
@@ -21,6 +22,7 @@ public final class ProjectConfigurationModel {
 
     private let session: EngineSessionModel
     private let projects: ProjectsModel
+    private var compositionRevisions: [String: Int] = [:]
 
     public init(session: EngineSessionModel, projects: ProjectsModel) {
         self.session = session
@@ -47,6 +49,13 @@ public final class ProjectConfigurationModel {
             let detail = try await client.getProject(id: projectId)
             let bindings = try await client.getProjectBindings(projectId: projectId)
             let candidates = try await client.listProjectBindingCandidates(projectId: projectId)
+            let previewConfiguration = detail.portableConfiguration.flatMap { configuration in
+                configuration.modules.isEmpty && configuration.slots.additionalProperties.isEmpty
+                    ? nil : configuration
+            }
+            let compositionGuide = try await client.previewProjectCompositionChoices(
+                projectId: projectId,
+                portableConfig: previewConfiguration)
             let draft: ProjectConfigurationDraft?
             if let configuration = detail.portableConfiguration {
                 draft = ProjectConfigurationDraft(configuration: configuration, packages: packages)
@@ -61,6 +70,7 @@ public final class ProjectConfigurationModel {
                 $0.detail = detail
                 $0.localBindings = bindings
                 $0.candidates = candidates
+                $0.compositionGuide = compositionGuide
                 $0.draft = draft
                 $0.errorMessage = nil
             }
@@ -76,11 +86,58 @@ public final class ProjectConfigurationModel {
         projectId: String,
         _ edit: (inout ProjectConfigurationDraft) -> Void
     ) {
+        var didEdit = false
         update(projectId) { state in
             guard var draft = state.draft else { return }
             edit(&draft)
             state.draft = draft
             state.errorMessage = nil
+            didEdit = true
+        }
+        guard didEdit else { return }
+        compositionRevisions[projectId, default: 0] += 1
+        Task { await refreshCompositionChoices(projectId: projectId) }
+    }
+
+    public func chooseStartingPoint(projectId: String, startingPointId: String) {
+        guard let guide = state(for: projectId).compositionGuide,
+            let startingPoint = guide.startingPoints.first(where: { $0.id == startingPointId })
+        else { return }
+        if let template = startingPoint.template {
+            update(projectId) {
+                $0.draft = ProjectConfigurationDraft(
+                    configuration: template, packages: guide.modulePackages)
+                $0.errorMessage = nil
+            }
+            compositionRevisions[projectId, default: 0] += 1
+            Task { await refreshCompositionChoices(projectId: projectId) }
+        } else {
+            editDraft(projectId: projectId) {
+                $0.modules = []
+                $0.slotRequirements = [:]
+            }
+        }
+    }
+
+    public func refreshCompositionChoices(projectId: String) async {
+        guard let client, let draft = state(for: projectId).draft,
+            let portableConfig = try? draft.payload()
+        else { return }
+        let revision = compositionRevisions[projectId, default: 0]
+        do {
+            let guide = try await client.previewProjectCompositionChoices(
+                projectId: projectId, portableConfig: portableConfig)
+            guard revision == compositionRevisions[projectId, default: 0] else { return }
+            update(projectId) {
+                $0.compositionGuide = guide
+                $0.errorMessage = nil
+            }
+        } catch {
+            guard revision == compositionRevisions[projectId, default: 0] else { return }
+            update(projectId) {
+                $0.errorMessage =
+                    "Composition choices could not be refreshed. Your Draft was preserved. Try the edit again or reload this Project."
+            }
         }
     }
 
@@ -144,6 +201,8 @@ public final class ProjectConfigurationModel {
         switch edit.operation {
         case .setProjectName(let name):
             editDraft(projectId: projectId) { $0.name = name }
+        case .chooseStartingPoint(let id):
+            chooseStartingPoint(projectId: projectId, startingPointId: id)
         case .addSlot:
             addSlot(projectId: projectId)
         case .removeSlot(let slotId):

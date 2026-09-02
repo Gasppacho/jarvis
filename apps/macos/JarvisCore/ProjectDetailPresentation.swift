@@ -11,6 +11,24 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         public let candidates: [ProjectResourceCandidate]
     }
 
+    public struct StartingPoint: Identifiable, Sendable, Equatable {
+        public let id: String
+        public let displayName: String
+        public let description: String
+        public let action: Action.Edit
+    }
+
+    public struct ModuleCard: Identifiable, Sendable, Equatable {
+        public let id: UUID
+        public let displayName: String
+        public let description: String
+        public let eventSummary: String
+        public let requiredCapabilities: String
+        public let compatibility: String
+        public let missingResources: String
+        public let technicalDetails: String
+    }
+
     public struct DeletionConfirmation: Sendable, Equatable {
         public let title: String
         public let message: String
@@ -29,6 +47,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         public struct Edit: Sendable, Equatable, Hashable {
             public enum Operation: Sendable, Equatable, Hashable {
                 case setProjectName(String)
+                case chooseStartingPoint(String)
                 case addSlot
                 case removeSlot(String)
                 case renameSlot(String, String)
@@ -58,6 +77,10 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
 
             public static func setProjectName(_ name: String) -> Self {
                 Self(.setProjectName(name), label: "Set project name")
+            }
+
+            public static func chooseStartingPoint(_ id: String, displayName: String) -> Self {
+                Self(.chooseStartingPoint(id), label: "Use \(displayName)")
             }
 
             public static let addSlot = Self(.addSlot, label: "Add slot")
@@ -227,7 +250,9 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
     }
 
     public let repositories: [ProjectBinding]
+    public let startingPoints: [StartingPoint]
     public let modules: [ProjectModuleDraft]
+    public let moduleCards: [ModuleCard]
     public let slots: [Slot]
     public let actions: [Action]
     public let deletionConfirmation: DeletionConfirmation
@@ -241,7 +266,40 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         isDeleting: Bool = false
     ) {
         repositories = detail?.bindings ?? []
+        startingPoints = (state.compositionGuide?.startingPoints ?? []).map {
+            StartingPoint(
+                id: $0.id,
+                displayName: $0.displayName,
+                description: $0.description,
+                action: .chooseStartingPoint($0.id, displayName: $0.displayName))
+        }
         modules = state.draft?.modules ?? []
+        moduleCards = modules.map { module in
+            let choice = state.compositionGuide?.moduleInstances.first {
+                $0.instanceId == module.instanceId
+            }
+            let package = packages.first { $0.moduleId == module.moduleId }
+            let consumes = choice?.consumes ?? package?.consumes ?? []
+            let produces = choice?.produces ?? package?.produces ?? []
+            let eventLabel: (String) -> String = { contractId in
+                state.compositionGuide?.eventChoices.first {
+                    contractId == "\($0.type).v\($0.version)"
+                }?.label ?? contractId
+            }
+            let consumedLabels = consumes.map(eventLabel)
+            let producedLabels = produces.map(eventLabel)
+            let required = choice?.requiredCapabilities ?? package?.requires ?? []
+            let missing = choice?.missingResources ?? []
+            return ModuleCard(
+                id: module.id,
+                displayName: choice?.displayName ?? package?.displayName ?? "Unavailable Module Package",
+                description: choice?.description ?? package?.description ?? "Choose an available Module Package.",
+                eventSummary: "Consumes: \(consumedLabels.isEmpty ? "None" : consumedLabels.joined(separator: ", ")). Emits: \(producedLabels.isEmpty ? "None" : producedLabels.joined(separator: ", ")).",
+                requiredCapabilities: required.isEmpty ? "No required capabilities" : required.joined(separator: ", "),
+                compatibility: choice?.compatibility ?? "unavailable",
+                missingResources: missing.isEmpty ? "No missing resources" : missing.joined(separator: ", "),
+                technicalDetails: "Instance ID: \(module.instanceId) · Package: \(module.moduleId) · Version: \(choice?.version ?? package?.version ?? "unavailable") · Contracts: \((consumes + produces).joined(separator: ", "))")
+        }
         slots = (state.draft?.slotRequirements ?? [:]).keys.sorted().map { slotId in
             let slot = state.draft?.slotRequirements[slotId]
             let requirement = slot?.requires ?? ""
@@ -259,6 +317,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         if let name = state.draft?.name {
             inventory.append(.edit(.setProjectName(name)))
         }
+        inventory.append(contentsOf: startingPoints.map { .edit($0.action) })
         inventory.append(.edit(.addSlot))
         inventory.append(contentsOf: packages.map { .edit(.addModule($0.moduleId)) })
         inventory.append(contentsOf: slots.flatMap { slot in

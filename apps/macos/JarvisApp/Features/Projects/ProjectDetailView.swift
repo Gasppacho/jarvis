@@ -155,6 +155,7 @@ public struct ProjectDetailView: View {
             TextField("Project name", text: projectNameBinding)
                 .textFieldStyle(.roundedBorder)
 
+            startingPointEditor
             slotRequirementsEditor
 
             HStack {
@@ -177,6 +178,31 @@ public struct ProjectDetailView: View {
                 moduleEditor(
                     module,
                     projectSlots: state.draft?.slotRequirements.keys.sorted() ?? [])
+            }
+        }
+    }
+
+    private var startingPointEditor: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Starting point").font(.headline)
+            Text("Choose a canonical draft or keep a Custom composition. You can edit every choice afterward.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            ForEach(presentation.startingPoints) { startingPoint in
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(startingPoint.displayName).font(.body.weight(.semibold))
+                        Text(startingPoint.description)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button(startingPoint.action.label) {
+                        perform(.edit(startingPoint.action))
+                    }
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityHint("Creates an editable Portable Configuration Draft without Local Bindings.")
             }
         }
     }
@@ -208,30 +234,47 @@ public struct ProjectDetailView: View {
 
     private func moduleEditor(_ module: ProjectModuleDraft, projectSlots: [String]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Picker(
-                    "Module Package", selection: modulePackageBinding(module.id, module.moduleId)
-                ) {
-                    ForEach(moduleCatalog.packages) { package in
-                        Text(package.displayName).tag(package.moduleId)
+            if let card = presentation.moduleCards.first(where: { $0.id == module.id }) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(card.displayName).font(.headline)
+                        Text(card.description).font(.callout).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Toggle("Enabled", isOn: moduleEnabledBinding(module.id))
+                    Button(role: .destructive) {
+                        perform(.edit(.removeModule(module.id)))
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.borderless)
+                }
+                Text(card.eventSummary).font(.caption)
+                Text("Required capabilities: \(card.requiredCapabilities)").font(.caption)
+                Text("Compatibility: \(card.compatibility)").font(.caption)
+                if card.missingResources != "No missing resources" {
+                    Label("Missing resources: \(card.missingResources)", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+                DisclosureGroup("Advanced") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Picker(
+                            "Module Package", selection: modulePackageBinding(module.id, module.moduleId)
+                        ) {
+                            ForEach(moduleCatalog.packages) { package in
+                                Text(package.displayName).tag(package.moduleId)
+                            }
+                        }
+                        TextField("Unique Instance ID", text: moduleInstanceIDBinding(module.id))
+                            .textFieldStyle(.roundedBorder)
+                        Text(card.technicalDetails).font(.caption.monospaced())
                     }
                 }
-                Toggle("Enabled", isOn: moduleEnabledBinding(module.id))
-                Button(role: .destructive) {
-                    perform(.edit(.removeModule(module.id)))
-                } label: {
-                    Image(systemName: "trash")
-                }
-                .buttonStyle(.borderless)
+                .accessibilityHint("Shows technical IDs, package version, and contract details.")
             }
-            TextField(
-                "Unique Instance ID",
-                text: moduleInstanceIDBinding(module.id)
-            )
-            .textFieldStyle(.roundedBorder)
 
-            Picker("Runtime slot", selection: moduleRuntimeSlotBinding(module.id))
-            {
+            Picker("Runtime slot", selection: moduleRuntimeSlotBinding(module.id)) {
                 Text("None").tag("")
                 ForEach(projectSlots, id: \.self) { Text($0).tag($0) }
             }

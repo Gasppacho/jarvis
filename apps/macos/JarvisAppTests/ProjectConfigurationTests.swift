@@ -178,6 +178,119 @@ final class ProjectConfigurationTests: XCTestCase {
     }
 
     @MainActor
+    func testFreshImportOffersGuidedStartingPointsAndRefreshesHumanModuleCards() async throws {
+        let repository = try makeRepository()
+        let session = EngineSessionModel(
+            supervisor: EngineSupervisor(
+                resources: .developmentBuild(),
+                dataRoot: temporaryDirectory(prefix: "jarvis-guided-start-data")))
+        let projects = ProjectsModel(
+            session: session,
+            repositoryGrants: RepositoryGrantStore(
+                storageDirectory: temporaryDirectory(prefix: "jarvis-guided-start-grants")))
+        let configuration = ProjectConfigurationModel(session: session, projects: projects)
+        let catalog = ModuleCatalogModel(session: session)
+        await session.start()
+        await catalog.refresh()
+        await projects.inspect(at: repository)
+        let importResult = await projects.confirmImport()
+        let imported = try XCTUnwrap(importResult)
+
+        await configuration.refresh(projectId: imported.id, packages: catalog.packages)
+        var state = configuration.state(for: imported.id)
+        XCTAssertNil(state.errorMessage, state.errorMessage ?? "")
+        XCTAssertEqual(
+            state.compositionGuide?.startingPoints.map(\.displayName),
+            ["GitHub Development", "Custom composition"])
+        XCTAssertEqual(state.compositionGuide?.modulePackages.count, 4)
+
+        configuration.chooseStartingPoint(
+            projectId: imported.id, startingPointId: "github-development")
+        await configuration.refreshCompositionChoices(projectId: imported.id)
+        state = configuration.state(for: imported.id)
+        XCTAssertEqual(
+            state.draft?.modules.map(\.instanceId),
+            ["github", "automation-rules", "development"])
+        XCTAssertEqual(state.localBindings?.slots, [])
+        XCTAssertEqual(
+            state.compositionGuide?.moduleInstances.map(\.displayName),
+            ["Automation Rules", "Development", "GitHub"])
+        XCTAssertEqual(
+            state.compositionGuide?.moduleInstances.first(where: {
+                $0.instanceId == "development"
+            })?.missingResources,
+            ["agent.execute", "shell.execute", "work-items.read"])
+        let presentation = ProjectDetailPresentation(
+            project: imported,
+            detail: state.detail,
+            state: state,
+            packages: catalog.packages)
+        XCTAssertEqual(presentation.startingPoints.map(\.displayName), [
+            "GitHub Development", "Custom composition",
+        ])
+        XCTAssertTrue(
+            presentation.actions.contains(
+                .edit(.chooseStartingPoint("github-development", displayName: "GitHub Development"))))
+        let developmentCard = try XCTUnwrap(
+            presentation.moduleCards.first { $0.displayName == "Development" })
+        XCTAssertTrue(developmentCard.description.contains("isolated Git workspace"))
+        XCTAssertTrue(developmentCard.eventSummary.contains("Implementation requested"))
+        XCTAssertTrue(developmentCard.requiredCapabilities.contains("agent.execute"))
+        XCTAssertEqual(developmentCard.compatibility, "compatible")
+        XCTAssertEqual(
+            developmentCard.missingResources,
+            "agent.execute, shell.execute, work-items.read")
+        XCTAssertTrue(developmentCard.technicalDetails.contains("jarvis.module.development"))
+        XCTAssertTrue(developmentCard.technicalDetails.contains("1.0.0"))
+        XCTAssertTrue(
+            developmentCard.technicalDetails.contains("development.implementation.requested.v1"))
+
+        configuration.apply(
+            .setProjectName("Preserved name"),
+            projectId: imported.id, packages: catalog.packages)
+        let development = try XCTUnwrap(
+            configuration.state(for: imported.id).draft?.modules.first(where: {
+                $0.instanceId == "development"
+            }))
+        configuration.apply(
+            .setModuleEnabled(development.id, false),
+            projectId: imported.id, packages: catalog.packages)
+        await configuration.refreshCompositionChoices(projectId: imported.id)
+        state = configuration.state(for: imported.id)
+        XCTAssertEqual(state.draft?.name, "Preserved name")
+        XCTAssertEqual(
+            state.compositionGuide?.moduleInstances.first(where: {
+                $0.instanceId == "development"
+            })?.enabled,
+            false)
+        XCTAssertEqual(
+            state.compositionGuide?.eventChoices.first(where: {
+                $0.type == "development.implementation.requested"
+            })?.routingStatus,
+            "orphaned")
+
+        let github = try XCTUnwrap(state.draft?.modules.first { $0.instanceId == "github" })
+        configuration.apply(
+            .setModulePackage(github.id, "jarvis.module.change-request-review"),
+            projectId: imported.id, packages: catalog.packages)
+        await configuration.refreshCompositionChoices(projectId: imported.id)
+        state = configuration.state(for: imported.id)
+        XCTAssertEqual(state.draft?.name, "Preserved name")
+        XCTAssertEqual(
+            state.compositionGuide?.moduleInstances.first(where: {
+                $0.instanceId == "github"
+            })?.displayName,
+            "Change Request Review")
+        XCTAssertTrue(
+            state.compositionGuide?.eventChoices.contains(where: {
+                $0.type == "scm.change-request.created"
+            }) == true)
+
+        projects.releaseRepositoryAccess()
+        await session.shutdown()
+    }
+
+    @MainActor
     func testFreshImportPreservesEngineDraftValuesWhileComposingSavingAndReopening() async throws {
         let repository = try makeRepository()
         try """
