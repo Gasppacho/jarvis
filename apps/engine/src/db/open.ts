@@ -1,8 +1,14 @@
 import Database from "better-sqlite3";
+import { randomUUID } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
+  constants as fsConstants,
+  fchmodSync,
+  fstatSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -72,7 +78,7 @@ function prepare(db: Database.Database, databasePath: string): Omit<OpenedDataba
   // this call, so they inherit the mode set here.
   chmodSync(databasePath, 0o600);
 
-  const appliedVersions = migrate(db);
+  const appliedVersions = migrate(db, databasePath);
 
   // `database: ready` must mean the schema is genuinely queryable, not merely
   // that no migration threw.
@@ -269,7 +275,9 @@ function lstatIfExists(path: string): Stats | undefined {
   }
 }
 
-function migrate(db: Database.Database): readonly string[] {
+const NON_TRIVIAL_MIGRATIONS = new Set(["0004_normalize_project_drafts"]);
+
+function migrate(db: Database.Database, databasePath: string): readonly string[] {
   db.exec(
     `CREATE TABLE IF NOT EXISTS schema_migrations (
        version TEXT PRIMARY KEY,
@@ -284,9 +292,16 @@ function migrate(db: Database.Database): readonly string[] {
       .map((row) => (row as { version: string }).version),
   );
 
+  const pending = listMigrations().filter((version) => !already.has(version));
+  const existingInstallation = already.size > 0;
   const applied: string[] = [];
-  for (const version of listMigrations()) {
-    if (already.has(version)) continue;
+  for (const version of pending) {
+    // A brand-new database has nothing to protect. Existing installations get
+    // a snapshot immediately before each pending data rewrite, after any
+    // preceding additive migrations have committed.
+    if (existingInstallation && NON_TRIVIAL_MIGRATIONS.has(version)) {
+      createMigrationBackup(db, databasePath, version);
+    }
     const sql = readFileSync(join(MIGRATIONS_DIR, `${version}.sql`), "utf8");
     // One transaction per migration: a failure leaves no half-applied version.
     db.transaction(() => {
@@ -298,6 +313,33 @@ function migrate(db: Database.Database): readonly string[] {
     applied.push(version);
   }
   return applied;
+}
+
+function createMigrationBackup(
+  db: Database.Database,
+  databasePath: string,
+  migration: string,
+): void {
+  // Every attempt gets an unpredictable, new path inside the already-private
+  // data root. VACUUM INTO refuses an existing target and creates a consistent
+  // snapshot from the live connection, so retries neither trust nor replace an
+  // earlier artifact.
+  const backupPath = `${databasePath}.pre-${migration}-${randomUUID()}.bak`;
+  db.prepare("VACUUM INTO ?").run(backupPath);
+
+  // Apply permissions to the exact inode opened without following links. This
+  // avoids a path-based lstat/chmod race after SQLite has created the snapshot.
+  const descriptor = openSync(backupPath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  try {
+    const stats = fstatSync(descriptor);
+    const uid = process.getuid?.();
+    if (!stats.isFile() || (uid !== undefined && stats.uid !== uid)) {
+      throw new Error(`Migration backup ${backupPath} is not a regular file owned by this user.`);
+    }
+    fchmodSync(descriptor, 0o600);
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 function listMigrations(): readonly string[] {
