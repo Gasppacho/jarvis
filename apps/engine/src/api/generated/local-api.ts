@@ -378,7 +378,7 @@ export interface paths {
         };
         get: operations["listProjectBindingCandidates"];
         put?: never;
-        post?: never;
+        post: operations["previewProjectBindingCandidates"];
         delete?: never;
         options?: never;
         head?: never;
@@ -862,6 +862,21 @@ export interface components {
             kind: "connection" | "runtime" | "mcp" | "module-instance" | "engine";
             displayName: string;
             capabilities: string[];
+        };
+        ProjectResourceChoices: {
+            /** @description Deduplicated union of resources eligible for at least one Slot. */
+            items: components["schemas"]["ProjectResourceCandidate"][];
+            slots: components["schemas"]["ProjectResourceBindingChoice"][];
+        };
+        ProjectResourceBindingChoice: {
+            slotId: string;
+            requiredCapabilities: string[];
+            /** @description Only explicitly project-scoped resources satisfying every Slot and Module Instance requirement. */
+            candidates: components["schemas"]["ProjectResourceCandidate"][];
+            /** @enum {string} */
+            status: "bound" | "available" | "missing" | "inaccessible" | "incompatible";
+            impact: string;
+            repairAction: string;
         };
         ProjectSlotBinding: {
             /** @enum {string} */
@@ -1614,15 +1629,44 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Resources explicitly eligible for this Project's slots. */
+            /** @description Project-scoped eligible resources and Engine-owned Slot repair guidance. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        items: components["schemas"]["ProjectResourceCandidate"][];
-                    };
+                    "application/json": components["schemas"]["ProjectResourceChoices"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    previewProjectBindingCandidates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    portableConfig: components["schemas"]["PortableProjectConfiguration"];
+                };
+            };
+        };
+        responses: {
+            /** @description Read-only resource eligibility preview for a proposed Portable Configuration. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResourceChoices"];
                 };
             };
             401: components["responses"]["Unauthorized"];

@@ -35,8 +35,8 @@ Capabilities name abstract authority or service; they are not implementation cla
 ## Rules
 
 - Modules request the narrowest capabilities required.
-- Project Slots bind portable needs to local resources.
-- A capability being available globally does not grant it to any Project.
+- Project Slots bind portable needs to local resources. Un candidat n'est éligible que s'il satisfait la capability du Slot **et** chaque capability des Module Instances qui résolvent leurs requirements par ce Slot.
+- A capability being available globally does not grant it to any Project. Les contrôles de binding n'énumèrent que l'intersection des grants explicites du Project et des capabilities requises.
 - A Module Manifest declaration does not grant authority; the resolved grant is the intersection of manifest, Project Bindings and system security policy.
 - New provider-neutral capability names are added here before use.
 - Provider-specific IDs remain inside provider modules and should not appear in other module manifests.

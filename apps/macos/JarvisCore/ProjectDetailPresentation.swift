@@ -11,6 +11,19 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         public let candidates: [ProjectResourceCandidate]
     }
 
+    public struct ResourceBinding: Identifiable, Sendable, Equatable {
+        public let id: String
+        public let requiredCapabilities: [String]
+        public let candidates: [ProjectResourceCandidate]
+        public let selectedCandidateID: String?
+        public let status: ProjectResourceBindingStatus
+        public let unavailableExplanation: String
+        public let impact: String
+        public let repairAction: String
+        public let accessibilityLabel: String
+        public let accessibilityHint: String
+    }
+
     public struct StartingPoint: Identifiable, Sendable, Equatable {
         public let id: String
         public let displayName: String
@@ -341,6 +354,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
     public let moduleCards: [ModuleCard]
     public let automationRuleRows: [AutomationRuleRow]
     public let slots: [Slot]
+    public let resourceBindings: [ResourceBinding]
     public let actions: [Action]
     public let deletionConfirmation: DeletionConfirmation
     public let isSaveEnabled: Bool
@@ -428,6 +442,8 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                     sentence: "When \(input?.label ?? rule.inputEventType) matches, emit \(emission?.label ?? rule.emissionEventType) to \(targetLabel).")
             }
         }
+        let choicesBySlot = Dictionary(
+            uniqueKeysWithValues: state.resourceChoices.map { ($0.slotId, $0) })
         slots = (state.draft?.slotRequirements ?? [:]).keys.sorted().map { slotId in
             let slot = state.draft?.slotRequirements[slotId]
             let requirement = slot?.requires ?? ""
@@ -436,7 +452,34 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 requirement: requirement,
                 optional: slot?.optional ?? false,
                 description: slot?.description,
-                candidates: state.candidates.filter { $0.capabilities.contains(requirement) })
+                candidates: choicesBySlot[slotId]?.candidates ?? [])
+        }
+        resourceBindings = state.resourceChoices.sorted { $0.slotId < $1.slotId }.map { choice in
+            let selected = state.localBindings?.slots.first { $0.slotId == choice.slotId }
+                .map { "\($0.kind.rawValue)/\($0.ref)" }
+            let capabilities = choice.requiredCapabilities.joined(separator: ", ")
+            let unavailable: String
+            switch choice.status {
+            case .bound, .available:
+                unavailable = "Eligible Project resources are available for \(capabilities)."
+            case .missing:
+                unavailable = "No Project-granted resource provides every required capability: \(capabilities)."
+            case .inaccessible:
+                unavailable = "The bound resource is no longer accessible to this Project."
+            case .incompatible:
+                unavailable = "Project resources exist, but none provides every required capability: \(capabilities)."
+            }
+            return ResourceBinding(
+                id: choice.slotId,
+                requiredCapabilities: choice.requiredCapabilities,
+                candidates: choice.candidates,
+                selectedCandidateID: selected,
+                status: choice.status,
+                unavailableExplanation: unavailable,
+                impact: choice.impact,
+                repairAction: choice.repairAction,
+                accessibilityLabel: "\(choice.slotId), \(choice.status.rawValue), \(capabilities)",
+                accessibilityHint: "\(choice.impact) \(choice.repairAction)")
         }
 
         var inventory: [Action] = repositories.map {

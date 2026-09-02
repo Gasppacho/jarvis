@@ -11,8 +11,32 @@ export interface ProjectResourceCandidate {
 }
 
 /** Project Runtime port exposing only candidates eligible inside one Project. */
+export type ProjectResourceBindingStatus =
+  "bound" | "available" | "missing" | "inaccessible" | "incompatible";
+
+/** Engine-owned eligibility and repair guidance for one Portable Configuration Slot. */
+export interface ProjectResourceBindingChoice {
+  readonly slotId: string;
+  readonly requiredCapabilities: readonly string[];
+  readonly candidates: readonly ProjectResourceCandidate[];
+  readonly status: ProjectResourceBindingStatus;
+  readonly impact: string;
+  readonly repairAction: string;
+}
+
+export interface ProjectResourceChoices {
+  /** Deduplicated union of candidates eligible for at least one Slot. */
+  readonly items: readonly ProjectResourceCandidate[];
+  readonly slots: readonly ProjectResourceBindingChoice[];
+}
+
 export interface ProjectResourceCandidateRegistry {
   listProjectResourceCandidates(projectId: unknown): readonly ProjectResourceCandidate[];
+  getProjectResourceChoices(projectId: unknown): ProjectResourceChoices;
+  previewProjectResourceChoices(
+    projectId: unknown,
+    proposedConfiguration: unknown,
+  ): ProjectResourceChoices;
 }
 
 /** Global registries expose only resources explicitly granted to one Project. */

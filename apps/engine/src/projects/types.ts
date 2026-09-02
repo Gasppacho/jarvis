@@ -82,6 +82,7 @@ export type {
   PortableProjectConfiguration,
   ProjectResourceCandidate,
   ProjectResourceCandidateRegistry,
+  ProjectResourceChoices,
   ProjectResourceGrantPort,
   ProjectValidationFinding,
   ProjectValidationReport,

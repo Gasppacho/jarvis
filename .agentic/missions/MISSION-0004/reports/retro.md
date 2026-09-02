@@ -2,15 +2,16 @@
 
 ## What worked
 
-- Local merge history, rather than unchanged labels or deliberately open issues, identified #37 as the frontier.
-- The existing project-scoped composition-choice tracer bullet supplied Event labels, compatibility, consumers, and routing explanations without adding UI routing policy.
-- Standard JSON Schema `$comment` annotations let the Module Configuration schema select a specialized editor while retaining compatibility with strict schema validation and generic older editors.
-- A dedicated XCTest file gave fast red/green feedback for canonical Rule decoding, repeatability, preservation, presentation metadata, unknown values, and readiness.
-- Application Harness coverage proved semantic metadata transport, bounded-match validation, and canonical save/reopen against the real Engine and SQLite.
+- Local merge history and the explicit mission work order selected #39 without relying on stale issue labels or open issue states.
+- Starting from the existing candidate endpoint kept the slice vertical: OpenAPI → Engine policy → generated clients → Swift presentation.
+- Computing one capability conjunction per Slot exposed a subtle existing bug: a candidate could satisfy the Slot while failing a Module Instance requirement routed through that Slot.
+- A POST preview beside the saved GET lets Draft edits refresh resource guidance without persisting Portable Configuration or Local Bindings.
+- Application Harness contract assertions and XCTest presentation inventory provided fast, realistic feedback before the full gate.
+- The full macOS build and all Swift tests ran successfully in this environment.
 
 ## What to improve
 
-- `pnpm test:integration -- <file>` currently executes the complete integration project, not only the named file. The mission guidance should document the repository's actual Vitest filtering syntax or explicitly describe this as an intentionally broad focused gate.
-- The composition-choice wire contract exposes Module Instance IDs but no independent human display label for Event producers/consumers. The shell currently derives a readable label from the instance ID; a future contract revision should consider returning display labels directly.
-- `$comment` semantics are valid and backward-compatible but stringly typed. If more specialized editors appear, promote these annotations to a named, schema-validated contract rather than accumulating ad hoc comment values.
-- #38 should consider extracting JSON normalization/structured-value handling shared by generic configuration fields and Automation Rules, without weakening invalid-input preservation.
+- `generate:check` compares generated files with the index, so a legitimate generated change must be staged before the pre-commit full gate. The implement guidance should document this repository-specific requirement.
+- The production Connection/MCP/Agent Runtime grant registry is intentionally empty. External explicit-grant and availability-transition policy therefore remains covered through the Project Service port, while the Application Harness covers selected Module Instances and the real HTTP/SQLite contract. Future registry tickets should add end-to-end Harness fixtures for those resource kinds.
+- Repository requirements use the existing dedicated Repository Grant flow rather than Slot candidate pickers. A future contract could unify their read-only presentation metadata while keeping repository grants separate from generic `ProjectBindings.slots`.
+- The resource status/repair construction in `ProjectService` is now substantial enough that a later change may justify extracting a Project Runtime domain service; this ticket kept it local to avoid unrelated prefactoring.

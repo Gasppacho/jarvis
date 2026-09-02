@@ -70,6 +70,7 @@ describe("repository discovery and project import", () => {
   let validateDetail: ReturnType<typeof localApiValidator>;
   let validateLegacyReport: ReturnType<typeof localApiValidator>;
   let validateReport: ReturnType<typeof localApiValidator>;
+  let validateResourceChoices: ReturnType<typeof localApiValidator>;
   let validateJsonReport: ReturnType<Ajv2020["compile"]>;
 
   beforeAll(() => {
@@ -78,6 +79,7 @@ describe("repository discovery and project import", () => {
     validateDetail = localApiValidator("ProjectDetail");
     validateLegacyReport = localApiValidator("ValidationReport");
     validateReport = localApiValidator("ProjectValidationReportV1");
+    validateResourceChoices = localApiValidator("ProjectResourceChoices");
     validateJsonReport = new Ajv2020({ strict: true, strictRequired: false }).compile(
       JSON.parse(
         readFileSync(
@@ -1605,7 +1607,7 @@ capabilities:
       const persistedBindings = {
         ...localBindings,
         slots: {
-          sourceControl: { kind: "module-instance", ref: "github" },
+          tickets: { kind: "module-instance", ref: "github" },
         },
       };
       expect(
@@ -1925,10 +1927,21 @@ capabilities:
     };
     expect(
       await (await engine.call(`/v1/projects/${created.id}/binding-candidates`)).json(),
-    ).toEqual({ items: [] });
+    ).toEqual({ items: [], slots: [] });
     const portableConfig = parseYaml(
       readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
     ) as Record<string, unknown>;
+    const preview = await engine.call(`/v1/projects/${created.id}/binding-candidates`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ portableConfig }),
+    });
+    expect(preview.status).toBe(200);
+    const previewChoices = await preview.json();
+    expect(validateResourceChoices(previewChoices), explain(validateResourceChoices)).toBe(true);
+    expect(
+      (previewChoices as { slots: { slotId: string }[] }).slots.map((slot) => slot.slotId),
+    ).toEqual(["agentRuntime", "sourceControl", "tickets"]);
     expect(
       (
         await engine.call(`/v1/projects/${created.id}/configuration`, {
@@ -1941,14 +1954,35 @@ capabilities:
     const candidates = await (
       await engine.call(`/v1/projects/${created.id}/binding-candidates`)
     ).json();
+    expect(validateResourceChoices(candidates), explain(validateResourceChoices)).toBe(true);
     expect(candidates).toEqual({
-      items: expect.arrayContaining([
+      items: [
         expect.objectContaining({
           ref: "github",
           kind: "module-instance",
-          capabilities: expect.arrayContaining(["scm.change-request.manage"]),
+          capabilities: expect.arrayContaining(["scm.change-request.manage", "work-items.read"]),
         }),
-      ]),
+      ],
+      slots: [
+        expect.objectContaining({
+          slotId: "agentRuntime",
+          requiredCapabilities: ["agent.execute"],
+          candidates: [],
+          status: "incompatible",
+        }),
+        expect.objectContaining({
+          slotId: "sourceControl",
+          requiredCapabilities: ["github.api", "scm.change-request.manage"],
+          candidates: [],
+          status: "incompatible",
+        }),
+        expect.objectContaining({
+          slotId: "tickets",
+          requiredCapabilities: ["work-items.read"],
+          candidates: [expect.objectContaining({ ref: "github", kind: "module-instance" })],
+          status: "available",
+        }),
+      ],
     });
 
     const initial = (await (
@@ -1972,7 +2006,7 @@ capabilities:
     const replacement = {
       ...initial,
       slots: {
-        sourceControl: { kind: "module-instance", ref: "github" },
+        tickets: { kind: "module-instance", ref: "github" },
       },
     };
     const response = await engine.call(`/v1/projects/${created.id}/bindings`, {
@@ -2042,6 +2076,7 @@ capabilities:
     const before = await (await engine.call(`/v1/projects/${created.id}/bindings`)).json();
     for (const slots of [
       { sourceControl: { kind: "connection", ref: "connection/opaque" } },
+      { sourceControl: { kind: "module-instance", ref: "github" } },
       { agentRuntime: { kind: "module-instance", ref: "github" } },
     ]) {
       const response = await engine.call(`/v1/projects/${created.id}/bindings`, {

@@ -1,0 +1,56 @@
+{
+  "items": [
+    {
+      "ref": "connection/github-qservices",
+      "kind": "connection",
+      "displayName": "GitHub — QServices",
+      "capabilities": [
+        "github.api",
+        "scm.change-request.manage",
+        "work-items.read"
+      ]
+    },
+    {
+      "ref": "runtime/codex-default",
+      "kind": "runtime",
+      "displayName": "Codex — default",
+      "capabilities": ["agent.execute"]
+    }
+  ],
+  "slots": [
+    {
+      "slotId": "agentRuntime",
+      "requiredCapabilities": ["agent.execute"],
+      "candidates": [
+        {
+          "ref": "runtime/codex-default",
+          "kind": "runtime",
+          "displayName": "Codex — default",
+          "capabilities": ["agent.execute"]
+        }
+      ],
+      "status": "bound",
+      "impact": "Module Instance development cannot run its configured behavior without agent.execute.",
+      "repairAction": "No repair is needed for agentRuntime."
+    },
+    {
+      "slotId": "sourceControl",
+      "requiredCapabilities": ["github.api", "scm.change-request.manage"],
+      "candidates": [
+        {
+          "ref": "connection/github-qservices",
+          "kind": "connection",
+          "displayName": "GitHub — QServices",
+          "capabilities": [
+            "github.api",
+            "scm.change-request.manage",
+            "work-items.read"
+          ]
+        }
+      ],
+      "status": "bound",
+      "impact": "Module Instances development and github cannot run their configured behavior without github.api and scm.change-request.manage.",
+      "repairAction": "No repair is needed for sourceControl."
+    }
+  ]
+}

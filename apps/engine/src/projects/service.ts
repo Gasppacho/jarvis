@@ -36,6 +36,7 @@ import type {
   PortableProjectConfiguration,
   ProjectBindings,
   ProjectResourceCandidate,
+  ProjectResourceChoices,
   ProjectResourceGrantPort,
   ProjectValidationReport,
   ProjectDetail,
@@ -191,9 +192,10 @@ export class ProjectService implements ProjectRegistry<
       }
     }
     validateSlotBindings(
-      configuration.slots,
+      configuration,
       current.slotBindings,
       eligibleCandidates(current.id, configuration, this.modules, this.resourceGrants),
+      this.modules,
       "project.config-invalid",
     );
 
@@ -227,12 +229,30 @@ export class ProjectService implements ProjectRegistry<
   }
 
   listProjectResourceCandidates(projectId: unknown): readonly ProjectResourceCandidate[] {
+    return this.getProjectResourceChoices(projectId).items;
+  }
+
+  getProjectResourceChoices(projectId: unknown): ProjectResourceChoices {
     const current = this.requireProject(projectId);
-    return eligibleCandidates(
-      current.id,
+    return resourceChoices(
+      current,
       current.portableConfig,
       this.modules,
-      this.resourceGrants,
+      this.resourceGrants.grantedToProject(current.id),
+    );
+  }
+
+  previewProjectResourceChoices(
+    projectId: unknown,
+    proposedConfiguration: unknown,
+  ): ProjectResourceChoices {
+    const current = this.requireProject(projectId);
+    const configuration = requirePortableProjectConfiguration(proposedConfiguration, this.modules);
+    return resourceChoices(
+      current,
+      configuration,
+      this.modules,
+      this.resourceGrants.grantedToProject(current.id),
     );
   }
 
@@ -250,6 +270,7 @@ export class ProjectService implements ProjectRegistry<
       current,
       bindings,
       eligibleCandidates(current.id, current.portableConfig, this.modules, this.resourceGrants),
+      this.modules,
     );
     const repositoryId = current.portableConfig.repositories[0]?.id ?? "main";
     const supplied = bindings.repositories[repositoryId];
@@ -327,38 +348,44 @@ function validateBindingReferences(
   current: ProjectRow,
   bindings: ProjectBindings,
   candidates: readonly ProjectResourceCandidate[],
+  modules: ModuleHost,
 ): void {
-  const declaredSlots =
-    "slots" in current.portableConfig ? current.portableConfig.slots : undefined;
-  validateSlotBindings(declaredSlots, bindings.slots, candidates, "project.bindings-invalid");
+  validateSlotBindings(
+    current.portableConfig,
+    bindings.slots,
+    candidates,
+    modules,
+    "project.bindings-invalid",
+  );
 }
 
 function validateSlotBindings(
-  declaredSlots: PortableProjectConfiguration["slots"] | undefined,
+  configuration: StoredPortableProjectConfiguration,
   bindings: ProjectBindings["slots"],
   candidates: readonly ProjectResourceCandidate[],
+  modules: ModuleHost,
   code: "project.config-invalid" | "project.bindings-invalid",
 ): void {
   for (const [slot, binding] of Object.entries(bindings)) {
-    const requirement = declaredSlots?.[slot];
-    if (requirement === undefined) {
+    if (configuration.slots[slot] === undefined) {
       throw new EngineError(
         code,
         400,
         `/slots/${slot} is not declared by the Portable Configuration.`,
       );
     }
+    const requiredCapabilities = slotRequirements(configuration, modules, slot).capabilities;
     const eligible = candidates.some(
       (candidate) =>
         candidate.ref === binding.ref &&
         candidate.kind === binding.kind &&
-        candidate.capabilities.includes(requirement.requires),
+        requiredCapabilities.every((capability) => candidate.capabilities.includes(capability)),
     );
     if (!eligible) {
       throw new EngineError(
         code,
         400,
-        `/slots/${slot} must reference an explicitly granted resource with capability ${requirement.requires}.`,
+        `/slots/${slot} must reference an explicitly granted resource with every required capability: ${requiredCapabilities.join(", ")}.`,
       );
     }
   }
@@ -371,6 +398,129 @@ function eligibleCandidates(
   grants: ProjectResourceGrantPort,
 ): readonly ProjectResourceCandidate[] {
   return projectResourceCandidates(configuration, modules, grants.grantedToProject(projectId));
+}
+
+function resourceChoices(
+  project: ProjectRow,
+  configuration: StoredPortableProjectConfiguration,
+  modules: ModuleHost,
+  grantedResources: readonly ProjectResourceCandidate[],
+): ProjectResourceChoices {
+  const scopedCandidates = projectResourceCandidates(configuration, modules, grantedResources)
+    .slice()
+    .sort(compareResourceCandidate);
+  const slots = Object.keys(configuration.slots)
+    .sort((left, right) => left.localeCompare(right))
+    .map((slotId) => {
+      const requirements = slotRequirements(configuration, modules, slotId);
+      const requiredCapabilities = requirements.capabilities;
+      const candidates = scopedCandidates.filter((candidate) =>
+        requiredCapabilities.every((capability) => candidate.capabilities.includes(capability)),
+      );
+      const binding = project.slotBindings[slotId];
+      const sameResource =
+        binding === undefined
+          ? undefined
+          : scopedCandidates.find(
+              (candidate) => candidate.kind === binding.kind && candidate.ref === binding.ref,
+            );
+      const bound =
+        binding === undefined
+          ? undefined
+          : candidates.find(
+              (candidate) => candidate.kind === binding.kind && candidate.ref === binding.ref,
+            );
+      const status =
+        bound !== undefined
+          ? ("bound" as const)
+          : binding !== undefined && sameResource === undefined
+            ? ("inaccessible" as const)
+            : binding !== undefined
+              ? ("incompatible" as const)
+              : candidates.length > 0
+                ? ("available" as const)
+                : scopedCandidates.length > 0
+                  ? ("incompatible" as const)
+                  : ("missing" as const);
+      const affected = requirements.instanceIds;
+      const impact =
+        affected.length === 0
+          ? `Project behavior requiring Slot ${slotId} cannot run without ${requiredCapabilities.join(
+              ", ",
+            )}.`
+          : `Module Instances ${affected.join(
+              ", ",
+            )} cannot run their configured behavior without ${requiredCapabilities.join(", ")}.`;
+      return {
+        slotId,
+        requiredCapabilities,
+        candidates,
+        status,
+        impact,
+        repairAction: repairAction(status, slotId, requiredCapabilities),
+      };
+    });
+  const eligibleIds = new Set(slots.flatMap((slot) => slot.candidates.map(resourceCandidateId)));
+  return {
+    items: scopedCandidates.filter((candidate) => eligibleIds.has(resourceCandidateId(candidate))),
+    slots,
+  };
+}
+
+function slotRequirements(
+  configuration: StoredPortableProjectConfiguration,
+  modules: ModuleHost,
+  slotId: string,
+): { readonly capabilities: string[]; readonly instanceIds: string[] } {
+  const slot = configuration.slots[slotId];
+  if (slot === undefined) return { capabilities: [], instanceIds: [] };
+  const capabilities = new Set([slot.requires]);
+  const instanceIds = new Set<string>();
+  for (const instance of configuration.modules.filter((candidate) => candidate.enabled)) {
+    for (const requirement of modules.composition(instance.moduleId)?.requires ?? []) {
+      if (requirement.resolution !== undefined || requirement.binding === undefined) continue;
+      const reference =
+        instance.bindings?.[requirement.binding] ??
+        (requirement.binding === "agentRuntime" ? instance.runtimeSlot : undefined);
+      if (reference !== slotId) continue;
+      capabilities.add(requirement.id);
+      instanceIds.add(instance.instanceId);
+    }
+  }
+  return { capabilities: [...capabilities].sort(), instanceIds: [...instanceIds].sort() };
+}
+
+function repairAction(
+  status: ProjectResourceChoices["slots"][number]["status"],
+  slotId: string,
+  capabilities: readonly string[],
+): string {
+  const required = capabilities.join(", ");
+  switch (status) {
+    case "bound":
+      return `No repair is needed for ${slotId}.`;
+    case "available":
+      return `Choose an eligible Project resource for ${slotId}.`;
+    case "inaccessible":
+      return `Restore Project access to the bound resource for ${slotId}, or choose another eligible resource.`;
+    case "incompatible":
+      return `Choose or grant a resource that provides every required capability: ${required}.`;
+    case "missing":
+      return `Grant a resource with ${required} to this Project, then reload Project Resources.`;
+  }
+  const exhaustive: never = status;
+  return exhaustive;
+}
+
+function resourceCandidateId(candidate: ProjectResourceCandidate): string {
+  return `${candidate.kind}/${candidate.ref}`;
+}
+
+function compareResourceCandidate(
+  left: ProjectResourceCandidate,
+  right: ProjectResourceCandidate,
+): number {
+  return resourceCandidateId(left).localeCompare(resourceCandidateId(right));
 }
 
 function resolvePortableConfig(

@@ -45,7 +45,9 @@ slots:
 
 Le fichier est un exemple de forme ; l'implémentation stocke ces valeurs localement et ne les commit pas.
 
-Un import ou draft non résolu reste explicitement valide avec `slots: {}`. Un ancien import peut aussi porter `bookmarkRef: null` jusqu'à ce que le macOS Shell fournisse un Repository Grant. Un `ref` de slot n'est accepté que s'il désigne un candidat explicitement dans l'autorité du projet, du bon `kind`, et fournissant la capability demandée. Les registres Connection, MCP et Agent Runtime ne font pas partie de ce tracer bullet : leur catalogue est vide et aucun grant implicite n'est synthétisé. Les Module Instances déjà sélectionnées sont des candidats project-scoped pour les capabilities déclarées par leur manifest.
+Un import ou draft non résolu reste explicitement valide avec `slots: {}`. Un ancien import peut aussi porter `bookmarkRef: null` jusqu'à ce que le macOS Shell fournisse un Repository Grant. Un `ref` de slot n'est accepté que s'il désigne un candidat explicitement dans l'autorité du projet, du bon `kind`, et fournissant **toutes** les capabilities demandées par le Slot et par les Module Instances qui le référencent. Les registres Connection, MCP et Agent Runtime ne sont pas encore persistés par ce tracer bullet : leur catalogue de production est vide et aucun grant implicite n'est synthétisé. Les Module Instances déjà sélectionnées sont des candidats project-scoped uniquement pour les capabilities déclarées dans `provides` par leur Manifest.
+
+`GET /v1/projects/{projectId}/binding-candidates` renvoie cette intersection pour la configuration sauvegardée; `POST` la prévisualise pour un Draft proposé, sans mutation. Les lignes sont ordonnées par Slot. Chaque ligne porte un statut `bound`, `available`, `missing`, `inaccessible` ou `incompatible`, l'impact sur les Module Instances et une action de réparation. Sa liste `candidates` n'expose jamais une ressource globale non accordée ni une ressource qui ne satisfait qu'une partie des capabilities requises.
 
 ## Merge algorithm
 

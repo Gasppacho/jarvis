@@ -173,6 +173,58 @@ public struct ProjectResourceCandidate: Identifiable, Sendable, Equatable {
     }
 }
 
+public enum ProjectResourceBindingStatus: String, Sendable, Equatable {
+    case bound
+    case available
+    case missing
+    case inaccessible
+    case incompatible
+}
+
+public struct ProjectResourceBindingChoice: Identifiable, Sendable, Equatable {
+    public var id: String { slotId }
+    public let slotId: String
+    public let requiredCapabilities: [String]
+    public let candidates: [ProjectResourceCandidate]
+    public let status: ProjectResourceBindingStatus
+    public let impact: String
+    public let repairAction: String
+
+    init(payload: Components.Schemas.ProjectResourceBindingChoice) {
+        slotId = payload.slotId
+        requiredCapabilities = payload.requiredCapabilities
+        candidates = payload.candidates.map(ProjectResourceCandidate.init(payload:))
+        let value = wireString(payload.status)
+        guard let status = ProjectResourceBindingStatus(rawValue: value) else {
+            preconditionFailure("Generated Project resource status drifted: \(value)")
+        }
+        self.status = status
+        impact = payload.impact
+        repairAction = payload.repairAction
+    }
+
+    init(
+        slotId: String,
+        requiredCapabilities: [String],
+        candidates: [ProjectResourceCandidate],
+        status: ProjectResourceBindingStatus,
+        impact: String,
+        repairAction: String
+    ) {
+        self.slotId = slotId
+        self.requiredCapabilities = requiredCapabilities
+        self.candidates = candidates
+        self.status = status
+        self.impact = impact
+        self.repairAction = repairAction
+    }
+}
+
+public struct ProjectResourceChoices: Sendable, Equatable {
+    public let candidates: [ProjectResourceCandidate]
+    public let slots: [ProjectResourceBindingChoice]
+}
+
 public struct ProjectCompositionStartingPoint: Identifiable, Sendable, Equatable {
     public let id: String
     public let displayName: String

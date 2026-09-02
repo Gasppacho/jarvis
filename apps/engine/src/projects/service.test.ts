@@ -70,15 +70,25 @@ describe("Project configuration replacement", () => {
       portableConfig: configuration,
       repositoryPath: repository,
     });
+    let grantIsAccessible = true;
     const grants: ProjectResourceGrantPort = {
-      grantedToProject: () => [
-        {
-          ref: "runtime/codex-test",
-          kind: "runtime",
-          displayName: "Test runtime grant",
-          capabilities: ["agent.execute"],
-        },
-      ],
+      grantedToProject: (projectId) =>
+        projectId === "token-warehouse" && grantIsAccessible
+          ? [
+              {
+                ref: "runtime/codex-test",
+                kind: "runtime" as const,
+                displayName: "Test runtime grant",
+                capabilities: ["agent.execute"],
+              },
+              {
+                ref: "runtime/incompatible",
+                kind: "runtime" as const,
+                displayName: "Incompatible runtime grant",
+                capabilities: ["shell.execute"],
+              },
+            ]
+          : [],
     };
     const service = new ProjectService(
       store,
@@ -89,9 +99,18 @@ describe("Project configuration replacement", () => {
       new LocalRepositoryAccessibility(),
     );
 
-    expect(service.listProjectResourceCandidates("token-warehouse")).toContainEqual(
+    const choices = service.getProjectResourceChoices("token-warehouse");
+    expect(choices.items).toContainEqual(
       expect.objectContaining({ ref: "runtime/codex-test", kind: "runtime" }),
     );
+    expect(choices.items).not.toContainEqual(
+      expect.objectContaining({ ref: "runtime/incompatible" }),
+    );
+    expect(choices.slots.find((slot) => slot.slotId === "agentRuntime")).toMatchObject({
+      requiredCapabilities: ["agent.execute"],
+      status: "available",
+      candidates: [expect.objectContaining({ ref: "runtime/codex-test" })],
+    });
     expect(
       service.replaceProjectBindings({
         projectId: "token-warehouse",
@@ -108,6 +127,10 @@ describe("Project configuration replacement", () => {
     ).toMatchObject({
       slots: { agentRuntime: { kind: "runtime", ref: "runtime/codex-test" } },
     });
+    grantIsAccessible = false;
+    expect(service.getProjectResourceChoices("token-warehouse").slots).toContainEqual(
+      expect.objectContaining({ slotId: "agentRuntime", status: "inaccessible" }),
+    );
   });
 
   it("removes a first repository file when SQLite fails after writing it", () => {
