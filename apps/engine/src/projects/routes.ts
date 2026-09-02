@@ -7,6 +7,7 @@ import type {
 } from "../../../../packages/kernel/src/project-registry.js";
 import type {
   ProjectBindings,
+  ProjectCompositionChoices,
   ProjectDetail,
   ProjectResourceCandidateRegistry,
   ProjectSummary,
@@ -20,7 +21,12 @@ export type LocalProjectRegistry = ProjectRegistry<
   ProjectBindings,
   ProjectValidationReport
 > &
-  ProjectResourceCandidateRegistry;
+  ProjectResourceCandidateRegistry & {
+    previewCompositionChoices(
+      id: unknown,
+      proposedConfiguration: unknown,
+    ): ProjectCompositionChoices;
+  };
 export type LocalRepositoryDiscovery = RepositoryDiscoveryPort<RepositoryDiscovery>;
 
 /**
@@ -81,6 +87,15 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
     const service = requireDatabaseReady(deps);
     const params = request.params as { projectId?: unknown } | undefined;
     return reply.code(200).send(service.validateProject(params?.projectId));
+  });
+
+  app.post("/v1/projects/:projectId/composition-choices", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    const body = request.body as { portableConfig?: unknown } | undefined;
+    return reply
+      .code(200)
+      .send(service.previewCompositionChoices(params?.projectId, body?.portableConfig));
   });
 
   app.delete("/v1/projects/:projectId", async (request, reply) => {

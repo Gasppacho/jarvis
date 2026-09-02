@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "development.implementation.failed v1",
+  "title": "Implementation failed",
+  "description": "A requested work item implementation failed.",
   "type": "object",
   "additionalProperties": false,
   "required": [

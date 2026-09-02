@@ -334,6 +334,8 @@ function moduleHost(): ModuleHost {
       })),
     readConfigurationSchema: (schemaRef) =>
       JSON.parse(readFileSync(join(ROOT, schemaRef), "utf8")) as unknown,
+    readEventSchema: (schemaRef) =>
+      JSON.parse(readFileSync(join(ROOT, schemaRef), "utf8")) as unknown,
   };
   const contract = JSON.parse(
     readFileSync(join(ROOT, "contracts/schemas/module-manifest.v1.schema.json"), "utf8"),

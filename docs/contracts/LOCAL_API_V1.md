@@ -38,8 +38,17 @@ fermée reste exactement `{valid, issues}`. `issues` projette les `findings` ave
 Les nouveaux clients appellent `POST /v1/projects/{projectId}/validation-report`. Cette
 opération distincte évite d'élargir silencieusement la réponse historique et renvoie le
 schéma explicite `ProjectValidationReportV1`, identifié dans le document par
-`apiVersion: jarvis.dev/project-validation/v1` et `kind: ProjectValidationReport`. Le
-nom de ressource reste sous le préfixe Local API `/v1`, conformément à la pratique de
+`apiVersion: jarvis.dev/project-validation/v1` et `kind: ProjectValidationReport`.
+
+`POST /v1/projects/{projectId}/composition-choices` prévisualise, sans mutation, les
+Events déclarés par la configuration sauvegardée ou par une `portableConfig` proposée.
+La réponse `ProjectCompositionChoicesV1` est déterministe et explique la diffusion des
+Facts ainsi que les Requests orphelines, résolues ou ambiguës. Labels, descriptions et
+payload schemas viennent des contrats Event versionnés; les producteurs, consumers et
+routes viennent des Manifests des Module Instances activées. Aucun graphe impératif
+n'est persisté.
+
+Ces ressources restent sous le préfixe Local API `/v1`, conformément à la pratique de
 versioning de cette API.
 
 ### Modules

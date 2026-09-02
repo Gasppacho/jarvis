@@ -6,6 +6,7 @@ import {
   projectResourceCandidates,
   type ProjectCompositionValidationPort,
 } from "../../../../packages/project-runtime/src/composition-validator.js";
+import { previewProjectCompositionChoices } from "../../../../packages/project-runtime/src/composition-choices.js";
 import type {
   ImportProjectRequest,
   ProjectRegistry,
@@ -31,6 +32,7 @@ import type { RepositoryAccessibilityPort } from "./repository-accessibility.js"
 import type { ProjectRow, ProjectStore } from "./store.js";
 import type {
   BindingStatus,
+  ProjectCompositionChoices,
   PortableProjectConfiguration,
   ProjectBindings,
   ProjectResourceCandidate,
@@ -127,6 +129,22 @@ export class ProjectService implements ProjectRegistry<
         accessible: this.repositoryAccessibility.isAccessibleDirectory(project.repositoryPath),
       },
       grantedResources: this.resourceGrants.grantedToProject(project.id),
+    });
+  }
+
+  previewCompositionChoices(
+    id: unknown,
+    proposedConfiguration: unknown,
+  ): ProjectCompositionChoices {
+    const project = this.requireProject(id);
+    const configuration =
+      proposedConfiguration === undefined
+        ? project.portableConfig
+        : requirePortableProjectConfiguration(proposedConfiguration, this.modules);
+    return previewProjectCompositionChoices(this.modules, {
+      projectId: project.id,
+      configuration,
+      slotBindings: project.slotBindings,
     });
   }
 

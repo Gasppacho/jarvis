@@ -1,6 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "development.implementation.completed v1",
+  "title": "Implementation completed",
+  "description": "A requested work item implementation completed successfully.",
   "type": "object",
   "additionalProperties": false,
   "required": [

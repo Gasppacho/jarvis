@@ -27,6 +27,12 @@ change-request.review.completed
 
 No module may emit a reserved name before it is registered as a versioned contract.
 
+## Choice metadata
+
+Chaque payload schema versionné porte un `title` humain et une `description`. Ces
+champs sont la source contractuelle des libellés et aides exposés par la prévisualisation
+de composition; le moteur ne déduit jamais la sémantique d'un nom de propriété.
+
 ## Ownership rule
 
 The event type belongs to the integration contract catalog, not to either producer or consumer implementation. A breaking payload change increments the event version and requires an explicit compatibility plan.
