@@ -2,50 +2,52 @@
 
 ## Result
 
-The mission completed the first frontier ticket, #34, and stopped cleanly after its commit because the remaining six tickets require fresh ticket-sized contexts. No later ticket was started, so no work is left half-implemented.
+This run first integrated the completed #34 branch into local `main`, confirmed `pnpm verify`, then completed and integrated the next frontier ticket, #35. No later ticket was started.
 
-| Issue | Title | Branch | Commit | DoD | Verification |
-|---|---|---|---|---|---|
-| #34 | Expose project-scoped composition choices | `agent/34-expose-project-scoped-composition-choices` | `0fd3dbe` | Complete | `pnpm verify` passed |
-| #35 | Choose the guided composition interaction grammar | not started | — | Remaining; next frontier | — |
-| #36 | Guide starting point and Module Instance choices | not started | — | Blocked by #35 | — |
-| #37 | Build sentence-style Automation Rules | not started | — | Blocked by #36 | — |
-| #38 | Structure every bundled Module Configuration | not started | — | Blocked by #37 | — |
-| #39 | Guide project-scoped resource bindings | not started | — | Blocked by #36 | — |
-| #40 | Review and save Project composition drafts | not started | — | Blocked by #38 and #39 | — |
+| Issue | Title | Branch | DoD | Verification |
+|---|---|---|---|---|
+| #34 | Expose project-scoped composition choices | `agent/34-expose-project-scoped-composition-choices` | Complete; merged locally | `pnpm verify` passed on `main` after merge |
+| #35 | Choose the guided composition interaction grammar | `agent/35-choose-guided-composition-grammar` | Complete; merged locally | `pnpm verify` passed on the ticket branch and merged `main` |
+| #36 | Guide starting point and Module Instance choices | not started | Remaining; next frontier | — |
+| #37 | Build sentence-style Automation Rules | not started | Blocked by #36 | — |
+| #38 | Structure every bundled Module Configuration | not started | Blocked by #37 | — |
+| #39 | Guide project-scoped resource bindings | not started | Blocked by #36 | — |
+| #40 | Review and save Project composition drafts | not started | Blocked by #38 and #39 | — |
 
-The issue set and dependency edges matched MISSION-0002 and the live tracker. All issues remained open as required. For mission sequencing, committed #34 is treated as satisfied, making #35 the next frontier despite its unchanged `needs-triage` label.
+The issue set and dependency edges match MISSION-0002 and the live tracker. The unchanged `needs-triage` labels were not treated as blockers. All issues remain open as required.
 
-## #34 integration and delivery
+## #35 integration and delivery
 
-The tracer bullet adds `POST /v1/projects/{projectId}/composition-choices` across OpenAPI, generated TypeScript and Swift build-time clients, Local API routing, Project service wiring, Project Runtime derivation, bundled Event contracts, and Application Harness coverage. It derives choices from enabled Module Instance Manifests and versioned Event payload schemas, supports saved or proposed Portable Configuration, explains Fact and Request routing, and does not persist a draft or workflow graph.
+Three temporary SwiftUI prototypes compared a modal linear assistant, a composition canvas, and persistent guided stages in a native split view. Each covered starting point, Module Instances, Automation Rules, resources, and review against shared Fresh, Valid, Orphaned, and Ambiguous scenarios. The prototypes compiled in the packaged app build and were deleted before delivery.
 
-Application Harness fixtures cover fresh, canonical valid, orphaned, ambiguous, added, removed, enabled/disabled, and package-changed compositions using the real Engine binary and temporary SQLite. The focused test was observed failing before implementation because `ProjectCompositionChoicesV1` did not exist.
+The selected persistent-stage grammar and the complete trade-off comparison are recorded in `docs/product/UX.md`. The retained `GuidedCompositionInventory` is presentation-only: it exposes five ordered sections, actions, statuses, keyboard order, and accessible role/label/value/hint content. Engine-provided routing statuses and explanations are mapped for display; Swift does not select consumers or derive compatibility. XCTest demonstrates shared fixture states, actionable empty/conflict states, preserved sentence input, keyboard order, and VoiceOver text inventory. The documented SwiftPM XCUITest limitation remains explicit.
+
+## TDD evidence
+
+`GuidedCompositionGrammarTests` was run before the inventory types existed and failed to compile because `GuidedCompositionFixture`, `GuidedCompositionInventory`, and `GuidedCompositionStage` were missing. After the minimal presentation inventory landed, the focused test passed. `pnpm typecheck`, the focused Swift test, the temporary packaged-app build, and final `pnpm verify` all passed.
 
 ## Code review
 
 ### Standards
 
-No blocking finding. The implementation keeps composition policy in Project Runtime, filesystem reads in the Engine adapter, and HTTP translation in routes/service wiring. It introduces no cross-module application/domain import, mutable ambient state, migration, secret, absolute fixture path, or external dependency. The larger contract-to-runtime diff is expected shotgun breadth for a synchronized Local API tracer bullet rather than unrelated change.
+No blocking finding. The change remains inside the macOS Shell presentation boundary, keeps routing policy in the Engine, introduces no dependency or persistence, and follows the existing plain-value presentation inventory seam. No secrets, personal paths, migration edits, cross-context imports, or generated-file drift were found. The fixture and inventory types are cohesive rather than speculative production views.
 
 ### Spec
 
-No blocking finding. The implementation covers the ticket's read-only preview, deterministic ordering, contract-owned human metadata and payload schemas, enabled-instance producer/consumer inventory, compatibility markers, zero/one/multiple Request explanations, Fact broadcast explanations, canonical GitHub Development events, proposed composition refresh, generated clients, documentation, and no persisted graph. Focused tests demonstrate the required fixture classes. No out-of-scope UI was added.
+No blocking finding. The UX source of truth records three structural alternatives, one shared fixture matrix, all requested trade-off dimensions, the selected rationale, prototype deletion, and native/XCUITest constraints. The XCTest seam covers the retained presentation/action/accessibility inventory for all four states. No prototype surface or out-of-scope production composition UI remains.
 
-## Definition of Done for #34
+## Definition of Done for #35
 
-- All acceptance criteria are demonstrated at the Application Harness seam.
-- Red was observed before green.
-- `pnpm typecheck`, focused integration tests, and `pnpm verify` pass.
-- Contract errors and zero/one/multiple routing cases are covered; the operation is read-only and idempotently deterministic.
-- OpenAPI, generated TypeScript/Swift clients, Event schemas, bundled runtime assets, docs, and tests are synchronized.
-- `pnpm arch:check` passes.
-- No secrets, personal absolute paths, migration edits, or new dependencies were introduced.
-- No new hard-to-reverse decision or context-specific vocabulary required an ADR or `CONTEXT.md` change.
-- Code review completed with no blocking findings.
-- Work is committed on the required branch and independently demoable.
-- Issue #34 was commented with branch, commit, DoD, and verification status; it was not closed.
+- Every acceptance criterion is demonstrated at the documented XCTest, packaged-app build, or UX decision-record seam.
+- Red was observed before green; focused tests and full verification pass.
+- The ticket has no relevant cancellation, persistence, idempotency, event-schema, manifest, OpenAPI, or migration change.
+- `pnpm arch:check` and generated contract checks pass.
+- No secrets, personal absolute paths, new dependencies, or applied migration edits were introduced.
+- The product UX source of truth was updated without duplicating Engine routing policy.
+- The decision is reversible presentation grammar and does not require an ADR or new domain vocabulary.
+- Two-axis code review completed with no blocking findings.
+- Work is independently demoable and committed on the required ticket branch.
 
-## Mission safeguards
+## Mission safeguards and remaining work
 
-Nothing was merged, pushed, or opened as a PR. Parent issue #31 was untouched. The active `gh` account was restored to `QServicesEntreprise`.
+#36 is the next frontier. Tickets #36–#40 remain untouched. Nothing was pushed and no PR was opened. Parent issue #31 was untouched. Issue #35 must remain open after its status comment, and the active `gh` account must be restored to `QServicesEntreprise`.
