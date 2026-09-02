@@ -86,6 +86,8 @@ L'utilisateur choisit un dossier avec `NSOpenPanel`. Le shell crée un bookmark 
 
 Dans les deux distributions, le bookmark conserve la pérennité du binding et la trace du consentement explicite. Un ancien security-scoped bookmark devenu illisible exige une nouvelle sélection explicite ; un binding moteur ne suffit jamais à recréer une autorisation shell.
 
+Lors d'une suppression de Project, le shell attend le succès du Local API avant de retirer le Repository Grant et de libérer l'accès security-scoped. Un échec API conserve les deux ; un échec de nettoyage après succès moteur est signalé comme résultat partiel.
+
 ## Menu bar and lifecycle
 
 Le produit peut rester actif avec fenêtre fermée. Le menu bar affiche santé et exécutions. L'option « lancer à l'ouverture de session » est postérieure au walking skeleton mais compatible avec un `SMAppService`.

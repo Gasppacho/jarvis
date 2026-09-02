@@ -10,11 +10,13 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let session: EngineSessionModel
     let projects: ProjectsModel
+    let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
 
     override init() {
         session = EngineSessionModel.bundled()
         projects = ProjectsModel(session: session)
+        projectConfiguration = ProjectConfigurationModel(session: session, projects: projects)
         moduleCatalog = ModuleCatalogModel(session: session)
         super.init()
     }
@@ -41,6 +43,7 @@ struct JarvisApp: App {
             ContentView(
                 session: delegate.session,
                 projects: delegate.projects,
+                projectConfiguration: delegate.projectConfiguration,
                 moduleCatalog: delegate.moduleCatalog)
                 .frame(minWidth: 520, minHeight: 320)
                 .task { await delegate.session.start() }

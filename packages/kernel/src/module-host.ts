@@ -56,6 +56,12 @@ export interface ModuleCatalogDiagnostic {
   readonly issues: readonly string[];
 }
 
+export interface ModuleConfigurationValidation {
+  readonly valid: boolean;
+  /** JSON Pointer paths and schema messages only; configuration values are never echoed. */
+  readonly issues: readonly string[];
+}
+
 /** Filesystem-backed discovery is an adapter injected through this port. */
 export interface ModulePackageRegistry {
   discover(): readonly DiscoveredModuleManifest[];
@@ -122,13 +128,19 @@ export class ModuleManifestContractRegistry {
  */
 export class ModuleHost {
   private readonly entries: ModuleCatalogEntry[] = [];
+  private readonly entriesById = new Map<string, ModuleCatalogEntry>();
+  private readonly configurationValidators = new Map<string, ValidateFunction>();
   private readonly rejected: ModuleCatalogDiagnostic[] = [];
 
   public constructor(registry: ModulePackageRegistry, contracts: ModuleManifestContractRegistry) {
     for (const candidate of registry.discover()) {
       try {
         const manifest = contracts.requireModuleManifestV1(candidate);
-        this.entries.push(toCatalogEntry(manifest, registry));
+        const entry = toCatalogEntry(manifest, registry);
+        const validator = configurationValidator(entry.configurationSchema);
+        this.entries.push(entry);
+        this.entriesById.set(entry.moduleId, entry);
+        if (validator !== undefined) this.configurationValidators.set(entry.moduleId, validator);
       } catch (error) {
         this.rejected.push(toDiagnostic(candidate, error));
       }
@@ -137,6 +149,29 @@ export class ModuleHost {
 
   public catalog(): readonly ModuleCatalogEntry[] {
     return this.entries;
+  }
+
+  /** Only successfully validated bundled packages are addressable by projects. */
+  public package(moduleId: string): ModuleCatalogEntry | undefined {
+    return this.entriesById.get(moduleId);
+  }
+
+  public validateConfiguration(
+    moduleId: string,
+    configuration: Readonly<Record<string, unknown>>,
+  ): ModuleConfigurationValidation {
+    if (!this.entriesById.has(moduleId)) {
+      return { valid: false, issues: ["/moduleId is not an accepted bundled Module Package"] };
+    }
+    const validate = this.configurationValidators.get(moduleId);
+    if (validate === undefined || validate(configuration)) return { valid: true, issues: [] };
+    return {
+      valid: false,
+      issues: (validate.errors ?? []).map(
+        (error) =>
+          `${error.instancePath === "" ? "/" : error.instancePath} ${error.message ?? "is invalid"}`,
+      ),
+    };
   }
 
   public diagnostics(): readonly ModuleCatalogDiagnostic[] {
@@ -191,6 +226,17 @@ function toCatalogEntry(
     configurationSchemaRef,
     configurationSchema,
   };
+}
+
+function configurationValidator(
+  schema: Readonly<Record<string, unknown>> | null,
+): ValidateFunction | undefined {
+  if (schema === null) return undefined;
+  try {
+    return new Ajv2020({ strict: false, allErrors: true }).compile(schema);
+  } catch {
+    throw new InvalidModuleConfigurationSchemaError("Configuration schema could not be compiled.");
+  }
 }
 
 function requireJsonObject(value: unknown): Readonly<Record<string, unknown>> {

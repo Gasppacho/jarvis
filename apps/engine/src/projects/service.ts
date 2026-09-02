@@ -1,6 +1,15 @@
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
+import type { ModuleHost } from "../../../../packages/kernel/src/module-host.js";
+import type {
+  ImportProjectRequest,
+  ProjectRegistry,
+  ReplaceProjectBindingsRequest,
+  ReplaceProjectConfigurationRequest,
+  RepositoryDiscoveryPort,
+  UpdateRepositoryBindingRequest,
+} from "../../../../packages/kernel/src/project-registry.js";
 import { EngineError } from "../errors.js";
 import {
   discoverRepository,
@@ -8,36 +17,50 @@ import {
   requireRepositoryDirectory,
   slugify,
 } from "./discovery.js";
-import { validatePortableConfig } from "./contracts.js";
-import type { ProjectStore, ProjectRow } from "./store.js";
+import {
+  requirePortableProjectConfiguration,
+  requireProjectBindings,
+  validatePortableConfig,
+} from "./contracts.js";
+import type { ProjectConfigurationWriter } from "./repository-config-writer.js";
+import type { ProjectRow, ProjectStore } from "./store.js";
 import type {
   BindingStatus,
-  PortableProjectConfig,
+  PortableProjectConfiguration,
+  ProjectBindings,
+  ProjectResourceCandidate,
+  ProjectResourceGrantPort,
   ProjectDetail,
   ProjectSummary,
+  StoredPortableProjectConfiguration,
+  RepositoryDiscovery,
 } from "./types.js";
 
-/**
- * Application boundary for the Project Registry: import, list and detail.
- * The absolute repository path is bound, never stored in the portable config;
- * the committed `.jarvis/project.yaml` is adopted, an oversized or invalid one
- * is rejected rather than silently replaced (docs/architecture/PROJECTS.md).
- */
-
 const PROJECT_YAML = join(".jarvis", "project.yaml");
-/** A committed config beyond this size is rejected: it will not be read at all. */
 const MAX_PROJECT_YAML_BYTES = 512 * 1024;
-
-export interface ImportProjectRequest {
-  readonly repositoryPath: unknown;
-  readonly portableConfig: unknown;
-}
-
-/** The MVP import flow ends in `draft` (IMPLEMENTATION_SEQUENCE.md, ticket 02). */
 const INITIAL_STATUS = "draft" as const;
 
-export class ProjectService {
-  constructor(private readonly store: ProjectStore) {}
+export class RepositoryDiscoveryService implements RepositoryDiscoveryPort<RepositoryDiscovery> {
+  discoverRepository(root: unknown): RepositoryDiscovery {
+    try {
+      return discoverRepository(root);
+    } catch (error) {
+      throw repositoryPathError(error);
+    }
+  }
+}
+
+export class ProjectService implements ProjectRegistry<
+  ProjectSummary,
+  ProjectDetail,
+  ProjectBindings
+> {
+  constructor(
+    private readonly store: ProjectStore,
+    private readonly modules: ModuleHost,
+    private readonly repositoryWriter: ProjectConfigurationWriter,
+    private readonly resourceGrants: ProjectResourceGrantPort,
+  ) {}
 
   importProject(request: ImportProjectRequest): ProjectDetail {
     let repositoryPath: string;
@@ -46,9 +69,6 @@ export class ProjectService {
     } catch (error) {
       throw repositoryPathError(error);
     }
-
-    // The unique index on the canonical path is the double-import guard: it also
-    // catches the same working tree reached through a symlink.
     const existing = this.store.findByRepositoryPath(repositoryPath);
     if (existing !== undefined) {
       throw new EngineError(
@@ -60,21 +80,22 @@ export class ProjectService {
     }
 
     const discovery = discoverRepository(repositoryPath);
-    const portableConfig = resolvePortableConfig(repositoryPath, request.portableConfig, discovery);
+    const resolved = resolvePortableConfig(repositoryPath, request.portableConfig, discovery);
+    const portableConfig = resolved.configuration;
+    if (!resolved.isDiscoveredDraft) {
+      requirePortableProjectConfiguration(portableConfig, this.modules);
+    }
     const id = allocateProjectId(portableConfig, this.store);
-    const name =
-      typeof portableConfig.metadata?.name === "string" && portableConfig.metadata.name !== ""
-        ? portableConfig.metadata.name
-        : id;
-
-    const row = this.store.createProject({
-      id,
-      name,
-      status: INITIAL_STATUS,
-      portableConfig,
-      repositoryPath,
-    });
-    return toDetail(row);
+    const name = portableConfig.metadata.name || id;
+    return toDetail(
+      this.store.createProject({
+        id,
+        name,
+        status: INITIAL_STATUS,
+        portableConfig,
+        repositoryPath,
+      }),
+    );
   }
 
   listProjects(): ProjectSummary[] {
@@ -85,14 +106,137 @@ export class ProjectService {
     return toDetail(this.requireProject(id));
   }
 
-  updateRepositoryBinding(
-    id: unknown,
-    repositoryId: unknown,
-    path: unknown,
-    bookmarkRef: unknown,
-  ): ProjectDetail {
-    const current = this.requireProject(id);
-    const expectedRepositoryId = current.portableConfig.repositories?.[0]?.id ?? "main";
+  deleteProject(id: unknown): void {
+    const projectId = typeof id === "string" ? id : "";
+    this.store.transaction(() => {
+      const project = this.store.findById(projectId);
+      if (project === undefined) throw notFound(projectId || "(empty)");
+      if (project.status === "active") {
+        throw new EngineError(
+          "project.active",
+          409,
+          `Project "${projectId}" is active and cannot be deleted. Pause it before deleting it.`,
+        );
+      }
+      if (!this.store.deleteById(projectId)) throw notFound(projectId || "(empty)");
+    });
+  }
+
+  replaceProjectConfiguration(request: ReplaceProjectConfigurationRequest): ProjectDetail {
+    const current = this.requireProject(request.projectId);
+    if (typeof request.writeToRepository !== "boolean") {
+      throw new EngineError("api.invalid-request", 400, "writeToRepository must be a boolean.");
+    }
+    const configuration = requirePortableProjectConfiguration(request.portableConfig, this.modules);
+    for (const slot of Object.keys(current.slotBindings)) {
+      if (!(slot in configuration.slots)) {
+        throw new EngineError(
+          "project.config-invalid",
+          400,
+          `/slots/${slot} cannot be removed while a Local Binding still references it.`,
+        );
+      }
+    }
+    validateSlotBindings(
+      configuration.slots,
+      current.slotBindings,
+      eligibleCandidates(current.id, configuration, this.modules, this.resourceGrants),
+      "project.config-invalid",
+    );
+
+    // Filesystem + SQLite cannot share a transaction. The repository write happens
+    // first, then is compensated if SQLite refuses the replacement.
+    const compensation = request.writeToRepository
+      ? this.repositoryWriter.write(current.repositoryPath, configuration)
+      : undefined;
+    try {
+      const updated = this.store.transaction(() =>
+        this.store.replaceConfiguration(current.id, configuration, configuration.metadata.name),
+      );
+      if (updated === undefined) throw notFound(current.id);
+      return toDetail(updated);
+    } catch (error) {
+      try {
+        compensation?.restore();
+      } catch {
+        throw new EngineError(
+          "project.repository-compensation-failed",
+          500,
+          "SQLite rejected the configuration and the previous repository file could not be restored. Reload the Project and inspect .jarvis/project.yaml before retrying.",
+        );
+      }
+      throw error;
+    }
+  }
+
+  getProjectBindings(projectId: unknown): ProjectBindings {
+    return toBindings(this.requireProject(projectId));
+  }
+
+  listProjectResourceCandidates(projectId: unknown): readonly ProjectResourceCandidate[] {
+    const current = this.requireProject(projectId);
+    return eligibleCandidates(
+      current.id,
+      current.portableConfig,
+      this.modules,
+      this.resourceGrants,
+    );
+  }
+
+  replaceProjectBindings(request: ReplaceProjectBindingsRequest): ProjectBindings {
+    const current = this.requireProject(request.projectId);
+    const bindings = requireProjectBindings(request.bindings);
+    if (bindings.projectId !== current.id) {
+      throw new EngineError(
+        "project.bindings-invalid",
+        400,
+        "/projectId must match the Project selected by the URL.",
+      );
+    }
+    validateBindingReferences(
+      current,
+      bindings,
+      eligibleCandidates(current.id, current.portableConfig, this.modules, this.resourceGrants),
+    );
+    const repositoryId = current.portableConfig.repositories[0]?.id ?? "main";
+    const supplied = bindings.repositories[repositoryId];
+    if (supplied === undefined || Object.keys(bindings.repositories).length !== 1) {
+      throw new EngineError(
+        "project.bindings-invalid",
+        400,
+        `/repositories must contain only the declared repository ${repositoryId}.`,
+      );
+    }
+
+    // Generic Local Bindings replacement cannot establish or replace the shell-owned
+    // Repository Grant. Only the dedicated repository binding operation may do that.
+    if (
+      supplied.bookmarkRef !== null &&
+      (supplied.bookmarkRef !== current.bookmarkRef || supplied.path !== current.repositoryPath)
+    ) {
+      throw new EngineError(
+        "project.bindings-invalid",
+        400,
+        "/repositories/main must preserve the shell-established Repository Grant.",
+      );
+    }
+
+    const updated = this.store.transaction(() =>
+      this.store.replaceBindings(
+        current.id,
+        current.repositoryPath,
+        current.bookmarkRef,
+        bindings.slots,
+      ),
+    );
+    if (updated === undefined) throw notFound(current.id);
+    return toBindings(updated);
+  }
+
+  updateRepositoryBinding(request: UpdateRepositoryBindingRequest): ProjectDetail {
+    const { projectId, repositoryId, path, bookmarkRef } = request;
+    const current = this.requireProject(projectId);
+    const expectedRepositoryId = current.portableConfig.repositories[0]?.id ?? "main";
     if (repositoryId !== expectedRepositoryId) {
       throw new EngineError(
         "api.invalid-request",
@@ -107,119 +251,157 @@ export class ProjectService {
         "bookmarkRef must be a non-empty local reference of at most 300 characters.",
       );
     }
-
     let repositoryPath: string;
     try {
       repositoryPath = requireRepositoryDirectory(path);
     } catch (error) {
       throw repositoryPathError(error);
     }
-
     const updated = this.store.updateRepositoryBinding(current.id, repositoryPath, bookmarkRef);
-    if (updated === undefined) {
-      throw new EngineError(
-        "project.not-found",
-        404,
-        `No project with id "${current.id}" in this installation.`,
-      );
-    }
+    if (updated === undefined) throw notFound(current.id);
     return toDetail(updated);
   }
 
   private requireProject(id: unknown): ProjectRow {
     const projectId = typeof id === "string" ? id : "";
     const row = this.store.findById(projectId);
-    if (row === undefined) {
-      throw new EngineError(
-        "project.not-found",
-        404,
-        `No project with id "${projectId || "(empty)"}" in this installation.`,
-      );
-    }
+    if (row === undefined) throw notFound(projectId || "(empty)");
     return row;
   }
 }
 
-/**
- * The committed file wins over a client-supplied config: it is the shared
- * source of truth inside the repository (PROJECTS.md import flow, step 3).
- * The inferred draft from discovery is the only config that stays unvalidated
- * — the full schema requires `slots` and `modules`, which the wizard fills in.
- */
+function validateBindingReferences(
+  current: ProjectRow,
+  bindings: ProjectBindings,
+  candidates: readonly ProjectResourceCandidate[],
+): void {
+  const declaredSlots =
+    "slots" in current.portableConfig ? current.portableConfig.slots : undefined;
+  validateSlotBindings(declaredSlots, bindings.slots, candidates, "project.bindings-invalid");
+}
+
+function validateSlotBindings(
+  declaredSlots: PortableProjectConfiguration["slots"] | undefined,
+  bindings: ProjectBindings["slots"],
+  candidates: readonly ProjectResourceCandidate[],
+  code: "project.config-invalid" | "project.bindings-invalid",
+): void {
+  for (const [slot, binding] of Object.entries(bindings)) {
+    const requirement = declaredSlots?.[slot];
+    if (requirement === undefined) {
+      throw new EngineError(
+        code,
+        400,
+        `/slots/${slot} is not declared by the Portable Configuration.`,
+      );
+    }
+    const eligible = candidates.some(
+      (candidate) =>
+        candidate.ref === binding.ref &&
+        candidate.kind === binding.kind &&
+        candidate.capabilities.includes(requirement.requires),
+    );
+    if (!eligible) {
+      throw new EngineError(
+        code,
+        400,
+        `/slots/${slot} must reference an explicitly granted resource with capability ${requirement.requires}.`,
+      );
+    }
+  }
+}
+
+function eligibleCandidates(
+  projectId: string,
+  configuration: StoredPortableProjectConfiguration,
+  modules: ModuleHost,
+  grants: ProjectResourceGrantPort,
+): readonly ProjectResourceCandidate[] {
+  const selected =
+    "modules" in configuration
+      ? configuration.modules.flatMap((instance) => {
+          const packageEntry = modules.package(instance.moduleId);
+          if (
+            !instance.enabled ||
+            packageEntry === undefined ||
+            packageEntry.provides.length === 0
+          ) {
+            return [];
+          }
+          return [
+            {
+              ref: instance.instanceId,
+              kind: "module-instance" as const,
+              displayName: instance.instanceId,
+              capabilities: packageEntry.provides,
+            },
+          ];
+        })
+      : [];
+  return [...selected, ...grants.grantedToProject(projectId)];
+}
+
 function resolvePortableConfig(
   repositoryPath: string,
   supplied: unknown,
   discovery: ReturnType<typeof discoverRepository>,
-): PortableProjectConfig {
+): { configuration: StoredPortableProjectConfiguration; isDiscoveredDraft: boolean } {
   const committed = readCommittedConfig(repositoryPath);
-  if (committed !== undefined) return committed;
+  if (committed !== undefined) {
+    return { configuration: committed, isDiscoveredDraft: false };
+  }
   if (supplied !== undefined) {
     validatePortableConfig(supplied);
-    return supplied as PortableProjectConfig;
+    return {
+      configuration: supplied as PortableProjectConfiguration,
+      isDiscoveredDraft: false,
+    };
   }
-  return discovery.suggested;
+  return { configuration: discovery.suggested, isDiscoveredDraft: true };
 }
 
-function readCommittedConfig(repositoryPath: string): PortableProjectConfig | undefined {
+function readCommittedConfig(
+  repositoryPath: string,
+): StoredPortableProjectConfiguration | undefined {
   const file = join(repositoryPath, PROJECT_YAML);
-
   let stats;
   try {
     stats = statSync(file);
   } catch {
     return undefined;
   }
-  if (!stats.isFile()) {
+  if (!stats.isFile())
     throw configInvalid(".jarvis/project.yaml exists but is not a regular file.");
-  }
   if (stats.size > MAX_PROJECT_YAML_BYTES) {
     throw configInvalid(
       `.jarvis/project.yaml is ${stats.size} bytes; the engine reads at most ${MAX_PROJECT_YAML_BYTES}. Trim it and import again.`,
     );
   }
-
-  let text: string;
-  try {
-    text = readFileSync(file, "utf8");
-  } catch {
-    throw configInvalid(".jarvis/project.yaml could not be read.");
-  }
-
   let document: unknown;
   try {
-    document = parseYaml(text);
+    document = parseYaml(readFileSync(file, "utf8"));
   } catch {
-    throw configInvalid(".jarvis/project.yaml is not valid YAML.");
+    throw configInvalid(".jarvis/project.yaml could not be read as valid YAML.");
   }
   validatePortableConfig(document);
-  return document as PortableProjectConfig;
+  return document as StoredPortableProjectConfiguration;
 }
 
 function configInvalid(reason: string): EngineError {
   return new EngineError("project.config-invalid", 400, `Rejected ${reason}`);
 }
 
-/**
- * Two checkouts of one repository carry the same `metadata.id`; the second is
- * suffixed rather than rejected — the working trees are different machines'
- * copies, so each binds its own path.
- */
-function allocateProjectId(config: PortableProjectConfig, store: ProjectStore): string {
-  const base = slugify(
-    typeof config.metadata?.id === "string" && config.metadata.id !== ""
-      ? config.metadata.id
-      : "project",
-  );
+function allocateProjectId(
+  config: StoredPortableProjectConfiguration,
+  store: ProjectStore,
+): string {
+  const base = slugify(config.metadata.id || "project");
   if (!store.existsById(base)) return base;
   for (let suffix = 2; suffix <= 999; suffix += 1) {
     const candidate = `${base}-${suffix}`;
     if (!store.existsById(candidate)) return candidate;
   }
-  throw new EngineError(
-    "system.internal-error",
-    500,
-    "No free project id could be allocated for this repository.",
-  );
+  throw new EngineError("system.internal-error", 500, "No free project id could be allocated.");
 }
 
 function repositoryPathError(error: unknown): EngineError {
@@ -230,30 +412,46 @@ function repositoryPathError(error: unknown): EngineError {
   return new EngineError("system.internal-error", 500, "The repository could not be inspected.");
 }
 
+function notFound(id: string): EngineError {
+  return new EngineError(
+    "project.not-found",
+    404,
+    `No project with id "${id}" in this installation.`,
+  );
+}
+
 function toSummary(row: ProjectRow): ProjectSummary {
   return {
     id: row.id,
     name: row.name,
     status: row.status,
-    moduleCount: row.portableConfig.modules?.length ?? 0,
+    moduleCount: "modules" in row.portableConfig ? (row.portableConfig.modules?.length ?? 0) : 0,
     activeExecutions: 0,
   };
 }
 
 function toDetail(row: ProjectRow): ProjectDetail {
-  const repositoryId = row.portableConfig.repositories?.[0]?.id ?? "main";
+  const repositoryId = row.portableConfig.repositories[0]?.id ?? "main";
   const bindingStatus: BindingStatus = {
     [repositoryId]: {
       path: row.repositoryPath,
-      // Live probe: a repository moved away since import must show as such.
       accessible: isAccessibleDirectory(row.repositoryPath),
       bookmarkRef: row.bookmarkRef,
     },
   };
+  return { ...toSummary(row), portableConfig: row.portableConfig, bindingStatus };
+}
+
+function toBindings(row: ProjectRow): ProjectBindings {
+  const repositoryId = row.portableConfig.repositories[0]?.id ?? "main";
   return {
-    ...toSummary(row),
-    portableConfig: row.portableConfig,
-    bindingStatus,
+    apiVersion: "jarvis.dev/project-bindings/v1",
+    kind: "ProjectBindings",
+    projectId: row.id,
+    repositories: {
+      [repositoryId]: { path: row.repositoryPath, bookmarkRef: row.bookmarkRef },
+    },
+    slots: row.slotBindings,
   };
 }
 

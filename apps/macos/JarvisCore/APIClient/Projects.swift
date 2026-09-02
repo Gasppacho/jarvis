@@ -84,6 +84,130 @@ public struct ProjectBinding: Sendable, Equatable, Identifiable {
     public var id: String { repositoryId }
 }
 
+public struct ProjectModulePresentationField: Identifiable, Sendable, Equatable {
+    public var id: String { label }
+    public let label: String
+    public let value: String
+}
+
+/// One configured Module Instance, decoded from the generated Local API payload.
+public struct ProjectModuleInstance: Identifiable, Sendable, Equatable {
+    public var id: String { instanceId }
+    public let instanceId: String
+    public let moduleId: String
+    public let enabled: Bool
+    public let runtimeSlot: String?
+    public let bindings: [String: String]
+    public let configurationSummary: String
+
+    init(payload: Components.Schemas.ModuleInstanceConfiguration) {
+        instanceId = payload.instanceId
+        moduleId = payload.moduleId
+        enabled = payload.enabled
+        runtimeSlot = payload.runtimeSlot
+        bindings = payload.bindings?.additionalProperties ?? [:]
+        configurationSummary = payload.configuration.flatMap(prettyJSON) ?? "None"
+    }
+
+    public var presentationFields: [ProjectModulePresentationField] {
+        [
+            .init(label: "Enabled", value: enabled ? "Enabled" : "Disabled"),
+            .init(label: "Package ID", value: moduleId),
+            .init(label: "Instance ID", value: instanceId),
+            .init(label: "Runtime slot", value: runtimeSlot ?? "None"),
+            .init(
+                label: "Bindings",
+                value: bindings.isEmpty
+                    ? "None"
+                    : bindings.sorted { $0.key < $1.key }
+                        .map { "\($0.key) → \($0.value)" }.joined(separator: ", ")),
+            .init(label: "Configuration", value: configurationSummary),
+        ]
+    }
+}
+
+public enum ProjectResourceKind: String, CaseIterable, Sendable, Equatable {
+    case connection
+    case runtime
+    case mcp
+    case moduleInstance = "module-instance"
+    case engine
+
+    init(wireValue: String) {
+        guard let kind = Self(rawValue: wireValue) else {
+            preconditionFailure("Generated Project resource kind drifted: \(wireValue)")
+        }
+        self = kind
+    }
+
+    init(payload: Components.Schemas.ProjectSlotBinding.kindPayload) {
+        self.init(wireValue: payload.rawValue)
+    }
+
+    var payload: Components.Schemas.ProjectSlotBinding.kindPayload {
+        guard let payload = Components.Schemas.ProjectSlotBinding.kindPayload(rawValue: rawValue)
+        else { preconditionFailure("Generated Project resource kind drifted: \(rawValue)") }
+        return payload
+    }
+}
+
+public struct ProjectSlotBinding: Identifiable, Sendable, Equatable {
+    public var id: String { slotId }
+    public let slotId: String
+    public let kind: ProjectResourceKind
+    public let ref: String
+}
+
+public struct ProjectResourceCandidate: Identifiable, Sendable, Equatable {
+    public var id: String { "\(kind.rawValue)/\(ref)" }
+    public let ref: String
+    public let kind: ProjectResourceKind
+    public let displayName: String
+    public let capabilities: [String]
+
+    init(payload: Components.Schemas.ProjectResourceCandidate) {
+        ref = payload.ref
+        displayName = payload.displayName
+        capabilities = payload.capabilities
+        kind = ProjectResourceKind(wireValue: payload.kind.rawValue)
+    }
+}
+
+public struct LocalRepositoryBinding: Identifiable, Sendable, Equatable {
+    public var id: String { repositoryId }
+    public let repositoryId: String
+    public let path: String
+    public let bookmarkRef: String?
+}
+
+public struct LocalProjectBindings: Sendable, Equatable {
+    public let projectId: String
+    public let repositories: [LocalRepositoryBinding]
+    public let slots: [ProjectSlotBinding]
+    public let wirePayload: Components.Schemas.ProjectBindings
+
+    init(payload: Components.Schemas.ProjectBindings) {
+        projectId = payload.projectId
+        repositories = payload.repositories.additionalProperties
+            .sorted { $0.key < $1.key }
+            .map { repositoryId, binding in
+                LocalRepositoryBinding(
+                    repositoryId: repositoryId,
+                    path: binding.path,
+                    bookmarkRef: binding.bookmarkRef)
+            }
+        slots = payload.slots.additionalProperties
+            .sorted { $0.key < $1.key }
+            .map { slotId, binding in
+                ProjectSlotBinding(
+                    slotId: slotId,
+                    kind: ProjectResourceKind(payload: binding.kind),
+                    ref: binding.ref)
+            }
+        wirePayload = payload
+    }
+}
+
 /// A project with its local bindings (the Local API's `ProjectDetail`).
 public struct ProjectDetail: Sendable, Equatable {
     public let project: Project
@@ -92,6 +216,10 @@ public struct ProjectDetail: Sendable, Equatable {
     /// committed to the user's repository, so it must never carry the machine's
     /// absolute path (docs/architecture/PROJECTS.md) — tests assert that.
     public let portableConfigJSON: Data?
+    public let portableConfiguration: Components.Schemas.PortableProjectConfiguration?
+    public let partialPortableConfiguration: Components.Schemas.PortableProjectDraft?
+    public let modules: [ProjectModuleInstance]
+    public let projectSlots: [String]
 
     init(detail: Components.Schemas.ProjectDetail) {
         project = Project(
@@ -102,7 +230,11 @@ public struct ProjectDetail: Sendable, Equatable {
             activeExecutions: detail.activeExecutions
         )
         bindings = ProjectDetail.decodeBindings(detail.bindingStatus)
-        portableConfigJSON = detail.portableConfig.jsonData
+        portableConfiguration = detail.portableConfig.value1
+        partialPortableConfiguration = detail.portableConfig.value2
+        modules = detail.portableConfig.value1?.modules.map(ProjectModuleInstance.init(payload:)) ?? []
+        projectSlots = detail.portableConfig.value1?.slots.additionalProperties.keys.sorted() ?? []
+        portableConfigJSON = encodedJSON(detail.portableConfig)
     }
 }
 
@@ -182,6 +314,19 @@ private extension ProjectDetail {
                 )
             }
     }
+}
+
+private func encodedJSON<Value: Encodable>(_ value: Value) -> Data? {
+    try? JSONEncoder().encode(value)
+}
+
+private func prettyJSON<Value: Encodable>(_ value: Value) -> String? {
+    guard let data = encodedJSON(value),
+        let object = try? JSONSerialization.jsonObject(with: data),
+        let pretty = try? JSONSerialization.data(
+            withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+    else { return nil }
+    return String(data: pretty, encoding: .utf8)
 }
 
 extension OpenAPIObjectContainer {

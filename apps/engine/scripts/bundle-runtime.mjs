@@ -26,7 +26,11 @@ cpSync(join(engineRoot, "src", "db", "migrations"), join(outDir, "migrations"), 
 const contractsOut = join(outDir, "contracts", "schemas");
 rmSync(join(outDir, "contracts"), { recursive: true, force: true });
 mkdirSync(contractsOut, { recursive: true });
-for (const schema of ["project-config.v1.schema.json", "module-manifest.v1.schema.json"]) {
+for (const schema of [
+  "project-config.v1.schema.json",
+  "project-bindings.v1.schema.json",
+  "module-manifest.v1.schema.json",
+]) {
   cpSync(join(engineRoot, "..", "..", "contracts", "schemas", schema), join(contractsOut, schema));
 }
 cpSync(

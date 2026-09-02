@@ -22,7 +22,11 @@ Errors crossing the Local API or stored as terminal Execution errors use stable 
 | `repository.path-invalid` | No | Repository discovery/import received a missing, relative, inaccessible or non-directory path |
 | `project.already-imported` | No | The canonical repository path is already bound to a Project |
 | `project.config-invalid` | No | Portable configuration fails schema/semantic validation |
+| `project.bindings-invalid` | No | Local Bindings fail schema, project identity or declared-slot validation |
+| `project.repository-write-failed` | Maybe | Atomic `.jarvis/project.yaml` replacement failed before SQLite was changed |
+| `project.repository-compensation-failed` | No | SQLite rejected a replacement and the previous repository file could not be restored; manual inspection is required |
 | `project.not-found` | No | No Project with the requested ID exists in this installation |
+| `project.active` | No | An active Project must be paused before deletion |
 | `project.binding-missing` | No | Required slot has no Local Binding |
 | `project.capability-unresolved` | No | Bound resource does not provide the required capability |
 | `project.request-orphaned` | No | Request contract has no active consumer |

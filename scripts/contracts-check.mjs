@@ -198,6 +198,86 @@ const openApiFile = join(repoRoot, "contracts/openapi/local-api.v1.yaml");
 const openApi = readYaml(openApiFile);
 const METHODS = ["get", "put", "post", "delete", "patch"];
 
+function dereferenceOpenApiSchema(value, seen = new Set()) {
+  if (Array.isArray(value)) return value.map((item) => dereferenceOpenApiSchema(item, seen));
+  if (typeof value !== "object" || value === null) return value;
+  if (typeof value.$ref === "string" && value.$ref.startsWith("#/components/schemas/")) {
+    const name = value.$ref.slice("#/components/schemas/".length);
+    if (seen.has(name)) throw new Error(`cyclic OpenAPI schema reference ${value.$ref}`);
+    const target = openApi.components?.schemas?.[name];
+    if (target === undefined) throw new Error(`missing OpenAPI schema reference ${value.$ref}`);
+    return dereferenceOpenApiSchema(target, new Set([...seen, name]));
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [key, dereferenceOpenApiSchema(child, seen)]),
+  );
+}
+
+function normalizedContractSchema(value) {
+  if (Array.isArray(value)) return value.map(normalizedContractSchema);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !["$schema", "$id", "title"].includes(key))
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => [key, normalizedContractSchema(child)]),
+  );
+}
+
+function enforceOpenApiParity({ componentName, schemaKey, example, parityRule, exampleRule }) {
+  const component = openApi.components?.schemas?.[componentName];
+  const schemaPath = join(repoRoot, schemaKey);
+  if (component === undefined) {
+    fail(parityRule, rel(openApiFile), `components.schemas.${componentName} is absent`);
+    return;
+  }
+
+  let resolved;
+  try {
+    resolved = dereferenceOpenApiSchema(component);
+  } catch (error) {
+    fail(parityRule, rel(openApiFile), String(error));
+    return;
+  }
+  const jsonSchema = readJson(schemaPath);
+  if (
+    JSON.stringify(normalizedContractSchema(resolved)) !==
+    JSON.stringify(normalizedContractSchema(jsonSchema))
+  ) {
+    fail(
+      parityRule,
+      rel(openApiFile),
+      `components.schemas.${componentName} differs from ${schemaKey}`,
+    );
+  }
+
+  try {
+    const validate = new Ajv2020({ strict: false, allErrors: true }).compile(resolved);
+    if (!validate(example)) fail(exampleRule, rel(openApiFile), errorText(validate));
+  } catch (error) {
+    fail(parityRule, rel(openApiFile), `components.schemas.${componentName}: ${String(error)}`);
+  }
+}
+
+if (existsSync(projectFile)) {
+  enforceOpenApiParity({
+    componentName: "PortableProjectConfiguration",
+    schemaKey: "contracts/schemas/project-config.v1.schema.json",
+    example: readYaml(projectFile),
+    parityRule: "project-config-openapi-parity",
+    exampleRule: "project-config-openapi-invalid",
+  });
+}
+if (existsSync(bindingsFile)) {
+  enforceOpenApiParity({
+    componentName: "ProjectBindings",
+    schemaKey: "contracts/schemas/project-bindings.v1.schema.json",
+    example: readYaml(bindingsFile),
+    parityRule: "project-bindings-openapi-parity",
+    exampleRule: "project-bindings-openapi-invalid",
+  });
+}
+
 if (openApi.openapi === undefined || !String(openApi.openapi).startsWith("3.1")) {
   fail("openapi-version", rel(openApiFile), `expected OpenAPI 3.1, got ${openApi.openapi}`);
 }

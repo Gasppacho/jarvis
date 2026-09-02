@@ -6,8 +6,10 @@ import SwiftUI
 /// detail. `NavigationSplitView` because the sidebar list is the navigation.
 struct RootView: View {
     let projects: ProjectsModel
+    let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
 
+    private let selectionPolicy = ProjectSelectionReconciliationPolicy()
     @State private var selection: SidebarSelection?
     @State private var pendingImport: Bool = false
 
@@ -35,6 +37,13 @@ struct RootView: View {
             if case .idle = newState { pendingImport = false }
             if case .inspecting = newState, !pendingImport { pendingImport = true }
         }
+        .onChange(of: projects.projects.map(\.id)) { _, projectIds in
+            guard case .project(let projectId) = selection else { return }
+            let reconciled = selectionPolicy.reconciledProjectID(
+                selectedProjectID: projectId,
+                availableProjectIDs: projectIds)
+            if reconciled == nil { selection = nil }
+        }
     }
 
     private var sidebar: some View {
@@ -57,12 +66,13 @@ struct RootView: View {
             }
         }
         .overlay(alignment: .top) {
-            if let errorMessage = projects.errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout)
-                    .foregroundStyle(.orange)
-                    .padding(12)
-                    .background(.bar)
+            VStack(spacing: 0) {
+                if let errorMessage = projects.errorMessage {
+                    warning(errorMessage)
+                }
+                if let deletionNotice = projects.deletionNotice {
+                    warning(deletionNotice)
+                }
             }
         }
         .navigationTitle("Jarvis")
@@ -78,6 +88,14 @@ struct RootView: View {
         }
     }
 
+    private func warning(_ message: String) -> some View {
+        Label(message, systemImage: "exclamationmark.triangle.fill")
+            .font(.callout)
+            .foregroundStyle(.orange)
+            .padding(12)
+            .background(.bar)
+    }
+
     private var importStateAllowsNewPicker: Bool {
         if case .idle = projects.importState { return true }
         return false
@@ -90,7 +108,11 @@ struct RootView: View {
             ModuleCatalogView(moduleCatalog: moduleCatalog)
         case .project(let projectId):
             if let project = projects.projects.first(where: { $0.id == projectId }) {
-                ProjectDetailView(projects: projects, project: project)
+                ProjectDetailView(
+                    projects: projects,
+                    projectConfiguration: projectConfiguration,
+                    moduleCatalog: moduleCatalog,
+                    project: project)
             } else {
                 ContentUnavailableView(
                     "Project unavailable", systemImage: "folder.badge.questionmark",

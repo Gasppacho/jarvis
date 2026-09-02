@@ -38,6 +38,12 @@ Pour les rows globales, comme les packages de module, le scope est explicitement
 
 Jarvis ne revendique pas l'event sourcing complet des aggregates. La table `events` est un journal d'intégration durable et audit. Les modules peuvent conserver leur état courant dans leurs propres tables.
 
+## Project deletion
+
+`DELETE /v1/projects/{projectId}` supprime la row `projects` dans une transaction SQLite. Les foreign keys `ON DELETE CASCADE` retirent atomiquement les Local Bindings et tout état moteur project-scoped rattaché ; les autres Projects restent isolés. Le commit rend l'absence durable après redémarrage. Dans cette transaction, un Project actif est refusé avant toute mutation.
+
+Cette transaction ne couvre que l'état moteur local. Elle n'inclut ni le repository ni le Repository Grant shell-owned.
+
 ## Transaction patterns
 
 ### Consume and publish

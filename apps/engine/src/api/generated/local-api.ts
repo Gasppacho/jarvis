@@ -64,7 +64,8 @@ export interface paths {
         get: operations["getProject"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** @description Forgets an inactive Project and its local engine state without modifying its repository. */
+        delete: operations["deleteProject"];
         options?: never;
         head?: never;
         patch?: never;
@@ -329,6 +330,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{projectId}/binding-candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        get: operations["listProjectBindingCandidates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{projectId}/graph": {
         parameters: {
             query?: never;
@@ -468,7 +487,7 @@ export interface components {
             status: "draft" | "valid" | "active" | "paused" | "invalid" | "degraded" | "archived";
             moduleCount: number;
             activeExecutions?: number;
-            portableConfig: Record<string, never>;
+            portableConfig: components["schemas"]["PortableProjectConfiguration"] | components["schemas"]["PortableProjectDraft"];
             bindingStatus: {
                 [key: string]: {
                     path: string;
@@ -551,10 +570,113 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
-        ProjectBindings: {
-            projectId: string;
-            repositories: Record<string, never>;
+        ProjectMetadata: {
+            id: string;
+            name: string;
+            description?: string;
+        };
+        ProjectRepositoryConfiguration: {
+            id: string;
+            /** @constant */
+            root: ".";
+            defaultBranch: string;
+            remote: string;
+        };
+        ProjectSlotRequirement: {
+            requires: string;
+            optional?: boolean;
+            description?: string;
+        };
+        ProjectCommands: {
+            install?: string;
+            lint?: string;
+            typecheck?: string;
+            test?: string;
+            build?: string;
+        };
+        ProjectGitConfiguration: {
+            branchPattern: string;
+            /** @enum {unknown} */
+            commitStrategy: "conventional" | "ticket-prefix" | "freeform";
+            pushRemote: string;
+            /** @constant */
+            allowForcePush?: false;
+        };
+        ProjectWorkspaceConfiguration: {
+            /** @constant */
+            strategy: "git-worktree";
+            maxConcurrentExecutions: number;
+            retainOnFailureDays: number;
+        };
+        ModuleInstanceConfiguration: {
+            instanceId: string;
+            moduleId: string;
+            enabled: boolean;
+            runtimeSlot?: string;
+            bindings?: {
+                [key: string]: string;
+            };
+            configuration?: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description Engine-discovered editable Project draft with empty user composition. */
+        PortableProjectDraft: {
+            /** @constant */
+            apiVersion: "jarvis.dev/project/v1";
+            /** @constant */
+            kind: "Project";
+            metadata: components["schemas"]["ProjectMetadata"];
+            repositories: components["schemas"]["ProjectRepositoryConfiguration"][];
             slots: Record<string, never>;
+            commands: components["schemas"]["ProjectCommands"];
+            git: components["schemas"]["ProjectGitConfiguration"];
+            workspace: components["schemas"]["ProjectWorkspaceConfiguration"];
+            modules: components["schemas"]["ModuleInstanceConfiguration"][];
+        };
+        PortableProjectConfiguration: {
+            /** @constant */
+            apiVersion: "jarvis.dev/project/v1";
+            /** @constant */
+            kind: "Project";
+            metadata: components["schemas"]["ProjectMetadata"];
+            repositories: components["schemas"]["ProjectRepositoryConfiguration"][];
+            slots: {
+                [key: string]: components["schemas"]["ProjectSlotRequirement"];
+            };
+            commands: components["schemas"]["ProjectCommands"];
+            git: components["schemas"]["ProjectGitConfiguration"];
+            workspace: components["schemas"]["ProjectWorkspaceConfiguration"];
+            modules: components["schemas"]["ModuleInstanceConfiguration"][];
+        };
+        ProjectRepositoryBinding: {
+            path: string;
+            bookmarkRef: string | null;
+        };
+        ProjectResourceCandidate: {
+            ref: string;
+            /** @enum {string} */
+            kind: "connection" | "runtime" | "mcp" | "module-instance" | "engine";
+            displayName: string;
+            capabilities: string[];
+        };
+        ProjectSlotBinding: {
+            /** @enum {string} */
+            kind: "connection" | "runtime" | "mcp" | "module-instance" | "engine";
+            ref: string;
+        };
+        ProjectBindings: {
+            /** @constant */
+            apiVersion: "jarvis.dev/project-bindings/v1";
+            /** @constant */
+            kind: "ProjectBindings";
+            projectId: string;
+            repositories: {
+                [key: string]: components["schemas"]["ProjectRepositoryBinding"];
+            };
+            slots: {
+                [key: string]: components["schemas"]["ProjectSlotBinding"];
+            };
         };
         ProjectGraph: {
             nodes: Record<string, never>[];
@@ -706,7 +828,7 @@ export interface operations {
             content: {
                 "application/json": {
                     repositoryPath: string;
-                    portableConfig?: Record<string, never>;
+                    portableConfig?: components["schemas"]["PortableProjectConfiguration"];
                 };
             };
         };
@@ -747,6 +869,31 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Project and cascading Local Bindings deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
             default: components["responses"]["Error"];
         };
     };
@@ -1123,7 +1270,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    portableConfig: Record<string, never>;
+                    portableConfig: components["schemas"]["PortableProjectConfiguration"];
                     writeToRepository: boolean;
                 };
             };
@@ -1190,6 +1337,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectBindings"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listProjectBindingCandidates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resources explicitly eligible for this Project's slots. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ProjectResourceCandidate"][];
+                    };
                 };
             };
             401: components["responses"]["Unauthorized"];
