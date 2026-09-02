@@ -107,7 +107,7 @@ Jarvis affiche :
 - runtime disponible ;
 - commandes valides.
 
-Un projet invalide peut être sauvegardé mais pas activé.
+Un projet invalide peut être sauvegardé mais pas activé. Le rapport distingue les états non validé, validation en cours, valide, invalide et erreur du Local API. Les findings invalides sont ordonnés par leurs identités contractuelles et nomment une référence Project, Request, contrat, Module Instance, Slot ou capability stable, ce qui est indisponible, le comportement affecté et l'action corrective. Une erreur du Local API ne ressemble jamais à un rapport invalide : elle explique son impact et permet de redemander un nouveau rapport.
 
 ### Grammaire de composition guidée
 

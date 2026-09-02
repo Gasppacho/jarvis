@@ -105,7 +105,21 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
     }
 
     public struct Validation: Sendable, Equatable {
-        public enum Status: Sendable, Equatable { case unvalidated, validating, valid }
+        public enum Status: Sendable, Equatable {
+            case unvalidated, validating, valid, invalid, failed
+        }
+
+        public struct Finding: Identifiable, Sendable, Equatable {
+            public let id: String
+            public let code: String
+            public let targetKind: ProjectValidationFinding.Target.Kind
+            public let reference: String
+            public let unavailable: String
+            public let impact: String
+            public let correctiveAction: String
+            public let diagnostic: String
+            public let accessibilityLabel: String
+        }
 
         public struct RequestRoute: Identifiable, Sendable, Equatable {
             public let id: String
@@ -121,6 +135,8 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
 
         public let status: Status
         public let title: String
+        public let errorMessage: String?
+        public let findings: [Finding]
         public let requestRoutes: [RequestRoute]
         public let satisfiedCapabilities: [SatisfiedCapability]
     }
@@ -657,31 +673,131 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             return Validation(
                 status: .unvalidated,
                 title: "Not validated",
+                errorMessage: nil,
+                findings: [],
                 requestRoutes: [],
                 satisfiedCapabilities: [])
         case .validating:
             return Validation(
                 status: .validating,
                 title: "Validating Project…",
+                errorMessage: nil,
+                findings: [],
                 requestRoutes: [],
                 satisfiedCapabilities: [])
         case .valid(let report):
+            return validationReport(
+                report, status: .valid, title: "Project validation passed")
+        case .invalid(let report):
+            return validationReport(
+                report, status: .invalid, title: "Project validation needs attention")
+        case .failed(let message):
             return Validation(
-                status: .valid,
-                title: "Project validation passed",
-                requestRoutes: report.requestRoutes.map { route in
-                    Validation.RequestRoute(
-                        id: "\(route.contract.identity)-\(route.producer.instanceId)-\(route.consumer.instanceId)",
-                        contractIdentity: route.contract.identity,
-                        route: "\(route.producer.instanceId) (\(route.producer.moduleId)) → \(route.consumer.instanceId) (\(route.consumer.moduleId))")
-                },
-                satisfiedCapabilities: report.satisfiedCapabilities.map { capability in
-                    Validation.SatisfiedCapability(
-                        id: "\(capability.capability)-\(capability.target.reference)-\(capability.source.reference)",
-                        capability: capability.capability,
-                        detail: "\(capability.target.reference) ← \(capability.source.reference)")
-                })
+                status: .failed,
+                title: "Validation report unavailable",
+                errorMessage: message,
+                findings: [],
+                requestRoutes: [],
+                satisfiedCapabilities: [])
         }
+    }
+
+    private static func validationReport(
+        _ report: ProjectValidationReport,
+        status: Validation.Status,
+        title: String
+    ) -> Validation {
+        let findings = report.findings
+            .map(validationFinding)
+            .sorted {
+                ($0.code, $0.reference) < ($1.code, $1.reference)
+            }
+        return Validation(
+            status: status,
+            title: title,
+            errorMessage: nil,
+            findings: findings,
+            requestRoutes: report.requestRoutes.map { route in
+                Validation.RequestRoute(
+                    id: "\(route.contract.identity)-\(route.producer.instanceId)-\(route.consumer.instanceId)",
+                    contractIdentity: route.contract.identity,
+                    route: "\(route.producer.instanceId) (\(route.producer.moduleId)) → \(route.consumer.instanceId) (\(route.consumer.moduleId))")
+            },
+            satisfiedCapabilities: report.satisfiedCapabilities.map { capability in
+                Validation.SatisfiedCapability(
+                    id: "\(capability.capability)-\(capability.target.reference)-\(capability.source.reference)",
+                    capability: capability.capability,
+                    detail: "\(capability.target.reference) ← \(capability.source.reference)")
+            })
+    }
+
+    private static func validationFinding(
+        _ finding: ProjectValidationFinding
+    ) -> Validation.Finding {
+        let guidance: (unavailable: String, impact: String, correction: String) =
+            switch finding.code {
+            case .compositionIncomplete:
+                (
+                    "Complete Project composition is unavailable.",
+                    "Validation cannot assess every configured behaviour.",
+                    "Complete the referenced Project field, save the Draft, and validate again."
+                )
+            case .bindingMissing:
+                (
+                    "A required Local Binding is unavailable.",
+                    "The affected behaviour cannot reach its project-scoped resource.",
+                    "Choose an eligible resource for the referenced Slot, then validate again."
+                )
+            case .capabilityUnresolved:
+                (
+                    "A required capability is unavailable.",
+                    "The referenced Slot or Module Instance cannot provide its affected behaviour.",
+                    "Bind a compatible resource or repair the Module Instance, then validate again."
+                )
+            case .contractIncompatible:
+                (
+                    "A compatible Event contract is unavailable.",
+                    "The producer and consumer cannot exchange the affected behaviour.",
+                    "Choose Module Instances with matching contract versions, then validate again."
+                )
+            case .instanceConfigInvalid:
+                (
+                    "Valid Module Instance configuration is unavailable.",
+                    "The referenced Module Instance cannot run its configured behaviour.",
+                    "Correct the referenced configuration field, save, and validate again."
+                )
+            case .modulePackageUnavailable:
+                (
+                    "The configured Module Package is unavailable.",
+                    "The referenced Module Instance cannot supply its behaviour.",
+                    "Choose an available Module Package or restore the configured package, then validate again."
+                )
+            case .requestAmbiguous:
+                (
+                    "A single consumer for this Project Request is unavailable.",
+                    "The request cannot route deterministically to the affected behaviour.",
+                    "Adjust the candidate Module Instances until exactly one active consumer remains."
+                )
+            case .requestOrphaned:
+                (
+                    "A consumer for this Project Request is unavailable.",
+                    "The produced request cannot reach the affected behaviour.",
+                    "Add or enable one compatible consumer, then validate again."
+                )
+            }
+        let reference = finding.target.stableReference
+        return Validation.Finding(
+            id: "\(finding.code.rawValue)-\(reference)",
+            code: finding.code.rawValue,
+            targetKind: finding.target.kind,
+            reference: reference,
+            unavailable: guidance.unavailable,
+            impact: guidance.impact,
+            correctiveAction: guidance.correction,
+            diagnostic: finding.message,
+            accessibilityLabel:
+                "\(finding.code.rawValue), \(reference). \(guidance.unavailable) \(guidance.impact) \(guidance.correction)"
+        )
     }
 
     private static func reviewRows(
