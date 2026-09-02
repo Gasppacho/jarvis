@@ -299,13 +299,40 @@ public struct EngineClient: Sendable {
         }
     }
 
-    public func listProjectBindingCandidates(projectId: String) async throws -> [ProjectResourceCandidate] {
+    public func listProjectBindingCandidates(projectId: String) async throws -> ProjectResourceChoices {
         let operation = "GET /v1/projects/\(projectId)/binding-candidates"
         let output = try await underlying.listProjectBindingCandidates(
             .init(path: .init(projectId: projectId)))
         switch output {
         case .ok(let ok):
-            return try ok.body.json.items.map(ProjectResourceCandidate.init(payload:))
+            let payload = try ok.body.json
+            return ProjectResourceChoices(
+                candidates: payload.items.map(ProjectResourceCandidate.init(payload:)),
+                slots: payload.slots.map(ProjectResourceBindingChoice.init(payload:)))
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
+    public func previewProjectBindingCandidates(
+        projectId: String,
+        portableConfig: Components.Schemas.PortableProjectConfiguration
+    ) async throws -> ProjectResourceChoices {
+        let operation = "POST /v1/projects/\(projectId)/binding-candidates"
+        let output = try await underlying.previewProjectBindingCandidates(
+            .init(
+                path: .init(projectId: projectId),
+                body: .json(.init(portableConfig: portableConfig))))
+        switch output {
+        case .ok(let ok):
+            let payload = try ok.body.json
+            return ProjectResourceChoices(
+                candidates: payload.items.map(ProjectResourceCandidate.init(payload:)),
+                slots: payload.slots.map(ProjectResourceBindingChoice.init(payload:)))
         case .unauthorized:
             throw EngineClientError.unauthorized(operation: operation)
         case .forbidden:

@@ -64,7 +64,11 @@ L'utilisateur lie :
 - slot `agentRuntime` ;
 - MCP optionnels.
 
-Une ressource globale n'est pas visible des agents du projet sans ce binding.
+Une ressource globale n'est pas visible des agents du projet sans ce binding. Pour chaque Slot, le contrôle n'affiche que les ressources explicitement accordées au Project qui satisfont à la fois la capability du Slot et celles des Module Instances qui le référencent. Une Module Instance sélectionnée n'apparaît elle-même que pour les capabilities de son Manifest qu'elle fournit réellement.
+
+Chaque ligne `Resources` nomme les capabilities requises, les Module Instances ou comportements impactés et un statut Engine : `bound`, `available`, `missing`, `inaccessible` ou `incompatible`. Un état non résolu indique une prochaine action précise — choisir un candidat éligible, restaurer l'accès du Project, accorder une ressource compatible puis recharger — plutôt qu'un picker `Unbound` sans explication. Recharger les candidats ou changer un Local Binding rafraîchit aussi les ressources manquantes et les choix Event sans remplacer les autres valeurs du Draft.
+
+Choisir un template n'accorde jamais de ressource locale. Le picker modifie uniquement `ProjectBindings`; la Portable Configuration reste inchangée. Sauvegarder puis rouvrir recharge séparément les documents canoniques `jarvis.dev/project/v1` et `jarvis.dev/project-bindings/v1`.
 
 ### Étape 4 — Modules
 

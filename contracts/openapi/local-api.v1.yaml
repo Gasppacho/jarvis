@@ -574,18 +574,37 @@ paths:
       operationId: listProjectBindingCandidates
       responses:
         "200":
-          description: Resources explicitly eligible for this Project's slots.
+          description: Project-scoped eligible resources and Engine-owned Slot repair guidance.
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: false
-                required: [items]
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/ProjectResourceCandidate"
+                $ref: "#/components/schemas/ProjectResourceChoices"
+        default:
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: previewProjectBindingCandidates
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [portableConfig]
+              properties:
+                portableConfig:
+                  $ref: "#/components/schemas/PortableProjectConfiguration"
+      responses:
+        "200":
+          description: Read-only resource eligibility preview for a proposed Portable Configuration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectResourceChoices"
         default:
           $ref: "#/components/responses/Error"
         "401":
@@ -1608,6 +1627,46 @@ components:
           type: array
           items:
             type: string
+    ProjectResourceChoices:
+      type: object
+      additionalProperties: false
+      required: [items, slots]
+      properties:
+        items:
+          description: Deduplicated union of resources eligible for at least one Slot.
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectResourceCandidate"
+        slots:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectResourceBindingChoice"
+    ProjectResourceBindingChoice:
+      type: object
+      additionalProperties: false
+      required: [slotId, requiredCapabilities, candidates, status, impact, repairAction]
+      properties:
+        slotId:
+          type: string
+        requiredCapabilities:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        candidates:
+          description: Only explicitly project-scoped resources satisfying every Slot and Module Instance requirement.
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectResourceCandidate"
+        status:
+          type: string
+          enum: [bound, available, missing, inaccessible, incompatible]
+        impact:
+          type: string
+          minLength: 1
+        repairAction:
+          type: string
+          minLength: 1
     ProjectSlotBinding:
       type: object
       additionalProperties: false

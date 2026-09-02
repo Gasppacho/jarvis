@@ -16,6 +16,9 @@ Machine-specific resolution of repository paths, connections, MCP and Agent Runt
 ### Slot
 A stable project name for a required capability, resolved by Local Bindings.
 
+### Project Resource Choice
+The read-only, project-scoped intersection of a Slot capability, the capabilities required by Module Instances that reference that Slot, and currently granted resource candidates. Its status and repair guidance may be previewed for a Draft without changing Local Bindings.
+
 ### Resolved Project
 The immutable validated composition used while a Project is active.
 

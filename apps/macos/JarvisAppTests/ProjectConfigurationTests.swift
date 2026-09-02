@@ -55,7 +55,8 @@ final class ProjectConfigurationTests: XCTestCase {
         let importResult = await first.confirmImport()
         let imported = try XCTUnwrap(importResult)
 
-        let configuration = try projectConfiguration(projectId: imported.id)
+        let configuration = try projectConfiguration(
+            projectId: imported.id, mapsSourceControlRequirement: false)
         let saved = await firstConfiguration.saveConfiguration(
             projectId: imported.id,
             portableConfig: configuration,
@@ -73,6 +74,8 @@ final class ProjectConfigurationTests: XCTestCase {
             loaded.candidates.first { candidate in
                 candidate.capabilities.contains("scm.change-request.manage")
             })
+        let eventChoiceIDs = loaded.compositionGuide?.eventChoices.map(\.id)
+        firstConfiguration.editDraft(projectId: imported.id) { $0.name = "Unsaved input" }
         let savedBindings = await firstConfiguration.setLocalBinding(
             projectId: imported.id, slotId: "sourceControl", candidate: candidate)
         XCTAssertNotNil(savedBindings)
@@ -80,6 +83,15 @@ final class ProjectConfigurationTests: XCTestCase {
             firstConfiguration.state(for: imported.id).localBindings)
         XCTAssertEqual(bindings.projectId, imported.id)
         XCTAssertEqual(bindings.slots.map(\.slotId), ["sourceControl"])
+        XCTAssertEqual(firstConfiguration.state(for: imported.id).draft?.name, "Unsaved input")
+        XCTAssertEqual(
+            firstConfiguration.state(for: imported.id).resourceChoices.first(where: {
+                $0.slotId == "sourceControl"
+            })?.status,
+            .bound)
+        XCTAssertEqual(
+            firstConfiguration.state(for: imported.id).compositionGuide?.eventChoices.map(\.id),
+            eventChoiceIDs)
         XCTAssertEqual(
             firstConfiguration.state(for: imported.id).detail?.projectSlots,
             ["sourceControl"])
@@ -212,6 +224,12 @@ final class ProjectConfigurationTests: XCTestCase {
             state.draft?.modules.map(\.instanceId),
             ["github", "automation-rules", "development"])
         XCTAssertEqual(state.localBindings?.slots, [])
+        XCTAssertEqual(state.resourceChoices.map(\.slotId), [
+            "agentRuntime", "sourceControl", "tickets",
+        ])
+        XCTAssertEqual(
+            state.resourceChoices.first { $0.slotId == "sourceControl" }?.status,
+            .incompatible)
         XCTAssertEqual(
             state.compositionGuide?.moduleInstances.map(\.displayName),
             ["Automation Rules", "Development", "GitHub"])
@@ -723,9 +741,14 @@ final class ProjectConfigurationTests: XCTestCase {
 
     private func projectConfiguration(
         projectId: String,
-        invalidPollInterval: Bool = false
+        invalidPollInterval: Bool = false,
+        mapsSourceControlRequirement: Bool = true
     ) throws -> Components.Schemas.PortableProjectConfiguration {
         let poll: Any = invalidPollInterval ? "invalid" : 60
+        var primaryBindings = ["repository": "main"]
+        if mapsSourceControlRequirement {
+            primaryBindings["sourceControl"] = "sourceControl"
+        }
         let document: [String: Any] = [
             "apiVersion": "jarvis.dev/project/v1",
             "kind": "Project",
@@ -759,7 +782,7 @@ final class ProjectConfigurationTests: XCTestCase {
                     "instanceId": "github-primary",
                     "moduleId": "jarvis.module.github",
                     "enabled": true,
-                    "bindings": ["sourceControl": "sourceControl", "repository": "main"],
+                    "bindings": primaryBindings,
                     "configuration": [
                         "pollIntervalSeconds": poll,
                         "repositories": ["main"],

@@ -6,6 +6,7 @@ public struct ProjectConfigurationState: Sendable, Equatable {
     public var detail: ProjectDetail?
     public var localBindings: LocalProjectBindings?
     public var candidates: [ProjectResourceCandidate] = []
+    public var resourceChoices: [ProjectResourceBindingChoice] = []
     public var compositionGuide: ProjectCompositionGuide?
     public var draft: ProjectConfigurationDraft?
     public var isLoading = false
@@ -43,12 +44,13 @@ public final class ProjectConfigurationModel {
         update(projectId) {
             $0.isLoading = true
             $0.candidates = []
+            $0.resourceChoices = []
         }
         defer { update(projectId) { $0.isLoading = false } }
         do {
             let detail = try await client.getProject(id: projectId)
             let bindings = try await client.getProjectBindings(projectId: projectId)
-            let candidates = try await client.listProjectBindingCandidates(projectId: projectId)
+            let resources = try await client.listProjectBindingCandidates(projectId: projectId)
             let previewConfiguration = detail.portableConfiguration.flatMap { configuration in
                 configuration.modules.isEmpty && configuration.slots.additionalProperties.isEmpty
                     ? nil : configuration
@@ -69,7 +71,8 @@ public final class ProjectConfigurationModel {
             update(projectId) {
                 $0.detail = detail
                 $0.localBindings = bindings
-                $0.candidates = candidates
+                $0.candidates = resources.candidates
+                $0.resourceChoices = resources.slots
                 $0.compositionGuide = compositionGuide
                 $0.draft = draft
                 $0.errorMessage = nil
@@ -77,6 +80,7 @@ public final class ProjectConfigurationModel {
         } catch {
             update(projectId) {
                 $0.candidates = []
+                $0.resourceChoices = []
                 $0.errorMessage = ProjectsModel.describe(error)
             }
         }
@@ -127,9 +131,13 @@ public final class ProjectConfigurationModel {
         do {
             let guide = try await client.previewProjectCompositionChoices(
                 projectId: projectId, portableConfig: portableConfig)
+            let resources = try await client.previewProjectBindingCandidates(
+                projectId: projectId, portableConfig: portableConfig)
             guard revision == compositionRevisions[projectId, default: 0] else { return }
             update(projectId) {
                 $0.compositionGuide = guide
+                $0.candidates = resources.candidates
+                $0.resourceChoices = resources.slots
                 $0.errorMessage = nil
             }
         } catch {
@@ -387,19 +395,20 @@ public final class ProjectConfigurationModel {
                 projectId: projectId,
                 portableConfig: portableConfig,
                 writeToRepository: writeToRepository)
-            let candidates: [ProjectResourceCandidate]
+            let resources: ProjectResourceChoices?
             let candidateError: String?
             do {
-                candidates = try await client.listProjectBindingCandidates(projectId: projectId)
+                resources = try await client.listProjectBindingCandidates(projectId: projectId)
                 candidateError = nil
             } catch {
-                candidates = []
+                resources = nil
                 candidateError =
                     "Configuration was saved, but eligible Local Binding candidates could not be refreshed. Reload this Project before binding a slot."
             }
             update(projectId) {
                 $0.detail = detail
-                $0.candidates = candidates
+                $0.candidates = resources?.candidates ?? []
+                $0.resourceChoices = resources?.slots ?? []
                 $0.errorMessage = candidateError
             }
             await projects.refresh()
@@ -449,6 +458,32 @@ public final class ProjectConfigurationModel {
             update(projectId) {
                 $0.localBindings = saved
                 $0.errorMessage = nil
+            }
+            do {
+                let resources: ProjectResourceChoices
+                let guide: ProjectCompositionGuide?
+                if let draft = state(for: projectId).draft,
+                    let portableConfig = try? draft.payload()
+                {
+                    resources = try await client.previewProjectBindingCandidates(
+                        projectId: projectId, portableConfig: portableConfig)
+                    guide = try await client.previewProjectCompositionChoices(
+                        projectId: projectId, portableConfig: portableConfig)
+                } else {
+                    resources = try await client.listProjectBindingCandidates(
+                        projectId: projectId)
+                    guide = nil
+                }
+                update(projectId) {
+                    $0.candidates = resources.candidates
+                    $0.resourceChoices = resources.slots
+                    if let guide { $0.compositionGuide = guide }
+                }
+            } catch {
+                update(projectId) {
+                    $0.errorMessage =
+                        "The Local Binding was saved, but resource and Event choices could not be refreshed. Your Draft was preserved; reload this Project."
+                }
             }
             return saved
         } catch {

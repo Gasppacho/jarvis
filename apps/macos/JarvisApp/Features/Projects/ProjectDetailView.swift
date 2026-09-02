@@ -446,22 +446,43 @@ public struct ProjectDetailView: View {
     private var localBindingsEditor: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Local Bindings").sectionLabel()
-            ForEach(presentation.slots) { slotPresentation in
-                let slot = slotPresentation.id
-                Picker(slot, selection: localBindingSelection(slot)) {
-                    Text("Unbound").tag("")
-                    ForEach(slotPresentation.candidates) { candidate in
-                        Text("\(candidate.displayName) · \(candidate.kind.rawValue)")
-                            .tag(candidate.id)
-                    }
-                }
-            }
-            if state.candidates.isEmpty {
-                Text(
-                    "No connection, runtime or MCP candidate is explicitly granted to this Project."
-                )
-                .font(.caption)
+            Text("Portable Configuration declares what is needed. These choices update only this Mac's Local Bindings.")
+                .font(.callout)
                 .foregroundStyle(.secondary)
+            ForEach(presentation.resourceBindings) { resource in
+                VStack(alignment: .leading, spacing: 5) {
+                    Picker(resource.id, selection: localBindingSelection(resource.id)) {
+                        Text("Unbound").tag("")
+                        ForEach(resource.candidates) { candidate in
+                            Text("\(candidate.displayName) · \(candidate.kind.rawValue)")
+                                .tag(candidate.id)
+                        }
+                    }
+                    Text("Requires: \(resource.requiredCapabilities.joined(separator: ", "))")
+                        .font(.caption)
+                    if resource.status != .bound {
+                        Label(resource.unavailableExplanation, systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                    Text(resource.impact).font(.caption).foregroundStyle(.secondary)
+                    Text("Next action: \(resource.repairAction)")
+                        .font(.caption.weight(.medium))
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel(resource.accessibilityLabel)
+                .accessibilityHint(resource.accessibilityHint)
+            }
+            if presentation.resourceBindings.isEmpty {
+                Text("This Portable Configuration declares no project resource Slots.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Button("Reload Project Resources") {
+                Task {
+                    await projectConfiguration.refresh(
+                        projectId: project.id, packages: moduleCatalog.packages)
+                }
             }
         }
     }

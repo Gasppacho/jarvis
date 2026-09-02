@@ -128,9 +128,16 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
   app.get("/v1/projects/:projectId/binding-candidates", async (request, reply) => {
     const service = requireDatabaseReady(deps);
     const params = request.params as { projectId?: unknown } | undefined;
+    return reply.code(200).send(service.getProjectResourceChoices(params?.projectId));
+  });
+
+  app.post("/v1/projects/:projectId/binding-candidates", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    const body = request.body as { portableConfig?: unknown } | undefined;
     return reply
       .code(200)
-      .send({ items: service.listProjectResourceCandidates(params?.projectId) });
+      .send(service.previewProjectResourceChoices(params?.projectId, body?.portableConfig));
   });
 
   app.put("/v1/projects/:projectId/bindings", async (request, reply) => {

@@ -53,8 +53,9 @@ références de schéma restent des détails techniques.
 
 Labels, descriptions et payload schemas viennent des contrats Event versionnés; les
 producteurs, consumers et routes viennent des Manifests des Module Instances activées.
-Prévisualiser ou choisir un template ne crée aucun Local Binding, grant ou graphe
-impératif persistant.
+Prévisualiser ou choisir un template ne crée aucun Local Binding, grant ou graphe impératif persistant.
+
+`GET /v1/projects/{projectId}/binding-candidates` retourne les choix de la configuration sauvegardée; `POST` prévisualise les mêmes choix pour une `portableConfig` proposée sans la persister. Chaque réponse contient l'union dédupliquée des ressources éligibles et une ligne par Slot. L'Engine intersecte les grants explicites du Project, la capability du Slot et les requirements des Module Instances qui ciblent ce Slot. Les statuts `bound`, `available`, `missing`, `inaccessible` et `incompatible`, ainsi que l'impact et l'action de réparation, appartiennent au contrat; le shell ne reconstruit pas cette politique.
 
 Ces ressources restent sous le préfixe Local API `/v1`, conformément à la pratique de
 versioning de cette API.
