@@ -225,6 +225,11 @@ public struct ProjectCompositionEventChoice: Identifiable, Sendable, Equatable {
     public let description: String
     public let routingStatus: String
     public let routingExplanation: String
+    public let producerLabels: [String]
+    public let producerInstanceIDs: [String]
+    public let consumerLabels: [String]
+    public let compatibleConsumerInstanceIDs: [String]
+    public let selectedConsumerID: String?
 
     init(payload: Components.Schemas.ProjectCompositionEventChoice) {
         guard let data = try? JSONEncoder().encode(payload),
@@ -237,6 +242,20 @@ public struct ProjectCompositionEventChoice: Identifiable, Sendable, Equatable {
         description = wire.description
         routingStatus = wire.routing.status
         routingExplanation = wire.routing.explanation
+        producerLabels = wire.producers.map { Self.instanceLabel($0.instanceId) }
+        producerInstanceIDs = wire.producers.map(\.instanceId)
+        consumerLabels = wire.consumers.map {
+            "\(Self.instanceLabel($0.instanceId)) (\($0.compatibility))"
+        }
+        compatibleConsumerInstanceIDs = wire.consumers.compactMap {
+            $0.compatibility == "compatible" ? $0.instanceId : nil
+        }
+        selectedConsumerID = wire.routing.selectedConsumer?.instanceId
+    }
+
+    public static func instanceLabel(_ id: String) -> String {
+        if id.lowercased() == "github" { return "GitHub" }
+        return id.replacingOccurrences(of: "-", with: " ").capitalized
     }
 }
 
@@ -398,8 +417,18 @@ private extension ProjectDetail {
 }
 
 private struct WireProjectCompositionEventChoice: Decodable {
+    struct Instance: Decodable {
+        let instanceId: String
+    }
+
+    struct Consumer: Decodable {
+        let instanceId: String
+        let compatibility: String
+    }
+
     struct Routing: Decodable {
         let status: String
+        let selectedConsumer: Instance?
         let explanation: String
     }
 
@@ -407,6 +436,8 @@ private struct WireProjectCompositionEventChoice: Decodable {
     let type: String
     let version: Int
     let kind: String
+    let producers: [Instance]
+    let consumers: [Consumer]
     let description: String
     let routing: Routing
 }

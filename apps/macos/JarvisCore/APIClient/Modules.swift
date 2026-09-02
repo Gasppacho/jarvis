@@ -17,6 +17,7 @@ public struct ModulePackage: Identifiable, Sendable, Equatable {
     public let configurationSchemaRef: String?
     public let configurationSchema: String?
     public let configurationFields: [ModuleConfigurationField]
+    public let automationRuleSemantics: AutomationRuleSchemaSemantics?
 
     init(payload: Components.Schemas.ModulePackage) {
         let configurationSchema: String? = if let schema = payload.configurationSchema,
@@ -41,6 +42,7 @@ public struct ModulePackage: Identifiable, Sendable, Equatable {
         configurationSchemaRef = payload.configurationSchemaRef
         self.configurationSchema = configurationSchema
         configurationFields = ModuleConfigurationField.decode(from: configurationSchema)
+        automationRuleSemantics = AutomationRuleSchemaSemantics.decode(from: configurationSchema)
     }
 
     public var presentationFields: [ModulePackagePresentationField] {
@@ -58,6 +60,31 @@ public struct ModulePackage: Identifiable, Sendable, Equatable {
 
     private func list(_ values: [String]) -> String {
         values.isEmpty ? "None" : values.joined(separator: ", ")
+    }
+}
+
+public struct AutomationRuleSchemaSemantics: Sendable, Equatable {
+    public let ruleSetKey: String
+
+    static func decode(from schema: String?) -> Self? {
+        guard let schema, let data = schema.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let properties = object["properties"] as? [String: [String: Any]],
+            let ruleSet = properties.first(where: {
+                $0.value["$comment"] as? String == "jarvis:automation-rule-set"
+            }),
+            let items = ruleSet.value["items"] as? [String: Any],
+            let ruleProperties = items["properties"] as? [String: [String: Any]],
+            let when = ruleProperties["when"],
+            let whenProperties = when["properties"] as? [String: [String: Any]],
+            whenProperties["eventType"]?["$comment"] as? String == "jarvis:event-kind=fact",
+            whenProperties["equals"]?["$comment"] as? String == "jarvis:bounded-match",
+            let emit = ruleProperties["emit"],
+            let emitProperties = emit["properties"] as? [String: [String: Any]],
+            emitProperties["type"]?["$comment"] as? String == "jarvis:event-kind=request",
+            emitProperties["target"]?["$comment"] as? String == "jarvis:request-target"
+        else { return nil }
+        return Self(ruleSetKey: ruleSet.key)
     }
 }
 

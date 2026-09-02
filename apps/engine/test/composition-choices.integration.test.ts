@@ -215,8 +215,20 @@ describe("project composition choices", () => {
     expect(response.status, `${await response.clone().text()}\n${engine.stderr()}`).toBe(200);
     const body = (await response.json()) as {
       choices: Array<Record<string, unknown>>;
+      modulePackages: Array<{
+        moduleId: string;
+        configurationSchema: {
+          properties?: Record<string, Record<string, unknown>>;
+        } | null;
+      }>;
     };
     expect(validatePreview(body), explain(validatePreview)).toBe(true);
+    const automationPackage = body.modulePackages.find(
+      ({ moduleId }) => moduleId === "jarvis.module.automation-rules",
+    );
+    expect(automationPackage?.configurationSchema?.properties?.["rules"]).toEqual(
+      expect.objectContaining({ $comment: "jarvis:automation-rule-set" }),
+    );
     const choiceKeys = body.choices.map(
       (choice) =>
         `${String(choice["type"])}.v${String(choice["version"])}.${String(choice["kind"])}`,
@@ -321,6 +333,51 @@ describe("project composition choices", () => {
       "scm.work-item.tag-added",
     ]);
     expect(await (await engine.call(`/v1/projects/${project.id}`)).json()).toEqual(before);
+  });
+
+  it("validates and round-trips canonical Automation Rules without UI-only state", async () => {
+    const { engine, project } = await setup();
+    const portableConfig = structuredClone(project.portableConfig);
+    const modules = portableConfig["modules"] as Array<Record<string, unknown>>;
+    const automation = modules.find(
+      (module) => module["moduleId"] === "jarvis.module.automation-rules",
+    )!;
+    const configuration = automation["configuration"] as {
+      rules: Array<{
+        when: { eventType: string; equals: Record<string, unknown> };
+        emit: { type: string };
+      }>;
+    };
+    configuration.rules[0]!.when.equals = { "payload.tag": "agent:queued" };
+
+    const saved = await engine.call(`/v1/projects/${project.id}/configuration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ portableConfig, writeToRepository: false }),
+    });
+    expect(saved.status, await saved.clone().text()).toBe(200);
+    const reopened = (await (await engine.call(`/v1/projects/${project.id}`)).json()) as {
+      portableConfig: Record<string, unknown>;
+    };
+    const reopenedAutomation = (
+      reopened.portableConfig["modules"] as Array<Record<string, unknown>>
+    ).find((module) => module["moduleId"] === "jarvis.module.automation-rules")!;
+    expect(reopenedAutomation["configuration"]).toEqual(automation["configuration"]);
+
+    configuration.rules[0]!.when.equals = {
+      "payload.tag": { nested: "values are not a bounded scalar match" },
+    };
+    const invalid = await engine.call(`/v1/projects/${project.id}/configuration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ portableConfig, writeToRepository: false }),
+    });
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toEqual(
+      expect.objectContaining({
+        error: expect.objectContaining({ code: "project.config-invalid" }),
+      }),
+    );
   });
 
   it("explains an untargeted Request with multiple compatible consumers as ambiguous", async () => {

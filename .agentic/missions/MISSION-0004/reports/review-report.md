@@ -2,63 +2,58 @@
 
 ## Result
 
-This run found no leftover unmerged ticket branch, selected the locally satisfied frontier correctly, and completed only #36. The branch was merged into local `main` after its ticket commit and both branch and merged `main` passed `pnpm verify`.
+This run found no leftover unmerged ticket branch, treated locally merged #34–#36 as satisfied despite their open issue states, and selected #37 as the lowest-numbered frontier ticket. Only #37 was implemented. Its branch passed `pnpm verify`; it was committed and merged into local `main` with `--no-ff`, and merged `main` passed `pnpm verify`. Nothing was pushed and no issue was closed.
 
 | Issue | Title | Branch | DoD | Verification |
 |---|---|---|---|---|
 | #34 | Expose project-scoped composition choices | `agent/34-expose-project-scoped-composition-choices` | Complete; merged locally | `pnpm verify` passed |
 | #35 | Choose the guided composition interaction grammar | `agent/35-choose-guided-composition-grammar` | Complete; merged locally | `pnpm verify` passed |
-| #36 | Guide starting point and Module Instance choices | `agent/36-guide-starting-point-module-choices` | Complete; merged locally | `pnpm verify` passed on branch and merged `main` |
-| #37 | Build sentence-style Automation Rules | not started | Remaining; next frontier | — |
-| #38 | Structure every bundled Module Configuration | not started | Blocked by #37 | — |
-| #39 | Guide project-scoped resource bindings | not started | Remaining; also on frontier after #36 | — |
+| #36 | Guide starting point and Module Instance choices | `agent/36-guide-starting-point-module-choices` | Complete; merged locally | `pnpm verify` passed |
+| #37 | Build sentence-style Automation Rules | `agent/37-build-sentence-style-automation-rules` | Complete; merged locally | `pnpm verify` passed on branch and merged `main` |
+| #38 | Structure every bundled Module Configuration | not started | Remaining; next after #37 | — |
+| #39 | Guide project-scoped resource bindings | not started | Remaining; on frontier | — |
 | #40 | Review and save Project composition drafts | not started | Blocked by #38 and #39 | — |
 
 Issues remain open as required. Labels were not used as the completion frontier.
 
-## #36 delivery
+## #37 delivery
 
-The versioned composition-choice response now includes:
-
-- `GitHub Development` and `Custom composition` starting points;
-- a canonical GitHub Development Portable Configuration derived from the imported Project's metadata, repository, commands and conventions;
-- validated bundled Module Package metadata;
-- deterministic Module Instance cards with human names/descriptions, consumed and emitted Events, required capabilities, compatibility and validator-owned missing resources;
-- the existing Event routing choices for the saved or proposed Draft.
-
-The canonical template creates GitHub, Automation Rules and Development Module Instances, the three documented Slots, safe configuration defaults and the `agent:ready` Rule. Previewing or selecting it does not persist the Draft and creates no Local Binding or grant.
-
-The macOS Project Wizard exposes both starting points and human-led Module Instance cards. Technical IDs, versions and contract IDs are under `Advanced`. Draft edits request a new Engine preview; revision checks prevent stale responses replacing newer edits. Tests demonstrate selection, human/accessibility presentation inventory, input preservation, enable/disable and package-change refresh.
+- The Automation Rules configuration schema carries documented JSON Schema semantic annotations for the Rule Set, Fact selector, bounded match, Request selector, and Request target.
+- The macOS editor decodes the canonical Rule Set into repeatable sentence rows and serializes it back into Module Configuration without UI-only connection state.
+- Searchable Event controls use project-scoped Engine choices. Their labels expose kind, version, producer, compatible consumers, routing status, and the Engine explanation.
+- The normal controls only select compatible known Facts and produced Requests. Advanced custom values remain visible and preserved, are marked unknown, and block Ready-to-validate.
+- Resolved consumers are selected from Engine-provided compatible consumer IDs. Orphaned and ambiguous Requests retain the Engine explanation and do not become ready.
+- The canonical `scm.work-item.tag-added` → `development.implementation.requested` Rule is editable, repeatable, removable, and round-trips through save/reopen.
 
 ## TDD evidence
 
-- Application Harness test first failed because `startingPoints`, `modulePackages` and `moduleInstances` were absent.
-- XCTest first failed to compile because the composition guide state and starting-point actions did not exist.
-- Focused integration and Swift tests passed after implementation.
-- No filesystem or SQLite mock was introduced; tests use the real Engine, temporary repository and SQLite.
+- XCTest first failed to compile because Rule schema semantics, Rule drafts, sentence presentation, actions, and readiness did not exist.
+- Application Harness first failed because the served Automation Rules schema lacked the semantic annotation.
+- Focused Swift tests and the integration project passed after implementation. The Harness uses a real Engine and temporary SQLite/repository; no filesystem or SQLite mock was added.
+- `pnpm typecheck` was run during development, followed by the complete `pnpm verify` gate.
 
 ## Code review
 
 ### Standards
 
-No blocking finding remains. The review used `AGENTS.md`, `docs/agents/coding-standards.md`, the DDD invariants and the smell baseline. A first review found that missing resources were inferred only from binding presence; this was corrected to use Project Validation findings, so inaccessible and unresolved Engine/repository/capability resources remain visible. Event cards were also changed to lead with contract-owned human labels while keeping contract IDs under `Advanced`. Generated-client use, structured concurrency and project boundaries conform to repository standards.
+No blocking finding remains. Review used `AGENTS.md`, the Definition of Done, context terminology, and the smell baseline. It found duplicated Module Instance label formatting and an add-Rule path that only worked for already-resolved Requests. Label formatting was centralized on the composition Event choice, and Rule creation now preserves orphaned/ambiguous repair paths while readiness still requires Engine status `resolved`. No dependency, migration, secret, personal path, cross-context import, or UI-owned routing policy was introduced.
 
 ### Spec
 
-No blocking finding remains. Every #36 criterion is represented in the Local API/Application Harness and Swift/XCTest seams. No wizard-only state is persisted, no machine-local resource is implicitly granted, unrelated Draft input survives refresh, and contract/docs/example changes are synchronized.
+No blocking finding remains. Every #37 criterion is represented at the Application Harness or XCTest/presentation seam. The review specifically checked repeatability, searchable metadata, Advanced unknown values, zero/one/multiple routing explanations, canonical Event selection, unrelated input preservation, canonical save/reopen, accessibility labels/hints, and synchronized schema/catalog/UX documentation.
 
-## Definition of Done for #36
+## Definition of Done for #37
 
-- Acceptance criteria demonstrated at Application Harness and XCTest seams.
-- Red observed before green; focused tests, typecheck and full verification pass.
-- Relevant failure and stale-response behavior is actionable; preview remains read-only.
-- OpenAPI, generated TypeScript, examples and source-of-truth docs are synchronized.
+- Acceptance criteria are demonstrated at Application Harness and XCTest seams.
+- Red was observed before green; focused tests, typecheck, and full verification pass.
+- Invalid bounded matches, unknown Events, orphaned/ambiguous routing, and input preservation are covered where relevant.
+- Schema, Manifest reference, Local API schema transport, generated clients, canonical example, Event Catalog, Manifest contract docs, and UX remain synchronized.
 - `pnpm arch:check` passes; no applied migration changed.
-- No secret, credential, personal path or new dependency was introduced.
-- No new hard-to-reverse architecture decision or new context vocabulary required an ADR/`CONTEXT.md` update.
+- No secret, credential, personal path, new dependency, or filesystem/SQLite mock was introduced.
+- Existing Rule/Rule Set/Matcher/Emission Template vocabulary was reused; no ADR or `CONTEXT.md` change was needed.
 - Two-axis code review completed and blocking findings were fixed.
 - The required branch and local `--no-ff` merge were used; nothing was pushed and no PR was opened.
 
 ## Remaining work
 
-#37 and #39 are now both eligible from the blocking graph; the prescribed lowest-numbered next ticket is #37. #38 follows #37, and #40 waits for #38 and #39.
+#38 and #39 are both eligible from the blocking graph. The prescribed lowest-numbered next ticket is #38. #40 remains blocked until both #38 and #39 are locally satisfied.

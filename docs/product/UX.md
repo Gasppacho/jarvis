@@ -128,6 +128,21 @@ L'inventaire de présentation retenu est piloté par les données : cinq section
 
 La comparaison native utilise le build de l'app empaquetée pour vérifier structure, tailles et navigation, et XCTest vérifie l'inventaire observable sur les quatre fixtures. SwiftPM ne fournit pas de target XCUITest pour l'exécutable SwiftPM macOS ; l'automatisation UI/VoiceOver de bout en bout reste donc une vérification manuelle de l'app empaquetée, et non un test `swift test` prétendument équivalent.
 
+### Automation Rules
+
+Une instance Automation Rules présente chaque Rule comme une phrase répétable :
+`When <Fact> matches <bounded match>, emit <Request> to <resolved consumer>`. Le Rule
+Set canonique reste stocké dans Module Configuration; aucune connexion ou sélection
+propre à l'UI n'est persistée.
+
+Les sélecteurs sont recherchables et montrent le libellé humain, le kind, la version,
+les producers/consumers compatibles et l'explication de routage renvoyée par l'Engine.
+Le chemin normal ne propose que les Facts consommables et Requests productibles par
+l'instance. `Advanced custom value` permet de préserver une valeur inconnue pour la
+réparer, la signale explicitement et bloque l'état Ready-to-validate jusqu'à ce que le
+contrat du Module Package la valide. Modifier ou supprimer une Rule ne remplace jamais
+les autres Rules ni les autres champs du Draft.
+
 ## Overview projet
 
 Affiche :

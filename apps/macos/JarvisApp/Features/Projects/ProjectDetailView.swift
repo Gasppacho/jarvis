@@ -311,7 +311,9 @@ public struct ProjectDetailView: View {
 
     @ViewBuilder
     private func configurationFields(_ module: ProjectModuleDraft) -> some View {
-        if !module.configurationFields.isEmpty {
+        if module.automationRules != nil {
+            automationRulesEditor(module)
+        } else if !module.configurationFields.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Schema-backed configuration").font(.subheadline.weight(.semibold))
                 ForEach(module.configurationFields) { field in
@@ -356,6 +358,87 @@ public struct ProjectDetailView: View {
                         Text(issue).font(.caption).foregroundStyle(.red)
                     }
                 }
+            }
+        }
+    }
+
+    private func automationRulesEditor(_ module: ProjectModuleDraft) -> some View {
+        let rows = presentation.automationRuleRows.filter { $0.moduleID == module.id }
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Automation Rules").font(.subheadline.weight(.semibold))
+            ForEach(rows) { row in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(row.sentence).font(.body.weight(.medium))
+                    AutomationEventSelector(
+                        title: "Input Fact",
+                        currentType: row.inputEventType,
+                        choices: row.inputChoices,
+                        hint: row.inputHint,
+                        select: { choice in
+                            perform(
+                                .edit(
+                                    .setAutomationRuleInput(
+                                        row.moduleID, row.id, choice.type)))
+                        },
+                        custom: { value in
+                            perform(
+                                .edit(
+                                    .setAutomationRuleInput(row.moduleID, row.id, value)))
+                        })
+                    LabeledContent("Bounded match") {
+                        TextEditor(text: automationRuleMatchBinding(row))
+                            .font(.body.monospaced())
+                            .frame(minHeight: 48)
+                            .overlay(RoundedRectangle(cornerRadius: 5).stroke(.separator))
+                    }
+                    AutomationEventSelector(
+                        title: "Emitted Request",
+                        currentType: row.emissionEventType,
+                        choices: row.emissionChoices,
+                        hint: row.emissionHint,
+                        select: { choice in
+                            perform(
+                                .edit(
+                                    .setAutomationRuleEmission(
+                                        row.moduleID,
+                                        row.id,
+                                        choice.type,
+                                        resolvedConsumerID: choice.selectedConsumerID)))
+                        },
+                        custom: { value in
+                            perform(
+                                .edit(
+                                    .setAutomationRuleEmission(
+                                        row.moduleID,
+                                        row.id,
+                                        value,
+                                        resolvedConsumerID: nil)))
+                        })
+                    if !row.targetChoices.isEmpty {
+                        Picker("Resolved consumer", selection: automationRuleTargetBinding(row)) {
+                            ForEach(row.targetChoices, id: \.self) { consumer in
+                                Text(consumer).tag(consumer)
+                            }
+                        }
+                    }
+                    Text(row.routingExplanation).font(.caption).foregroundStyle(.secondary)
+                    DisclosureGroup("Advanced Rule details") {
+                        TextField("Rule ID", text: automationRuleIDBinding(row))
+                        Text("Target: \(String(describing: row.target))")
+                            .font(.caption.monospaced())
+                    }
+                    Button("Remove Automation Rule", role: .destructive) {
+                        perform(.edit(.removeAutomationRule(row.moduleID, row.id)))
+                    }
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel(row.sentence)
+                .accessibilityHint(row.routingExplanation)
+                .padding(10)
+                .background(.background, in: RoundedRectangle(cornerRadius: 8))
+            }
+            Button("Add Automation Rule") {
+                perform(.edit(.addAutomationRule(module.id)))
             }
         }
     }
@@ -470,6 +553,33 @@ public struct ProjectDetailView: View {
             set: { perform(.edit(.setModulePackage(id, $0))) })
     }
 
+    private func automationRuleIDBinding(
+        _ row: ProjectDetailPresentation.AutomationRuleRow
+    ) -> Binding<String> {
+        Binding(
+            get: { row.ruleID },
+            set: { perform(.edit(.setAutomationRuleID(row.moduleID, row.id, $0))) })
+    }
+
+    private func automationRuleTargetBinding(
+        _ row: ProjectDetailPresentation.AutomationRuleRow
+    ) -> Binding<String> {
+        Binding(
+            get: {
+                if case .moduleInstance(let id) = row.target { return id }
+                return ""
+            },
+            set: { perform(.edit(.setAutomationRuleTarget(row.moduleID, row.id, $0))) })
+    }
+
+    private func automationRuleMatchBinding(
+        _ row: ProjectDetailPresentation.AutomationRuleRow
+    ) -> Binding<String> {
+        Binding(
+            get: { row.matchJSON },
+            set: { perform(.edit(.setAutomationRuleMatch(row.moduleID, row.id, $0))) })
+    }
+
     private func configurationBinding(_ id: UUID, _ key: String) -> Binding<String> {
         Binding(
             get: {
@@ -554,6 +664,61 @@ public struct ProjectDetailView: View {
             Text(label).foregroundStyle(.secondary)
             Text(value).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
         }
+    }
+}
+
+@MainActor
+private struct AutomationEventSelector: View {
+    let title: String
+    let currentType: String
+    let choices: [ProjectDetailPresentation.AutomationEventOption]
+    let hint: String
+    let select: (ProjectDetailPresentation.AutomationEventOption) -> Void
+    let custom: (String) -> Void
+
+    @State private var search = ""
+
+    private var filteredChoices: [ProjectDetailPresentation.AutomationEventOption] {
+        guard !search.isEmpty else { return choices }
+        return choices.filter {
+            $0.label.localizedCaseInsensitiveContains(search)
+                || $0.type.localizedCaseInsensitiveContains(search)
+                || $0.detail.localizedCaseInsensitiveContains(search)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            TextField("Search \(title)", text: $search)
+                .textFieldStyle(.roundedBorder)
+            Menu("\(title): \(selectedLabel)") {
+                ForEach(filteredChoices) { choice in
+                    Button("\(choice.label) — \(choice.detail)") { select(choice) }
+                }
+            }
+            Text(hint).font(.caption).foregroundStyle(.secondary)
+            DisclosureGroup("Advanced custom value") {
+                TextField(
+                    "Custom Event type",
+                    text: Binding(get: { currentType }, set: { custom($0) }))
+                    .textFieldStyle(.roundedBorder)
+                if !choices.contains(where: { $0.type == currentType }) {
+                    Label(
+                        "Unknown Event blocks readiness until contract validation succeeds.",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(title), \(selectedLabel)")
+        .accessibilityHint(hint)
+    }
+
+    private var selectedLabel: String {
+        choices.first { $0.type == currentType }?.label ?? "Unknown: \(currentType)"
     }
 }
 

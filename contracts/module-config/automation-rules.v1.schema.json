@@ -10,6 +10,7 @@
     "rules": {
       "type": "array",
       "minItems": 1,
+      "$comment": "jarvis:automation-rule-set",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -31,11 +32,17 @@
             ],
             "properties": {
               "eventType": {
+                "title": "Input Fact",
+                "description": "Versioned Fact selected from project-scoped composition choices.",
                 "type": "string",
-                "minLength": 3
+                "minLength": 3,
+                "$comment": "jarvis:event-kind=fact"
               },
               "equals": {
+                "title": "Bounded match",
+                "description": "Exact scalar payload fields that must match before emission.",
                 "type": "object",
+                "$comment": "jarvis:bounded-match",
                 "additionalProperties": {
                   "type": [
                     "string",
@@ -56,11 +63,17 @@
             ],
             "properties": {
               "type": {
+                "title": "Emitted Request",
+                "description": "Versioned Request selected from project-scoped composition choices.",
                 "type": "string",
-                "minLength": 3
+                "minLength": 3,
+                "$comment": "jarvis:event-kind=request"
               },
               "target": {
+                "title": "Resolved consumer",
+                "description": "Project-scoped binding or Module Instance resolved by the Engine.",
                 "type": "object",
+                "$comment": "jarvis:request-target",
                 "additionalProperties": false,
                 "properties": {
                   "binding": {
