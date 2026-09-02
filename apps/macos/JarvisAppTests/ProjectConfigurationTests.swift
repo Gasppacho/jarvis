@@ -121,6 +121,101 @@ final class ProjectConfigurationTests: XCTestCase {
         await secondSession.shutdown()
     }
 
+    @MainActor
+    func testInvalidProjectSaveReopenAndRevalidationPreserveDurableComposition() async throws {
+        let repository = try makeRepository()
+        let dataRoot = temporaryDirectory(prefix: "jarvis-invalid-reopen-data")
+        let session = EngineSessionModel(
+            supervisor: EngineSupervisor(resources: .developmentBuild(), dataRoot: dataRoot))
+        let projects = ProjectsModel(
+            session: session,
+            repositoryGrants: RepositoryGrantStore(
+                storageDirectory: temporaryDirectory(prefix: "jarvis-invalid-reopen-grants")))
+        let report = try validationReportFixture()
+        let reports = ReopenedValidationSequence(report: report)
+        let configuration = ProjectConfigurationModel(
+            session: session,
+            projects: projects,
+            validationReportProvider: { _ in try await reports.load() })
+
+        await session.start()
+        await projects.inspect(at: repository)
+        let importResult = await projects.confirmImport()
+        let imported = try XCTUnwrap(importResult)
+        let portableConfiguration = try projectConfiguration(
+            projectId: imported.id, mapsSourceControlRequirement: false)
+        let initialSave = await configuration.saveConfiguration(
+            projectId: imported.id,
+            portableConfig: portableConfiguration,
+            writeToRepository: false)
+        XCTAssertNotNil(initialSave)
+        await configuration.refresh(projectId: imported.id)
+        let candidate = try XCTUnwrap(
+            configuration.state(for: imported.id).candidates.first {
+                $0.capabilities.contains("scm.change-request.manage")
+            })
+        let savedBinding = await configuration.setLocalBinding(
+            projectId: imported.id,
+            slotId: "sourceControl",
+            candidate: candidate)
+        XCTAssertNotNil(savedBinding)
+
+        await configuration.validate(projectId: imported.id)
+        let firstInvalidPresentation = ProjectDetailPresentation(
+            project: imported,
+            detail: configuration.state(for: imported.id).detail,
+            state: configuration.state(for: imported.id),
+            packages: [])
+        XCTAssertEqual(firstInvalidPresentation.validation.status, .invalid)
+        let invalidProjectSave = await configuration.saveDraft(
+            projectId: imported.id, writeToRepository: false)
+        XCTAssertNotNil(
+            invalidProjectSave,
+            "semantic validation findings must not prevent saving a schema-valid Draft")
+        let attemptsAfterSave = await reports.attemptCount()
+        XCTAssertEqual(attemptsAfterSave, 1, "saving must not validate implicitly")
+
+        let durableState = configuration.state(for: imported.id)
+        let durableConfiguration = try configurationSnapshot(
+            try XCTUnwrap(durableState.draft))
+        let durableBindings = try XCTUnwrap(durableState.localBindings)
+
+        await configuration.refresh(projectId: imported.id)
+        let reopened = configuration.state(for: imported.id)
+        XCTAssertEqual(reopened.validation, .unvalidated)
+        XCTAssertEqual(
+            try configurationSnapshot(try XCTUnwrap(reopened.draft)),
+            durableConfiguration)
+        XCTAssertEqual(reopened.localBindings, durableBindings)
+
+        await configuration.validate(projectId: imported.id)
+        guard case .failed(let message) = configuration.state(for: imported.id).validation else {
+            return XCTFail("a failed revalidation must remain distinct from an invalid report")
+        }
+        XCTAssertTrue(message.contains("Validation report is unavailable"))
+        XCTAssertEqual(
+            try configurationSnapshot(
+                try XCTUnwrap(configuration.state(for: imported.id).draft)),
+            durableConfiguration)
+        XCTAssertEqual(configuration.state(for: imported.id).localBindings, durableBindings)
+
+        await configuration.validate(projectId: imported.id)
+        let revalidatedPresentation = ProjectDetailPresentation(
+            project: imported,
+            detail: configuration.state(for: imported.id).detail,
+            state: configuration.state(for: imported.id),
+            packages: [])
+        XCTAssertEqual(revalidatedPresentation.validation.status, .invalid)
+        XCTAssertEqual(
+            revalidatedPresentation.validation.findings.map(\.reference),
+            firstInvalidPresentation.validation.findings.map(\.reference))
+        let totalAttempts = await reports.attemptCount()
+        XCTAssertEqual(totalAttempts, 3)
+
+        projects.releaseRepositoryAccess()
+        await session.shutdown()
+    }
+
     func testSchemaDescriptorsDistinguishControlsAndApplyDefaults() throws {
         let package = try schemaFixturePackage()
         let fields = Dictionary(uniqueKeysWithValues: package.configurationFields.map { ($0.key, $0) })
@@ -918,6 +1013,50 @@ final class ProjectConfigurationTests: XCTestCase {
             Components.Schemas.PortableProjectConfiguration.self, from: data)
     }
 
+    private func configurationSnapshot(_ draft: ProjectConfigurationDraft) throws -> String {
+        let encoded = try JSONEncoder().encode(draft.payload())
+        let object = try JSONSerialization.jsonObject(with: encoded)
+        let canonical = try JSONSerialization.data(
+            withJSONObject: object, options: [.sortedKeys])
+        return try XCTUnwrap(String(data: canonical, encoding: .utf8))
+    }
+
+    private func validationReportFixture() throws -> ProjectValidationReport {
+        let data = Data(
+            """
+            {
+              "apiVersion": "jarvis.dev/project-validation/v1",
+              "kind": "ProjectValidationReport",
+              "projectId": "swift-config",
+              "valid": false,
+              "requestRoutes": [{
+                "contract": {"type":"development.implementation.requested","version":1,"kind":"request"},
+                "producer": {"instanceId":"automation-rules","moduleId":"jarvis.module.automation-rules"},
+                "consumer": {"instanceId":"development","moduleId":"jarvis.module.development"}
+              }],
+              "satisfiedCapabilities": [{
+                "capability":"repository.write",
+                "target":{"kind":"module-instance","instanceId":"development"},
+                "source":{"kind":"repository","ref":"repository/main"}
+              }],
+              "findings": [{
+                "code":"project.request-orphaned",
+                "severity":"error",
+                "message":"No consumer is available.",
+                "target":{
+                  "kind":"request-edge",
+                  "contract":{"type":"deploy.requested","version":1,"kind":"request"},
+                  "producer":{"instanceId":"automation","moduleId":"jarvis.module.automation-rules"}
+                }
+              }]
+            }
+            """.utf8)
+        let payload = try JSONDecoder().decode(
+            Components.Schemas.ProjectValidationReportV1.self,
+            from: data)
+        return try ProjectValidationReport(payload: payload)
+    }
+
     private func makeRepository() throws -> URL {
         let root = temporaryDirectory(prefix: "jarvis-swift-config-repository")
         let git = root.appendingPathComponent(".git", isDirectory: true)
@@ -936,4 +1075,24 @@ final class ProjectConfigurationTests: XCTestCase {
         roots.append(root)
         return root
     }
+}
+
+private actor ReopenedValidationSequence {
+    private let report: ProjectValidationReport
+    private var attempts = 0
+
+    init(report: ProjectValidationReport) {
+        self.report = report
+    }
+
+    func load() throws -> ProjectValidationReport {
+        attempts += 1
+        if attempts == 2 {
+            throw EngineClientError.unexpectedResponse(
+                "POST /v1/projects/swift-config/validation-report returned 503")
+        }
+        return report
+    }
+
+    func attemptCount() -> Int { attempts }
 }

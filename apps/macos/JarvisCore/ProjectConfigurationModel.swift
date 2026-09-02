@@ -63,6 +63,9 @@ public final class ProjectConfigurationModel {
             $0.isLoading = true
             $0.candidates = []
             $0.resourceChoices = []
+            // A report evaluates the previously loaded snapshot. Reopening or
+            // reloading requires a fresh engine evaluation before it is current.
+            $0.validation = .unvalidated
         }
         defer { update(projectId) { $0.isLoading = false } }
         do {
