@@ -14,6 +14,7 @@ export type ErrorCode =
   | "project.repository-write-failed"
   | "project.repository-compensation-failed"
   | "project.not-found"
+  | "project.active"
   | "system.internal-error"
   | "system.storage-unavailable";
 

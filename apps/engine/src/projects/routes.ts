@@ -59,6 +59,13 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
     return reply.code(200).send(detail);
   });
 
+  app.delete("/v1/projects/:projectId", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    service.deleteProject(params?.projectId);
+    return reply.code(204).send();
+  });
+
   app.put("/v1/projects/:projectId/configuration", async (request, reply) => {
     const service = requireDatabaseReady(deps);
     const params = request.params as { projectId?: unknown } | undefined;

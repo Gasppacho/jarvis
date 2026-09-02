@@ -118,6 +118,12 @@ Les workspaces et artefacts sont placés sous :
 
 Les secrets restent dans le Keychain et sont accessibles uniquement via un binding autorisé.
 
+## Project deletion
+
+La suppression oublie un Project inactif de l'installation locale : record du Project Registry, Local Bindings et état moteur project-scoped. Le moteur effectue cette suppression dans une transaction locale et refuse un Project `Active` tant qu'il n'est pas pausé.
+
+La suppression ne lit, ne modifie et ne supprime jamais le repository, `.jarvis/project.yaml`, les branches, commits ou fichiers. Le Repository Grant appartient au shell macOS : il n'est retiré, et son accès security-scoped n'est libéré, qu'après confirmation de la suppression moteur.
+
 ## Project states
 
 ```text

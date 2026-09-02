@@ -53,6 +53,109 @@ final class ProjectImportTests: XCTestCase {
     }
 
     @MainActor
+    func testConfirmedDeletionClearsProjectConfigurationSidebarAndRepositoryGrant() async throws {
+        let repository = try makeRepository()
+        let packageFile = repository.appendingPathComponent("package.json")
+        let packageBefore = try Data(contentsOf: packageFile)
+        let dataRoot = temporaryDirectory(prefix: "jarvis-delete-data")
+        let grantStorage = temporaryDirectory(prefix: "jarvis-delete-grants")
+        let grantStore = RepositoryGrantStore(storageDirectory: grantStorage)
+        let session = EngineSessionModel(
+            supervisor: EngineSupervisor(resources: .developmentBuild(), dataRoot: dataRoot))
+        let projects = ProjectsModel(session: session, repositoryGrants: grantStore)
+        let configuration = ProjectConfigurationModel(session: session, projects: projects)
+
+        await session.start()
+        await projects.inspect(at: repository)
+        let importResult = await projects.confirmImport()
+        let imported = try XCTUnwrap(importResult)
+        await configuration.refresh(projectId: imported.id)
+        let bookmarkRef = try XCTUnwrap(
+            configuration.state(for: imported.id).detail?.bindings.first?.bookmarkRef)
+        XCTAssertNotNil(try grantStore.resolve(bookmarkRef: bookmarkRef))
+        XCTAssertTrue(
+            projects.isRepositoryAccessRetained(projectId: imported.id, repositoryId: "main"))
+
+        let deleted = await configuration.deleteProject(projectId: imported.id)
+        XCTAssertTrue(deleted)
+        XCTAssertTrue(projects.projects.isEmpty)
+        XCTAssertNil(configuration.states[imported.id])
+        XCTAssertNil(try grantStore.resolve(bookmarkRef: bookmarkRef))
+        XCTAssertFalse(
+            projects.isRepositoryAccessRetained(projectId: imported.id, repositoryId: "main"))
+        XCTAssertEqual(try Data(contentsOf: packageFile), packageBefore)
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: repository.appendingPathComponent(".jarvis/project.yaml").path()))
+
+        projects.releaseRepositoryAccess()
+        await session.shutdown()
+    }
+
+    @MainActor
+    func testDeleteAPIFailurePreservesSidebarConfigurationAndRepositoryGrant() async throws {
+        let repository = try makeRepository()
+        let grantStore = RepositoryGrantStore(
+            storageDirectory: temporaryDirectory(prefix: "jarvis-failed-delete-grants"))
+        let session = EngineSessionModel(
+            supervisor: EngineSupervisor(
+                resources: .developmentBuild(),
+                dataRoot: temporaryDirectory(prefix: "jarvis-failed-delete-data")))
+        let projects = ProjectsModel(session: session, repositoryGrants: grantStore)
+        let configuration = ProjectConfigurationModel(session: session, projects: projects)
+
+        await session.start()
+        await projects.inspect(at: repository)
+        let importResult = await projects.confirmImport()
+        let imported = try XCTUnwrap(importResult)
+        await configuration.refresh(projectId: imported.id)
+        let bookmarkRef = try XCTUnwrap(
+            configuration.state(for: imported.id).detail?.bindings.first?.bookmarkRef)
+        try await session.client?.deleteProject(id: imported.id)
+
+        let deleted = await configuration.deleteProject(projectId: imported.id)
+        XCTAssertFalse(deleted)
+        XCTAssertEqual(projects.projects.map(\.id), [imported.id])
+        XCTAssertNotNil(configuration.states[imported.id])
+        XCTAssertNotNil(try grantStore.resolve(bookmarkRef: bookmarkRef))
+        XCTAssertTrue(projects.errorMessage?.contains("project.not-found") == true)
+
+        projects.releaseRepositoryAccess()
+        await session.shutdown()
+    }
+
+    @MainActor
+    func testSuccessfulEngineDeletionReportsRepositoryGrantCleanupFailure() async throws {
+        let repository = try makeRepository()
+        let dataRoot = temporaryDirectory(prefix: "jarvis-partial-delete-data")
+        let backingStore = RepositoryGrantStore(
+            storageDirectory: temporaryDirectory(prefix: "jarvis-partial-delete-grants"))
+        let grantStore = FailingRemovalGrantStore(backing: backingStore)
+        let session = EngineSessionModel(
+            supervisor: EngineSupervisor(resources: .developmentBuild(), dataRoot: dataRoot))
+        let projects = ProjectsModel(session: session, repositoryGrants: grantStore)
+        let configuration = ProjectConfigurationModel(session: session, projects: projects)
+
+        await session.start()
+        await projects.inspect(at: repository)
+        let importResult = await projects.confirmImport()
+        let imported = try XCTUnwrap(importResult)
+        await configuration.refresh(projectId: imported.id)
+        let bookmarkRef = try XCTUnwrap(
+            configuration.state(for: imported.id).detail?.bindings.first?.bookmarkRef)
+
+        let deleted = await configuration.deleteProject(projectId: imported.id)
+        XCTAssertTrue(deleted)
+        XCTAssertTrue(projects.projects.isEmpty)
+        XCTAssertTrue(projects.errorMessage?.contains("Project was deleted") == true)
+        XCTAssertTrue(projects.errorMessage?.contains("Repository Grant") == true)
+        XCTAssertNotNil(try backingStore.resolve(bookmarkRef: bookmarkRef))
+
+        projects.releaseRepositoryAccess()
+        await session.shutdown()
+    }
+
+    @MainActor
     func testRelaunchRestoresTheDraftThroughItsRepositoryGrant() async throws {
         let repository = try makeRepository()
         let originalPath = repository.resolvingSymlinksInPath().path()
@@ -223,5 +326,30 @@ final class ProjectImportTests: XCTestCase {
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         roots.append(root)
         return root
+    }
+}
+
+private final class FailingRemovalGrantStore: RepositoryGrantStoring {
+    private let backing: RepositoryGrantStore
+
+    init(backing: RepositoryGrantStore) {
+        self.backing = backing
+    }
+
+    func save(repositoryURL: URL, projectId: String, repositoryId: String) throws -> String {
+        try backing.save(
+            repositoryURL: repositoryURL, projectId: projectId, repositoryId: repositoryId)
+    }
+
+    func refresh(_ grant: RepositoryGrantStore.ResolvedGrant) throws {
+        try backing.refresh(grant)
+    }
+
+    func remove(bookmarkRef _: String) throws {
+        throw CocoaError(.fileWriteNoPermission)
+    }
+
+    func resolve(bookmarkRef: String) throws -> RepositoryGrantStore.ResolvedGrant? {
+        try backing.resolve(bookmarkRef: bookmarkRef)
     }
 }

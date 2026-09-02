@@ -38,6 +38,7 @@ export interface ProjectRegistry<Summary, Detail, Bindings> {
   importProject(request: ImportProjectRequest): Detail;
   listProjects(): Summary[];
   getProject(id: unknown): Detail;
+  deleteProject(id: unknown): void;
   updateRepositoryBinding(request: UpdateRepositoryBindingRequest): Detail;
   replaceProjectConfiguration(request: ReplaceProjectConfigurationRequest): Detail;
   getProjectBindings(projectId: unknown): Bindings;

@@ -11,6 +11,14 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         public let candidates: [ProjectResourceCandidate]
     }
 
+    public struct DeletionConfirmation: Sendable, Equatable {
+        public let title: String
+        public let message: String
+        public let confirmLabel: String
+        public let cancelLabel: String
+        public let isEnabled: Bool
+    }
+
     public enum Action: Sendable, Equatable, Hashable {
         case chooseRepository(String)
         case setProjectName(String)
@@ -34,6 +42,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         case setLocalBinding(String, String?)
         case saveLocal
         case saveRepository
+        case deleteProject
 
         public var label: String {
             switch self {
@@ -59,6 +68,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             case .setLocalBinding: "Set Local Binding"
             case .saveLocal: "Save locally"
             case .saveRepository: "Save and write .jarvis/project.yaml"
+            case .deleteProject: "Delete Project…"
             }
         }
     }
@@ -67,9 +77,11 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
     public let modules: [ProjectModuleDraft]
     public let slots: [Slot]
     public let actions: [Action]
+    public let deletionConfirmation: DeletionConfirmation
     public let isSaveEnabled: Bool
 
     public init(
+        project: Project,
         detail: ProjectDetail?,
         state: ProjectConfigurationState,
         packages: [ModulePackage]
@@ -122,8 +134,16 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                     .setModuleConfiguration(module.id, $0, module.configurationValues[$0] ?? "")
                 })
         }
-        inventory.append(contentsOf: [.saveLocal, .saveRepository])
+        inventory.append(contentsOf: [.saveLocal, .saveRepository, .deleteProject])
         actions = inventory
+        deletionConfirmation = DeletionConfirmation(
+            title: "Delete “\(project.name)”?",
+            message:
+                "This removes the Project Registry record, project-scoped engine state, Local Bindings, and the Repository Grant from this Mac. Repository files, including .jarvis/project.yaml, remain untouched.",
+            confirmLabel: "Delete Project",
+            cancelLabel: "Cancel",
+            isEnabled: project.status != .active
+        )
         isSaveEnabled = state.draft?.validationIssues.isEmpty == true && !state.isSaving
     }
 }

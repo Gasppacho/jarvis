@@ -258,7 +258,10 @@ final class ProjectConfigurationTests: XCTestCase {
 
         let editorState = configuration.state(for: imported.id)
         let presentation = ProjectDetailPresentation(
-            detail: editorState.detail, state: editorState, packages: catalog.packages)
+            project: imported,
+            detail: editorState.detail,
+            state: editorState,
+            packages: catalog.packages)
         XCTAssertEqual(presentation.repositories.map(\.repositoryId), ["main"])
         XCTAssertEqual(presentation.slots.map(\.id), ["sourceControl"])
         XCTAssertEqual(presentation.modules.map(\.moduleId), ["jarvis.module.github"])
@@ -299,6 +302,30 @@ final class ProjectConfigurationTests: XCTestCase {
                 .setModuleConfiguration(moduleId, "pollIntervalSeconds", "60")))
         XCTAssertTrue(presentation.actions.contains(.saveLocal))
         XCTAssertTrue(presentation.actions.contains(.saveRepository))
+        XCTAssertTrue(presentation.actions.contains(.deleteProject))
+        XCTAssertEqual(ProjectDetailPresentation.Action.deleteProject.label, "Delete Project…")
+        XCTAssertEqual(presentation.deletionConfirmation.title, "Delete “\(imported.name)”?")
+        XCTAssertTrue(presentation.deletionConfirmation.message.contains("Project Registry record"))
+        XCTAssertTrue(
+            presentation.deletionConfirmation.message.contains("project-scoped engine state"))
+        XCTAssertTrue(presentation.deletionConfirmation.message.contains("Local Bindings"))
+        XCTAssertTrue(presentation.deletionConfirmation.message.contains("Repository Grant"))
+        XCTAssertTrue(presentation.deletionConfirmation.message.contains("remain untouched"))
+        XCTAssertEqual(presentation.deletionConfirmation.cancelLabel, "Cancel")
+        XCTAssertTrue(presentation.deletionConfirmation.isEnabled)
+        let activeProject = Project(
+            id: imported.id,
+            name: imported.name,
+            status: .active,
+            moduleCount: imported.moduleCount,
+            activeExecutions: imported.activeExecutions)
+        XCTAssertFalse(
+            ProjectDetailPresentation(
+                project: activeProject,
+                detail: editorState.detail,
+                state: editorState,
+                packages: catalog.packages
+            ).deletionConfirmation.isEnabled)
         XCTAssertTrue(presentation.isSaveEnabled)
 
         await configuration.perform(

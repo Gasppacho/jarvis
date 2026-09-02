@@ -104,6 +104,17 @@ export class ProjectStore {
     return this.db.prepare("SELECT 1 FROM projects WHERE id = ?").get(id) !== undefined;
   }
 
+  deleteProject(id: string): "deleted" | "active" | "not-found" {
+    return this.db.transaction(() => {
+      const project = this.db.prepare("SELECT status FROM projects WHERE id = ?").get(id) as
+        { status: string } | undefined;
+      if (project === undefined) return "not-found";
+      if (project.status === "active") return "active";
+      this.db.prepare("DELETE FROM projects WHERE id = ?").run(id);
+      return "deleted";
+    })();
+  }
+
   updateRepositoryBinding(
     projectId: string,
     repositoryPath: string,

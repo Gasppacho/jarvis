@@ -10,6 +10,8 @@ public struct ProjectDetailView: View {
     let moduleCatalog: ModuleCatalogModel
     let project: Project
 
+    @State private var isDeleteConfirmationPresented = false
+
     public init(
         projects: ProjectsModel,
         projectConfiguration: ProjectConfigurationModel,
@@ -47,6 +49,7 @@ public struct ProjectDetailView: View {
                         .font(.callout)
                         .foregroundStyle(.orange)
                 }
+                deleteAction
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(24)
@@ -55,6 +58,17 @@ public struct ProjectDetailView: View {
         .task(id: refreshID) {
             await projectConfiguration.refresh(
                 projectId: project.id, packages: moduleCatalog.packages)
+        }
+        .alert(
+            presentation.deletionConfirmation.title,
+            isPresented: $isDeleteConfirmationPresented
+        ) {
+            Button(presentation.deletionConfirmation.cancelLabel, role: .cancel) {}
+            Button(presentation.deletionConfirmation.confirmLabel, role: .destructive) {
+                perform(.deleteProject)
+            }
+        } message: {
+            Text(presentation.deletionConfirmation.message)
         }
     }
 
@@ -68,7 +82,10 @@ public struct ProjectDetailView: View {
 
     private var presentation: ProjectDetailPresentation {
         ProjectDetailPresentation(
-            detail: state.detail, state: state, packages: moduleCatalog.packages)
+            project: project,
+            detail: state.detail,
+            state: state,
+            packages: moduleCatalog.packages)
     }
 
     private var addModuleActions: [ProjectDetailPresentation.Action] {
@@ -304,6 +321,22 @@ public struct ProjectDetailView: View {
         }
     }
 
+    private var deleteAction: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+            let action = ProjectDetailPresentation.Action.deleteProject
+            Button(action.label, role: .destructive) {
+                isDeleteConfirmationPresented = true
+            }
+            .disabled(!presentation.deletionConfirmation.isEnabled)
+            if !presentation.deletionConfirmation.isEnabled {
+                Text("Pause this Project before deleting it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
     private var saveActions: some View {
         HStack {
             let saveLocal = ProjectDetailPresentation.Action.saveLocal
@@ -325,7 +358,7 @@ public struct ProjectDetailView: View {
                 $0.repositoryId == repositoryId
             }) else { return }
             chooseRepository(for: binding)
-        case .setLocalBinding, .saveLocal, .saveRepository:
+        case .setLocalBinding, .saveLocal, .saveRepository, .deleteProject:
             Task {
                 await projectConfiguration.perform(
                     action,

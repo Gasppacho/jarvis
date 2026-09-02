@@ -198,7 +198,7 @@ public final class ProjectConfigurationModel {
             editModule(projectId: projectId, moduleId: moduleId) {
                 $0.configurationValues[key] = value
             }
-        case .chooseRepository, .setLocalBinding, .saveLocal, .saveRepository:
+        case .chooseRepository, .setLocalBinding, .saveLocal, .saveRepository, .deleteProject:
             break
         }
     }
@@ -220,6 +220,8 @@ public final class ProjectConfigurationModel {
             _ = await saveDraft(projectId: projectId, writeToRepository: false)
         case .saveRepository:
             _ = await saveDraft(projectId: projectId, writeToRepository: true)
+        case .deleteProject:
+            _ = await deleteProject(projectId: projectId)
         default:
             apply(
                 action,
@@ -227,6 +229,13 @@ public final class ProjectConfigurationModel {
                 packages: packages,
                 bindingOptions: bindingOptions)
         }
+    }
+
+    @discardableResult
+    public func deleteProject(projectId: String) async -> Bool {
+        guard await projects.deleteProject(id: projectId) else { return false }
+        states[projectId] = nil
+        return true
     }
 
     @discardableResult

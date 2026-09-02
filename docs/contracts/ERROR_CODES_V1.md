@@ -26,6 +26,7 @@ Errors crossing the Local API or stored as terminal Execution errors use stable 
 | `project.repository-write-failed` | Maybe | Atomic `.jarvis/project.yaml` replacement failed before SQLite was changed |
 | `project.repository-compensation-failed` | No | SQLite rejected a replacement and the previous repository file could not be restored; manual inspection is required |
 | `project.not-found` | No | No Project with the requested ID exists in this installation |
+| `project.active` | No | An active Project must be paused before deletion |
 | `project.binding-missing` | No | Required slot has no Local Binding |
 | `project.capability-unresolved` | No | Bound resource does not provide the required capability |
 | `project.request-orphaned` | No | Request contract has no active consumer |

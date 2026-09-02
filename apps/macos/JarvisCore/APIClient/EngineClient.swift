@@ -225,6 +225,27 @@ public struct EngineClient: Sendable {
         }
     }
 
+    public func deleteProject(id: String) async throws {
+        let operation = "DELETE /v1/projects/\(id)"
+        let output = try await underlying.deleteProject(
+            .init(path: .init(projectId: id))
+        )
+        switch output {
+        case .noContent:
+            return
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .notFound(let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        case .conflict(let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
     public func replaceProjectConfiguration(
         projectId: String,
         portableConfig: Components.Schemas.PortableProjectConfiguration,

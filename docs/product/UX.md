@@ -104,6 +104,12 @@ Affiche :
 - liens repository et provider ;
 - actions `Pause`, `Validate`, `Run diagnostics`.
 
+## Suppression d'un projet
+
+Project Detail expose l'action destructive `Delete Project…`. Elle ouvre une confirmation native qui nomme le Project et explique que l'état Jarvis local, les Local Bindings et le Repository Grant seront retirés, tandis que tous les fichiers du repository — dont `.jarvis/project.yaml` — resteront intacts.
+
+`Cancel` ne déclenche aucune opération. Après confirmation, la sidebar et sa sélection ne sont effacées qu'une fois la suppression moteur réussie. Un échec API conserve le Project et son Repository Grant ; un échec de nettoyage du grant après suppression moteur est signalé comme résultat partiel. Un Project actif doit d'abord être pausé.
+
 ## Graphe émergent
 
 Le graphe est dérivé des manifests et instances actives. Il n'est pas un éditeur de workflow impératif.

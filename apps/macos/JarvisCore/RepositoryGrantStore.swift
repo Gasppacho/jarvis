@@ -164,6 +164,15 @@ public final class RepositoryGrantStore {
     }
 }
 
+public protocol RepositoryGrantStoring {
+    func save(repositoryURL: URL, projectId: String, repositoryId: String) throws -> String
+    func refresh(_ grant: RepositoryGrantStore.ResolvedGrant) throws
+    func remove(bookmarkRef: String) throws
+    func resolve(bookmarkRef: String) throws -> RepositoryGrantStore.ResolvedGrant?
+}
+
+extension RepositoryGrantStore: RepositoryGrantStoring {}
+
 private enum RepositoryGrantStoreError: Error {
     case unsupportedVersion(Int)
 }

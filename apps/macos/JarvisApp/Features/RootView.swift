@@ -36,6 +36,12 @@ struct RootView: View {
             if case .idle = newState { pendingImport = false }
             if case .inspecting = newState, !pendingImport { pendingImport = true }
         }
+        .onChange(of: projects.projects.map(\.id)) { _, projectIds in
+            guard case .project(let projectId) = selection,
+                !projectIds.contains(projectId)
+            else { return }
+            selection = nil
+        }
     }
 
     private var sidebar: some View {

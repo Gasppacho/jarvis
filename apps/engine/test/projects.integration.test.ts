@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import Database from "better-sqlite3";
 import { parse as parseYaml } from "yaml";
 import { explain, localApiValidator } from "./contract.js";
 import { startEngine, type Harness } from "./harness.js";
@@ -969,6 +970,82 @@ describe("repository discovery and project import", () => {
     expect(execFileSync("git", ["-C", root, "status", "--short"], { encoding: "utf8" })).toContain(
       ".jarvis/",
     );
+  });
+
+  it("deletes one inactive Project durably without touching either repository", async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-project-delete-"));
+    const deletedRepository = fixture(() => makeNodeRepositoryFixture());
+    const retainedRepository = fixture(() => makeNodeRepositoryFixture());
+    const deletedRepositoryBefore = treeSnapshot(deletedRepository);
+    const retainedRepositoryBefore = treeSnapshot(retainedRepository);
+    try {
+      const first = await start({ dataRoot });
+      const deleted = (await (
+        await importProject(first, { repositoryPath: deletedRepository })
+      ).json()) as { id: string };
+      const retained = (await (
+        await importProject(first, { repositoryPath: retainedRepository })
+      ).json()) as { id: string };
+
+      const response = await first.call(`/v1/projects/${deleted.id}`, { method: "DELETE" });
+      expect(response.status).toBe(204);
+      expect(await response.text()).toBe("");
+      expect((await first.call(`/v1/projects/${deleted.id}`)).status).toBe(404);
+      expect((await first.call(`/v1/projects/${retained.id}`)).status).toBe(200);
+      expect(treeSnapshot(deletedRepository)).toBe(deletedRepositoryBefore);
+      expect(treeSnapshot(retainedRepository)).toBe(retainedRepositoryBefore);
+      await first.dispose();
+
+      const second = await start({ dataRoot });
+      started.push(second);
+      expect((await second.call(`/v1/projects/${deleted.id}`)).status).toBe(404);
+      expect((await second.call(`/v1/projects/${retained.id}`)).status).toBe(200);
+      expect((await importProject(second, { repositoryPath: deletedRepository })).status).toBe(201);
+    } finally {
+      await rm(dataRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects active Projects and returns the stable not-found error for repeated deletion", async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-project-active-delete-"));
+    const root = fixture(() => makeNodeRepositoryFixture());
+    try {
+      const first = await start({ dataRoot });
+      const created = (await (await importProject(first, { repositoryPath: root })).json()) as {
+        id: string;
+      };
+      await first.dispose();
+
+      const database = new Database(join(dataRoot, "jarvis.sqlite"));
+      database.prepare("UPDATE projects SET status = 'active' WHERE id = ?").run(created.id);
+      database.close();
+
+      const second = await start({ dataRoot });
+      const activeDelete = await second.call(`/v1/projects/${created.id}`, { method: "DELETE" });
+      expect(activeDelete.status).toBe(409);
+      expect((await activeDelete.json()) as unknown).toMatchObject({
+        error: { code: "project.active" },
+      });
+      expect((await second.call(`/v1/projects/${created.id}`)).status).toBe(200);
+      await second.dispose();
+
+      const pausedDatabase = new Database(join(dataRoot, "jarvis.sqlite"));
+      pausedDatabase.prepare("UPDATE projects SET status = 'paused' WHERE id = ?").run(created.id);
+      pausedDatabase.close();
+
+      const third = await start({ dataRoot });
+      started.push(third);
+      expect((await third.call(`/v1/projects/${created.id}`, { method: "DELETE" })).status).toBe(
+        204,
+      );
+      const repeated = await third.call(`/v1/projects/${created.id}`, { method: "DELETE" });
+      expect(repeated.status).toBe(404);
+      expect((await repeated.json()) as unknown).toMatchObject({
+        error: { code: "project.not-found" },
+      });
+    } finally {
+      await rm(dataRoot, { recursive: true, force: true });
+    }
   });
 
   it("persists a Repository Grant path resolved after the repository moves", async () => {

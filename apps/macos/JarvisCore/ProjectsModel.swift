@@ -35,14 +35,14 @@ public final class ProjectsModel {
     }
 
     private let session: EngineSessionModel
-    private let repositoryGrants: RepositoryGrantStore
+    private let repositoryGrants: any RepositoryGrantStoring
     private var inspectedURL: URL?
     /// Retaining these URLs retains security-scoped access for the Engine Session.
     private var activeRepositoryURLs: [String: URL] = [:]
 
     public init(
         session: EngineSessionModel,
-        repositoryGrants: RepositoryGrantStore = RepositoryGrantStore()
+        repositoryGrants: any RepositoryGrantStoring = RepositoryGrantStore()
     ) {
         self.session = session
         self.repositoryGrants = repositoryGrants
@@ -139,6 +139,48 @@ public final class ProjectsModel {
             throw EngineClientError.unexpectedResponse("The engine is not running")
         }
         return try await client.getProject(id: id)
+    }
+
+    /// Deletes engine-owned Project state first. Shell-owned Repository Grants
+    /// and security scopes are cleaned up only after the Local API confirms it.
+    @discardableResult
+    public func deleteProject(id: String) async -> Bool {
+        guard let client else {
+            errorMessage = Self.engineUnavailableForDeletion
+            return false
+        }
+        let detail: ProjectDetail
+        do {
+            detail = try await client.getProject(id: id)
+            try await client.deleteProject(id: id)
+        } catch {
+            errorMessage = Self.describe(error)
+            return false
+        }
+
+        projects.removeAll { $0.id == id }
+
+        var cleanupFailed = false
+        for binding in detail.bindings {
+            if let bookmarkRef = binding.bookmarkRef {
+                do {
+                    try repositoryGrants.remove(bookmarkRef: bookmarkRef)
+                } catch {
+                    cleanupFailed = true
+                    Self.logger.error(
+                        "Project \(id, privacy: .public) was deleted, but its Repository Grant could not be removed: \(String(reflecting: error), privacy: .private)"
+                    )
+                }
+            }
+            releaseAccess(key: grantKey(projectId: id, repositoryId: binding.repositoryId))
+        }
+        repositoryGrantMessages[id] = nil
+        await refresh()
+        if cleanupFailed {
+            errorMessage =
+                "The Project was deleted, but its Repository Grant could not be removed. Repository files remain untouched; restart Jarvis and remove the stale grant from Application Support."
+        }
+        return true
     }
 
     private func restoreRepositoryGrant(for project: Project, client: EngineClient) async {
@@ -270,6 +312,10 @@ public final class ProjectsModel {
         }
     }
 
+    public func isRepositoryAccessRetained(projectId: String, repositoryId: String) -> Bool {
+        activeRepositoryURLs[grantKey(projectId: projectId, repositoryId: repositoryId)] != nil
+    }
+
     private func grantKey(projectId: String, repositoryId: String) -> String {
         "\(projectId)/\(repositoryId)"
     }
@@ -302,6 +348,8 @@ public final class ProjectsModel {
                     "\(message) (\(code)) Projects cannot be loaded or saved. Restart Jarvis; if this repeats, inspect its local data."
                 case "project.not-found":
                     "\(message) (\(code)) The selected project is no longer available. Refresh the project list."
+                case "project.active":
+                    "\(message) (\(code)) Pause the Project, then try deletion again."
                 default:
                     "\(message) (\(code)) The operation did not complete. Try again; if it repeats, restart Jarvis."
                 }
@@ -311,6 +359,9 @@ public final class ProjectsModel {
         }
         return error.localizedDescription
     }
+
+    private static let engineUnavailableForDeletion =
+        "The engine is not running, so the Project was not deleted. Restart Jarvis and try again."
 }
 
 private enum RepositoryGrantAccessError: Error {
