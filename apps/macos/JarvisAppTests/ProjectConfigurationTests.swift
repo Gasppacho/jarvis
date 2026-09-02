@@ -731,6 +731,78 @@ final class ProjectConfigurationTests: XCTestCase {
             policy.reconciledProjectID(selectedProjectID: nil, availableProjectIDs: []))
     }
 
+    @MainActor
+    func testReviewUsesEngineReadinessAndKeepsIncompleteDraftSaveable() async throws {
+        let repository = try makeRepository()
+        let dataRoot = temporaryDirectory(prefix: "jarvis-review-data")
+        let session = EngineSessionModel(
+            supervisor: EngineSupervisor(resources: .developmentBuild(), dataRoot: dataRoot))
+        let projects = ProjectsModel(
+            session: session,
+            repositoryGrants: RepositoryGrantStore(
+                storageDirectory: temporaryDirectory(prefix: "jarvis-review-grants")))
+        let configuration = ProjectConfigurationModel(session: session, projects: projects)
+        await session.start()
+        await projects.inspect(at: repository)
+        let importResult = await projects.confirmImport()
+        let imported = try XCTUnwrap(importResult)
+
+        await configuration.refresh(projectId: imported.id)
+        let freshSave = await configuration.saveDraft(
+            projectId: imported.id, writeToRepository: false)
+        XCTAssertEqual(freshSave?.modules, [])
+        let freshState = configuration.state(for: imported.id)
+        XCTAssertNotNil(freshState.compositionReview, freshState.errorMessage ?? "missing review")
+        XCTAssertFalse(freshState.compositionReview?.readyToValidate ?? true)
+
+        let incomplete = try projectConfiguration(projectId: imported.id)
+        let saveResult = await configuration.saveConfiguration(
+            projectId: imported.id,
+            portableConfig: incomplete,
+            writeToRepository: false)
+        XCTAssertNotNil(saveResult)
+        await configuration.refresh(projectId: imported.id)
+
+        var state = configuration.state(for: imported.id)
+        let review = try XCTUnwrap(state.compositionReview)
+        XCTAssertFalse(review.readyToValidate)
+        XCTAssertTrue(
+            review.findings.contains {
+                $0.code == "project.binding-missing"
+                    || $0.code == "project.capability-unresolved"
+            })
+        var presentation = ProjectDetailPresentation(
+            project: imported,
+            detail: state.detail,
+            state: state,
+            packages: [])
+        XCTAssertTrue(presentation.isSaveEnabled, "semantic findings must not block Draft save")
+        XCTAssertFalse(presentation.isReadyForValidation)
+        XCTAssertTrue(presentation.reviewRows.contains { $0.category == .module })
+        XCTAssertTrue(presentation.reviewRows.contains { $0.category == .eventPath })
+        XCTAssertTrue(presentation.reviewRows.contains { $0.category == .finding })
+        XCTAssertTrue(presentation.reviewRows.contains { $0.category == .binding })
+        XCTAssertTrue(presentation.reviewRows.allSatisfy { !$0.accessibilityLabel.isEmpty })
+        XCTAssertTrue(
+            presentation.reviewRows.filter { $0.status == .needsAttention }
+                .allSatisfy { $0.repairAction != nil && $0.navigationTarget != nil })
+
+        configuration.editDraft(projectId: imported.id) { $0.name = "Unsaved review edit" }
+        state = configuration.state(for: imported.id)
+        XCTAssertNil(state.compositionReview, "saved readiness must become stale after an edit")
+        presentation = ProjectDetailPresentation(
+            project: imported,
+            detail: state.detail,
+            state: state,
+            packages: [])
+        XCTAssertTrue(presentation.isSaveEnabled)
+        XCTAssertFalse(presentation.isReadyForValidation)
+        XCTAssertEqual(state.draft?.name, "Unsaved review edit")
+
+        projects.releaseRepositoryAccess()
+        await session.shutdown()
+    }
+
     private func schemaFixturePackage(
         moduleId: String = "jarvis.module.fixture"
     ) throws -> ModulePackage {

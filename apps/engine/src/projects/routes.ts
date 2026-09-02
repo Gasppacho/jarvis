@@ -8,6 +8,7 @@ import type {
 import type {
   ProjectBindings,
   ProjectCompositionChoices,
+  ProjectCompositionReview,
   ProjectDetail,
   ProjectResourceCandidateRegistry,
   ProjectSummary,
@@ -26,6 +27,7 @@ export type LocalProjectRegistry = ProjectRegistry<
       id: unknown,
       proposedConfiguration: unknown,
     ): ProjectCompositionChoices;
+    compositionReview(id: unknown, proposedConfiguration: unknown): ProjectCompositionReview;
   };
 export type LocalRepositoryDiscovery = RepositoryDiscoveryPort<RepositoryDiscovery>;
 
@@ -96,6 +98,13 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
     return reply
       .code(200)
       .send(service.previewCompositionChoices(params?.projectId, body?.portableConfig));
+  });
+
+  app.post("/v1/projects/:projectId/composition-review", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    const body = request.body as { portableConfig?: unknown } | undefined;
+    return reply.code(200).send(service.compositionReview(params?.projectId, body?.portableConfig));
   });
 
   app.delete("/v1/projects/:projectId", async (request, reply) => {

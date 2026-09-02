@@ -55,6 +55,19 @@ Labels, descriptions et payload schemas viennent des contrats Event versionnés;
 producteurs, consumers et routes viennent des Manifests des Module Instances activées.
 Prévisualiser ou choisir un template ne crée aucun Local Binding, grant ou graphe impératif persistant.
 
+`PUT /v1/projects/{projectId}/configuration` accepte aussi le `PortableProjectDraft`
+Engine complet mais encore vide de Slots et Module Instances. Cela permet de sauvegarder
+et rouvrir un point de départ incomplet sans affaiblir le schéma de la Portable
+Configuration prête à valider.
+
+`POST /v1/projects/{projectId}/composition-review` assemble le même inventaire avec le
+rapport de validation et les choix de ressources dans une réponse
+`ProjectCompositionReviewV1`. `readyToValidate` est exactement le résultat Engine de
+validation de la Portable Configuration proposée (ou sauvegardée) avec les Local Bindings
+courants. L'opération est read-only : elle ne sauvegarde ni Draft, ni relation Event, ni
+état de Review. Le shell invalide l'état Ready dès qu'un Draft sauvegardé est modifié et ne
+le rétablit qu'après une nouvelle réponse Engine.
+
 `GET /v1/projects/{projectId}/binding-candidates` retourne les choix de la configuration sauvegardée; `POST` prévisualise les mêmes choix pour une `portableConfig` proposée sans la persister. Chaque réponse contient l'union dédupliquée des ressources éligibles et une ligne par Slot. L'Engine intersecte les grants explicites du Project, la capability du Slot et les requirements des Module Instances qui ciblent ce Slot. Les statuts `bound`, `available`, `missing`, `inaccessible` et `incompatible`, ainsi que l'impact et l'action de réparation, appartiennent au contrat; le shell ne reconstruit pas cette politique.
 
 Ces ressources restent sous le préfixe Local API `/v1`, conformément à la pratique de

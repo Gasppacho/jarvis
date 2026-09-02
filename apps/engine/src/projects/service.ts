@@ -24,6 +24,7 @@ import {
 } from "./discovery.js";
 import {
   requirePortableProjectConfiguration,
+  requirePortableProjectDraft,
   requireProjectBindings,
   validatePortableConfig,
 } from "./contracts.js";
@@ -33,6 +34,7 @@ import type { ProjectRow, ProjectStore } from "./store.js";
 import type {
   BindingStatus,
   ProjectCompositionChoices,
+  ProjectCompositionReview,
   PortableProjectConfiguration,
   ProjectBindings,
   ProjectResourceCandidate,
@@ -137,11 +139,16 @@ export class ProjectService implements ProjectRegistry<
     id: unknown,
     proposedConfiguration: unknown,
   ): ProjectCompositionChoices {
+    return this.compositionReview(id, proposedConfiguration).composition;
+  }
+
+  compositionReview(id: unknown, proposedConfiguration: unknown): ProjectCompositionReview {
     const project = this.requireProject(id);
     const configuration =
       proposedConfiguration === undefined
         ? project.portableConfig
         : requirePortableProjectConfiguration(proposedConfiguration, this.modules);
+    const grantedResources = this.resourceGrants.grantedToProject(project.id);
     const validation = this.compositionValidator.validate({
       projectId: project.id,
       configuration,
@@ -150,14 +157,23 @@ export class ProjectService implements ProjectRegistry<
         saved: project.bookmarkRef !== null,
         accessible: this.repositoryAccessibility.isAccessibleDirectory(project.repositoryPath),
       },
-      grantedResources: this.resourceGrants.grantedToProject(project.id),
+      grantedResources,
     });
-    return previewProjectCompositionChoices(this.modules, {
+    const composition = previewProjectCompositionChoices(this.modules, {
       projectId: project.id,
       configuration,
       slotBindings: project.slotBindings,
       validationFindings: validation.findings,
     });
+    return {
+      apiVersion: "jarvis.dev/project-composition-review/v1",
+      kind: "ProjectCompositionReview",
+      projectId: project.id,
+      readyToValidate: validation.valid,
+      composition,
+      validation,
+      resources: resourceChoices(project, configuration, this.modules, grantedResources),
+    };
   }
 
   deleteProject(id: unknown): void {
@@ -181,7 +197,15 @@ export class ProjectService implements ProjectRegistry<
     if (typeof request.writeToRepository !== "boolean") {
       throw new EngineError("api.invalid-request", 400, "writeToRepository must be a boolean.");
     }
-    const configuration = requirePortableProjectConfiguration(request.portableConfig, this.modules);
+    const supplied = request.portableConfig as Partial<StoredPortableProjectConfiguration>;
+    const configuration =
+      Array.isArray(supplied.modules) &&
+      supplied.modules.length === 0 &&
+      typeof supplied.slots === "object" &&
+      supplied.slots !== null &&
+      Object.keys(supplied.slots).length === 0
+        ? requirePortableProjectDraft(request.portableConfig)
+        : requirePortableProjectConfiguration(request.portableConfig, this.modules);
     for (const slot of Object.keys(current.slotBindings)) {
       if (!(slot in configuration.slots)) {
         throw new EngineError(

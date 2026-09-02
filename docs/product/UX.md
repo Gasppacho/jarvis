@@ -130,6 +130,16 @@ Le troisième prototype est retenu : il combine la progression du wizard avec la
 
 L'inventaire de présentation retenu est piloté par les données : cinq sections ordonnées, des lignes avec état et action, un ordre clavier stable, puis pour chaque ligne un rôle, un label, une valeur et un hint accessibles. Les phrases saisies sont distinctes des explications de routage. Les statuts `resolved`, `broadcast`, `orphaned` et `ambiguous` ainsi que leurs explications viennent de la réponse de l'Engine ; Swift ne recalcule ni consumer ni compatibilité.
 
+`Review` présente sous forme de listes textuelles les Module Instances, chemins Event et
+diffusion des Facts, routes de Requests, compatibilité, capabilities et Local Bindings.
+Chaque finding bloquant possède une action qui ramène au contrôle de Module Instance,
+d'Automation Rule ou de ressource concerné. `Save Draft` reste disponible pour une
+composition structurellement sérialisable mais incomplète. `Ready to validate` est un
+résultat séparé de l'Engine pour le Draft sauvegardé et ses Local Bindings; toute édition
+non sauvegardée le rend immédiatement caduc. Validate et Activate restent indisponibles
+tant que ce résultat est faux. La sauvegarde ne contient que Portable Configuration et
+Local Bindings, jamais les lignes de Review ni un graphe Event.
+
 La comparaison native utilise le build de l'app empaquetée pour vérifier structure, tailles et navigation, et XCTest vérifie l'inventaire observable sur les quatre fixtures. SwiftPM ne fournit pas de target XCUITest pour l'exécutable SwiftPM macOS ; l'automatisation UI/VoiceOver de bout en bout reste donc une vérification manuelle de l'app empaquetée, et non un test `swift test` prétendument équivalent.
 
 ### Automation Rules

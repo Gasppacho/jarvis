@@ -32,6 +32,15 @@
         "contract": { "$ref": "#/$defs/validationContract" }
       }
     },
+    "projectFindingTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "field"],
+      "properties": {
+        "kind": { "const": "project" },
+        "field": { "type": "string" }
+      }
+    },
     "requestEdgeFindingTarget": {
       "type": "object",
       "additionalProperties": false,
@@ -213,6 +222,7 @@
         "properties": {
           "code": {
             "enum": [
+              "project.composition-incomplete",
               "project.binding-missing",
               "project.capability-unresolved",
               "project.contract-incompatible",
@@ -226,6 +236,7 @@
           "message": { "type": "string", "minLength": 1 },
           "target": {
             "oneOf": [
+              { "$ref": "#/$defs/projectFindingTarget" },
               { "$ref": "#/$defs/requestEdgeFindingTarget" },
               { "$ref": "#/$defs/contractEdgeFindingTarget" },
               { "$ref": "#/$defs/moduleInstanceFindingTarget" },

@@ -243,6 +243,37 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /v1/projects/{projectId}/composition-review:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      operationId: reviewProjectCompositionV1
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [portableConfig]
+              properties:
+                portableConfig:
+                  oneOf:
+                    - $ref: "#/components/schemas/PortableProjectDraft"
+                    - $ref: "#/components/schemas/PortableProjectConfiguration"
+      responses:
+        "200":
+          description: Read-only Engine-owned review of the saved or proposed composition.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectCompositionReviewV1"
+        default:
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/projects/{projectId}/activate:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -512,7 +543,9 @@ paths:
               required: [portableConfig, writeToRepository]
               properties:
                 portableConfig:
-                  $ref: "#/components/schemas/PortableProjectConfiguration"
+                  oneOf:
+                    - $ref: "#/components/schemas/PortableProjectDraft"
+                    - $ref: "#/components/schemas/PortableProjectConfiguration"
                 writeToRepository:
                   type: boolean
       responses:
@@ -909,6 +942,15 @@ components:
           type: string
         contract:
           $ref: "#/components/schemas/ValidationContract"
+    ProjectFindingTarget:
+      type: object
+      additionalProperties: false
+      required: [kind, field]
+      properties:
+        kind:
+          const: project
+        field:
+          type: string
     RequestEdgeFindingTarget:
       type: object
       additionalProperties: false
@@ -1166,6 +1208,27 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ProjectCompositionEventChoice"
+    ProjectCompositionReviewV1:
+      type: object
+      additionalProperties: false
+      required: [apiVersion, kind, projectId, readyToValidate, composition, validation, resources]
+      properties:
+        apiVersion:
+          const: jarvis.dev/project-composition-review/v1
+        kind:
+          const: ProjectCompositionReview
+        projectId:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9._-]*$"
+        readyToValidate:
+          type: boolean
+          description: Engine-owned readiness for the supplied or saved Portable Configuration and current Local Bindings.
+        composition:
+          $ref: "#/components/schemas/ProjectCompositionChoicesV1"
+        validation:
+          $ref: "#/components/schemas/ProjectValidationReportV1"
+        resources:
+          $ref: "#/components/schemas/ProjectResourceChoices"
     ProjectValidationReportV1:
       type: object
       additionalProperties: false
@@ -1262,6 +1325,7 @@ components:
             properties:
               code:
                 enum:
+                  - project.composition-incomplete
                   - project.binding-missing
                   - project.capability-unresolved
                   - project.contract-incompatible
@@ -1276,6 +1340,7 @@ components:
                 minLength: 1
               target:
                 oneOf:
+                  - $ref: "#/components/schemas/ProjectFindingTarget"
                   - $ref: "#/components/schemas/RequestEdgeFindingTarget"
                   - $ref: "#/components/schemas/ContractEdgeFindingTarget"
                   - $ref: "#/components/schemas/ModuleInstanceFindingTarget"

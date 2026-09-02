@@ -7,6 +7,7 @@ import type { ModuleHost } from "../../../../packages/kernel/src/module-host.js"
 import type {
   ProjectBindings,
   PortableProjectConfiguration,
+  PortableProjectDraft,
 } from "../../../../packages/project-runtime/src/project-types.js";
 import { EngineError, type ErrorCode } from "../errors.js";
 
@@ -24,6 +25,38 @@ let bindingsValidator: ValidateFunction | undefined;
 export function validatePortableConfig(value: unknown): void {
   requireObject(value, "project.config-invalid", "The portable config must be a JSON object.");
   requireValid(projectConfigValidator(), value, "project.config-invalid", "portable config");
+}
+
+/** Validates the Engine-owned empty-composition shape without weakening the full config schema. */
+export function requirePortableProjectDraft(value: unknown): PortableProjectDraft {
+  requireObject(value, "project.config-invalid", "The portable draft must be a JSON object.");
+  const candidate = value as Record<string, unknown>;
+  const slots = candidate["slots"];
+  const modules = candidate["modules"];
+  if (
+    typeof slots !== "object" ||
+    slots === null ||
+    Array.isArray(slots) ||
+    Object.keys(slots).length !== 0 ||
+    !Array.isArray(modules) ||
+    modules.length !== 0
+  ) {
+    invalid("an incomplete Draft must have empty slots and modules");
+  }
+  const schemaProbe = {
+    ...candidate,
+    slots: { "draft-placeholder": { requires: "draft.placeholder" } },
+    modules: [
+      {
+        instanceId: "draft-placeholder",
+        moduleId: "jarvis.module.draft-placeholder",
+        enabled: false,
+      },
+    ],
+  };
+  requireValid(projectConfigValidator(), schemaProbe, "project.config-invalid", "portable draft");
+  requirePortableConfigurationValues(value, "");
+  return value as unknown as PortableProjectDraft;
 }
 
 /** Full replacement validation: machine schema plus Project Runtime invariants. */

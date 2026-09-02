@@ -145,6 +145,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{projectId}/composition-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["reviewProjectCompositionV1"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{projectId}/activate": {
         parameters: {
             query?: never;
@@ -549,6 +567,11 @@ export interface components {
             moduleId: string;
             contract: components["schemas"]["ValidationContract"];
         };
+        ProjectFindingTarget: {
+            /** @constant */
+            kind: "project";
+            field: string;
+        };
         RequestEdgeFindingTarget: {
             /** @constant */
             kind: "request-edge";
@@ -661,6 +684,18 @@ export interface components {
             moduleInstances: components["schemas"]["ProjectCompositionModuleInstance"][];
             choices: components["schemas"]["ProjectCompositionEventChoice"][];
         };
+        ProjectCompositionReviewV1: {
+            /** @constant */
+            apiVersion: "jarvis.dev/project-composition-review/v1";
+            /** @constant */
+            kind: "ProjectCompositionReview";
+            projectId: string;
+            /** @description Engine-owned readiness for the supplied or saved Portable Configuration and current Local Bindings. */
+            readyToValidate: boolean;
+            composition: components["schemas"]["ProjectCompositionChoicesV1"];
+            validation: components["schemas"]["ProjectValidationReportV1"];
+            resources: components["schemas"]["ProjectResourceChoices"];
+        };
         ProjectValidationReportV1: {
             /** @constant */
             apiVersion: "jarvis.dev/project-validation/v1";
@@ -703,11 +738,11 @@ export interface components {
             }[];
             findings: {
                 /** @enum {unknown} */
-                code: "project.binding-missing" | "project.capability-unresolved" | "project.contract-incompatible" | "project.instance-config-invalid" | "project.module-package-unavailable" | "project.request-ambiguous" | "project.request-orphaned";
+                code: "project.composition-incomplete" | "project.binding-missing" | "project.capability-unresolved" | "project.contract-incompatible" | "project.instance-config-invalid" | "project.module-package-unavailable" | "project.request-ambiguous" | "project.request-orphaned";
                 /** @enum {unknown} */
                 severity: "error" | "warning";
                 message: string;
-                target: components["schemas"]["RequestEdgeFindingTarget"] | components["schemas"]["ContractEdgeFindingTarget"] | components["schemas"]["ModuleInstanceFindingTarget"] | components["schemas"]["SlotFindingTarget"] | components["schemas"]["ModuleCapabilityFindingTarget"] | components["schemas"]["SlotCapabilityFindingTarget"];
+                target: components["schemas"]["ProjectFindingTarget"] | components["schemas"]["RequestEdgeFindingTarget"] | components["schemas"]["ContractEdgeFindingTarget"] | components["schemas"]["ModuleInstanceFindingTarget"] | components["schemas"]["SlotFindingTarget"] | components["schemas"]["ModuleCapabilityFindingTarget"] | components["schemas"]["SlotCapabilityFindingTarget"];
             }[];
         };
         ModuleInstance: {
@@ -1229,6 +1264,37 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    reviewProjectCompositionV1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    portableConfig: components["schemas"]["PortableProjectDraft"] | components["schemas"]["PortableProjectConfiguration"];
+                };
+            };
+        };
+        responses: {
+            /** @description Read-only Engine-owned review of the saved or proposed composition. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectCompositionReviewV1"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
     activateProject: {
         parameters: {
             query?: never;
@@ -1544,7 +1610,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    portableConfig: components["schemas"]["PortableProjectConfiguration"];
+                    portableConfig: components["schemas"]["PortableProjectDraft"] | components["schemas"]["PortableProjectConfiguration"];
                     writeToRepository: boolean;
                 };
             };

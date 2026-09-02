@@ -2,7 +2,7 @@
 
 ## Result
 
-This run found no leftover unmerged ticket branch. Local merge history showed #34–#37 and #39 satisfied, so #38 was the frontier despite every issue remaining open. Exactly #38 was implemented on `agent/38-structure-bundled-module-configurations`, committed as `f6d13bb`, commented on GitHub, and merged into local `main` with `--no-ff`. `pnpm verify` passed on the branch and again on merged `main`.
+No leftover unmerged ticket branch was found. Local merge ancestry showed #34–#39 satisfied, so #40 was the frontier despite its open state and stale `needs-triage` label. Exactly #40 was implemented on `agent/40-review-save-project-composition-drafts`, committed, and merged into local `main` with `--no-ff`. `pnpm verify` passed on the branch and again on merged `main`.
 
 | Issue | Title | Branch | DoD | Verification |
 |---|---|---|---|---|
@@ -10,53 +10,52 @@ This run found no leftover unmerged ticket branch. Local merge history showed #3
 | #35 | Choose the guided composition interaction grammar | `agent/35-choose-guided-composition-grammar` | Complete; merged locally | `pnpm verify` passed |
 | #36 | Guide starting point and Module Instance choices | `agent/36-guide-starting-point-module-choices` | Complete; merged locally | `pnpm verify` passed |
 | #37 | Build sentence-style Automation Rules | `agent/37-build-sentence-style-automation-rules` | Complete; merged locally | `pnpm verify` passed |
-| #38 | Structure every bundled Module Configuration | `agent/38-structure-bundled-module-configurations` | Complete; merged locally | `pnpm verify` passed on branch and merged `main` |
+| #38 | Structure every bundled Module Configuration | `agent/38-structure-bundled-module-configurations` | Complete; merged locally | `pnpm verify` passed |
 | #39 | Guide project-scoped resource bindings | `agent/39-guide-project-scoped-resource-bindings` | Complete; merged locally | `pnpm verify` passed |
-| #40 | Review and save Project composition drafts | not started | Remaining; next frontier ticket | — |
+| #40 | Review and save Project composition drafts | `agent/40-review-save-project-composition-drafts` | Complete; merged locally | `pnpm verify` passed on branch and merged `main` |
 
-## #38 delivery
+## #40 delivery
 
-- Bundled Module Configuration schemas now own titles, descriptions, examples, canonical defaults, enum choices, and applicable bounds.
-- The Swift schema model recursively describes scalar, enum, object, array, and repeatable controls and exposes accessible labels, hints, required state, defaults, examples, ranges, and inline validation.
-- The Project Wizard renders structured recursive controls; raw JSON is confined to Advanced repair disclosures and invalid raw input is preserved.
-- Automation Rules retain their sentence grammar while bounded-match and Request-payload objects have structured key/value controls.
-- Module Package changes preserve valid and invalid values, Automation Rules, and raw configuration per package, with an actionable restore/repair explanation.
-- Slot creation no longer invents `slot1` or `capability.required`; users provide both values before insertion.
-- Application Harness coverage verifies schema metadata and canonical save/reopen round trips across Automation Rules, GitHub, and Development. XCTest covers recursive inventories, metadata, accessibility, validation, package switching, payload round trips, and preservation.
-- Contract and UX source-of-truth documentation was synchronized. OpenAPI already transports the full schema object, so no OpenAPI shape or generated-client change was required.
+- Added the read-only `ProjectCompositionReviewV1` Local API aggregation for Engine-owned composition choices, validation findings/routes/capabilities, resource status, and `readyToValidate`.
+- Added `project.composition-incomplete` so an empty Draft remains saveable but cannot be presented as ready.
+- Allowed the Engine-owned empty `PortableProjectDraft` shape through Draft replacement without weakening full Portable Configuration validation.
+- Added the Swift generated-client adapter, model refresh/invalidation, and a textual Review inventory for Module Instances, Event paths and Fact broadcasts, compatibility, capabilities, findings, and Local Bindings.
+- Added accessible labels/hints and repair buttons that scroll to the affected starting point, Module Instance, Automation Rule, or Local Binding.
+- Kept Draft save separate from readiness. Any edit invalidates saved readiness; only an Engine review for the saved Draft and current Local Bindings can restore it.
+- Persisted only Portable Configuration and Local Bindings. The review endpoint is read-only and no graph or review-only state was added.
+- Synchronized OpenAPI, generated TypeScript, validation JSON Schema, stable error-code docs, Local API docs, Project architecture, and UX.
 
 ## TDD evidence
 
-Red was observed before implementation at the agreed seams:
+Red was observed before implementation at both agreed seams:
 
-- XCTest failed because recursive array/object kinds, examples, accessibility metadata, package-preservation state, explicit Slot input, and Automation Rule payload actions did not exist.
-- Application Harness failed because bundled schemas did not expose schema-owned presentation guidance.
+- Application Harness tests first received `404` for `/composition-review`; the empty-Draft save test then received `400` before the replacement contract and validator were extended.
+- XCTest first failed to compile because review/readiness presentation types did not exist. It later exposed the fresh-Draft readiness gap before `project.composition-incomplete` was added.
 
-Focused XCTest, Application Harness, `pnpm typecheck`, and contract checks were run during implementation. No filesystem or SQLite mock was added; Harness tests use the real Engine and temporary SQLite/repositories.
+Focused Application Harness tests, XCTest, contract checks, and `pnpm typecheck` were run regularly. No filesystem or SQLite mock was added; Harness coverage uses the real Engine and temporary SQLite/repositories.
 
 ## Code review
 
 ### Standards
 
-No blocking finding remains. The review used `AGENTS.md`, `docs/plans/DEFINITION_OF_DONE.md`, and the smell baseline. Schema decoding and Draft mutation stay in JarvisCore; SwiftUI only renders controls and forwards actions. No cross-context import, applied migration edit, new dependency, secret, credential, or personal path was introduced. A formatting-noise finding was corrected before commit.
+No blocking finding remains. Review used `AGENTS.md`, `docs/plans/DEFINITION_OF_DONE.md`, and the Fowler smell baseline. Engine policy remains in Project Runtime/Engine code; SwiftUI renders presentation values and invokes navigation only. Generated clients remain contract-derived. No cross-context import, applied migration edit, dependency, secret, credential, or personal path was introduced. A review finding that fresh Custom Drafts could not round-trip was fixed by adding a narrowly validated empty-Draft save path rather than weakening the full configuration schema.
 
 ### Spec
 
-No blocking finding remains. Review checked every #38 acceptance criterion. A partial implementation initially omitted structured editing for an Automation Rule's optional Request payload; review added the payload action, structured object control, presentation inventory, and canonical round-trip test before commit.
+No blocking finding remains. Every #40 criterion was checked against the diff and focused tests. A partial implementation initially left unknown Advanced Event findings out whenever an Engine review existed and treated an empty Draft as ready; both were corrected. Validate/Activate execution itself remains owned by the existing lifecycle tickets; #40 supplies the Engine-owned readiness gate and does not duplicate activation policy in Swift.
 
-## Definition of Done for #38
+## Definition of Done for #40
 
-- All acceptance criteria are demonstrated at Application Harness and XCTest seams.
+- Acceptance criteria are demonstrated at Application Harness and XCTest seams; the packaged app build completed.
 - Red was observed before green where the change allowed it.
-- Focused tests, typecheck, and full `pnpm verify` pass; packaged app build and all Swift tests ran successfully.
-- Invalid input, schema validation, repeatable bounds, package switching, save/reopen, and unrelated-input preservation are covered.
-- Schemas, Local API schema payloads, examples, generated clients, contract docs, and UX remain synchronized.
-- `pnpm arch:check` passes; no migration or external dependency changed.
-- No secret, real credential, personal path, filesystem mock, or SQLite mock was introduced.
-- No ADR or context vocabulary update was required: this extends the existing JSON Schema editor and canonical Module Configuration model.
-- Two-axis code review completed and the blocking payload finding was fixed.
-- Required branch, commit, GitHub comment, local `--no-ff` merge, and post-merge verification completed. Nothing was pushed; no PR was opened; no issue was closed.
+- Focused tests, typecheck, architecture checks, and full `pnpm verify` pass.
+- Empty/incomplete Draft save/reopen, ambiguous preview, read-only review, stale readiness, unknown Events, findings, repair navigation, and accessibility inventory are covered.
+- OpenAPI, generated TypeScript/Swift clients, JSON Schema, error catalog, architecture, contract docs, and UX are synchronized. Event/Capability Catalog and Manifests did not change because no Event, capability, or Module contract changed.
+- No applied migration, external dependency, filesystem mock, SQLite mock, secret, credential, or personal path was introduced.
+- No ADR was required: the implementation extends the already documented Engine-owned validation/read-model boundary. No new domain vocabulary beyond a stable validation finding code was introduced; that code is documented in the contract catalog.
+- Two-axis code review completed and blocking findings were fixed.
+- Required branch and local integration steps are completed by this run; nothing is pushed, no PR is opened, and no issue is closed.
 
 ## Remaining work
 
-Only #40 remains. Its blockers #38 and #39 are now both integrated into local `main`, making #40 the next frontier ticket. Parent #31 and all child issue states remain untouched.
+No #31 child ticket remains unimplemented after #40 is merged into local `main`. Parent #31 and all child issue states remain untouched.
