@@ -103,7 +103,7 @@ public struct ProjectDetailView: View {
     private var addModuleActions: [ProjectDetailPresentation.Action.Edit] {
         presentation.actions.compactMap { action in
             guard case .edit(let edit) = action,
-                case .addModule = edit
+                case .addModule = edit.operation
             else { return nil }
             return edit
         }
@@ -162,7 +162,7 @@ public struct ProjectDetailView: View {
                 Spacer()
                 Menu("Add Module Instance") {
                     ForEach(addModuleActions, id: \.self) { edit in
-                        if case .addModule(let packageId) = edit,
+                        if case .addModule(let packageId) = edit.operation,
                             let package = moduleCatalog.packages.first(where: {
                                 $0.moduleId == packageId
                             })
@@ -373,7 +373,7 @@ public struct ProjectDetailView: View {
     ) {
         switch action {
         case .repositoryPicker(let picker):
-            switch picker {
+            switch picker.operation {
             case .chooseRepository(let repositoryId):
                 guard let binding = presentation.repositories.first(where: {
                     $0.repositoryId == repositoryId
@@ -382,9 +382,9 @@ public struct ProjectDetailView: View {
             }
         case .confirmation:
             isDeleteConfirmationPresented = true
-        case .asynchronous(let operation):
+        case .asynchronous(let asynchronous):
             Task {
-                await projectConfiguration.perform(operation, projectId: project.id)
+                await projectConfiguration.perform(asynchronous, projectId: project.id)
             }
         case .edit(let edit):
             projectConfiguration.apply(

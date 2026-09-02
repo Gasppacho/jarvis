@@ -258,7 +258,9 @@ final class ProjectImportTests: XCTestCase {
             packages: [])
         XCTAssertTrue(presentation.actions.contains(.confirmation(.deleteProject)))
         XCTAssertTrue(presentation.actions.contains(.noOp(.cancelProjectDeletion)))
-        guard case .cancelProjectDeletion = presentation.deletionConfirmation.cancelAction else {
+        guard case .cancelProjectDeletion =
+            presentation.deletionConfirmation.cancelAction.operation
+        else {
             return XCTFail("deletion cancellation must route as a no-op")
         }
 

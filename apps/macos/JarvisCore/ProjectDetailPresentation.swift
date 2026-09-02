@@ -26,94 +26,202 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         case confirmation(Confirmation)
         case noOp(NoOp)
 
-        public enum Edit: Sendable, Equatable, Hashable {
-            case setProjectName(String)
-            case addSlot
-            case removeSlot(String)
-            case renameSlot(String, String)
-            case setSlotRequirement(String, String)
-            case setSlotOptional(String, Bool)
-            case setSlotDescription(String, String?)
-            case addModule(String)
-            case removeModule(UUID)
-            case setModulePackage(UUID, String)
-            case setModuleInstanceID(UUID, String)
-            case setModuleEnabled(UUID, Bool)
-            case setModuleRuntimeSlot(UUID, String)
-            case addModuleBinding(UUID)
-            case removeModuleBinding(UUID, String)
-            case renameModuleBinding(UUID, String, String)
-            case setModuleBinding(UUID, String, String)
-            case setModuleConfiguration(UUID, String, String)
+        public struct Edit: Sendable, Equatable, Hashable {
+            public enum Operation: Sendable, Equatable, Hashable {
+                case setProjectName(String)
+                case addSlot
+                case removeSlot(String)
+                case renameSlot(String, String)
+                case setSlotRequirement(String, String)
+                case setSlotOptional(String, Bool)
+                case setSlotDescription(String, String?)
+                case addModule(String)
+                case removeModule(UUID)
+                case setModulePackage(UUID, String)
+                case setModuleInstanceID(UUID, String)
+                case setModuleEnabled(UUID, Bool)
+                case setModuleRuntimeSlot(UUID, String)
+                case addModuleBinding(UUID)
+                case removeModuleBinding(UUID, String)
+                case renameModuleBinding(UUID, String, String)
+                case setModuleBinding(UUID, String, String)
+                case setModuleConfiguration(UUID, String, String)
+            }
 
-            public var label: String {
-                switch self {
-                case .setProjectName: "Set project name"
-                case .addSlot: "Add slot"
-                case .removeSlot: "Remove slot"
-                case .renameSlot: "Rename slot"
-                case .setSlotRequirement: "Set slot requirement"
-                case .setSlotOptional: "Set slot optionality"
-                case .setSlotDescription: "Set slot description"
-                case .addModule: "Add Module Instance"
-                case .removeModule: "Remove Module Instance"
-                case .setModulePackage: "Set Module Package"
-                case .setModuleInstanceID: "Set Instance ID"
-                case .setModuleEnabled: "Set Module enabled"
-                case .setModuleRuntimeSlot: "Set runtime slot"
-                case .addModuleBinding: "Add module binding"
-                case .removeModuleBinding: "Remove module binding"
-                case .renameModuleBinding: "Rename module binding"
-                case .setModuleBinding: "Set module binding"
-                case .setModuleConfiguration: "Set module configuration"
-                }
+            public let operation: Operation
+            public let label: String
+
+            private init(_ operation: Operation, label: String) {
+                self.operation = operation
+                self.label = label
+            }
+
+            public static func setProjectName(_ name: String) -> Self {
+                Self(.setProjectName(name), label: "Set project name")
+            }
+
+            public static let addSlot = Self(.addSlot, label: "Add slot")
+
+            public static func removeSlot(_ slotId: String) -> Self {
+                Self(.removeSlot(slotId), label: "Remove slot")
+            }
+
+            public static func renameSlot(_ oldName: String, _ newName: String) -> Self {
+                Self(.renameSlot(oldName, newName), label: "Rename slot")
+            }
+
+            public static func setSlotRequirement(_ slotId: String, _ requirement: String) -> Self {
+                Self(.setSlotRequirement(slotId, requirement), label: "Set slot requirement")
+            }
+
+            public static func setSlotOptional(_ slotId: String, _ optional: Bool) -> Self {
+                Self(.setSlotOptional(slotId, optional), label: "Set slot optionality")
+            }
+
+            public static func setSlotDescription(_ slotId: String, _ description: String?) -> Self {
+                Self(.setSlotDescription(slotId, description), label: "Set slot description")
+            }
+
+            public static func addModule(_ packageId: String) -> Self {
+                Self(.addModule(packageId), label: "Add Module Instance")
+            }
+
+            public static func removeModule(_ moduleId: UUID) -> Self {
+                Self(.removeModule(moduleId), label: "Remove Module Instance")
+            }
+
+            public static func setModulePackage(_ moduleId: UUID, _ packageId: String) -> Self {
+                Self(.setModulePackage(moduleId, packageId), label: "Set Module Package")
+            }
+
+            public static func setModuleInstanceID(_ moduleId: UUID, _ instanceId: String) -> Self {
+                Self(.setModuleInstanceID(moduleId, instanceId), label: "Set Instance ID")
+            }
+
+            public static func setModuleEnabled(_ moduleId: UUID, _ enabled: Bool) -> Self {
+                Self(.setModuleEnabled(moduleId, enabled), label: "Set Module enabled")
+            }
+
+            public static func setModuleRuntimeSlot(_ moduleId: UUID, _ slotId: String) -> Self {
+                Self(.setModuleRuntimeSlot(moduleId, slotId), label: "Set runtime slot")
+            }
+
+            public static func addModuleBinding(_ moduleId: UUID) -> Self {
+                Self(.addModuleBinding(moduleId), label: "Add module binding")
+            }
+
+            public static func removeModuleBinding(_ moduleId: UUID, _ key: String) -> Self {
+                Self(.removeModuleBinding(moduleId, key), label: "Remove module binding")
+            }
+
+            public static func renameModuleBinding(
+                _ moduleId: UUID,
+                _ oldKey: String,
+                _ newKey: String
+            ) -> Self {
+                Self(
+                    .renameModuleBinding(moduleId, oldKey, newKey),
+                    label: "Rename module binding")
+            }
+
+            public static func setModuleBinding(
+                _ moduleId: UUID,
+                _ key: String,
+                _ value: String
+            ) -> Self {
+                Self(.setModuleBinding(moduleId, key, value), label: "Set module binding")
+            }
+
+            public static func setModuleConfiguration(
+                _ moduleId: UUID,
+                _ key: String,
+                _ value: String
+            ) -> Self {
+                Self(
+                    .setModuleConfiguration(moduleId, key, value),
+                    label: "Set module configuration")
             }
         }
 
-        public enum Asynchronous: Sendable, Equatable, Hashable {
-            case setLocalBinding(String, String?)
-            case saveLocal
-            case saveRepository
-            case confirmProjectDeletion
+        public struct Asynchronous: Sendable, Equatable, Hashable {
+            public enum Operation: Sendable, Equatable, Hashable {
+                case setLocalBinding(String, String?)
+                case saveLocal
+                case saveRepository
+                case confirmProjectDeletion
+            }
 
-            public var label: String {
-                switch self {
-                case .setLocalBinding: "Set Local Binding"
-                case .saveLocal: "Save locally"
-                case .saveRepository: "Save and write .jarvis/project.yaml"
-                case .confirmProjectDeletion: "Delete Project"
-                }
+            public let operation: Operation
+            public let label: String
+
+            private init(_ operation: Operation, label: String) {
+                self.operation = operation
+                self.label = label
+            }
+
+            public static func setLocalBinding(_ slotId: String, _ candidateId: String?) -> Self {
+                Self(.setLocalBinding(slotId, candidateId), label: "Set Local Binding")
+            }
+
+            public static let saveLocal = Self(.saveLocal, label: "Save locally")
+            public static let saveRepository = Self(
+                .saveRepository,
+                label: "Save and write .jarvis/project.yaml")
+            public static let confirmProjectDeletion = Self(
+                .confirmProjectDeletion,
+                label: "Delete Project")
+        }
+
+        public struct RepositoryPicker: Sendable, Equatable, Hashable {
+            public enum Operation: Sendable, Equatable, Hashable {
+                case chooseRepository(String)
+            }
+
+            public let operation: Operation
+            public let label: String
+
+            private init(_ operation: Operation, label: String) {
+                self.operation = operation
+                self.label = label
+            }
+
+            public static func chooseRepository(_ repositoryId: String) -> Self {
+                Self(.chooseRepository(repositoryId), label: "Choose repository…")
             }
         }
 
-        public enum RepositoryPicker: Sendable, Equatable, Hashable {
-            case chooseRepository(String)
-
-            public var label: String {
-                switch self {
-                case .chooseRepository: "Choose repository…"
-                }
+        public struct Confirmation: Sendable, Equatable, Hashable {
+            public enum Operation: Sendable, Equatable, Hashable {
+                case deleteProject
             }
+
+            public let operation: Operation
+            public let label: String
+
+            private init(_ operation: Operation, label: String) {
+                self.operation = operation
+                self.label = label
+            }
+
+            public static let deleteProject = Self(.deleteProject, label: "Delete Project…")
         }
 
-        public enum Confirmation: Sendable, Equatable, Hashable {
-            case deleteProject
-
-            public var label: String {
-                switch self {
-                case .deleteProject: "Delete Project…"
-                }
+        public struct NoOp: Sendable, Equatable, Hashable {
+            public enum Operation: Sendable, Equatable, Hashable {
+                case cancelProjectDeletion
             }
-        }
 
-        public enum NoOp: Sendable, Equatable, Hashable {
-            case cancelProjectDeletion
+            public let operation: Operation
+            public let label: String
 
-            public var label: String {
-                switch self {
-                case .cancelProjectDeletion: "Cancel"
-                }
+            private init(_ operation: Operation, label: String) {
+                self.operation = operation
+                self.label = label
             }
+
+            public static let cancelProjectDeletion = Self(
+                .cancelProjectDeletion,
+                label: "Cancel")
         }
 
     }

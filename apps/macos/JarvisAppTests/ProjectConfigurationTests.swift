@@ -14,6 +14,29 @@ final class ProjectConfigurationTests: XCTestCase {
         super.tearDown()
     }
 
+    func testActionDescriptorsCarryTheirOperationAndLabelTogether() {
+        let edit = ProjectDetailPresentation.Action.Edit.addSlot
+        XCTAssertEqual(edit.operation, .addSlot)
+        XCTAssertEqual(edit.label, "Add slot")
+
+        let asynchronous = ProjectDetailPresentation.Action.Asynchronous.saveLocal
+        XCTAssertEqual(asynchronous.operation, .saveLocal)
+        XCTAssertEqual(asynchronous.label, "Save locally")
+
+        let repositoryPicker =
+            ProjectDetailPresentation.Action.RepositoryPicker.chooseRepository("main")
+        XCTAssertEqual(repositoryPicker.operation, .chooseRepository("main"))
+        XCTAssertEqual(repositoryPicker.label, "Choose repository…")
+
+        let confirmation = ProjectDetailPresentation.Action.Confirmation.deleteProject
+        XCTAssertEqual(confirmation.operation, .deleteProject)
+        XCTAssertEqual(confirmation.label, "Delete Project…")
+
+        let noOp = ProjectDetailPresentation.Action.NoOp.cancelProjectDeletion
+        XCTAssertEqual(noOp.operation, .cancelProjectDeletion)
+        XCTAssertEqual(noOp.label, "Cancel")
+    }
+
     @MainActor
     func testSavesLoadsAndPresentsConfiguredInstancesAcrossEngineRestart() async throws {
         let repository = try makeRepository()
@@ -269,7 +292,9 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertTrue(presentation.actions.contains(.edit(.addSlot)))
         XCTAssertEqual(
             presentation.actions.compactMap { action -> String? in
-                guard case .edit(.addModule(let packageId)) = action else { return nil }
+                guard case .edit(let edit) = action,
+                    case .addModule(let packageId) = edit.operation
+                else { return nil }
                 return packageId
             }.sorted(),
             catalog.packages.map(\.moduleId).sorted())

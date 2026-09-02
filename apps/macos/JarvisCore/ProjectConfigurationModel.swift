@@ -141,7 +141,7 @@ public final class ProjectConfigurationModel {
         packages: [ModulePackage],
         bindingOptions: [String] = []
     ) {
-        switch edit {
+        switch edit.operation {
         case .setProjectName(let name):
             editDraft(projectId: projectId) { $0.name = name }
         case .addSlot:
@@ -203,10 +203,10 @@ public final class ProjectConfigurationModel {
 
     /// Performs asynchronous Project Configuration actions.
     public func perform(
-        _ operation: ProjectDetailPresentation.Action.Asynchronous,
+        _ action: ProjectDetailPresentation.Action.Asynchronous,
         projectId: String
     ) async {
-        switch operation {
+        switch action.operation {
         case .setLocalBinding(let slotId, let candidateId):
             let candidate = candidateId.flatMap { id in
                 state(for: projectId).candidates.first { $0.id == id }
