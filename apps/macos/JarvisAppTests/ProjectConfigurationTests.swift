@@ -227,7 +227,7 @@ final class ProjectConfigurationTests: XCTestCase {
             session: session,
             repositoryGrants: RepositoryGrantStore(
                 storageDirectory: temporaryDirectory(prefix: "jarvis-stale-validation-grants")))
-        let report = try validationReportFixture()
+        let report = try validationReportFixture(valid: true)
         let reports = DelayedValidationSequence(report: report)
         let configuration = ProjectConfigurationModel(
             session: session,
@@ -257,9 +257,16 @@ final class ProjectConfigurationTests: XCTestCase {
 
         await configuration.validate(projectId: imported.id)
         let currentValidation = configuration.state(for: imported.id).validation
-        guard case .invalid = currentValidation else {
+        guard case .valid = currentValidation else {
             return XCTFail("the controlled report must be current before editing")
         }
+        XCTAssertTrue(
+            ProjectDetailPresentation(
+                project: imported,
+                detail: configuration.state(for: imported.id).detail,
+                state: configuration.state(for: imported.id),
+                packages: []
+            ).validation.isReadyToActivate)
 
         configuration.renameSlot(
             projectId: imported.id, from: "sourceControl", to: "renamed")
@@ -277,6 +284,13 @@ final class ProjectConfigurationTests: XCTestCase {
             configuration.state(for: imported.id).validation,
             currentValidation,
             "a failed binding write must not stale the report for unchanged durable bindings")
+        XCTAssertTrue(
+            ProjectDetailPresentation(
+                project: imported,
+                detail: configuration.state(for: imported.id).detail,
+                state: configuration.state(for: imported.id),
+                packages: []
+            ).validation.isReadyToActivate)
 
         configuration.editDraft(projectId: imported.id) { $0.name = "Edited composition" }
         guard case .stale(let historicalReport) =
@@ -294,6 +308,7 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertTrue(stalePresentation.validation.requestRoutes.isEmpty)
         XCTAssertTrue(stalePresentation.validation.satisfiedCapabilities.isEmpty)
         XCTAssertTrue(stalePresentation.validation.findings.isEmpty)
+        XCTAssertFalse(stalePresentation.validation.isReadyToActivate)
 
         let lateValidation = Task { await configuration.validate(projectId: imported.id) }
         await reports.waitUntilSecondRequestStarts()
@@ -303,11 +318,25 @@ final class ProjectConfigurationTests: XCTestCase {
         guard case .stale = configuration.state(for: imported.id).validation else {
             return XCTFail("a superseded validation response must not become current")
         }
+        XCTAssertFalse(
+            ProjectDetailPresentation(
+                project: imported,
+                detail: configuration.state(for: imported.id).detail,
+                state: configuration.state(for: imported.id),
+                packages: []
+            ).validation.isReadyToActivate)
 
         await configuration.validate(projectId: imported.id)
-        guard case .invalid = configuration.state(for: imported.id).validation else {
+        guard case .valid = configuration.state(for: imported.id).validation else {
             return XCTFail("fresh validation must replace stale state")
         }
+        XCTAssertTrue(
+            ProjectDetailPresentation(
+                project: imported,
+                detail: configuration.state(for: imported.id).detail,
+                state: configuration.state(for: imported.id),
+                packages: []
+            ).validation.isReadyToActivate)
         let removedBinding = await configuration.setLocalBinding(
             projectId: imported.id,
             slotId: "sourceControl",
@@ -316,6 +345,13 @@ final class ProjectConfigurationTests: XCTestCase {
         guard case .stale = configuration.state(for: imported.id).validation else {
             return XCTFail("a successful Local Binding edit must make the report stale")
         }
+        XCTAssertFalse(
+            ProjectDetailPresentation(
+                project: imported,
+                detail: configuration.state(for: imported.id).detail,
+                state: configuration.state(for: imported.id),
+                packages: []
+            ).validation.isReadyToActivate)
 
         await configuration.validate(projectId: imported.id)
         let repositoryBinding = try XCTUnwrap(
@@ -1140,14 +1176,28 @@ final class ProjectConfigurationTests: XCTestCase {
         return try XCTUnwrap(String(data: canonical, encoding: .utf8))
     }
 
-    private func validationReportFixture() throws -> ProjectValidationReport {
+    private func validationReportFixture(valid: Bool = false) throws -> ProjectValidationReport {
+        let findings = valid
+            ? "[]"
+            : """
+              [{
+                "code":"project.request-orphaned",
+                "severity":"error",
+                "message":"No consumer is available.",
+                "target":{
+                  "kind":"request-edge",
+                  "contract":{"type":"deploy.requested","version":1,"kind":"request"},
+                  "producer":{"instanceId":"automation","moduleId":"jarvis.module.automation-rules"}
+                }
+              }]
+              """
         let data = Data(
             """
             {
               "apiVersion": "jarvis.dev/project-validation/v1",
               "kind": "ProjectValidationReport",
               "projectId": "swift-config",
-              "valid": false,
+              "valid": \(valid),
               "requestRoutes": [{
                 "contract": {"type":"development.implementation.requested","version":1,"kind":"request"},
                 "producer": {"instanceId":"automation-rules","moduleId":"jarvis.module.automation-rules"},
@@ -1158,16 +1208,7 @@ final class ProjectConfigurationTests: XCTestCase {
                 "target":{"kind":"module-instance","instanceId":"development"},
                 "source":{"kind":"repository","ref":"repository/main"}
               }],
-              "findings": [{
-                "code":"project.request-orphaned",
-                "severity":"error",
-                "message":"No consumer is available.",
-                "target":{
-                  "kind":"request-edge",
-                  "contract":{"type":"deploy.requested","version":1,"kind":"request"},
-                  "producer":{"instanceId":"automation","moduleId":"jarvis.module.automation-rules"}
-                }
-              }]
+              "findings": \(findings)
             }
             """.utf8)
         let payload = try JSONDecoder().decode(

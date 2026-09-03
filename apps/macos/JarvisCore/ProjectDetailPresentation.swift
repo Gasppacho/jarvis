@@ -136,6 +136,8 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         public let status: Status
         public let title: String
         public let errorMessage: String?
+        public let isReadyToActivate: Bool
+        public let activationReadinessExplanation: String
         public let findings: [Finding]
         public let requestRoutes: [RequestRoute]
         public let satisfiedCapabilities: [SatisfiedCapability]
@@ -651,7 +653,9 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         reviewRows = Self.reviewRows(
             review: state.compositionReview,
             automationRules: automationRuleRows)
-        validation = Self.validation(from: state.validation)
+        validation = Self.validation(
+            from: state.validation,
+            selectedProjectId: project.id)
         deletionConfirmation = DeletionConfirmation(
             title: "Delete “\(project.name)”?",
             message:
@@ -667,13 +671,19 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             && !state.isSaving
     }
 
-    private static func validation(from state: ProjectValidationState) -> Validation {
+    private static func validation(
+        from state: ProjectValidationState,
+        selectedProjectId: String
+    ) -> Validation {
         switch state {
         case .unvalidated:
             return Validation(
                 status: .unvalidated,
                 title: "Not validated",
                 errorMessage: nil,
+                isReadyToActivate: false,
+                activationReadinessExplanation:
+                    "Validation is required before this Project can be ready to activate.",
                 findings: [],
                 requestRoutes: [],
                 satisfiedCapabilities: [])
@@ -682,21 +692,48 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 status: .validating,
                 title: "Validating Project…",
                 errorMessage: nil,
+                isReadyToActivate: false,
+                activationReadinessExplanation:
+                    "Validation is still running. Readiness will be available after it succeeds.",
                 findings: [],
                 requestRoutes: [],
                 satisfiedCapabilities: [])
         case .valid(let report):
+            let isCurrent = report.projectId == selectedProjectId
+            let readinessExplanation: String
+            if !isCurrent {
+                readinessExplanation =
+                    "This validation report does not belong to the selected Project, so readiness is unavailable."
+            } else if !report.valid {
+                readinessExplanation =
+                    "Project is invalid. Repair its findings and validate again."
+            } else {
+                readinessExplanation =
+                    "Ready to activate. The current Project validation report is valid."
+            }
             return validationReport(
-                report, status: .valid, title: "Project validation passed")
+                report,
+                status: .valid,
+                title: "Project validation passed",
+                isReadyToActivate: isCurrent && report.valid,
+                activationReadinessExplanation: readinessExplanation)
         case .invalid(let report):
             return validationReport(
-                report, status: .invalid, title: "Project validation needs attention")
+                report,
+                status: .invalid,
+                title: "Project validation needs attention",
+                isReadyToActivate: false,
+                activationReadinessExplanation:
+                    "Project is invalid. Repair the findings below and validate again.")
         case .stale:
             return Validation(
                 status: .stale,
                 title: "Validation report is stale",
                 errorMessage:
                     "The Project composition changed after this report was generated. Save the change and revalidate before relying on readiness, routes, capabilities, or findings.",
+                isReadyToActivate: false,
+                activationReadinessExplanation:
+                    "Validation is stale because the Project composition or Local Bindings changed. Validate again.",
                 findings: [],
                 requestRoutes: [],
                 satisfiedCapabilities: [])
@@ -705,6 +742,9 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 status: .failed,
                 title: "Validation report unavailable",
                 errorMessage: message,
+                isReadyToActivate: false,
+                activationReadinessExplanation:
+                    "Validation failed. Correct the API problem and retry validation.",
                 findings: [],
                 requestRoutes: [],
                 satisfiedCapabilities: [])
@@ -714,7 +754,9 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
     private static func validationReport(
         _ report: ProjectValidationReport,
         status: Validation.Status,
-        title: String
+        title: String,
+        isReadyToActivate: Bool,
+        activationReadinessExplanation: String
     ) -> Validation {
         let findings = report.findings
             .map(validationFinding)
@@ -725,6 +767,8 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             status: status,
             title: title,
             errorMessage: nil,
+            isReadyToActivate: isReadyToActivate,
+            activationReadinessExplanation: activationReadinessExplanation,
             findings: findings,
             requestRoutes: report.requestRoutes.map { route in
                 Validation.RequestRoute(
