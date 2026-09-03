@@ -53,3 +53,9 @@ Visual verification passed. Integration results are recorded below as they compl
     - Exit 0. No orphaned matching processes were present.
 18. `pnpm verify` (full output captured temporarily; exit and final test summary printed)
     - Exit 0 on merged `main`. The full verification pipeline passed; Swift executed 63 tests with 0 failures.
+19. `rm /tmp/mission-0014-verify.log && git add .agentic/missions/MISSION-0014/reports/review-report.md && git commit --amend --no-edit`
+    - Exit 0. Removed the temporary test log, staged only this report, and amended the merge commit as `5635db5`.
+20. `git push origin main`
+    - Exit 0. Plain fast-forward push advanced `origin/main` from `9d25d78` to `5635db5`; no force option was used.
+21. Fetch-and-compare confirmation (`git fetch origin main`, `git rev-parse main`, `git rev-parse origin/main`) plus `git status --short`
+    - Exit 0. Local `main` and `origin/main` both resolved to `5635db511b56f5acd8aa13cd7dc2c1656a025825`. Only pre-existing unrelated untracked `.agentic/` material remained.
