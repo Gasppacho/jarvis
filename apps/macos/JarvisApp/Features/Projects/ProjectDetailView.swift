@@ -218,14 +218,19 @@ public struct ProjectDetailView: View {
     }
 
     private var slotRequirementsEditor: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("Project slots").font(.headline)
+            Text("Choose capability IDs declared by the loaded Module Catalog.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
             ForEach(presentation.slots) { slotPresentation in
                 let slot = slotPresentation.id
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .top) {
                         TextField("Slot", text: slotNameBinding(slot))
-                        TextField("Required capability", text: slotRequirementBinding(slot))
+                        capabilityControl(
+                            selection: slotRequirementBinding(slot),
+                            currentValue: slotPresentation.requirement)
                         Toggle("Optional", isOn: slotOptionalBinding(slot))
                         Button(role: .destructive) {
                             perform(.edit(.removeSlot(slot)))
@@ -235,21 +240,74 @@ public struct ProjectDetailView: View {
                         .buttonStyle(.borderless)
                     }
                     TextField("Description", text: slotDescriptionBinding(slot))
+                    requesterList(slotPresentation.requesters)
+                }
+                .padding(10)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top) {
+                    TextField("New slot name", text: $newSlotName)
+                    capabilityControl(
+                        selection: $newSlotRequirement,
+                        currentValue: newSlotRequirement)
+                    Button("Add slot") {
+                        let edit = ProjectDetailPresentation.Action.Edit.addSlot(
+                            name: newSlotName, requirement: newSlotRequirement)
+                        perform(.edit(edit))
+                        newSlotName = ""
+                        newSlotRequirement = ""
+                    }
+                    .disabled(
+                        newSlotName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            || newSlotRequirement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
-            HStack {
-                TextField("New slot name", text: $newSlotName)
-                TextField("Required capability", text: $newSlotRequirement)
-                Button("Add slot") {
-                    let edit = ProjectDetailPresentation.Action.Edit.addSlot(
-                        name: newSlotName, requirement: newSlotRequirement)
-                    perform(.edit(edit))
-                    newSlotName = ""
-                    newSlotRequirement = ""
+        }
+    }
+
+    private func capabilityControl(
+        selection: Binding<String>, currentValue: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Picker("Required capability", selection: selection) {
+                Text("Choose from Module Catalog").tag("")
+                if !currentValue.isEmpty && !presentation.capabilityOptions.contains(currentValue) {
+                    Text("Custom value — edit in Advanced").tag(currentValue)
                 }
-                .disabled(
-                    newSlotName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || newSlotRequirement.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                ForEach(presentation.capabilityOptions, id: \.self) { capability in
+                    Text(capability).tag(capability)
+                }
+            }
+            if presentation.capabilityOptions.isEmpty {
+                Text("No installed Module Package declares a required capability.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            DisclosureGroup("Advanced") {
+                TextField("Custom capability ID", text: selection)
+                    .textFieldStyle(.roundedBorder)
+            }
+            .font(.caption)
+        }
+    }
+
+    @ViewBuilder
+    private func requesterList(_ requesters: [ProjectDetailPresentation.SlotRequester]) -> some View {
+        if requesters.isEmpty {
+            Text("Needed by: no Module Instance in the current Draft.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            Text("Needed by").font(.caption.weight(.semibold))
+            ForEach(requesters) { requester in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(requester.instanceId) — \(requester.displayName)")
+                        .font(.caption.weight(.medium))
+                    Text(requester.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -594,33 +652,51 @@ public struct ProjectDetailView: View {
     }
 
     private var localBindingsEditor: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("Local Bindings").sectionLabel()
             Text(
-                "Portable Configuration declares what is needed. These choices update only this Mac's Local Bindings."
+                "Portable Configuration declares what is needed. Resource choices update only this Mac's Local Bindings."
             )
                 .font(.callout)
                 .foregroundStyle(.secondary)
             ForEach(presentation.resourceBindings) { resource in
-                VStack(alignment: .leading, spacing: 5) {
-                    Picker(resource.id, selection: localBindingSelection(resource.id)) {
-                        Text("Unbound").tag("")
-                        ForEach(resource.candidates) { candidate in
-                            Text("\(candidate.displayName) · \(candidate.kind.rawValue)")
-                                .tag(candidate.id)
-                        }
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text(resource.id).font(.headline)
+                        Text(resource.statusLabel)
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(.quaternary, in: Capsule())
                     }
                     Text("Requires: \(resource.requiredCapabilities.joined(separator: ", "))")
                         .font(.caption)
+                    requesterList(resource.requesters)
                     if resource.status != .bound {
-                        Label(resource.unavailableExplanation, systemImage: "exclamationmark.triangle")
-                            .font(.caption)
+                        Label("Consequence: \(resource.impact)", systemImage: "exclamationmark.triangle")
+                            .font(.callout)
                             .foregroundStyle(.orange)
+                        Text("Next action: \(resource.repairAction)")
+                            .font(.callout.weight(.medium))
                     }
-                    Text(resource.impact).font(.caption).foregroundStyle(.secondary)
-                    Text("Next action: \(resource.repairAction)")
+                    if resource.candidates.isEmpty {
+                        Label(resource.emptyCandidateExplanation, systemImage: "questionmark.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Picker("Eligible resource", selection: localBindingSelection(resource.id)) {
+                            Text("Unbound").tag("")
+                            ForEach(resource.candidates) { candidate in
+                                Text("\(candidate.displayName) · \(candidate.kind.rawValue)")
+                                    .tag(candidate.id)
+                            }
+                        }
+                    }
+                    Text("Writes Local Bindings only. Portable Configuration is untouched.")
                         .font(.caption.weight(.medium))
                 }
+                .padding(12)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel(resource.accessibilityLabel)
                 .accessibilityHint(resource.accessibilityHint)

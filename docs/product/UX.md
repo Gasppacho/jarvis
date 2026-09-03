@@ -66,7 +66,9 @@ L'utilisateur lie :
 
 Une ressource globale n'est pas visible des agents du projet sans ce binding. Pour chaque Slot, le contrôle n'affiche que les ressources explicitement accordées au Project qui satisfont à la fois la capability du Slot et celles des Module Instances qui le référencent. Une Module Instance sélectionnée n'apparaît elle-même que pour les capabilities de son Manifest qu'elle fournit réellement.
 
-Chaque ligne `Resources` nomme les capabilities requises, les Module Instances ou comportements impactés et un statut Engine : `bound`, `available`, `missing`, `inaccessible` ou `incompatible`. Un état non résolu indique une prochaine action précise — choisir un candidat éligible, restaurer l'accès du Project, accorder une ressource compatible puis recharger — plutôt qu'un picker `Unbound` sans explication. Recharger les candidats ou changer un Local Binding rafraîchit aussi les ressources manquantes et les choix Event sans remplacer les autres valeurs du Draft.
+Chaque ligne `Resources` nomme les capabilities requises et les Module Instances du Draft qui référencent le Slot par un binding ou un `runtimeSlot`, avec le nom et la description de leur Module Package. Elle affiche tel quel le statut Engine `bound`, `available`, `missing`, `inaccessible` ou `incompatible`. Pour un état non résolu, la conséquence (`impact`) puis la prochaine action (`repairAction`) précèdent tout choix de ressource. Quand l'Engine ne retourne aucun candidat éligible, la ligne explique l'indisponibilité avec ce statut et cette action plutôt que d'afficher un picker `Unbound` vide. Recharger les candidats ou changer un Local Binding rafraîchit aussi les ressources manquantes et les choix Event sans remplacer les autres valeurs du Draft.
+
+Le contrôle de capability d'un Slot propose uniquement l'union des identifiants déclarés par `ModulePackage.requires` dans le Module Catalog chargé. Une valeur libre reste accessible sous `Advanced`; le shell n'invente ni identifiant ni explication humaine absente du catalogue servi.
 
 Choisir un template n'accorde jamais de ressource locale. Le picker modifie uniquement `ProjectBindings`; la Portable Configuration reste inchangée. Sauvegarder puis rouvrir recharge séparément les documents canoniques `jarvis.dev/project/v1` et `jarvis.dev/project-bindings/v1`.
 
@@ -168,9 +170,10 @@ n'est jamais le chemin principal.
 Changer de Module Package conserve en mémoire les entrées valides ou invalides du package
 précédent, indique comment les réparer ou les retrouver, et restaure ces valeurs si
 l'utilisateur revient au package. Le wizard ne déduit aucune sémantique du nom d'une
-propriété et ne crée ni nom de Slot ni capability factice : ces deux valeurs sont saisies
-avant l'ajout. La sauvegarde sérialise uniquement la Module Configuration canonique, sans
-état de contrôle propre au shell.
+propriété et ne crée ni nom de Slot ni capability factice : le nom reste saisi, tandis que
+la capability est offerte depuis le Module Catalog ou explicitement saisie sous `Advanced`.
+La sauvegarde sérialise uniquement la Module Configuration canonique, sans état de contrôle
+propre au shell.
 
 ## Overview projet
 
