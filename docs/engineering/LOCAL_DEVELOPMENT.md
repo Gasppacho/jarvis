@@ -26,19 +26,21 @@ pnpm typecheck
 pnpm test
 pnpm test:integration
 pnpm build:engine
-pnpm verify             # all non-release gates
+pnpm build:app           # build the Engine and package the macOS app
+pnpm test:swift          # run the Swift package tests
+pnpm verify              # all non-release gates
 ```
 
-`pnpm verify` also runs three helpers directly: `generate:check` (regeneration
-leaves no diff), `arch:check` (dependency-cruiser import graph) and `format`
-(`prettier --write`, the writing counterpart of `lint`).
+`pnpm verify` also runs two helpers directly: `generate:check` (regeneration
+leaves no diff) and `arch:check` (dependency-cruiser import graph). It finishes
+by running `build:app` and `test:swift`.
 
-macOS commands:
-
-```bash
-xcodebuild -scheme Jarvis -configuration Debug build
-xcodebuild -scheme Jarvis test
-```
+The canonical way to run the Swift tests is `pnpm test:swift`. The repository
+root contains no Xcode project or workspace, so it does not expose a `Jarvis`
+scheme for root-level `xcodebuild` commands. SwiftPM also provides no XCUITest
+target for the macOS executable. End-to-end UI and VoiceOver checking therefore
+remains a manual verification of the packaged app produced by `pnpm build:app`;
+it is not an additional automated test gate.
 
 A helper such as `scripts/run-dev-app.sh` may build/copy the Engine resources and launch the Xcode app. It must not become a production runtime prerequisite.
 
@@ -48,8 +50,9 @@ A helper such as `scripts/run-dev-app.sh` may build/copy the Engine resources an
 2. Run `/implement <ticket>`.
 3. Start at the ticket's primary seam with `/tdd`.
 4. Run the smallest failing test repeatedly.
-5. Run `pnpm typecheck` and Swift build regularly.
-6. Run `pnpm verify` and Xcode tests at completion.
+5. Run `pnpm typecheck` and `pnpm build:app` regularly.
+6. Run `pnpm verify` at completion; it already runs the Swift package tests.
+   For UI changes, manually check the packaged app's UI and VoiceOver behavior.
 7. Run `/code-review` and fix blockers.
 8. Commit.
 
