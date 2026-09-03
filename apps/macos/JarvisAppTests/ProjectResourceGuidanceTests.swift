@@ -216,7 +216,9 @@ final class ProjectResourceGuidanceTests: XCTestCase {
             XCTAssertEqual(resource.impact, "Impact reported for \(resource.statusLabel).")
             XCTAssertEqual(resource.repairAction, "Repair reported for \(resource.statusLabel).")
             XCTAssertTrue(resource.emptyCandidateExplanation.contains(resource.statusLabel))
-            XCTAssertTrue(resource.emptyCandidateExplanation.contains(resource.repairAction))
+            // The repair action is rendered on its own row; the empty-candidate explanation must
+            // not repeat it, or an unresolved Slot states the same next action twice.
+            XCTAssertFalse(resource.emptyCandidateExplanation.contains(resource.repairAction))
         }
     }
 
