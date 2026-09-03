@@ -168,6 +168,65 @@ final class ProjectValidationTests: XCTestCase {
             })
     }
 
+    func testStepFiveDerivesActivationReadinessFromOnlyTheCurrentValidReport() throws {
+        let selectedProject = Project(
+            id: "validation-fixture",
+            name: "Validation Fixture",
+            status: .draft,
+            moduleCount: 2,
+            activeExecutions: nil)
+        let validReport = try decodeReport(fixture(valid: true))
+        let invalidReport = try decodeReport(fixture(valid: false, includesFindings: true))
+        let states: [(ProjectValidationState, Bool, String)] = [
+            (.unvalidated, false, "Validation is required"),
+            (.validating, false, "Validation is still running"),
+            (.stale(validReport), false, "Validation is stale"),
+            (.failed("Local API unavailable"), false, "Validation failed"),
+            (.invalid(invalidReport), false, "Project is invalid"),
+            (.valid(validReport), true, "Ready to activate"),
+        ]
+
+        for (validation, expectedReadiness, expectedExplanation) in states {
+            var state = ProjectConfigurationState()
+            state.validation = validation
+            let presentation = ProjectDetailPresentation(
+                project: selectedProject, detail: nil, state: state, packages: [])
+
+            XCTAssertEqual(presentation.validation.isReadyToActivate, expectedReadiness)
+            XCTAssertTrue(
+                presentation.validation.activationReadinessExplanation.contains(expectedExplanation),
+                "unexpected explanation for \(validation)")
+        }
+
+        var mismatchedState = ProjectConfigurationState()
+        mismatchedState.validation = .valid(
+            try decodeReport(
+                fixture(valid: true).replacingOccurrences(
+                    of: "validation-fixture", with: "another-project")))
+        let mismatchedPresentation = ProjectDetailPresentation(
+            project: selectedProject, detail: nil, state: mismatchedState, packages: [])
+        XCTAssertFalse(mismatchedPresentation.validation.isReadyToActivate)
+        XCTAssertTrue(
+            mismatchedPresentation.validation.activationReadinessExplanation.contains(
+                "selected Project"))
+
+        let callableOperations = Set(
+            mismatchedPresentation.actions.compactMap { action -> String? in
+                guard case .asynchronous(let asynchronous) = action else { return nil }
+                switch asynchronous.operation {
+                case .setLocalBinding: return "set-local-binding"
+                case .saveLocal: return "save-local"
+                case .saveRepository: return "save-repository"
+                case .validate: return "validate"
+                case .confirmProjectDeletion: return "confirm-project-deletion"
+                }
+            })
+        XCTAssertEqual(
+            callableOperations,
+            ["save-local", "save-repository", "validate", "confirm-project-deletion"],
+            "step 5 must expose readiness without adding a callable activation request")
+    }
+
     @MainActor
     func testActionableValidationErrorRetriesAndTransitionsToInvalidReport() async throws {
         let report = try decodeReport(fixture(valid: false, includesFindings: true))

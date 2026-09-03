@@ -695,6 +695,19 @@ public struct ProjectDetailView: View {
                 systemImage: validationStatusIcon)
                 .foregroundStyle(validationStatusColor)
 
+            Label(
+                presentation.validation.activationReadinessExplanation,
+                systemImage: presentation.validation.isReadyToActivate
+                    ? "bolt.circle.fill" : "bolt.slash.circle")
+                .font(.callout)
+                .foregroundStyle(
+                    presentation.validation.isReadyToActivate ? .green : .secondary)
+                .accessibilityLabel(
+                    presentation.validation.isReadyToActivate
+                        ? "Ready to activate" : "Not ready to activate")
+                .accessibilityHint(
+                    presentation.validation.activationReadinessExplanation)
+
             if presentation.validation.status == .validating {
                 ProgressView("Checking saved Project composition…")
             }
