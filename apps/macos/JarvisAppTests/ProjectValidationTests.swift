@@ -379,17 +379,21 @@ private actor ValidationSequence {
 private actor ValidationGate {
     let report: ProjectValidationReport
     var continuation: CheckedContinuation<Void, Never>?
+    var isResumed = false
 
     init(report: ProjectValidationReport) {
         self.report = report
     }
 
     func load() async throws -> ProjectValidationReport {
-        await withCheckedContinuation { continuation = $0 }
+        if !isResumed {
+            await withCheckedContinuation { continuation = $0 }
+        }
         return report
     }
 
     func resume() {
+        isResumed = true
         continuation?.resume()
         continuation = nil
     }
