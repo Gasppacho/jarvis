@@ -3,12 +3,20 @@ import Foundation
 /// Complete, data-driven content and action inventory rendered by ProjectDetailView.
 /// SwiftUI owns only bindings and side-effect handlers; this value is testable in JarvisCore.
 public struct ProjectDetailPresentation: Sendable, Equatable {
+    public struct SlotRequester: Identifiable, Sendable, Equatable {
+        public var id: String { instanceId }
+        public let instanceId: String
+        public let displayName: String
+        public let description: String
+    }
+
     public struct Slot: Identifiable, Sendable, Equatable {
         public let id: String
         public let requirement: String
         public let optional: Bool
         public let description: String?
         public let candidates: [ProjectResourceCandidate]
+        public let requesters: [SlotRequester]
     }
 
     public struct ResourceBinding: Identifiable, Sendable, Equatable {
@@ -17,9 +25,12 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         public let candidates: [ProjectResourceCandidate]
         public let selectedCandidateID: String?
         public let status: ProjectResourceBindingStatus
+        public let statusLabel: String
         public let unavailableExplanation: String
+        public let emptyCandidateExplanation: String
         public let impact: String
         public let repairAction: String
+        public let requesters: [SlotRequester]
         public let accessibilityLabel: String
         public let accessibilityHint: String
     }
@@ -432,6 +443,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
     public let automationRuleRows: [AutomationRuleRow]
     public let slots: [Slot]
     public let resourceBindings: [ResourceBinding]
+    public let capabilityOptions: [String]
     public let actions: [Action]
     public let deletionConfirmation: DeletionConfirmation
     public let reviewRows: [ReviewRow]
@@ -454,8 +466,9 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 description: $0.description,
                 action: .chooseStartingPoint($0.id, displayName: $0.displayName))
         }
-        modules = state.draft?.modules ?? []
-        moduleCards = modules.map { module in
+        let draftModules = state.draft?.modules ?? []
+        modules = draftModules
+        moduleCards = draftModules.map { module in
             let choice = state.compositionGuide?.moduleInstances.first {
                 $0.instanceId == module.instanceId
             }
@@ -531,6 +544,18 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 )
             }
         }
+        capabilityOptions = Array(Set(packages.flatMap(\.requires))).sorted()
+        let requestersForSlot: (String) -> [SlotRequester] = { slotId in
+            draftModules.compactMap { module in
+                guard module.runtimeSlot == slotId || module.bindings.values.contains(slotId)
+                else { return nil }
+                let package = packages.first { $0.moduleId == module.moduleId }
+                return SlotRequester(
+                    instanceId: module.instanceId,
+                    displayName: package?.displayName ?? "Unavailable Module Package",
+                    description: package?.description ?? "The configured Module Package is unavailable.")
+            }.sorted { $0.instanceId < $1.instanceId }
+        }
         let choicesBySlot = Dictionary(
             uniqueKeysWithValues: state.resourceChoices.map { ($0.slotId, $0) })
         slots = (state.draft?.slotRequirements ?? [:]).keys.sorted().map { slotId in
@@ -541,7 +566,8 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 requirement: requirement,
                 optional: slot?.optional ?? false,
                 description: slot?.description,
-                candidates: choicesBySlot[slotId]?.candidates ?? [])
+                candidates: choicesBySlot[slotId]?.candidates ?? [],
+                requesters: requestersForSlot(slotId))
         }
         resourceBindings = state.resourceChoices.sorted { $0.slotId < $1.slotId }.map { choice in
             let selected = state.localBindings?.slots.first { $0.slotId == choice.slotId }
@@ -566,9 +592,13 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 candidates: choice.candidates,
                 selectedCandidateID: selected,
                 status: choice.status,
+                statusLabel: choice.status.rawValue,
                 unavailableExplanation: unavailable,
+                emptyCandidateExplanation:
+                    "No eligible Project resource is available. Engine status: \(choice.status.rawValue). Next action: \(choice.repairAction)",
                 impact: choice.impact,
                 repairAction: choice.repairAction,
+                requesters: requestersForSlot(choice.slotId),
                 accessibilityLabel: "\(choice.slotId), \(choice.status.rawValue), \(capabilities)",
                 accessibilityHint: "\(choice.impact) \(choice.repairAction)")
         }

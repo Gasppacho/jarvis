@@ -105,6 +105,141 @@ final class ProjectResourceGuidanceTests: XCTestCase {
         XCTAssertFalse(missing.impact.isEmpty)
     }
 
+    func testSlotInspectorDerivesRequestersAndCapabilityOptionsFromDraftAndCatalog() throws {
+        let configuration = try decodePortableConfiguration([
+            "apiVersion": "jarvis.dev/project/v1",
+            "kind": "Project",
+            "metadata": ["id": "inspector", "name": "Inspector"],
+            "repositories": [],
+            "slots": [
+                "sourceControl": ["requires": "capability.source"],
+                "agentRuntime": ["requires": "capability.runtime"],
+            ],
+            "commands": [:],
+            "git": [
+                "branchPattern": "agent/{workItemId}-{slug}",
+                "commitStrategy": "conventional", "pushRemote": "origin",
+                "allowForcePush": false,
+            ],
+            "workspace": [
+                "strategy": "git-worktree", "maxConcurrentExecutions": 1,
+                "retainOnFailureDays": 1,
+            ],
+            "modules": [
+                [
+                    "instanceId": "change-provider", "moduleId": "module.change",
+                    "enabled": true, "bindings": ["source": "sourceControl"],
+                ],
+                [
+                    "instanceId": "local-runner", "moduleId": "module.runner",
+                    "enabled": true, "runtimeSlot": "agentRuntime", "bindings": [:],
+                ],
+            ],
+        ])
+        let packages = [
+            try modulePackage(
+                id: "module.change", name: "Change Provider",
+                description: "Publishes source-control changes.",
+                requires: ["capability.shared", "capability.source"]),
+            try modulePackage(
+                id: "module.runner", name: "Local Runner",
+                description: "Runs work on this Mac.",
+                requires: ["capability.runtime", "capability.shared"]),
+        ]
+        var state = ProjectConfigurationState()
+        state.draft = ProjectConfigurationDraft(configuration: configuration, packages: packages)
+        state.resourceChoices = [
+            ProjectResourceBindingChoice(
+                slotId: "sourceControl",
+                requiredCapabilities: ["capability.source"],
+                candidates: [], status: .missing,
+                impact: "Changes cannot be published.",
+                repairAction: "Grant a source-control resource."),
+            ProjectResourceBindingChoice(
+                slotId: "agentRuntime",
+                requiredCapabilities: ["capability.runtime"],
+                candidates: [], status: .incompatible,
+                impact: "Work cannot run.",
+                repairAction: "Grant a compatible runtime."),
+        ]
+
+        let presentation = ProjectDetailPresentation(
+            project: Project(id: "inspector", name: "Inspector", status: .draft,
+                             moduleCount: 2, activeExecutions: 0),
+            detail: nil, state: state, packages: packages)
+
+        XCTAssertEqual(presentation.capabilityOptions, [
+            "capability.runtime", "capability.shared", "capability.source",
+        ])
+        let sourceControl = try XCTUnwrap(presentation.slots.first { $0.id == "sourceControl" })
+        XCTAssertEqual(sourceControl.requesters.map(\.instanceId), ["change-provider"])
+        XCTAssertEqual(sourceControl.requesters.map(\.displayName), ["Change Provider"])
+        XCTAssertEqual(
+            sourceControl.requesters.map(\.description),
+            ["Publishes source-control changes."])
+        let runtime = try XCTUnwrap(presentation.slots.first { $0.id == "agentRuntime" })
+        XCTAssertEqual(runtime.requesters.map(\.instanceId), ["local-runner"])
+        XCTAssertEqual(runtime.requesters.map(\.displayName), ["Local Runner"])
+        XCTAssertEqual(runtime.requesters.map(\.description), ["Runs work on this Mac."])
+        let sourceBinding = try XCTUnwrap(
+            presentation.resourceBindings.first { $0.id == "sourceControl" })
+        XCTAssertEqual(sourceBinding.requesters, sourceControl.requesters)
+        let runtimeBinding = try XCTUnwrap(
+            presentation.resourceBindings.first { $0.id == "agentRuntime" })
+        XCTAssertEqual(runtimeBinding.requesters, runtime.requesters)
+    }
+
+    func testResourceInspectorPresentsEngineGuidanceAndEveryReportedStatus() throws {
+        let statuses: [ProjectResourceBindingStatus] = [
+            .bound, .available, .missing, .inaccessible, .incompatible,
+        ]
+        var state = ProjectConfigurationState()
+        state.resourceChoices = statuses.map { status in
+            ProjectResourceBindingChoice(
+                slotId: status.rawValue,
+                requiredCapabilities: ["capability.\(status.rawValue)"],
+                candidates: [],
+                status: status,
+                impact: "Impact reported for \(status.rawValue).",
+                repairAction: "Repair reported for \(status.rawValue).")
+        }
+
+        let presentation = ProjectDetailPresentation(
+            project: Project(id: "statuses", name: "Statuses", status: .draft,
+                             moduleCount: 0, activeExecutions: 0),
+            detail: nil, state: state, packages: [])
+
+        XCTAssertEqual(
+            presentation.resourceBindings.map(\.statusLabel),
+            statuses.map(\.rawValue).sorted())
+        for resource in presentation.resourceBindings {
+            XCTAssertEqual(resource.impact, "Impact reported for \(resource.statusLabel).")
+            XCTAssertEqual(resource.repairAction, "Repair reported for \(resource.statusLabel).")
+            XCTAssertTrue(resource.emptyCandidateExplanation.contains(resource.statusLabel))
+            XCTAssertTrue(resource.emptyCandidateExplanation.contains(resource.repairAction))
+        }
+    }
+
+    private func modulePackage(
+        id: String, name: String, description: String, requires: [String]
+    ) throws -> ModulePackage {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "moduleId": id,
+            "version": "1.0.0",
+            "displayName": name,
+            "description": description,
+            "categories": [],
+            "consumes": [],
+            "produces": [],
+            "requires": requires,
+            "provides": [],
+            "configurationSchemaRef": "fixture.schema.json",
+            "configurationSchema": ["type": "object", "properties": [:]],
+        ])
+        return ModulePackage(
+            payload: try JSONDecoder().decode(Components.Schemas.ModulePackage.self, from: data))
+    }
+
     private func candidate(
         ref: String, kind: String, displayName: String, capabilities: [String]
     ) throws -> ProjectResourceCandidate {

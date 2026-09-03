@@ -77,6 +77,8 @@ final class ProjectConfigurationTests: XCTestCase {
             })
         let eventChoiceIDs = loaded.compositionGuide?.eventChoices.map(\.id)
         firstConfiguration.editDraft(projectId: imported.id) { $0.name = "Unsaved input" }
+        let portableConfigurationBeforeBinding = try configurationSnapshot(
+            try XCTUnwrap(firstConfiguration.state(for: imported.id).draft))
         let savedBindings = await firstConfiguration.setLocalBinding(
             projectId: imported.id, slotId: "sourceControl", candidate: candidate)
         XCTAssertNotNil(savedBindings)
@@ -85,6 +87,11 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(bindings.projectId, imported.id)
         XCTAssertEqual(bindings.slots.map(\.slotId), ["sourceControl"])
         XCTAssertEqual(firstConfiguration.state(for: imported.id).draft?.name, "Unsaved input")
+        XCTAssertEqual(
+            try configurationSnapshot(
+                try XCTUnwrap(firstConfiguration.state(for: imported.id).draft)),
+            portableConfigurationBeforeBinding,
+            "a Local Binding write must leave the Portable Configuration unchanged")
         XCTAssertEqual(
             firstConfiguration.state(for: imported.id).resourceChoices.first(where: {
                 $0.slotId == "sourceControl"
