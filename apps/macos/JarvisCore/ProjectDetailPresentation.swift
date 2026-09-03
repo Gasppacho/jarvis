@@ -594,8 +594,10 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 status: choice.status,
                 statusLabel: choice.status.rawValue,
                 unavailableExplanation: unavailable,
+                // The repair action already has its own row above this one; repeating it here made
+                // an empty Slot state the same sentence twice.
                 emptyCandidateExplanation:
-                    "No eligible Project resource is available. Engine status: \(choice.status.rawValue). Next action: \(choice.repairAction)",
+                    "No eligible Project resource is available. Engine status: \(choice.status.rawValue).",
                 impact: choice.impact,
                 repairAction: choice.repairAction,
                 requesters: requestersForSlot(choice.slotId),
