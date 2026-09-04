@@ -7,6 +7,7 @@ import {
   type ProjectCompositionValidationPort,
 } from "../../../../packages/project-runtime/src/composition-validator.js";
 import { previewProjectCompositionChoices } from "../../../../packages/project-runtime/src/composition-choices.js";
+import { buildProjectCompositionGraph } from "../../../../packages/project-runtime/src/composition-graph.js";
 import type {
   ImportProjectRequest,
   ProjectRegistry,
@@ -34,6 +35,7 @@ import type { ProjectRow, ProjectStore } from "./store.js";
 import type {
   BindingStatus,
   ProjectCompositionChoices,
+  ProjectCompositionGraph,
   ProjectCompositionReview,
   PortableProjectConfiguration,
   ProjectBindings,
@@ -123,16 +125,18 @@ export class ProjectService implements ProjectRegistry<
 
   validateProject(id: unknown): ProjectValidationReport {
     const project = this.requireProject(id);
-    return this.compositionValidator.validate({
-      projectId: project.id,
-      configuration: project.portableConfig,
-      slotBindings: project.slotBindings,
-      repositoryBinding: {
-        saved: project.bookmarkRef !== null,
-        accessible: this.repositoryAccessibility.isAccessibleDirectory(project.repositoryPath),
-      },
-      grantedResources: this.resourceGrants.grantedToProject(project.id),
-    });
+    return toWireValidationReport(
+      this.compositionValidator.validate({
+        projectId: project.id,
+        configuration: project.portableConfig,
+        slotBindings: project.slotBindings,
+        repositoryBinding: {
+          saved: project.bookmarkRef !== null,
+          accessible: this.repositoryAccessibility.isAccessibleDirectory(project.repositoryPath),
+        },
+        grantedResources: this.resourceGrants.grantedToProject(project.id),
+      }),
+    );
   }
 
   previewCompositionChoices(
@@ -144,21 +148,8 @@ export class ProjectService implements ProjectRegistry<
 
   compositionReview(id: unknown, proposedConfiguration: unknown): ProjectCompositionReview {
     const project = this.requireProject(id);
-    const configuration =
-      proposedConfiguration === undefined
-        ? project.portableConfig
-        : requirePortableProjectConfiguration(proposedConfiguration, this.modules);
+    const { configuration, validation } = this.validateComposition(project, proposedConfiguration);
     const grantedResources = this.resourceGrants.grantedToProject(project.id);
-    const validation = this.compositionValidator.validate({
-      projectId: project.id,
-      configuration,
-      slotBindings: project.slotBindings,
-      repositoryBinding: {
-        saved: project.bookmarkRef !== null,
-        accessible: this.repositoryAccessibility.isAccessibleDirectory(project.repositoryPath),
-      },
-      grantedResources,
-    });
     const composition = previewProjectCompositionChoices(this.modules, {
       projectId: project.id,
       configuration,
@@ -171,8 +162,54 @@ export class ProjectService implements ProjectRegistry<
       projectId: project.id,
       readyToValidate: validation.valid,
       composition,
-      validation,
+      validation: toWireValidationReport(validation),
       resources: resourceChoices(project, configuration, this.modules, grantedResources),
+    };
+  }
+
+  /**
+   * Composition graph read model: the derived, read-only projection the Wizard
+   * and Project Overview consume. Same dual shape as the review: the saved
+   * composition, or a proposed configuration evaluated against the current
+   * Local Bindings. Mutates nothing.
+   */
+  compositionGraph(id: unknown, proposedConfiguration: unknown): ProjectCompositionGraph {
+    const project = this.requireProject(id);
+    const { configuration, validation } = this.validateComposition(project, proposedConfiguration);
+    return buildProjectCompositionGraph(this.modules, {
+      configuration,
+      slotBindings: project.slotBindings,
+      validation,
+    });
+  }
+
+  /**
+   * Resolves the saved or proposed configuration and runs the shared
+   * composition validator once, against the project's current Local Bindings.
+   */
+  private validateComposition(
+    project: ProjectRow,
+    proposedConfiguration: unknown,
+  ): {
+    readonly configuration: StoredPortableProjectConfiguration;
+    readonly validation: ProjectValidationReport;
+  } {
+    const configuration =
+      proposedConfiguration === undefined
+        ? project.portableConfig
+        : requirePortableProjectConfiguration(proposedConfiguration, this.modules);
+    return {
+      configuration,
+      validation: this.compositionValidator.validate({
+        projectId: project.id,
+        configuration,
+        slotBindings: project.slotBindings,
+        repositoryBinding: {
+          saved: project.bookmarkRef !== null,
+          accessible: this.repositoryAccessibility.isAccessibleDirectory(project.repositoryPath),
+        },
+        grantedResources: this.resourceGrants.grantedToProject(project.id),
+      }),
     };
   }
 
@@ -608,6 +645,19 @@ function allocateProjectId(
     if (!store.existsById(candidate)) return candidate;
   }
   throw new EngineError("system.internal-error", 500, "No free project id could be allocated.");
+}
+
+/**
+ * `requestAttempts`/`factDeliveries` are internal-only: the composition graph
+ * projects them directly from the in-process validation report, and the
+ * `ProjectValidationReportV1` wire contract predates them and never declares
+ * them (a struct that does crashes the generated Swift client's synthesized
+ * destructor). Endpoints that send a `ProjectValidationReport` over the wire
+ * strip them first; `compositionGraph` reads the untrimmed report instead.
+ */
+function toWireValidationReport(report: ProjectValidationReport): ProjectValidationReport {
+  const { requestAttempts, factDeliveries, ...wire } = report;
+  return wire;
 }
 
 function repositoryPathError(error: unknown): EngineError {

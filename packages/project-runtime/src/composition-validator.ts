@@ -1,4 +1,6 @@
 import type {
+  ProjectFactDelivery,
+  ProjectRequestAttempt,
   ProjectResourceCandidate,
   StoredPortableProjectConfiguration,
   ProjectValidationFinding,
@@ -68,6 +70,8 @@ export class SavedProjectCompositionValidator implements ProjectCompositionValid
     const candidates = projectResourceCandidates(configuration, modules, project.grantedResources);
     const findings: ProjectValidationFinding[] = [];
     const requestRoutes: ProjectValidationReport["requestRoutes"][number][] = [];
+    const requestAttempts: ProjectRequestAttempt[] = [];
+    const factDeliveries: ProjectFactDelivery[] = [];
     const satisfiedCapabilities: ProjectValidationReport["satisfiedCapabilities"][number][] = [];
 
     if (allInstances.length === 0 || Object.keys(configuration.slots).length === 0) {
@@ -125,6 +129,11 @@ export class SavedProjectCompositionValidator implements ProjectCompositionValid
               candidate.contract.version === produced.version &&
               candidate.contract.kind === produced.kind
             ) {
+              factDeliveries.push({
+                contract: { type: produced.type, version: produced.version, kind: "fact" },
+                producer: instanceTarget(producer),
+                consumer: instanceTarget(candidate.instance),
+              });
               continue;
             }
             findings.push(contractIncompatibleFinding(producer, produced, candidate));
@@ -158,10 +167,21 @@ export class SavedProjectCompositionValidator implements ProjectCompositionValid
               contract.kind === produced.kind,
           );
           if (matching.length === 1) {
-            requestRoutes.push({ ...edge, consumer: instanceTarget(matching[0]!.instance) });
+            const consumer = instanceTarget(matching[0]!.instance);
+            requestRoutes.push({ ...edge, consumer });
+            requestAttempts.push({ ...edge, status: "resolved", consumer });
             continue;
           }
           if (matching.length > 1) {
+            const candidates = matching
+              .map(({ instance }) => instanceTarget(instance))
+              .sort(compareJson);
+            requestAttempts.push({
+              contract: edge.contract,
+              producer: edge.producer,
+              status: "ambiguous",
+              candidates,
+            });
             findings.push({
               code: "project.request-ambiguous",
               severity: "error",
@@ -169,13 +189,16 @@ export class SavedProjectCompositionValidator implements ProjectCompositionValid
               target: {
                 kind: "request-edge",
                 ...edge,
-                candidates: matching
-                  .map(({ instance }) => instanceTarget(instance))
-                  .sort(compareJson),
+                candidates,
               },
             });
             continue;
           }
+          requestAttempts.push({
+            contract: edge.contract,
+            producer: edge.producer,
+            status: "orphaned",
+          });
           const relatedConsumers = scopedConsumers.filter(
             ({ contract }) => contract.type === produced.type,
           );
@@ -339,6 +362,8 @@ export class SavedProjectCompositionValidator implements ProjectCompositionValid
 
     findings.sort(compareJson);
     requestRoutes.sort(compareJson);
+    requestAttempts.sort(compareJson);
+    factDeliveries.sort(compareJson);
     satisfiedCapabilities.sort(compareJson);
     return {
       apiVersion: "jarvis.dev/project-validation/v1",
@@ -346,6 +371,8 @@ export class SavedProjectCompositionValidator implements ProjectCompositionValid
       projectId: project.projectId,
       valid: findings.every((finding) => finding.severity !== "error"),
       requestRoutes,
+      requestAttempts,
+      factDeliveries,
       satisfiedCapabilities,
       findings,
     };

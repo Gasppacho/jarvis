@@ -163,6 +163,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{projectId}/composition-graph": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Returns the Engine-owned composition graph read model for the Project's saved composition, or for the proposed configuration evaluated against the current Local Bindings when a body is supplied. The graph exposes Module Instance nodes, event-contract edges, the capability/slot/binding rail, and the validator's routing decision for every request edge. Read-only: nothing is persisted or mutated. */
+        post: operations["projectCompositionGraph"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{projectId}/activate": {
         parameters: {
             query?: never;
@@ -695,6 +714,92 @@ export interface components {
             composition: components["schemas"]["ProjectCompositionChoicesV1"];
             validation: components["schemas"]["ProjectValidationReportV1"];
             resources: components["schemas"]["ProjectResourceChoices"];
+        };
+        ProjectCompositionGraphV1: {
+            /** @constant */
+            apiVersion: "jarvis.dev/project-composition-graph/v1";
+            /** @constant */
+            kind: "ProjectCompositionGraph";
+            projectId: string;
+            nodes: components["schemas"]["ProjectCompositionGraphNodeV1"][];
+            edges: components["schemas"]["ProjectCompositionGraphEdgeV1"][];
+            rail: components["schemas"]["ProjectCompositionGraphRailItemV1"][];
+            findings: components["schemas"]["ProjectCompositionGraphFindingV1"][];
+        };
+        ProjectCompositionGraphNodeV1: {
+            instanceId: string;
+            moduleId: string;
+            enabled: boolean;
+            /** @description Null while the Module Package is unavailable. */
+            moduleVersion: string | null;
+            /** @description Null while the Module Package is unavailable. */
+            displayName: string | null;
+            findings: string[];
+        };
+        ProjectCompositionGraphEdgeV1: {
+            /** @enum {string} */
+            kind: "request" | "fact";
+            contract: components["schemas"]["ValidationContract"];
+            from: components["schemas"]["ValidationInstanceTarget"];
+            /** @description Resolved request consumer or fact delivery consumer; absent for unresolved requests. */
+            to?: components["schemas"]["ValidationInstanceTarget"];
+            /** @description Present on every request edge; facts are broadcast, not routed. */
+            routing?: {
+                /** @enum {string} */
+                status: "resolved";
+                consumer: components["schemas"]["ValidationInstanceTarget"];
+            } | {
+                /** @enum {string} */
+                status: "orphaned";
+            } | {
+                /** @enum {string} */
+                status: "ambiguous";
+                candidates: components["schemas"]["ValidationInstanceTarget"][];
+            };
+            findings: string[];
+        };
+        ProjectCompositionGraphRailItemV1: {
+            /** @enum {string} */
+            kind: "slot";
+            slot: string;
+            capability: string;
+            binding?: {
+                /** @enum {string} */
+                kind: "connection" | "runtime" | "mcp" | "module-instance" | "engine";
+                ref: string;
+            };
+            /** @enum {string} */
+            state: "bound" | "unbound" | "unresolved";
+            source?: {
+                /** @enum {string} */
+                kind: "connection" | "runtime" | "mcp" | "module-instance" | "engine" | "repository";
+                ref: string;
+            };
+            findings: string[];
+        } | {
+            /** @enum {string} */
+            kind: "module-instance";
+            instanceId: string;
+            capability: string;
+            binding?: string;
+            /** @enum {string} */
+            state: "bound" | "unbound" | "unresolved";
+            source?: {
+                /** @enum {string} */
+                kind: "connection" | "runtime" | "mcp" | "module-instance" | "engine" | "repository";
+                ref: string;
+            };
+            findings: string[];
+        };
+        ProjectCompositionGraphFindingV1: {
+            /** @description Stable address of this finding inside this response. */
+            id: string;
+            /** @enum {unknown} */
+            code: "project.composition-incomplete" | "project.binding-missing" | "project.capability-unresolved" | "project.contract-incompatible" | "project.instance-config-invalid" | "project.module-package-unavailable" | "project.request-ambiguous" | "project.request-orphaned";
+            /** @enum {unknown} */
+            severity: "error" | "warning";
+            message: string;
+            target: components["schemas"]["ProjectFindingTarget"] | components["schemas"]["RequestEdgeFindingTarget"] | components["schemas"]["ContractEdgeFindingTarget"] | components["schemas"]["ModuleInstanceFindingTarget"] | components["schemas"]["SlotFindingTarget"] | components["schemas"]["ModuleCapabilityFindingTarget"] | components["schemas"]["SlotCapabilityFindingTarget"];
         };
         ProjectValidationReportV1: {
             /** @constant */
@@ -1288,6 +1393,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectCompositionReviewV1"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    projectCompositionGraph: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    portableConfig: components["schemas"]["PortableProjectDraft"] | components["schemas"]["PortableProjectConfiguration"];
+                };
+            };
+        };
+        responses: {
+            /** @description The derived composition graph read model. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectCompositionGraphV1"];
                 };
             };
             401: components["responses"]["Unauthorized"];
