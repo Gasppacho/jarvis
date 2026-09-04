@@ -11,6 +11,7 @@ import type {
   StoredPortableProjectConfiguration,
   SuggestedProjectConfig,
 } from "../../../../packages/project-runtime/src/project-types.js";
+import type { ProjectCompositionGraph } from "../../../../packages/project-runtime/src/composition-graph.js";
 
 /** The Local API contract is the source of truth for exposed lifecycle values. */
 export type ProjectStatus = components["schemas"]["ProjectSummary"]["status"];
@@ -56,6 +57,13 @@ export type LocalApiProjectValidationReportContractParity = Assert<
   MutuallyAssignable<Mutable<ProjectValidationReport>, ApiValidationReport>
 >;
 
+type ApiCompositionGraph = components["schemas"]["ProjectCompositionGraphV1"];
+
+/** The graph must stay isomorphic with the generated read model the client consumes. */
+export type LocalApiProjectCompositionGraphContractParity = Assert<
+  MutuallyAssignable<Mutable<ProjectCompositionGraph>, ApiCompositionGraph>
+>;
+
 export interface ProjectSummary {
   readonly id: string;
   readonly name: string;
@@ -91,3 +99,4 @@ export type {
   StoredPortableProjectConfiguration,
   SuggestedProjectConfig,
 } from "../../../../packages/project-runtime/src/project-types.js";
+export type { ProjectCompositionGraph } from "../../../../packages/project-runtime/src/composition-graph.js";

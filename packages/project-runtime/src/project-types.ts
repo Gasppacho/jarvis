@@ -184,6 +184,46 @@ export interface ProjectRequestRoute {
   readonly consumer: ProjectValidationInstanceTarget;
 }
 
+export interface ProjectFactContract extends ProjectValidationContract {
+  readonly kind: "fact";
+}
+
+/** Every configured request attempt with the validator's routing decision. */
+export type ProjectRequestAttemptStatus = "resolved" | "orphaned" | "ambiguous";
+
+/**
+ * Internal-only: never serialized under the `ProjectValidationReportV1` wire
+ * contract, which predates it (embedding it there crashed the generated
+ * Swift client's synthesized destructor — a swift-openapi-generator ARC bug,
+ * unrelated to this shape). The composition graph projects it directly from
+ * the in-process validation report.
+ */
+export type ProjectRequestAttempt =
+  | {
+      readonly contract: ProjectRequestContract;
+      readonly producer: ProjectValidationInstanceTarget;
+      readonly status: "resolved";
+      readonly consumer: ProjectValidationInstanceTarget;
+    }
+  | {
+      readonly contract: ProjectRequestContract;
+      readonly producer: ProjectValidationInstanceTarget;
+      readonly status: "orphaned";
+    }
+  | {
+      readonly contract: ProjectRequestContract;
+      readonly producer: ProjectValidationInstanceTarget;
+      readonly status: "ambiguous";
+      readonly candidates: readonly ProjectValidationInstanceTarget[];
+    };
+
+/** A compatible fact producer to consumer delivery. */
+export interface ProjectFactDelivery {
+  readonly contract: ProjectFactContract;
+  readonly producer: ProjectValidationInstanceTarget;
+  readonly consumer: ProjectValidationInstanceTarget;
+}
+
 export type ProjectSatisfiedCapabilityTarget =
   | { readonly kind: "module-instance"; readonly instanceId: string }
   | { readonly kind: "slot"; readonly slot: string };
@@ -251,6 +291,15 @@ export interface ProjectValidationReport {
   readonly projectId: string;
   readonly valid: boolean;
   readonly requestRoutes: readonly ProjectRequestRoute[];
+  /**
+   * Every configured request attempt with its routing decision, for the
+   * composition graph to project. Always populated by this engine; optional
+   * only so wire responses can omit it — see `toWireValidationReport` in
+   * `apps/engine/src/projects/service.ts`.
+   */
+  readonly requestAttempts?: readonly ProjectRequestAttempt[];
+  /** Compatible fact deliveries (broadcast), for the composition graph to project. Always populated; see `requestAttempts`. */
+  readonly factDeliveries?: readonly ProjectFactDelivery[];
   readonly satisfiedCapabilities: readonly ProjectSatisfiedCapability[];
   readonly findings: readonly ProjectValidationFinding[];
 }
