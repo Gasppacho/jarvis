@@ -1001,7 +1001,7 @@ private struct WireProjectCompositionEventChoice: Decodable {
     let routing: Routing
 }
 
-private func wireString<Value: Encodable>(_ value: Value) -> String {
+func wireString<Value: Encodable>(_ value: Value) -> String {
     guard let data = try? JSONEncoder().encode(value),
         let decoded = try? JSONDecoder().decode(String.self, from: data)
     else { preconditionFailure("Generated string value drifted") }

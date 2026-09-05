@@ -1,0 +1,42 @@
+mission: MISSION-0017
+ticket: 51
+team:
+  - role: repo-analyst
+    task: >
+      Read docs/product/UX.md "Graphe émergent" → "Représentation retenue" for the shape #50 retained,
+      packages/project-runtime/src/composition-graph.ts for what the read model carries,
+      apps/macos/JarvisCore/ProjectDetailPresentation.swift for how this repo maps an API response to
+      testable presentation rows, ProjectConfigurationModel.swift for how a Wizard step fetches from
+      the Local API, ProjectDetailView.swift around its validationReport section for where the list
+      belongs, and ProjectValidationTests.swift for the existing XCTest style. Report the row model to
+      build, where it lives, and how the Wizard obtains the graph. Read nothing under
+      apps/macos/.build, node_modules or dist. Write no production code.
+  - role: implementer
+    task: >
+      Check the GUI session FIRST with `ioreg -n Root -d1 -a | grep -A1 CGSSessionScreenIsLocked`;
+      <true/> means stop and report before building. Build the hierarchical outline row model in
+      apps/macos/JarvisCore, mapping ProjectCompositionGraphV1 to parent Module Instance rows and
+      child contract/capability rows, each carrying stable identifier, contract version, routing
+      status and applicable findings, and each state named in text alongside its icon. Qualify every
+      row id by Module Instance, role and index — a non-unique id duplicated a row in MISSION-0016's
+      prototype. Render it in the Wizard from ProjectDetailView.swift. Recompute no routing, no
+      consumer, no compatibility in Swift.
+  - role: test-engineer
+    task: >
+      Add XCTest in apps/macos/JarvisAppTests asserting the mapping from read model to list rows for
+      valid, incomplete and ambiguous compositions: parent/child structure, stable identifiers,
+      contract version, each routing status (resolved, broadcast, orphaned, ambiguous) with its text
+      label, the rail's bound/unresolved/unbound states, disabled instances, finding references, row
+      ordering matching the read model, and row id uniqueness across the whole list.
+  - role: reviewer
+    task: >
+      Build and launch the packaged app, capture with `screencapture -x -o` into
+      .agentic/missions/MISSION-0017/reports/ a composition showing a resolved route and one showing
+      an orphaned or ambiguous request, each proving the state is readable in text. Recapture rather
+      than accept a shot that does not show the changed surface; delete any capture carrying personal
+      information and report it. Reap orphaned xctest / swift-test processes, run `pnpm verify` in
+      full and report each stage with its actual result — never attach with `tail -f`, poll a bounded
+      loop instead. Stage explicit paths only, never `git add -A`. Commit on
+      agent/51-composition-list, merge --no-ff into main, re-run pnpm verify on merged main, push as a
+      plain fast-forward, confirm origin/main equals local main. Create, edit, label, comment on or
+      close NO GitHub issue. Write reports/review-report.md and reports/retro.md.

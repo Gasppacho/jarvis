@@ -448,6 +448,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
     public let deletionConfirmation: DeletionConfirmation
     public let reviewRows: [ReviewRow]
     public let validation: Validation
+    public let compositionOutline: ProjectCompositionOutline?
     public let isSaveEnabled: Bool
     public let isReadyForValidation: Bool
 
@@ -688,6 +689,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         validation = Self.validation(
             from: state.validation,
             selectedProjectId: project.id)
+        compositionOutline = state.compositionGraph.map(ProjectCompositionOutline.init(graph:))
         deletionConfirmation = DeletionConfirmation(
             title: "Delete “\(project.name)”?",
             message:

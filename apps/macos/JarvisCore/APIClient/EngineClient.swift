@@ -279,6 +279,33 @@ public struct EngineClient: Sendable {
         }
     }
 
+    public func fetchProjectCompositionGraph(
+        projectId: String,
+        portableConfig: Components.Schemas.PortableProjectConfiguration? = nil
+    ) async throws -> ProjectCompositionGraph {
+        let operation = "POST /v1/projects/\(projectId)/composition-graph"
+        let body: Operations.projectCompositionGraph.Input.Body?
+        if let portableConfig {
+            let payload: Operations.projectCompositionGraph.Input.Body.jsonPayload.portableConfigPayload =
+                .PortableProjectConfiguration(portableConfig)
+            body = .json(.init(portableConfig: payload))
+        } else {
+            body = nil
+        }
+        let output = try await underlying.projectCompositionGraph(
+            .init(path: .init(projectId: projectId), body: body))
+        switch output {
+        case .ok(let ok):
+            return ProjectCompositionGraph(payload: try ok.body.json)
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
     public func generateProjectValidationReport(projectId: String) async throws
         -> ProjectValidationReport
     {
