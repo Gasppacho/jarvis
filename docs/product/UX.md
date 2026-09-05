@@ -195,7 +195,7 @@ Project Detail expose l'action destructive `Delete Project…`. Elle ouvre une c
 
 ## Graphe émergent
 
-Le graphe est dérivé des manifests et instances actives. Il n'est pas un éditeur de workflow impératif.
+Le graphe est dérivé des manifests et instances actives. Il n'est pas un éditeur de workflow impératif. Cette vue reste une prévisualisation de configuration : #18 conserve la visibilité runtime/exécution et l'annulation.
 
 ```text
 [GitHub]
@@ -211,13 +211,32 @@ Le graphe est dérivé des manifests et instances actives. Il n'est pas un édit
     └─ scm.change-request.created
 ```
 
-États visuels :
+États visuels, chacun distingué par une icône et un texte plutôt que par la seule couleur :
 
-- chemin valide ;
-- request orpheline ;
-- plusieurs consommateurs illégaux ;
-- module désactivé ;
-- contrat incompatible.
+- chemin valide (icône de succès, « Resolved → \<consumer\> » pour une Request routée ou « Broadcast → \<consumer\> » pour un Fact diffusé) ;
+- request orpheline (icône d'avertissement, « Orphaned — no consumer ») ;
+- plusieurs consommateurs illégaux (icône d'ambiguïté, « Ambiguous — \<candidats\> ») ;
+- module désactivé (badge « Disabled ») ;
+- contrat incompatible ;
+- capability ou Slot non résolue (icône d'avertissement, état `bound`/`unresolved`/`unbound` nommé en toutes lettres sur le rail).
+
+### Représentation retenue
+
+Cette décision vient d'une comparaison de trois prototypes SwiftUI structurellement différents, tous alimentés par les mêmes fixtures `jarvis.dev/project-composition-graph/v1` capturées depuis le harness Engine (composition valide, Request orpheline, Request ambiguë) :
+
+- **Flow map** : cartes de Module Instance de gauche à droite, liste des Events avec leur contrat et leur statut de routage, rail de capability/Slot en bande secondaire — la grammaire que #28 propose de battre ;
+- **Hierarchical outline** : chaque Module Instance en ligne parente, ses contrats produits et consommés ainsi que ses capabilities requises en lignes filles, le statut de routage porté par la ligne fille ;
+- **Routing table** : une ligne par contrat Request nommant son producer, son consumer résolu ou son échec, la version du contrat et le finding applicable.
+
+| Prototype | Structure | Lisibilité du routage | Comportement en densité | Clavier, VoiceOver et coût de l'équivalent texte/liste |
+|---|---|---|---|---|
+| Flow map | Cartes de Module Instance, liste d'edges séparée, rail de capability en bande | Le statut de routage exige un aller-retour entre la carte et la ligne d'edge correspondante ; aucun trait ne relie visuellement les cartes | Cartes, edges et rail défilent chacun sur un axe différent ; sans connexion dessinée entre les cartes, la mise en page dégénère en trois listes non reliées dès que la composition grossit | Trois zones de défilement d'orientations différentes rendent l'ordre clavier et VoiceOver imprévisible ; structure la plus éloignée de la liste texte que #51 doit de toute façon construire |
+| Hierarchical outline | Module Instance en ligne parente, Events produits/consommés et capabilities en lignes filles | Le statut de routage est porté directement par la ligne fille concernée, sans recherche croisée | Liste native qui défile verticalement ; une identité de ligne non unique par Module Instance a provoqué un doublon d'affichage sur la fixture Ambiguous, corrigé en qualifiant chaque ligne par Module Instance, rôle et index | Ordre clavier et VoiceOver strictement descendant, identique au split view déjà retenu pour la grammaire de composition guidée ; le contenu affiché est déjà la représentation texte/liste |
+| Routing table | Une ligne par contrat Request : producer, consumer résolu ou échec, version, finding | Statut de routage directement lisible par ligne, la plus compacte des trois | `Table` native, la plus robuste à la densité, mais les Facts diffusés ne figurent dans aucune ligne : la table ne montre qu'une partie du graphe de composition | Ordre clavier et VoiceOver natif ligne/colonne ; coût texte/liste nul, mais au prix de rendre invisibles les événements diffusés |
+
+Le deuxième prototype est retenu : il montre l'intégralité du graphe de composition — Module Instances, Requests routées, Facts diffusés et capabilities — sans recherche croisée pour lire un statut, avec l'ordre clavier/VoiceOver descendant déjà retenu pour la grammaire de composition guidée, et son contenu constitue déjà la représentation texte/liste que #51 doit fournir. Le flow map ne dessine aucune connexion réelle entre les cartes une fois construit sur le read model : il dégénère en trois listes non reliées, moins lisibles et plus coûteuses à faire correspondre à la liste texte. Le routing table reste le plus compact pour les seules Requests, mais omet entièrement les Facts diffusés du graphe de composition, ce qui ne convient pas à une prévisualisation qui doit rester complète. Les statuts `resolved`, `broadcast`, `orphaned` et `ambiguous` ainsi que les états `bound`/`unresolved`/`unbound` du rail viennent tels quels de la réponse `POST /v1/projects/{projectId}/composition-graph` ; Swift ne recalcule ni consumer ni compatibilité.
+
+Les trois prototypes ont été comparés depuis le build empaqueté (`pnpm build:app`, captures `screencapture` sur les fixtures Orphaned et Ambiguous), puis supprimés avec leur point d'entrée temporaire une fois la comparaison faite ; aucune `View` prototype ne devient une surface de production.
 
 ## Executions
 
