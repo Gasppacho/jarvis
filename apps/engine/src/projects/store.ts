@@ -2,9 +2,26 @@ import type Database from "better-sqlite3";
 import type { Clock } from "../../../../packages/kernel/src/clock.js";
 import type {
   ProjectBindings,
+  ProjectModuleInstanceConfiguration,
+  ProjectRequestRoute,
   StoredPortableProjectConfiguration,
 } from "../../../../packages/project-runtime/src/project-types.js";
 import type { ProjectStatus } from "./types.js";
+
+/**
+ * The immutable Resolved Project (ticket #53): the frozen composition, its
+ * Module Instances, its Local Bindings and its resolved request routes, as
+ * they were at the moment activation succeeded.
+ */
+export interface ResolvedProjectSnapshot {
+  readonly composition: StoredPortableProjectConfiguration;
+  readonly moduleInstances: readonly ProjectModuleInstanceConfiguration[];
+  readonly bindings: {
+    readonly slots: ProjectBindings["slots"];
+    readonly repository: { readonly path: string; readonly bookmarkRef: string | null };
+  };
+  readonly requestRoutes: readonly ProjectRequestRoute[];
+}
 
 export interface ProjectRow {
   readonly id: string;
@@ -123,6 +140,49 @@ export class ProjectStore {
 
   transaction<Result>(operation: () => Result): Result {
     return this.db.transaction(operation)();
+  }
+
+  /**
+   * Freezes the Resolved Project for `compositionFingerprint` and moves the
+   * Project to `active`, atomically. A repeat activation carrying the same
+   * fingerprint as the one already recorded writes no second Resolved
+   * Project row — only `projects.status`/`updated_at` are touched again.
+   */
+  activateProject(
+    projectId: string,
+    compositionFingerprint: string,
+    snapshot: ResolvedProjectSnapshot,
+  ): ProjectRow | undefined {
+    return this.db.transaction(() => {
+      const existing = this.db
+        .prepare(
+          "SELECT composition_fingerprint FROM project_resolved_compositions WHERE project_id = ?",
+        )
+        .get(projectId) as { composition_fingerprint: string } | undefined;
+      const now = this.clock.now().toISOString();
+      if (existing === undefined || existing.composition_fingerprint !== compositionFingerprint) {
+        this.db
+          .prepare(
+            `INSERT INTO project_resolved_compositions
+               (project_id, composition_fingerprint, resolved_project, activated_at)
+             VALUES (@projectId, @fingerprint, @snapshot, @now)
+             ON CONFLICT(project_id) DO UPDATE SET
+               composition_fingerprint = excluded.composition_fingerprint,
+               resolved_project = excluded.resolved_project,
+               activated_at = excluded.activated_at`,
+          )
+          .run({
+            projectId,
+            fingerprint: compositionFingerprint,
+            snapshot: JSON.stringify(snapshot),
+            now,
+          });
+      }
+      const result = this.db
+        .prepare(`UPDATE projects SET status = 'active', updated_at = ? WHERE id = ?`)
+        .run(now, projectId);
+      return result.changes === 0 ? undefined : this.findById(projectId);
+    })();
   }
 
   replaceConfiguration(

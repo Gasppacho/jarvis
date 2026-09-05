@@ -302,6 +302,16 @@ export interface ProjectValidationReport {
   readonly factDeliveries?: readonly ProjectFactDelivery[];
   readonly satisfiedCapabilities: readonly ProjectSatisfiedCapability[];
   readonly findings: readonly ProjectValidationFinding[];
+  /**
+   * Stable digest of exactly the Portable Configuration and Local Bindings
+   * this report describes (ticket #53). `activateProject` takes it back and
+   * refuses activation when it no longer matches what is saved right now,
+   * instead of silently revalidating a stale report. Always populated by this
+   * engine; optional on the wire contract only so a client or fixture
+   * predating this ticket need not supply it — see `requestAttempts` above
+   * for the identical precedent.
+   */
+  readonly compositionFingerprint?: string;
 }
 
 export interface ProjectCompositionChoiceInstance {

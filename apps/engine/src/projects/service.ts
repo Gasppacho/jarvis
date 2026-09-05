@@ -9,6 +9,7 @@ import {
 import { previewProjectCompositionChoices } from "../../../../packages/project-runtime/src/composition-choices.js";
 import { buildProjectCompositionGraph } from "../../../../packages/project-runtime/src/composition-graph.js";
 import type {
+  ActivateProjectRequest,
   ImportProjectRequest,
   ProjectRegistry,
   ReplaceProjectBindingsRequest,
@@ -31,7 +32,7 @@ import {
 } from "./contracts.js";
 import type { ProjectConfigurationWriter } from "./repository-config-writer.js";
 import type { RepositoryAccessibilityPort } from "./repository-accessibility.js";
-import type { ProjectRow, ProjectStore } from "./store.js";
+import type { ProjectRow, ProjectStore, ResolvedProjectSnapshot } from "./store.js";
 import type {
   BindingStatus,
   ProjectCompositionChoices,
@@ -133,10 +134,84 @@ export class ProjectService implements ProjectRegistry<
         repositoryBinding: {
           saved: project.bookmarkRef !== null,
           accessible: this.repositoryAccessibility.isAccessibleDirectory(project.repositoryPath),
+          path: project.repositoryPath,
+          bookmarkRef: project.bookmarkRef,
         },
         grantedResources: this.resourceGrants.grantedToProject(project.id),
       }),
     );
+  }
+
+  /**
+   * Activation guard (ticket #53): the recomputed report's `compositionFingerprint`
+   * must match the one the client supplies, proving it describes the composition
+   * and Local Bindings saved right now rather than a stale one — never silently
+   * revalidated. On success it freezes the immutable Resolved Project and moves
+   * the Project to `active`; a rejection leaves durable state untouched, and
+   * repeating activation of an unchanged composition is idempotent.
+   */
+  activateProject(request: ActivateProjectRequest): ProjectSummary {
+    const project = this.requireProject(request.projectId);
+    const report = this.compositionValidator.validate({
+      projectId: project.id,
+      configuration: project.portableConfig,
+      slotBindings: project.slotBindings,
+      repositoryBinding: {
+        saved: project.bookmarkRef !== null,
+        accessible: this.repositoryAccessibility.isAccessibleDirectory(project.repositoryPath),
+        path: project.repositoryPath,
+        bookmarkRef: project.bookmarkRef,
+      },
+      grantedResources: this.resourceGrants.grantedToProject(project.id),
+    });
+    // Optional only on the wire contract, for a fixture predating ticket #53
+    // (see `ProjectValidationReport.compositionFingerprint`); this engine's own
+    // validator always sets it.
+    const currentFingerprint = report.compositionFingerprint;
+    if (currentFingerprint === undefined) {
+      throw new EngineError(
+        "system.internal-error",
+        500,
+        "The composition validator produced no compositionFingerprint.",
+      );
+    }
+
+    const supplied = request.compositionFingerprint;
+    if (typeof supplied !== "string" || supplied.trim() === "") {
+      throw activationRejected(
+        "project.activation-not-validated",
+        project.id,
+        "has no successful validation report for its current composition",
+      );
+    }
+    if (supplied !== currentFingerprint) {
+      throw activationRejected(
+        "project.activation-report-stale",
+        project.id,
+        "changed its configuration or Local Bindings since the supplied validation report",
+      );
+    }
+    if (!report.valid) {
+      throw activationRejected(
+        "project.activation-not-validated",
+        project.id,
+        "has no successful validation report for its current composition",
+      );
+    }
+
+    const configuration = project.portableConfig;
+    const snapshot: ResolvedProjectSnapshot = {
+      composition: configuration,
+      moduleInstances: "modules" in configuration ? configuration.modules : [],
+      bindings: {
+        slots: project.slotBindings,
+        repository: { path: project.repositoryPath, bookmarkRef: project.bookmarkRef },
+      },
+      requestRoutes: report.requestRoutes,
+    };
+    const updated = this.store.activateProject(project.id, currentFingerprint, snapshot);
+    if (updated === undefined) throw notFound(project.id);
+    return toSummary(updated);
   }
 
   previewCompositionChoices(
@@ -207,6 +282,8 @@ export class ProjectService implements ProjectRegistry<
         repositoryBinding: {
           saved: project.bookmarkRef !== null,
           accessible: this.repositoryAccessibility.isAccessibleDirectory(project.repositoryPath),
+          path: project.repositoryPath,
+          bookmarkRef: project.bookmarkRef,
         },
         grantedResources: this.resourceGrants.grantedToProject(project.id),
       }),
@@ -673,6 +750,18 @@ function notFound(id: string): EngineError {
     "project.not-found",
     404,
     `No project with id "${id}" in this installation.`,
+  );
+}
+
+function activationRejected(
+  code: "project.activation-not-validated" | "project.activation-report-stale",
+  projectId: string,
+  reason: string,
+): EngineError {
+  return new EngineError(
+    code,
+    409,
+    `Project "${projectId}" ${reason}. Request a fresh POST /v1/projects/${projectId}/validation-report and retry activation with its compositionFingerprint.`,
   );
 }
 

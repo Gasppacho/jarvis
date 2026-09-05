@@ -849,6 +849,8 @@ export interface components {
                 message: string;
                 target: components["schemas"]["ProjectFindingTarget"] | components["schemas"]["RequestEdgeFindingTarget"] | components["schemas"]["ContractEdgeFindingTarget"] | components["schemas"]["ModuleInstanceFindingTarget"] | components["schemas"]["SlotFindingTarget"] | components["schemas"]["ModuleCapabilityFindingTarget"] | components["schemas"]["SlotCapabilityFindingTarget"];
             }[];
+            /** @description Stable digest of exactly the Portable Configuration and Local Bindings this report describes. POST /v1/projects/{projectId}/activate takes it back and refuses activation when it no longer matches what is saved right now, instead of silently revalidating a stale report. */
+            compositionFingerprint?: string;
         };
         ModuleInstance: {
             instanceId: string;
@@ -1440,7 +1442,14 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The `compositionFingerprint` from a successful `ProjectValidationReportV1` for this Project's composition saved right now. */
+                    compositionFingerprint: string;
+                };
+            };
+        };
         responses: {
             /** @description Activated project. */
             200: {

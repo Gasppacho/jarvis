@@ -28,6 +28,12 @@ export interface UpdateRepositoryBindingRequest {
   readonly bookmarkRef: unknown;
 }
 
+export interface ActivateProjectRequest {
+  readonly projectId: unknown;
+  /** The `compositionFingerprint` from a `ProjectValidationReportV1`. */
+  readonly compositionFingerprint: unknown;
+}
+
 /** Read-only repository inspection remains available while persistence is degraded. */
 export interface RepositoryDiscoveryPort<Discovery> {
   discoverRepository(root: unknown): Discovery;
@@ -39,6 +45,7 @@ export interface ProjectRegistry<Summary, Detail, Bindings, ValidationReport> {
   listProjects(): Summary[];
   getProject(id: unknown): Detail;
   validateProject(id: unknown): ValidationReport;
+  activateProject(request: ActivateProjectRequest): Summary;
   deleteProject(id: unknown): void;
   updateRepositoryBinding(request: UpdateRepositoryBindingRequest): Detail;
   replaceProjectConfiguration(request: ReplaceProjectConfigurationRequest): Detail;

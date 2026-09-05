@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   ProjectFactDelivery,
   ProjectRequestAttempt,
@@ -51,7 +52,14 @@ export interface SavedProjectCompositionValidationInput {
   readonly slotBindings: Readonly<
     Record<string, { readonly kind: ProjectResourceCandidate["kind"]; readonly ref: string }>
   >;
-  readonly repositoryBinding: { readonly saved: boolean; readonly accessible: boolean };
+  readonly repositoryBinding: {
+    readonly saved: boolean;
+    readonly accessible: boolean;
+    /** Local Binding: the canonical repository path, for the composition fingerprint. */
+    readonly path: string;
+    /** Local Binding: the shell-owned bookmark reference, for the composition fingerprint. */
+    readonly bookmarkRef: string | null;
+  };
   readonly grantedResources: readonly ProjectResourceCandidate[];
 }
 
@@ -375,8 +383,39 @@ export class SavedProjectCompositionValidator implements ProjectCompositionValid
       factDeliveries,
       satisfiedCapabilities,
       findings,
+      compositionFingerprint: fingerprintComposition(project),
     };
   }
+}
+
+/**
+ * A stable digest of exactly the saved state a validation report describes:
+ * the Portable Configuration and the Local Bindings (slot bindings and the
+ * repository binding). Global resource grants are deliberately excluded —
+ * ticket #53's activation guard reacts only to configuration or Local
+ * Bindings changing, never to the global registries the report also reads.
+ */
+function fingerprintComposition(project: SavedProjectCompositionValidationInput): string {
+  const canonical = canonicalizeJson({
+    configuration: project.configuration,
+    slotBindings: project.slotBindings,
+    repository: {
+      path: project.repositoryBinding.path,
+      bookmarkRef: project.repositoryBinding.bookmarkRef,
+    },
+  });
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+}
+
+/** Recursively sorts object keys so semantically identical input always serializes identically. */
+function canonicalizeJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeJson);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+      .map(([key, child]) => [key, canonicalizeJson(child)]),
+  );
 }
 
 function contractIncompatibleFinding(

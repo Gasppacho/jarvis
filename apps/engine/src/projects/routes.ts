@@ -93,6 +93,18 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
     return reply.code(200).send(service.validateProject(params?.projectId));
   });
 
+  app.post("/v1/projects/:projectId/activate", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    const body = request.body as { compositionFingerprint?: unknown } | undefined;
+    return reply.code(200).send(
+      service.activateProject({
+        projectId: params?.projectId,
+        compositionFingerprint: body?.compositionFingerprint,
+      }),
+    );
+  });
+
   app.post("/v1/projects/:projectId/composition-choices", async (request, reply) => {
     const service = requireDatabaseReady(deps);
     const params = request.params as { projectId?: unknown } | undefined;

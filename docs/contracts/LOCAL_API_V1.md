@@ -38,7 +38,21 @@ fermée reste exactement `{valid, issues}`. `issues` projette les `findings` ave
 Les nouveaux clients appellent `POST /v1/projects/{projectId}/validation-report`. Cette
 opération distincte évite d'élargir silencieusement la réponse historique et renvoie le
 schéma explicite `ProjectValidationReportV1`, identifié dans le document par
-`apiVersion: jarvis.dev/project-validation/v1` et `kind: ProjectValidationReport`.
+`apiVersion: jarvis.dev/project-validation/v1` et `kind: ProjectValidationReport`. Le
+rapport porte aussi `compositionFingerprint`, un condensé stable de la Portable
+Configuration et des Local Bindings exacts qu'il décrit.
+
+`POST /v1/projects/{projectId}/activate` (ticket #53) n'accepte que le
+`compositionFingerprint` d'un rapport vert pour la composition sauvegardée à l'instant de
+l'appel. L'Engine recalcule ce condensé depuis l'état durable courant et refuse
+l'activation sans jamais revalider silencieusement : `project.activation-not-validated`
+quand aucun rapport réussi n'existe pour la composition courante, et
+`project.activation-report-stale` quand la configuration ou les Local Bindings ont changé
+depuis ce rapport. Un succès crée le Resolved Project immuable — composition figée,
+Module Instances, bindings et routes de requests résolues — et fait passer le Project à
+`active`; répéter l'activation d'une composition inchangée est idempotent et ne crée pas
+un second Resolved Project. Aucune subscription ni Event ne sont créés par cette
+opération.
 
 `POST /v1/projects/{projectId}/composition-choices` prévisualise, sans mutation, les
 Events déclarés par la configuration sauvegardée ou par une `portableConfig` proposée.
