@@ -317,6 +317,22 @@ paths:
       - $ref: "#/components/parameters/ProjectId"
     post:
       operationId: activateProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [compositionFingerprint]
+              properties:
+                compositionFingerprint:
+                  type: string
+                  pattern: "^[0-9a-f]{64}$"
+                  description: >-
+                    The `compositionFingerprint` from a successful
+                    `ProjectValidationReportV1` for this Project's composition
+                    saved right now.
       responses:
         "200":
           description: Activated project.
@@ -1602,6 +1618,10 @@ components:
                   - $ref: "#/components/schemas/SlotFindingTarget"
                   - $ref: "#/components/schemas/ModuleCapabilityFindingTarget"
                   - $ref: "#/components/schemas/SlotCapabilityFindingTarget"
+        compositionFingerprint:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: "Stable digest of exactly the Portable Configuration and Local Bindings this report describes. POST /v1/projects/{projectId}/activate takes it back and refuses activation when it no longer matches what is saved right now, instead of silently revalidating a stale report."
     ModuleInstance:
       type: object
       required: [instanceId, moduleId, version, enabled, status]

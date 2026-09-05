@@ -417,6 +417,7 @@ capabilities:
         },
       ],
       findings: [],
+      compositionFingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
     expect(
       await (
@@ -2278,5 +2279,281 @@ capabilities:
     } finally {
       await rm(dataRoot, { recursive: true, force: true });
     }
+  });
+
+  describe("project activation (#53)", () => {
+    /** A trivially green composition: no PUT to /bindings, no resource grant needed. */
+    async function setupGreenProject(dataRoot?: string) {
+      const runtimeRoot = runtimeWithEmbeddedValidComposition();
+      const engine = await start({
+        enginePath: join(runtimeRoot, "engine.bundle.mjs"),
+        ...(dataRoot === undefined ? {} : { dataRoot }),
+      });
+      const root = fixture(() => makeNodeRepositoryFixture());
+      const created = (await (
+        await importProject(engine, {
+          repositoryPath: root,
+          portableConfig: embeddedPortableConfig([automationInstance(), workerInstance()]),
+        })
+      ).json()) as { id: string };
+      const report = (await (
+        await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+      ).json()) as {
+        valid: boolean;
+        compositionFingerprint: string;
+        requestRoutes: unknown[];
+        findings: unknown[];
+      };
+      expect(report.valid, JSON.stringify(report.findings)).toBe(true);
+      return { engine, projectId: created.id, report, repositoryPath: root };
+    }
+
+    const activate = (engine: Harness, projectId: string, body: Record<string, unknown>) =>
+      engine.call(`/v1/projects/${projectId}/activate`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    function tableNames(dataRoot: string): string[] {
+      const database = new Database(join(dataRoot, "jarvis.sqlite"));
+      try {
+        return (
+          database.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as {
+            name: string;
+          }[]
+        )
+          .map((row) => row.name)
+          .sort();
+      } finally {
+        database.close();
+      }
+    }
+
+    function resolvedCompositionRows(
+      dataRoot: string,
+      projectId: string,
+    ): { composition_fingerprint: string; resolved_project: string; activated_at: string }[] {
+      const database = new Database(join(dataRoot, "jarvis.sqlite"));
+      try {
+        return database
+          .prepare("SELECT * FROM project_resolved_compositions WHERE project_id = ?")
+          .all(projectId) as {
+          composition_fingerprint: string;
+          resolved_project: string;
+          activated_at: string;
+        }[];
+      } finally {
+        database.close();
+      }
+    }
+
+    it("rejects activation with no successful validation report", async () => {
+      const engine = await start();
+      const root = fixture(() => makeNodeRepositoryFixture());
+      const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
+        id: string;
+      };
+
+      const response = await activate(engine, created.id, {});
+      expect(response.status).toBe(409);
+      expect((await response.json()) as unknown).toMatchObject({
+        error: { code: "project.activation-not-validated" },
+      });
+      const detail = (await (await engine.call(`/v1/projects/${created.id}`)).json()) as {
+        status: string;
+      };
+      expect(detail.status).toBe("draft");
+    });
+
+    it("rejects a compositionFingerprint that does not describe the composition saved right now", async () => {
+      const engine = await start();
+      const root = fixture(() => makeNodeRepositoryFixture());
+      const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
+        id: string;
+      };
+
+      const response = await activate(engine, created.id, {
+        compositionFingerprint: "a".repeat(64),
+      });
+      expect(response.status).toBe(409);
+      expect((await response.json()) as unknown).toMatchObject({
+        error: { code: "project.activation-report-stale" },
+      });
+    });
+
+    it("activates a Project whose current composition has a successful validation report", async () => {
+      const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-project-activate-"));
+      try {
+        const { engine, projectId, report } = await setupGreenProject(dataRoot);
+
+        const response = await activate(engine, projectId, {
+          compositionFingerprint: report.compositionFingerprint,
+        });
+        const body = (await response.json()) as { id: string; status: string };
+        expect(response.status, JSON.stringify(body)).toBe(200);
+        expect(validateSummary(body), explain(validateSummary)).toBe(true);
+        expect(body).toMatchObject({ id: projectId, status: "active" });
+
+        const detail = (await (await engine.call(`/v1/projects/${projectId}`)).json()) as {
+          status: string;
+        };
+        expect(detail.status).toBe("active");
+
+        await engine.dispose();
+        const rows = resolvedCompositionRows(dataRoot, projectId);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.composition_fingerprint).toBe(report.compositionFingerprint);
+        const snapshot = JSON.parse(rows[0]!.resolved_project) as {
+          composition: { modules: { instanceId: string }[] };
+          moduleInstances: { instanceId: string }[];
+          bindings: { slots: unknown; repository: { path: string; bookmarkRef: string | null } };
+          requestRoutes: unknown[];
+        };
+        expect(snapshot.moduleInstances.map((instance) => instance.instanceId).sort()).toEqual([
+          "automation-rules",
+          "request-worker",
+        ]);
+        expect(snapshot.requestRoutes).toEqual(report.requestRoutes);
+        expect(snapshot.bindings.repository.bookmarkRef).toBeNull();
+      } finally {
+        await rm(dataRoot, { recursive: true, force: true });
+      }
+    });
+
+    it("is idempotent: repeated activation of an unchanged composition writes no second Resolved Project", async () => {
+      const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-project-activate-idempotent-"));
+      try {
+        const { engine, projectId, report } = await setupGreenProject(dataRoot);
+
+        const first = await activate(engine, projectId, {
+          compositionFingerprint: report.compositionFingerprint,
+        });
+        expect(first.status).toBe(200);
+        const firstBody = await first.json();
+
+        const second = await activate(engine, projectId, {
+          compositionFingerprint: report.compositionFingerprint,
+        });
+        expect(second.status).toBe(200);
+        expect(await second.json()).toEqual(firstBody);
+
+        await engine.dispose();
+        const rows = resolvedCompositionRows(dataRoot, projectId);
+        expect(rows).toHaveLength(1);
+      } finally {
+        await rm(dataRoot, { recursive: true, force: true });
+      }
+    });
+
+    it("rejects activation once the composition changed after the supplied report, leaving durable state intact", async () => {
+      const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-project-activate-stale-config-"));
+      try {
+        const { engine, projectId, report } = await setupGreenProject(dataRoot);
+
+        const beforeConfig = (await (await engine.call(`/v1/projects/${projectId}`)).json()) as {
+          portableConfig: Record<string, unknown>;
+        };
+        const proposed = structuredClone(beforeConfig.portableConfig);
+        (proposed["modules"] as Record<string, unknown>[]).push({
+          ...structuredClone(workerInstance("other-worker")),
+        });
+        const saved = await engine.call(`/v1/projects/${projectId}/configuration`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ portableConfig: proposed, writeToRepository: false }),
+        });
+        expect(saved.status).toBe(200);
+
+        const response = await activate(engine, projectId, {
+          compositionFingerprint: report.compositionFingerprint,
+        });
+        expect(response.status).toBe(409);
+        expect((await response.json()) as unknown).toMatchObject({
+          error: { code: "project.activation-report-stale" },
+        });
+
+        const detail = (await (await engine.call(`/v1/projects/${projectId}`)).json()) as {
+          status: string;
+        };
+        expect(detail.status).toBe("draft");
+        await engine.dispose();
+        expect(resolvedCompositionRows(dataRoot, projectId)).toHaveLength(0);
+      } finally {
+        await rm(dataRoot, { recursive: true, force: true });
+      }
+    });
+
+    it("rejects activation once Local Bindings changed after the supplied report, leaving durable state intact", async () => {
+      const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-project-activate-stale-bindings-"));
+      try {
+        const { engine, projectId, report, repositoryPath } = await setupGreenProject(dataRoot);
+
+        const rebind = await engine.call(`/v1/projects/${projectId}/repositories/main/binding`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            path: repositoryPath,
+            bookmarkRef: `bookmark/${projectId}/main`,
+          }),
+        });
+        expect(rebind.status).toBe(200);
+
+        const response = await activate(engine, projectId, {
+          compositionFingerprint: report.compositionFingerprint,
+        });
+        expect(response.status).toBe(409);
+        expect((await response.json()) as unknown).toMatchObject({
+          error: { code: "project.activation-report-stale" },
+        });
+
+        const detail = (await (await engine.call(`/v1/projects/${projectId}`)).json()) as {
+          status: string;
+        };
+        expect(detail.status).toBe("draft");
+        await engine.dispose();
+        expect(resolvedCompositionRows(dataRoot, projectId)).toHaveLength(0);
+      } finally {
+        await rm(dataRoot, { recursive: true, force: true });
+      }
+    });
+
+    it("opens no subscription, delivers no event and leaves a second Project unaffected", async () => {
+      const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-project-activate-isolation-"));
+      try {
+        const { engine, projectId, report } = await setupGreenProject(dataRoot);
+        const otherRoot = fixture(() => makeNodeRepositoryFixture());
+        const other = (await (
+          await importProject(engine, { repositoryPath: otherRoot })
+        ).json()) as { id: string };
+
+        const response = await activate(engine, projectId, {
+          compositionFingerprint: report.compositionFingerprint,
+        });
+        const body = (await response.json()) as Record<string, unknown>;
+        expect(response.status).toBe(200);
+        expect(body).not.toHaveProperty("subscription");
+        expect(body).toMatchObject({ activeExecutions: 0 });
+
+        const otherDetail = (await (await engine.call(`/v1/projects/${other.id}`)).json()) as {
+          status: string;
+        };
+        expect(otherDetail.status).toBe("draft");
+        await engine.dispose();
+        expect(resolvedCompositionRows(dataRoot, other.id)).toHaveLength(0);
+        // Activation only ever writes projects, project_bindings and the Resolved
+        // Project table this ticket's migration adds — never a subscription or
+        // event/execution store, which do not exist in this schema at all.
+        expect(tableNames(dataRoot)).toEqual([
+          "engine_metadata",
+          "project_bindings",
+          "project_resolved_compositions",
+          "projects",
+          "schema_migrations",
+        ]);
+      } finally {
+        await rm(dataRoot, { recursive: true, force: true });
+      }
+    });
   });
 });

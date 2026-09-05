@@ -15,6 +15,8 @@ export type ErrorCode =
   | "project.repository-compensation-failed"
   | "project.not-found"
   | "project.active"
+  | "project.activation-not-validated"
+  | "project.activation-report-stale"
   | "system.internal-error"
   | "system.storage-unavailable";
 

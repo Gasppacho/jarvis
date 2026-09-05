@@ -160,6 +160,28 @@ Le rapport vérifie :
 - cycles et limites ;
 - permissions demandées.
 
+## Activation
+
+Le rapport de validation n'est pas persisté ; il reste une évaluation read-only recalculée
+à chaque appel. `POST /v1/projects/{projectId}/activate` (ticket #53) résout donc la
+fraîcheur du rapport sans le stocker : le rapport porte un `compositionFingerprint`, un
+condensé stable dérivé uniquement de la Portable Configuration et des Local Bindings
+sauvegardées (jamais des grants globaux). Le client renvoie ce condensé à l'activation ;
+l'Engine recalcule le condensé de ce qui est sauvegardé à l'instant de l'appel et refuse
+sans jamais revalider silencieusement :
+
+- `project.activation-not-validated` : aucun rapport réussi n'existe pour la composition
+  courante (condensé absent, ou la composition ne valide plus) ;
+- `project.activation-report-stale` : le condensé fourni ne correspond plus à la
+  configuration ou aux Local Bindings sauvegardées — elles ont changé depuis ce rapport.
+
+Un refus laisse l'état durable strictement inchangé. Un succès crée le Resolved Project
+immuable : composition figée, Module Instances, Local Bindings et routes de requests
+résolues au moment de l'activation, et fait passer le Project à `active`. Répéter
+l'activation de la même composition est idempotent : même Resolved Project, aucun second
+enregistrement. Cette opération n'ouvre aucune subscription et ne délivre aucun Event —
+ce sont les tickets #54 et #6.
+
 ## One repository in MVP
 
 Le schema conserve une liste `repositories` avec `repositoryId`, mais le validateur MVP exige exactement un élément identifié `main`. Cette forme évite un breaking change lorsque le multi-repository sera ajouté.
