@@ -187,6 +187,8 @@ Affiche :
 - liens repository et provider ;
 - actions `Pause`, `Validate`, `Run diagnostics`.
 
+Cette surface reste bloquée : statut actif/dégradé, dernière activité, exécutions en cours et dead letters sont un état runtime détenu par #18 et #6, ni l'un ni l'autre construits. #52 ne l'invente pas partiellement ; la seconde surface qu'il livre est décrite dans « Graphe émergent » → « Sélection et deuxième surface ».
+
 ## Suppression d'un projet
 
 Project Detail expose l'action destructive `Delete Project…`. Elle ouvre une confirmation native qui nomme le Project et explique que l'état Jarvis local, les Local Bindings et le Repository Grant seront retirés, tandis que tous les fichiers du repository — dont `.jarvis/project.yaml` — resteront intacts.
@@ -237,6 +239,12 @@ Cette décision vient d'une comparaison de trois prototypes SwiftUI structurelle
 Le deuxième prototype est retenu : il montre l'intégralité du graphe de composition — Module Instances, Requests routées, Facts diffusés et capabilities — sans recherche croisée pour lire un statut, avec l'ordre clavier/VoiceOver descendant déjà retenu pour la grammaire de composition guidée, et son contenu constitue déjà la représentation texte/liste que #51 doit fournir. Le flow map ne dessine aucune connexion réelle entre les cartes une fois construit sur le read model : il dégénère en trois listes non reliées, moins lisibles et plus coûteuses à faire correspondre à la liste texte. Le routing table reste le plus compact pour les seules Requests, mais omet entièrement les Facts diffusés du graphe de composition, ce qui ne convient pas à une prévisualisation qui doit rester complète. Les statuts `resolved`, `broadcast`, `orphaned` et `ambiguous` ainsi que les états `bound`/`unresolved`/`unbound` du rail viennent tels quels de la réponse `POST /v1/projects/{projectId}/composition-graph` ; Swift ne recalcule ni consumer ni compatibilité.
 
 Les trois prototypes ont été comparés depuis le build empaqueté (`pnpm build:app`, captures `screencapture` sur les fixtures Orphaned et Ambiguous), puis supprimés avec leur point d'entrée temporaire une fois la comparaison faite ; aucune `View` prototype ne devient une surface de production.
+
+### Sélection et deuxième surface
+
+#52 termine l'outline retenue ci-dessus sans dessiner de carte, d'edge ni de canvas : #50 a tranché contre le flow map sur ce même read model, et cette décision n'est pas rouverte. Sélectionner une ligne — Module Instance, contrat produit, contrat consommé, capability requise ou entrée de rail — révèle son détail : identifiants stables, version de contrat, statut de routage et findings applicables. Ce détail est une projection pure de `ProjectCompositionGraph`, indexée par l'id déjà qualifié par Module Instance, rôle et index ; il ne recalcule ni consumer, ni compatibilité, ni routage, et un id inconnu ou périmé ne révèle rien plutôt que de planter. La sélection est un `Button` natif : atteignable au clavier, annoncée par VoiceOver, distinguée par un glyphe de divulgation et par le mot « Selected » dans son libellé d'accessibilité — jamais par la seule couleur ni par le survol.
+
+La seconde surface que #28 demandait (Wizard preview et Project Overview) se réduit, tant que #18 et #6 ne livrent pas l'état runtime, à l'état lecture seule de Project Detail : un Project sauvegardé, sans Draft ouvert (`ProjectConfigurationState.isDraftSaved == true`). Cet état affiche la même Composition, construite par le même `ProjectCompositionOutline` à partir du même `ProjectCompositionGraph`, que l'état d'édition du Wizard ; aucune des deux surfaces ne reconstruit de règle métier Engine. La liste retenue par #51 reste disponible et équivalente pour la même composition.
 
 ## Executions
 
