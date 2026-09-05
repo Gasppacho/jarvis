@@ -9,6 +9,7 @@ public struct ProjectConfigurationState: Sendable, Equatable {
     public var resourceChoices: [ProjectResourceBindingChoice] = []
     public var compositionGuide: ProjectCompositionGuide?
     public var compositionReview: ProjectCompositionReview?
+    public var compositionGraph: ProjectCompositionGraph?
     public var validation: ProjectValidationState = .unvalidated
     public var draft: ProjectConfigurationDraft?
     public var isDraftSaved = false
@@ -102,6 +103,9 @@ public final class ProjectConfigurationModel {
             let compositionReview = try await client.reviewProjectComposition(
                 projectId: projectId,
                 portableConfig: previewConfiguration)
+            let compositionGraph = try? await client.fetchProjectCompositionGraph(
+                projectId: projectId,
+                portableConfig: previewConfiguration)
             let draft: ProjectConfigurationDraft?
             if let configuration = detail.portableConfiguration {
                 draft = ProjectConfigurationDraft(configuration: configuration, packages: packages)
@@ -119,6 +123,7 @@ public final class ProjectConfigurationModel {
                 $0.resourceChoices = compositionReview.resourceChoices.slots
                 $0.compositionGuide = compositionReview.compositionGuide
                 $0.compositionReview = compositionReview
+                $0.compositionGraph = compositionGraph
                 $0.draft = draft
                 $0.isDraftSaved = true
                 $0.errorMessage = nil
@@ -183,10 +188,13 @@ public final class ProjectConfigurationModel {
         do {
             let review = try await client.reviewProjectComposition(
                 projectId: projectId, portableConfig: portableConfig)
+            let graph = try? await client.fetchProjectCompositionGraph(
+                projectId: projectId, portableConfig: portableConfig)
             guard revision == compositionRevisions[projectId, default: 0] else { return }
             update(projectId) {
                 $0.compositionGuide = review.compositionGuide
                 $0.compositionReview = review
+                $0.compositionGraph = graph
                 $0.candidates = review.resourceChoices.candidates
                 $0.resourceChoices = review.resourceChoices.slots
                 $0.errorMessage = nil

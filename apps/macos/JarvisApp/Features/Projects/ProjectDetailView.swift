@@ -37,6 +37,7 @@ public struct ProjectDetailView: View {
                             portableConfigurationEditor(detail)
                             localBindingsEditor
                             compositionReview(proxy)
+                            compositionOutline
                             validationReport
                             saveActions
                         } else {
@@ -761,6 +762,60 @@ public struct ProjectDetailView: View {
             }
         }
         .id("composition-review")
+    }
+
+    private var compositionOutline: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Composition").sectionLabel()
+            if let outline = presentation.compositionOutline {
+                ForEach(outline.rows) { row in
+                    HStack(alignment: .top, spacing: 8) {
+                        if row.depth > 0 {
+                            Spacer().frame(width: 20)
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.title)
+                                .font(row.depth == 0 ? .headline : .body)
+                            Label(row.statusLabel, systemImage: row.statusSymbol)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            if !row.findings.isEmpty {
+                                Text("Findings: \(row.findings.joined(separator: ", "))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(row.accessibilityLabel)
+                    .id(row.id)
+                }
+                if !outline.rail.isEmpty {
+                    Text("Rail").font(.headline)
+                    ForEach(outline.rail) { item in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.slot).font(.body)
+                            Label(item.statusLabel, systemImage: item.statusSymbol)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            if !item.findings.isEmpty {
+                                Text("Findings: \(item.findings.joined(separator: ", "))")
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel(item.accessibilityLabel)
+                        .id(item.id)
+                    }
+                }
+            } else {
+                Text("The composition graph is unavailable. Reload this Project to see its outline.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .id("composition-outline")
     }
 
     private var validationReport: some View {
