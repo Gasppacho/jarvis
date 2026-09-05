@@ -13,6 +13,7 @@ public struct ProjectDetailView: View {
     @State private var isDeleteConfirmationPresented = false
     @State private var newSlotName = ""
     @State private var newSlotRequirement = ""
+    @State private var selectedCompositionID: String?
 
     public init(
         projects: ProjectsModel,
@@ -769,45 +770,22 @@ public struct ProjectDetailView: View {
             Text("Composition").sectionLabel()
             if let outline = presentation.compositionOutline {
                 ForEach(outline.rows) { row in
-                    HStack(alignment: .top, spacing: 8) {
-                        if row.depth > 0 {
-                            Spacer().frame(width: 20)
-                        }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(row.title)
-                                .font(row.depth == 0 ? .headline : .body)
-                            Label(row.statusLabel, systemImage: row.statusSymbol)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            if !row.findings.isEmpty {
-                                Text("Findings: \(row.findings.joined(separator: ", "))")
-                                    .font(.caption2)
-                                    .foregroundStyle(.orange)
-                            }
-                        }
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel(row.accessibilityLabel)
-                    .id(row.id)
+                    compositionSelectableRow(
+                        id: row.id, depth: row.depth, title: row.title,
+                        statusLabel: row.statusLabel, statusSymbol: row.statusSymbol,
+                        findings: row.findings, accessibilityLabel: row.accessibilityLabel)
                 }
                 if !outline.rail.isEmpty {
                     Text("Rail").font(.headline)
                     ForEach(outline.rail) { item in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(item.slot).font(.body)
-                            Label(item.statusLabel, systemImage: item.statusSymbol)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            if !item.findings.isEmpty {
-                                Text("Findings: \(item.findings.joined(separator: ", "))")
-                                    .font(.caption2)
-                                    .foregroundStyle(.orange)
-                            }
-                        }
-                        .accessibilityElement(children: .combine)
-                        .accessibilityLabel(item.accessibilityLabel)
-                        .id(item.id)
+                        compositionSelectableRow(
+                            id: item.id, depth: 0, title: item.slot,
+                            statusLabel: item.statusLabel, statusSymbol: item.statusSymbol,
+                            findings: item.findings, accessibilityLabel: item.accessibilityLabel)
                     }
+                }
+                if let detail = selectedCompositionID.flatMap(outline.selectionDetail(forID:)) {
+                    compositionSelectionDetail(detail)
                 }
             } else {
                 Text("The composition graph is unavailable. Reload this Project to see its outline.")
@@ -816,6 +794,96 @@ public struct ProjectDetailView: View {
             }
         }
         .id("composition-outline")
+    }
+
+    /// One outline row or rail entry, rendered as a `Button` so selection is
+    /// reachable by keyboard (Tab/Space) and announced by VoiceOver as a
+    /// selectable element - never dependent on hover or on colour alone: the
+    /// disclosure glyph itself changes shape, and the accessibility label
+    /// states "Selected" in words.
+    private func compositionSelectableRow(
+        id: String, depth: Int, title: String, statusLabel: String, statusSymbol: String,
+        findings: [String], accessibilityLabel: String
+    ) -> some View {
+        let isSelected = selectedCompositionID == id
+        return Button {
+            selectedCompositionID = isSelected ? nil : id
+        } label: {
+            HStack(alignment: .top, spacing: 8) {
+                if depth > 0 {
+                    Spacer().frame(width: 20)
+                }
+                Image(systemName: isSelected ? "chevron.right.circle.fill" : "chevron.right.circle")
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(depth == 0 ? .headline : .body)
+                    Label(statusLabel, systemImage: statusSymbol)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if !findings.isEmpty {
+                        Text("Findings: \(findings.joined(separator: ", "))")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                }
+                Spacer()
+            }
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
+            .background(
+                isSelected ? Color.accentColor.opacity(0.15) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(isSelected ? "\(accessibilityLabel), Selected" : accessibilityLabel)
+        .accessibilityHint("Selects this row to reveal its identifiers, contract version, routing status and findings.")
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .id(id)
+    }
+
+    private func compositionSelectionDetail(
+        _ detail: ProjectCompositionOutline.SelectionDetail
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Selection detail").font(.headline)
+            if let instanceId = detail.instanceId {
+                Text("Module Instance: \(instanceId)")
+            }
+            if let moduleId = detail.moduleId {
+                Text("Module Package: \(moduleId)")
+            }
+            if let slot = detail.slot {
+                Text("Project Slot: \(slot)")
+            }
+            if let capability = detail.capability {
+                Text("Required capability: \(capability)")
+            }
+            if let contractType = detail.contractType, let version = detail.contractVersion {
+                Text("Contract: \(contractType).v\(version)")
+            }
+            if let bindingRef = detail.bindingRef {
+                Text("Binding: \(bindingRef)")
+            }
+            Label(detail.statusLabel, systemImage: "circle.grid.cross")
+                .font(.callout)
+            if detail.findings.isEmpty {
+                Text("No validation findings apply to this selection.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Findings: \(detail.findings.joined(separator: ", "))")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).strokeBorder(.secondary.opacity(0.35)))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Selection detail. \(detail.accessibilityLabel)")
+        .id("composition-selection-detail")
     }
 
     private var validationReport: some View {
