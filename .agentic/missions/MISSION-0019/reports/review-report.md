@@ -46,8 +46,21 @@ would need a migration and a durable row per Project purely to remember a fact t
 can instead prove exactly, on demand, from state that is already durable (the Portable
 Configuration and Local Bindings themselves).
 
-Nothing in `PROJECTS.md` or ADR 0004 needed to change to accommodate this design; both
-already describe activation as report-gated and the report as computed fresh each time.
+Neither `PROJECTS.md` nor ADR 0004 needed a *correction* to accommodate this design —
+both already describe activation as report-gated and the report as computed fresh each
+time, and nothing above contradicts either document. `PROJECTS.md` did need *new*
+material, though: before this ticket it said only "`Validate` produit un rapport ;
+`Activate` n'est autorisé que si le rapport est vert" with no description of how staleness
+is detected, what a rejection looks like, or what activation durably creates — because
+none of that existed yet. A new `## Activation` section was added, right after
+"Validation report", spelling out: the `compositionFingerprint` mechanism and why it
+adds no persisted evaluation state; the two rejection codes
+(`project.activation-not-validated`, `project.activation-report-stale`) and exactly what
+each means; that a rejection leaves durable state untouched; and that success creates the
+immutable Resolved Project and is idempotent. This is `docs/plans/DEFINITION_OF_DONE.md`'s
+"la documentation source de vérité est mise à jour sans duplication" applied to a
+document that was accurate but incomplete, not a correction of anything it previously got
+wrong.
 
 ## What was built
 
@@ -107,6 +120,18 @@ real responses (which always set the field) exactly as before. `pnpm contracts:c
 still enforces the two schemas match each other property-for-property, and every actual
 Engine response — validated by `pnpm test:integration` — always carries a genuine value.
 
+Being optional on the *wire schema* does not weaken the activation guard itself:
+`ProjectService.activateProject()` treats a missing or non-string
+`request.compositionFingerprint` in the *request body* as `project.activation-not-validated`
+regardless of the report schema's own required-ness, and separately guards its own
+recomputed report with an internal `system.internal-error` assertion should this engine's
+validator ever fail to set the field — which it always does. The two "optional" and
+"required" surfaces are independent: the *response* field being optional is only about
+tolerating readers that predate this ticket; the *request* field is still required by the
+handler's own logic, and a stale or absent one is still rejected exactly as ticket #53
+specifies (tests: "rejects activation with no successful validation report" and "rejects a
+compositionFingerprint that does not describe the composition saved right now").
+
 ## Verification — every command with its actual result
 
 Fast, non-integration checks were run directly (not through `pnpm <script>`, which the
@@ -125,7 +150,8 @@ invocations are noted where that happened.
 | `vitest run --project unit` | **Pass** — 6 files, 42 tests. |
 | `vitest run --project integration` | **Pass** — 11 files, 166 tests (first full run), then 17 files / 208 tests once the new activation suite was added — all green. |
 | `pnpm test:swift` (standalone, to isolate the Swift decoding failure) | **Failed** first: 9 `JarvisAppTests` failures, all `DecodingError.keyNotFound("compositionFingerprint")` — root-caused to the field being wire-`required`; fixed by making it optional (see above). Rerun: **Pass** — 72 tests, 0 failures. |
-| **`pnpm verify` (full pipeline, background + bounded notification wait, no `tail -f`)** | First full run **failed** at `test:swift` (the same 9 decoding failures, caught before this was understood as the general-verify gate rather than a one-off). Second full run, after the optional-field fix and re-staging the regenerated file, **passed end to end**: `generate:check`, `contracts:check`, `lint`, `typecheck`, `arch:check`, `build:engine`, `test` (42), `test:integration` (166), `build:app`, `test:swift` (72, 0 failures). Exit code 0. |
+| **`pnpm verify` (full pipeline, background + bounded notification wait, no `tail -f`)** — branch | First full run **failed** at `test:swift` (the same 9 decoding failures, caught before this was understood as the general-verify gate rather than a one-off). Second full run, after the optional-field fix and re-staging the regenerated file, **passed end to end**: `generate:check`, `contracts:check`, `lint`, `typecheck`, `arch:check`, `build:engine`, `test` (42), `test:integration` (166), `build:app`, `test:swift` (72, 0 failures). Exit code 0. |
+| **`pnpm verify` — re-run on merged `main`** | **Pass**, identical stage-by-stage result to the branch run above: `contracts ok — 15 schemas, 4 event examples, 4 manifests, 30 API paths`; `All matched files use Prettier code style!`; `no dependency violations found (66 modules, 200 dependencies cruised)`; `test` 42/42; `test:integration` 166/166; `Build complete!`; `test:swift` 72/72, 0 failures. Exit code 0. |
 
 An earlier attempt to background `pnpm verify` via `nohup ... &` inside a
 `run_in_background: true` Bash call returned immediately (the wrapper backgrounds and
@@ -187,9 +213,15 @@ tracked the real process to actual completion each time.
   see the table above.
 - [x] Staged by explicit paths; no `git add -A` — every `git add` in this mission named
   files explicitly.
-- [ ] Merged `--no-ff` into `main`, `pnpm verify` re-run on merged `main`, pushed as a
-  plain fast-forward, `origin/main` confirmed equal to local `main` — pending, performed
-  after this report is written and committed (per the mission's own sequencing).
+- [x] Merged `--no-ff` into `main` (commit `0dee1d5`), `pnpm verify` re-run on merged
+  `main` — full pass: `generate:check`, `contracts:check` ("contracts ok — 15 schemas, 4
+  event examples, 4 manifests, 30 API paths"), `lint` ("All matched files use Prettier
+  code style!"), `typecheck`, `arch:check` ("no dependency violations found (66 modules,
+  200 dependencies cruised)"), `build:engine`, `test` (42 passed), `test:integration`
+  (166 passed), `build:app` ("Build complete!"), `test:swift` (72 tests, 0 failures).
+  Pushed `origin main` as a plain fast-forward (`e510b78..0dee1d5`, no force); `git
+  rev-parse main` and `git rev-parse origin/main` both report `0dee1d5...` — confirmed
+  equal.
 - [x] `reports/review-report.md` and `reports/retro.md` written and committed alongside
   the code.
 
