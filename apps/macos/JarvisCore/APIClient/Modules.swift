@@ -1,6 +1,24 @@
 import Foundation
 import JarvisAPI
 
+/// A Module Package requirement's capability id and manifest binding name
+/// together (ticket 48) — the binding name is never discarded on the wire, so
+/// the shell can offer it without inventing one.
+public struct ModuleCapabilityRequirement: Sendable, Equatable {
+    public let id: String
+    public let binding: String?
+
+    public init(id: String, binding: String? = nil) {
+        self.id = id
+        self.binding = binding
+    }
+
+    init(payload: Components.Schemas.ModuleCapabilityRequirementV1) {
+        id = payload.id
+        binding = payload.binding
+    }
+}
+
 /// A validated bundled Module Package as presented by the macOS catalogue.
 public struct ModulePackage: Identifiable, Sendable, Equatable {
     public var id: String { "\(moduleId)@\(version)" }
@@ -12,12 +30,22 @@ public struct ModulePackage: Identifiable, Sendable, Equatable {
     public let categories: [String]
     public let consumes: [String]
     public let produces: [String]
-    public let requires: [String]
+    public let requires: [ModuleCapabilityRequirement]
     public let provides: [String]
     public let configurationSchemaRef: String?
     public let configurationSchema: String?
     public let configurationFields: [ModuleConfigurationField]
     public let automationRuleSemantics: AutomationRuleSchemaSemantics?
+
+    /// Capability ids this Module Package requires, for the live-catalog picker.
+    public var requiredCapabilityIDs: [String] { requires.map(\.id) }
+
+    /// Manifest binding names this Module Package declares, deduplicated and
+    /// sorted, for the guided binding-name control. Never invented: absent
+    /// when the manifest declares no binding for a requirement.
+    public var declaredBindingNames: [String] {
+        Array(Set(requires.compactMap(\.binding))).sorted()
+    }
 
     init(payload: Components.Schemas.ModulePackage) {
         let configurationSchema: String? =
@@ -38,7 +66,7 @@ public struct ModulePackage: Identifiable, Sendable, Equatable {
         categories = payload.categories
         consumes = payload.consumes
         produces = payload.produces
-        requires = payload.requires
+        requires = payload.requires.map(ModuleCapabilityRequirement.init(payload:))
         provides = payload.provides
         configurationSchemaRef = payload.configurationSchemaRef
         self.configurationSchema = configurationSchema
@@ -52,7 +80,7 @@ public struct ModulePackage: Identifiable, Sendable, Equatable {
             .init(label: "Categories", value: list(categories)),
             .init(label: "Consumes", value: list(consumes)),
             .init(label: "Produces", value: list(produces)),
-            .init(label: "Requires", value: list(requires)),
+            .init(label: "Requires", value: list(requiredCapabilityIDs)),
             .init(label: "Provides", value: list(provides)),
             .init(label: "Configuration schema reference", value: configurationSchemaRef ?? "None"),
             .init(label: "Configuration schema", value: configurationSchema ?? "None"),
@@ -61,6 +89,21 @@ public struct ModulePackage: Identifiable, Sendable, Equatable {
 
     private func list(_ values: [String]) -> String {
         values.isEmpty ? "None" : values.joined(separator: ", ")
+    }
+}
+
+/// Served, versioned human meaning for one capability id (ticket 48), read from
+/// `GET /v1/capability-catalog` — never copied from `CAPABILITY_CATALOG_V1.md`.
+public struct CapabilityGuidance: Identifiable, Sendable, Equatable {
+    public var id: String { capabilityId }
+    public let capabilityId: String
+    public let meaning: String
+    public let owner: String?
+
+    init(payload: Components.Schemas.CapabilityCatalogEntryV1) {
+        capabilityId = payload.id
+        meaning = payload.meaning
+        owner = payload.owner
     }
 }
 

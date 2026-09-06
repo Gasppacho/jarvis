@@ -60,6 +60,8 @@ final class ModuleCatalogTests: XCTestCase {
         XCTAssertEqual(automation.consumes, ["scm.work-item.tag-added.v1"])
         XCTAssertEqual(automation.produces, ["development.implementation.requested.v1"])
         XCTAssertEqual(automation.requires, [])
+        XCTAssertEqual(automation.requiredCapabilityIDs, [])
+        XCTAssertEqual(automation.declaredBindingNames, [])
         XCTAssertEqual(automation.provides, [])
         XCTAssertEqual(
             automation.configurationSchemaRef,
@@ -77,7 +79,9 @@ final class ModuleCatalogTests: XCTestCase {
         XCTAssertEqual(review.categories, ["agentic", "decision"])
         XCTAssertEqual(review.consumes, ["scm.change-request.created.v1"])
         XCTAssertEqual(review.produces, [])
-        XCTAssertEqual(review.requires, ["agent.execute"])
+        XCTAssertEqual(review.requires, [ModuleCapabilityRequirement(id: "agent.execute", binding: "agentRuntime")])
+        XCTAssertEqual(review.requiredCapabilityIDs, ["agent.execute"])
+        XCTAssertEqual(review.declaredBindingNames, ["agentRuntime"])
         XCTAssertEqual(review.provides, [])
         XCTAssertNil(review.configurationSchemaRef)
         XCTAssertEqual(
@@ -103,9 +107,23 @@ final class ModuleCatalogTests: XCTestCase {
         XCTAssertEqual(
             development.requires,
             [
+                ModuleCapabilityRequirement(id: "repository.write", binding: "repository"),
+                ModuleCapabilityRequirement(id: "git.branch", binding: "repository"),
+                ModuleCapabilityRequirement(id: "git.commit", binding: "repository"),
+                ModuleCapabilityRequirement(id: "git.push", binding: "repository"),
+                ModuleCapabilityRequirement(id: "shell.execute"),
+                ModuleCapabilityRequirement(id: "work-items.read", binding: "tickets"),
+                ModuleCapabilityRequirement(id: "agent.execute", binding: "agentRuntime"),
+            ])
+        XCTAssertEqual(
+            development.requiredCapabilityIDs,
+            [
                 "repository.write", "git.branch", "git.commit", "git.push", "shell.execute",
                 "work-items.read", "agent.execute",
             ])
+        XCTAssertEqual(
+            development.declaredBindingNames,
+            ["agentRuntime", "repository", "tickets"].sorted())
         XCTAssertEqual(development.provides, [])
         XCTAssertEqual(
             development.configurationSchemaRef,
@@ -128,12 +146,34 @@ final class ModuleCatalogTests: XCTestCase {
                 "scm.work-item.tag-added.v1", "scm.change-request.created.v1",
                 "scm.change-request.creation-failed.v1",
             ])
-        XCTAssertEqual(github.requires, ["github.api"])
+        XCTAssertEqual(github.requires, [ModuleCapabilityRequirement(id: "github.api", binding: "sourceControl")])
+        XCTAssertEqual(github.requiredCapabilityIDs, ["github.api"])
+        XCTAssertEqual(github.declaredBindingNames, ["sourceControl"])
         XCTAssertEqual(github.provides, ["scm.change-request.manage", "work-items.read"])
         XCTAssertEqual(
             github.configurationSchemaRef,
             "contracts/module-config/github.v1.schema.json")
         XCTAssertTrue(github.configurationSchema?.contains("GitHub Module Config v1") == true)
+
+        // Ticket 48: the served, versioned capability meaning matches the
+        // documented catalog (docs/contracts/CAPABILITY_CATALOG_V1.md).
+        XCTAssertTrue(
+            moduleCatalog.capabilityGuidance.contains {
+                $0.capabilityId == "repository.write"
+                    && $0.meaning == "Modify files inside the leased workspace"
+                    && $0.owner == "Workspace"
+            })
+        XCTAssertTrue(
+            moduleCatalog.capabilityGuidance.contains {
+                $0.capabilityId == "agent.execute"
+                    && $0.meaning == "Start a session on the bound Agent Runtime"
+                    && $0.owner == nil
+            })
+        for requirement in development.requires {
+            XCTAssertTrue(
+                moduleCatalog.capabilityGuidance.contains { $0.capabilityId == requirement.id },
+                "capability \(requirement.id) declared by a bundled Manifest must be served")
+        }
 
         await session.shutdown()
     }

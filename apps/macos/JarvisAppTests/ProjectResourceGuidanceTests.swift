@@ -140,11 +140,17 @@ final class ProjectResourceGuidanceTests: XCTestCase {
             try modulePackage(
                 id: "module.change", name: "Change Provider",
                 description: "Publishes source-control changes.",
-                requires: ["capability.shared", "capability.source"]),
+                requires: [
+                    ModuleCapabilityRequirement(id: "capability.shared", binding: "shared"),
+                    ModuleCapabilityRequirement(id: "capability.source", binding: "source"),
+                ]),
             try modulePackage(
                 id: "module.runner", name: "Local Runner",
                 description: "Runs work on this Mac.",
-                requires: ["capability.runtime", "capability.shared"]),
+                requires: [
+                    ModuleCapabilityRequirement(id: "capability.runtime", binding: "runtime"),
+                    ModuleCapabilityRequirement(id: "capability.shared", binding: "shared"),
+                ]),
         ]
         var state = ProjectConfigurationState()
         state.draft = ProjectConfigurationDraft(configuration: configuration, packages: packages)
@@ -163,14 +169,43 @@ final class ProjectResourceGuidanceTests: XCTestCase {
                 repairAction: "Grant a compatible runtime."),
         ]
 
+        let guidance = [
+            CapabilityGuidance(
+                payload: try JSONDecoder().decode(
+                    Components.Schemas.CapabilityCatalogEntryV1.self,
+                    from: JSONSerialization.data(withJSONObject: [
+                        "id": "capability.source", "meaning": "Publish source-control changes.",
+                        "owner": NSNull(),
+                    ]))),
+        ]
         let presentation = ProjectDetailPresentation(
             project: Project(id: "inspector", name: "Inspector", status: .draft,
                              moduleCount: 2, activeExecutions: 0),
-            detail: nil, state: state, packages: packages)
+            detail: nil, state: state, packages: packages, capabilityGuidance: guidance)
 
         XCTAssertEqual(presentation.capabilityOptions, [
             "capability.runtime", "capability.shared", "capability.source",
         ])
+        // Served guidance (ticket 48): known ids resolve to served meaning; an id
+        // the served catalogue does not document is unavailable, never guessed.
+        XCTAssertEqual(
+            presentation.capabilityGuidance["capability.source"],
+            "Publish source-control changes.")
+        XCTAssertNil(presentation.capabilityGuidance["capability.shared"])
+
+        // Binding names offered by each selected Module Package (ticket 48) —
+        // never invented by the shell, and never shared across packages.
+        let changeModuleID = try XCTUnwrap(
+            presentation.modules.first { $0.instanceId == "change-provider" }?.id)
+        let changeCard = try XCTUnwrap(
+            presentation.moduleCards.first { $0.id == changeModuleID })
+        XCTAssertEqual(changeCard.declaredBindingNames, ["shared", "source"])
+        let runnerModuleID = try XCTUnwrap(
+            presentation.modules.first { $0.instanceId == "local-runner" }?.id)
+        let runnerCard = try XCTUnwrap(
+            presentation.moduleCards.first { $0.id == runnerModuleID })
+        XCTAssertEqual(runnerCard.declaredBindingNames, ["runtime", "shared"])
+
         let sourceControl = try XCTUnwrap(presentation.slots.first { $0.id == "sourceControl" })
         XCTAssertEqual(sourceControl.requesters.map(\.instanceId), ["change-provider"])
         XCTAssertEqual(sourceControl.requesters.map(\.displayName), ["Change Provider"])
@@ -223,7 +258,8 @@ final class ProjectResourceGuidanceTests: XCTestCase {
     }
 
     private func modulePackage(
-        id: String, name: String, description: String, requires: [String]
+        id: String, name: String, description: String,
+        requires: [ModuleCapabilityRequirement]
     ) throws -> ModulePackage {
         let data = try JSONSerialization.data(withJSONObject: [
             "moduleId": id,
@@ -233,7 +269,11 @@ final class ProjectResourceGuidanceTests: XCTestCase {
             "categories": [],
             "consumes": [],
             "produces": [],
-            "requires": requires,
+            "requires": requires.map { requirement -> [String: Any] in
+                var object: [String: Any] = ["id": requirement.id]
+                if let binding = requirement.binding { object["binding"] = binding }
+                return object
+            },
             "provides": [],
             "configurationSchemaRef": "fixture.schema.json",
             "configurationSchema": ["type": "object", "properties": [:]],

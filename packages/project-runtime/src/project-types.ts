@@ -371,6 +371,13 @@ export interface ProjectCompositionStartingPoint {
   readonly template?: PortableProjectConfiguration;
 }
 
+/** Capability id and manifest binding name together (ticket 48); binding is
+ * omitted, never guessed, when the manifest requirement declares none. */
+export interface ProjectModuleCatalogCapabilityRequirement {
+  readonly id: string;
+  readonly binding?: string;
+}
+
 export interface ProjectCompositionModulePackage {
   readonly moduleId: string;
   readonly version: string;
@@ -379,7 +386,7 @@ export interface ProjectCompositionModulePackage {
   readonly categories: readonly string[];
   readonly consumes: readonly string[];
   readonly produces: readonly string[];
-  readonly requires: readonly string[];
+  readonly requires: readonly ProjectModuleCatalogCapabilityRequirement[];
   readonly provides: readonly string[];
   readonly configurationSchemaRef: string | null;
   readonly configurationSchema: Readonly<Record<string, unknown>> | null;

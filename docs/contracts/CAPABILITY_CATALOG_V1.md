@@ -2,6 +2,15 @@
 
 Capabilities name abstract authority or service; they are not implementation classes. IDs are lowercase dotted strings and may be used in Module Manifests and Project Slots.
 
+## Served source
+
+This document is documentation, not the contract clients read. The Engine serves
+this table as a machine-readable, versioned `CapabilityCatalogV1` at
+`GET /v1/capability-catalog` (`contracts/openapi/local-api.v1.yaml`), sourced from
+`packages/kernel/src/capability-catalog.ts`. A client renders a capability's human
+meaning from that served response — never by copying prose from this file — and
+renders any capability id absent from it as unavailable, never guessed.
+
 ## Engine capabilities
 
 | ID | Meaning | Typical owner |

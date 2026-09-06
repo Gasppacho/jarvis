@@ -51,6 +51,9 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         public let compatibility: String
         public let missingResources: String
         public let technicalDetails: String
+        /// Binding names declared by the selected Module Package's manifest
+        /// (ticket 48) — never a name invented by the shell.
+        public let declaredBindingNames: [String]
     }
 
     public struct AutomationEventOption: Identifiable, Sendable, Equatable {
@@ -465,6 +468,10 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
     public let slots: [Slot]
     public let resourceBindings: [ResourceBinding]
     public let capabilityOptions: [String]
+    /// Served human meaning by capability id (ticket 48), keyed for the
+    /// capability control's caption. A missing key renders as unavailable —
+    /// never a guessed explanation.
+    public let capabilityGuidance: [String: String]
     public let actions: [Action]
     public let deletionConfirmation: DeletionConfirmation
     public let reviewRows: [ReviewRow]
@@ -479,8 +486,12 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         detail: ProjectDetail?,
         state: ProjectConfigurationState,
         packages: [ModulePackage],
+        capabilityGuidance: [CapabilityGuidance] = [],
         isDeleting: Bool = false
     ) {
+        self.capabilityGuidance = Dictionary(
+            capabilityGuidance.map { ($0.capabilityId, $0.meaning) },
+            uniquingKeysWith: { first, _ in first })
         repositories = detail?.bindings ?? []
         startingPoints = (state.compositionGuide?.startingPoints ?? []).map {
             StartingPoint(
@@ -505,7 +516,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             }
             let consumedLabels = consumes.map(eventLabel)
             let producedLabels = produces.map(eventLabel)
-            let required = choice?.requiredCapabilities ?? package?.requires ?? []
+            let required = choice?.requiredCapabilities ?? package?.requiredCapabilityIDs ?? []
             let missing = choice?.missingResources ?? []
             return ModuleCard(
                 id: module.id,
@@ -520,7 +531,8 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 missingResources: missing.isEmpty
                     ? "No missing resources" : missing.joined(separator: ", "),
                 technicalDetails:
-                    "Instance ID: \(module.instanceId) · Package: \(module.moduleId) · Version: \(choice?.version ?? package?.version ?? "unavailable") · Contracts: \((consumes + produces).joined(separator: ", "))"
+                    "Instance ID: \(module.instanceId) · Package: \(module.moduleId) · Version: \(choice?.version ?? package?.version ?? "unavailable") · Contracts: \((consumes + produces).joined(separator: ", "))",
+                declaredBindingNames: package?.declaredBindingNames ?? []
             )
         }
         let eventChoices = state.compositionGuide?.eventChoices ?? []
@@ -567,7 +579,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 )
             }
         }
-        capabilityOptions = Array(Set(packages.flatMap(\.requires))).sorted()
+        capabilityOptions = Array(Set(packages.flatMap(\.requiredCapabilityIDs))).sorted()
         let requestersForSlot: (String) -> [SlotRequester] = { slotId in
             draftModules.compactMap { module in
                 guard module.runtimeSlot == slotId || module.bindings.values.contains(slotId)

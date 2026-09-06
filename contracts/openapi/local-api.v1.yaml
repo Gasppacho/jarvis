@@ -609,6 +609,22 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /v1/capability-catalog:
+    get:
+      operationId: getCapabilityCatalog
+      responses:
+        "200":
+          description: >
+            Served, versioned human meaning for every documented capability id, so
+            clients stop reading prose out of docs/contracts/CAPABILITY_CATALOG_V1.md.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CapabilityCatalogV1"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/projects/{projectId}/configuration:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -1795,7 +1811,7 @@ components:
         requires:
           type: array
           items:
-            type: string
+            $ref: "#/components/schemas/ModuleCapabilityRequirementV1"
         provides:
           type: array
           items:
@@ -1805,6 +1821,50 @@ components:
         configurationSchema:
           type: [object, "null"]
           additionalProperties: true
+    ModuleCapabilityRequirementV1:
+      type: object
+      additionalProperties: false
+      required: [id]
+      description: >
+        A Module Package requirement's capability id and the manifest binding name
+        it resolves through (ticket 48). `binding` is omitted, never guessed, when
+        the manifest requirement declares none.
+      properties:
+        id:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9._-]*$"
+        binding:
+          type: string
+    CapabilityCatalogEntryV1:
+      type: object
+      additionalProperties: false
+      required: [id, meaning, owner]
+      properties:
+        id:
+          type: string
+          pattern: "^[a-z0-9][a-z0-9._-]*$"
+        meaning:
+          type: string
+          minLength: 1
+        owner:
+          type: [string, "null"]
+    CapabilityCatalogV1:
+      type: object
+      additionalProperties: false
+      required: [apiVersion, kind, capabilities]
+      description: >
+        Served, versioned human meaning for every documented capability id
+        (ticket 48). Reproduces docs/contracts/CAPABILITY_CATALOG_V1.md; clients
+        read this instead of copying prose from that document.
+      properties:
+        apiVersion:
+          const: jarvis.dev/capability-catalog/v1
+        kind:
+          const: CapabilityCatalog
+        capabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/CapabilityCatalogEntryV1"
     ProjectMetadata:
       type: object
       additionalProperties: false

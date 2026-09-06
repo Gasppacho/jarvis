@@ -138,6 +138,24 @@ public struct EngineClient: Sendable {
         }
     }
 
+    /// Served, versioned human meaning for every documented capability id
+    /// (ticket 48). Never a hardcoded fallback: an id absent from this
+    /// response must render as unavailable rather than guessed.
+    public func getCapabilityCatalog() async throws -> [CapabilityGuidance] {
+        let operation = "GET /v1/capability-catalog"
+        let output = try await underlying.getCapabilityCatalog(.init())
+        switch output {
+        case .ok(let ok):
+            return try ok.body.json.capabilities.map(CapabilityGuidance.init(payload:))
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .undocumented(let statusCode, _):
+            throw EngineClientError.unexpectedResponse("\(operation) returned \(statusCode)")
+        }
+    }
+
     // MARK: Project Registry (ticket 02)
 
     /// Inspects a local repository read-only. Discovery never spawns git, never
