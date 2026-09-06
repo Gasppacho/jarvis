@@ -71,6 +71,7 @@ describe("repository discovery and project import", () => {
   let validateLegacyReport: ReturnType<typeof localApiValidator>;
   let validateReport: ReturnType<typeof localApiValidator>;
   let validateResourceChoices: ReturnType<typeof localApiValidator>;
+  let validateSubscriptions: ReturnType<typeof localApiValidator>;
   let validateJsonReport: ReturnType<Ajv2020["compile"]>;
 
   beforeAll(() => {
@@ -80,6 +81,7 @@ describe("repository discovery and project import", () => {
     validateLegacyReport = localApiValidator("ValidationReport");
     validateReport = localApiValidator("ProjectValidationReportV1");
     validateResourceChoices = localApiValidator("ProjectResourceChoices");
+    validateSubscriptions = localApiValidator("ProjectSubscriptionsV1");
     validateJsonReport = new Ajv2020({ strict: true, strictRequired: false }).compile(
       JSON.parse(
         readFileSync(
@@ -2554,6 +2556,224 @@ capabilities:
       } finally {
         await rm(dataRoot, { recursive: true, force: true });
       }
+    });
+
+    describe("open subscriptions (#54)", () => {
+      const getSubscriptions = async (engine: Harness, projectId: string) => {
+        const response = await engine.call(`/v1/projects/${projectId}/subscriptions`);
+        expect(response.status).toBe(200);
+        const body = (await response.json()) as {
+          projectId: string;
+          items: {
+            instanceId: string;
+            moduleId: string;
+            contract: { type: string; version: number; kind: string };
+          }[];
+        };
+        expect(validateSubscriptions(body), explain(validateSubscriptions)).toBe(true);
+        return body;
+      };
+
+      /** Imports, validates and activates one Project on `engine`; returns its id. */
+      async function activateComposition(
+        engine: Harness,
+        modules: readonly Record<string, unknown>[],
+      ): Promise<string> {
+        const root = fixture(() => makeNodeRepositoryFixture());
+        const created = (await (
+          await importProject(engine, {
+            repositoryPath: root,
+            portableConfig: embeddedPortableConfig(modules),
+          })
+        ).json()) as { id: string };
+        const report = (await (
+          await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+        ).json()) as { valid: boolean; compositionFingerprint: string; findings: unknown[] };
+        expect(report.valid, JSON.stringify(report.findings)).toBe(true);
+        const activation = await activate(engine, created.id, {
+          compositionFingerprint: report.compositionFingerprint,
+        });
+        expect(activation.status).toBe(200);
+        return created.id;
+      }
+
+      it("has no open subscription before activation ever succeeds", async () => {
+        const engine = await start();
+        const root = fixture(() => makeNodeRepositoryFixture());
+        const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
+          id: string;
+        };
+
+        const body = await getSubscriptions(engine, created.id);
+        expect(body).toMatchObject({ projectId: created.id, items: [] });
+      });
+
+      it("opens exactly the consumed contracts of the enabled Module Instances, no more, no fewer", async () => {
+        const { engine, projectId, report } = await setupGreenProject();
+        expect(
+          (
+            await activate(engine, projectId, {
+              compositionFingerprint: report.compositionFingerprint,
+            })
+          ).status,
+        ).toBe(200);
+
+        const body = await getSubscriptions(engine, projectId);
+        expect(body.items).toEqual([
+          {
+            instanceId: "automation-rules",
+            moduleId: "jarvis.module.automation-rules",
+            contract: { type: "scm.work-item.tag-added", version: 1, kind: "fact" },
+          },
+          {
+            instanceId: "request-worker",
+            moduleId: "jarvis.module.change-request-review",
+            contract: { type: "development.implementation.requested", version: 1, kind: "request" },
+          },
+        ]);
+      });
+
+      it("opens no subscription for a disabled Module Instance sharing an otherwise-consumed Module Package", async () => {
+        const runtimeRoot = runtimeWithEmbeddedValidComposition();
+        const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+        const root = fixture(() => makeNodeRepositoryFixture());
+        const created = (await (
+          await importProject(engine, {
+            repositoryPath: root,
+            portableConfig: embeddedPortableConfig([
+              automationInstance(),
+              workerInstance(),
+              { ...workerInstance("disabled-worker"), enabled: false },
+            ]),
+          })
+        ).json()) as { id: string };
+        const report = (await (
+          await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+        ).json()) as { valid: boolean; compositionFingerprint: string; findings: unknown[] };
+        expect(report.valid, JSON.stringify(report.findings)).toBe(true);
+        expect(
+          (
+            await activate(engine, created.id, {
+              compositionFingerprint: report.compositionFingerprint,
+            })
+          ).status,
+        ).toBe(200);
+
+        const body = await getSubscriptions(engine, created.id);
+        expect(body.items.map((item) => item.instanceId).sort()).toEqual([
+          "automation-rules",
+          "request-worker",
+        ]);
+        expect(body.items.map((item) => item.instanceId)).not.toContain("disabled-worker");
+      });
+
+      it("leaves the open subscription set unchanged across a repeated activation of the unchanged composition", async () => {
+        const { engine, projectId, report } = await setupGreenProject();
+        expect(
+          (
+            await activate(engine, projectId, {
+              compositionFingerprint: report.compositionFingerprint,
+            })
+          ).status,
+        ).toBe(200);
+        const before = await getSubscriptions(engine, projectId);
+
+        expect(
+          (
+            await activate(engine, projectId, {
+              compositionFingerprint: report.compositionFingerprint,
+            })
+          ).status,
+        ).toBe(200);
+        const after = await getSubscriptions(engine, projectId);
+
+        expect(after).toEqual(before);
+      });
+
+      it("leaves the previously open subscriptions untouched after a failed re-activation, with a structured error", async () => {
+        const { engine, projectId, report } = await setupGreenProject();
+        expect(
+          (
+            await activate(engine, projectId, {
+              compositionFingerprint: report.compositionFingerprint,
+            })
+          ).status,
+        ).toBe(200);
+        const before = await getSubscriptions(engine, projectId);
+
+        const failed = await activate(engine, projectId, {
+          compositionFingerprint: "a".repeat(64),
+        });
+        expect(failed.status).toBe(409);
+        expect((await failed.json()) as unknown).toMatchObject({
+          error: { code: "project.activation-report-stale" },
+        });
+
+        const after = await getSubscriptions(engine, projectId);
+        expect(after).toEqual(before);
+      });
+
+      it("isolates open subscriptions between two Projects sharing overlapping Module Packages and identical instance ids", async () => {
+        const runtimeRoot = runtimeWithEmbeddedValidComposition();
+        const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+
+        // Same Module Packages, same instance ids as Project A — only the
+        // enabled instances differ. Invariant 9 requires this to matter not at
+        // all to Project A's own subscription set.
+        const projectA = await activateComposition(engine, [
+          automationInstance(),
+          workerInstance(),
+        ]);
+        const projectB = await activateComposition(engine, [
+          { ...automationInstance(), enabled: false },
+          workerInstance(),
+        ]);
+
+        const subsA = await getSubscriptions(engine, projectA);
+        const subsB = await getSubscriptions(engine, projectB);
+
+        expect(subsA.items.map((item) => item.instanceId).sort()).toEqual([
+          "automation-rules",
+          "request-worker",
+        ]);
+        expect(subsB.items.map((item) => item.instanceId)).toEqual(["request-worker"]);
+        expect(subsA.items.map((item) => item.contract.type)).toContain("scm.work-item.tag-added");
+        expect(subsB.items.map((item) => item.contract.type)).not.toContain(
+          "scm.work-item.tag-added",
+        );
+        expect(subsA.projectId).toBe(projectA);
+        expect(subsB.projectId).toBe(projectB);
+
+        // Neither Project's own composition is disturbed by the other's
+        // activation or by reading the other's subscriptions.
+        expect(await getSubscriptions(engine, projectA)).toEqual(subsA);
+      });
+
+      it("never grows a subscription, event, delivery, inbox or outbox table beyond the Resolved Project one", async () => {
+        const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-project-subscriptions-tables-"));
+        try {
+          const { engine, projectId, report } = await setupGreenProject(dataRoot);
+          expect(
+            (
+              await activate(engine, projectId, {
+                compositionFingerprint: report.compositionFingerprint,
+              })
+            ).status,
+          ).toBe(200);
+          await getSubscriptions(engine, projectId);
+
+          await engine.dispose();
+          expect(tableNames(dataRoot)).toEqual([
+            "engine_metadata",
+            "project_bindings",
+            "project_resolved_compositions",
+            "projects",
+            "schema_migrations",
+          ]);
+        } finally {
+          await rm(dataRoot, { recursive: true, force: true });
+        }
+      });
     });
   });
 });

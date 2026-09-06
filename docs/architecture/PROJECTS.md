@@ -179,8 +179,19 @@ Un refus laisse l'état durable strictement inchangé. Un succès crée le Resol
 immuable : composition figée, Module Instances, Local Bindings et routes de requests
 résolues au moment de l'activation, et fait passer le Project à `active`. Répéter
 l'activation de la même composition est idempotent : même Resolved Project, aucun second
-enregistrement. Cette opération n'ouvre aucune subscription et ne délivre aucun Event —
-ce sont les tickets #54 et #6.
+enregistrement.
+
+Le succès ouvre aussi, sans écriture ni store durable supplémentaire, exactement les
+subscriptions déclarées par les Module Instances project-scoped `enabled` du Resolved
+Project (ticket #54) : un contrat consommé du Manifest pour chaque instance activée de la
+composition figée ; une instance désactivée n'en ouvre aucune. `GET
+/v1/projects/{projectId}/subscriptions` projette cet ensemble à la demande depuis le
+Resolved Project et les Manifests des Module Packages, jamais depuis une seconde table :
+il ne peut donc jamais diverger de ce qui a réellement été activé, et répéter
+l'activation d'une composition inchangée laisse l'ensemble inchangé. Avant toute
+activation réussie, `items` est vide. Ouvrir une subscription n'est pas délivrer un
+Event : cette opération ne dispatche rien, ne délivre aucun Event et ne démarre aucune
+exécution — la delivery reste le ticket #6.
 
 ## One repository in MVP
 
