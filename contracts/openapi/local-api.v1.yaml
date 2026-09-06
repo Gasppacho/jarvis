@@ -312,6 +312,33 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /v1/projects/{projectId}/subscriptions:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      operationId: listProjectSubscriptions
+      description: >-
+        Ticket #54: the open subscription set, derived read-only from the
+        immutable Resolved Project (ticket #53) frozen at activation and the
+        Module Package Manifests — never a second durable store, so it cannot
+        drift from what was actually activated. Exactly the consumed
+        contracts of the Resolved Project's enabled Module Instances; a
+        disabled instance contributes none. Before activation ever succeeded,
+        `items` is empty. Opening a subscription is not delivering an Event:
+        this operation never dispatches, delivers or starts an execution.
+      responses:
+        "200":
+          description: The Project's open subscription set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectSubscriptionsV1"
+        default:
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/projects/{projectId}/activate:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -996,6 +1023,21 @@ components:
           type: string
         contract:
           $ref: "#/components/schemas/ValidationContract"
+    ProjectSubscriptionsV1:
+      type: object
+      additionalProperties: false
+      required: [apiVersion, kind, projectId, items]
+      properties:
+        apiVersion:
+          const: jarvis.dev/project-subscriptions/v1
+        kind:
+          const: ProjectSubscriptions
+        projectId:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidationContractEndpoint"
     ProjectFindingTarget:
       type: object
       additionalProperties: false

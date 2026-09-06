@@ -51,8 +51,16 @@ quand aucun rapport réussi n'existe pour la composition courante, et
 depuis ce rapport. Un succès crée le Resolved Project immuable — composition figée,
 Module Instances, bindings et routes de requests résolues — et fait passer le Project à
 `active`; répéter l'activation d'une composition inchangée est idempotent et ne crée pas
-un second Resolved Project. Aucune subscription ni Event ne sont créés par cette
-opération.
+un second Resolved Project. Aucun Event n'est créé ni délivré par cette opération.
+
+`GET /v1/projects/{projectId}/subscriptions` (ticket #54) renvoie `ProjectSubscriptionsV1` :
+l'ensemble des subscriptions ouvertes, dérivé à la demande du Resolved Project et des
+Manifests des Module Packages, sans aucun second store durable. `items` porte un
+`ValidationContractEndpoint` (`instanceId`, `moduleId`, `contract`) par contrat consommé
+de chaque Module Instance `enabled` de la composition figée ; une instance désactivée n'y
+contribue rien. Avant toute activation réussie, `items` est vide. Répéter l'activation
+d'une composition inchangée laisse cet ensemble inchangé. Ouvrir une subscription n'est
+pas délivrer un Event : cette lecture ne dispatche, ne délivre et ne démarre rien.
 
 `POST /v1/projects/{projectId}/composition-choices` prévisualise, sans mutation, les
 Events déclarés par la configuration sauvegardée ou par une `portableConfig` proposée.

@@ -182,6 +182,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{projectId}/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        /** @description Ticket #54: the open subscription set, derived read-only from the immutable Resolved Project (ticket #53) frozen at activation and the Module Package Manifests — never a second durable store, so it cannot drift from what was actually activated. Exactly the consumed contracts of the Resolved Project's enabled Module Instances; a disabled instance contributes none. Before activation ever succeeded, `items` is empty. Opening a subscription is not delivering an Event: this operation never dispatches, delivers or starts an execution. */
+        get: operations["listProjectSubscriptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{projectId}/activate": {
         parameters: {
             query?: never;
@@ -585,6 +604,14 @@ export interface components {
             instanceId: string;
             moduleId: string;
             contract: components["schemas"]["ValidationContract"];
+        };
+        ProjectSubscriptionsV1: {
+            /** @constant */
+            apiVersion: "jarvis.dev/project-subscriptions/v1";
+            /** @constant */
+            kind: "ProjectSubscriptions";
+            projectId: string;
+            items: components["schemas"]["ValidationContractEndpoint"][];
         };
         ProjectFindingTarget: {
             /** @constant */
@@ -1426,6 +1453,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectCompositionGraphV1"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listProjectSubscriptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The Project's open subscription set. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectSubscriptionsV1"];
                 };
             };
             401: components["responses"]["Unauthorized"];

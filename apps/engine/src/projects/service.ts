@@ -8,6 +8,7 @@ import {
 } from "../../../../packages/project-runtime/src/composition-validator.js";
 import { previewProjectCompositionChoices } from "../../../../packages/project-runtime/src/composition-choices.js";
 import { buildProjectCompositionGraph } from "../../../../packages/project-runtime/src/composition-graph.js";
+import { deriveProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
 import type {
   ActivateProjectRequest,
   ImportProjectRequest,
@@ -49,6 +50,7 @@ import type {
   StoredPortableProjectConfiguration,
   RepositoryDiscovery,
 } from "./types.js";
+import type { ProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
 
 const PROJECT_YAML = join(".jarvis", "project.yaml");
 const MAX_PROJECT_YAML_BYTES = 512 * 1024;
@@ -212,6 +214,20 @@ export class ProjectService implements ProjectRegistry<
     const updated = this.store.activateProject(project.id, currentFingerprint, snapshot);
     if (updated === undefined) throw notFound(project.id);
     return toSummary(updated);
+  }
+
+  /**
+   * Ticket #54: the open subscription set, derived fresh from the frozen
+   * Resolved Project (ticket #53) and the Module Package Manifests — no
+   * second durable store, so it can never drift from what was activated.
+   * Before activation ever succeeded there is no Resolved Project yet, and
+   * the set is empty: no subscription is open before an Event could ever be
+   * routed to it.
+   */
+  listProjectSubscriptions(id: unknown): ProjectSubscriptions {
+    const project = this.requireProject(id);
+    const resolved = this.store.getResolvedProject(project.id);
+    return deriveProjectSubscriptions(project.id, resolved?.moduleInstances ?? [], this.modules);
   }
 
   previewCompositionChoices(

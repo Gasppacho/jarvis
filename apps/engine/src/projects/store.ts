@@ -185,6 +185,20 @@ export class ProjectStore {
     })();
   }
 
+  /**
+   * The frozen Resolved Project for `projectId` (ticket #53), or `undefined`
+   * before activation ever succeeded. Ticket #54's open-subscription read
+   * model derives from exactly this snapshot's `moduleInstances`.
+   */
+  getResolvedProject(projectId: string): ResolvedProjectSnapshot | undefined {
+    const record = this.db
+      .prepare("SELECT resolved_project FROM project_resolved_compositions WHERE project_id = ?")
+      .get(projectId) as { resolved_project: string } | undefined;
+    return record === undefined
+      ? undefined
+      : (JSON.parse(record.resolved_project) as ResolvedProjectSnapshot);
+  }
+
   replaceConfiguration(
     projectId: string,
     configuration: StoredPortableProjectConfiguration,

@@ -16,6 +16,7 @@ import type {
   ProjectValidationReport,
   RepositoryDiscovery,
 } from "./types.js";
+import type { ProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
 
 export type LocalProjectRegistry = ProjectRegistry<
   ProjectSummary,
@@ -30,6 +31,7 @@ export type LocalProjectRegistry = ProjectRegistry<
     ): ProjectCompositionChoices;
     compositionReview(id: unknown, proposedConfiguration: unknown): ProjectCompositionReview;
     compositionGraph(id: unknown, proposedConfiguration: unknown): ProjectCompositionGraph;
+    listProjectSubscriptions(id: unknown): ProjectSubscriptions;
   };
 export type LocalRepositoryDiscovery = RepositoryDiscoveryPort<RepositoryDiscovery>;
 
@@ -103,6 +105,12 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
         compositionFingerprint: body?.compositionFingerprint,
       }),
     );
+  });
+
+  app.get("/v1/projects/:projectId/subscriptions", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    return reply.code(200).send(service.listProjectSubscriptions(params?.projectId));
   });
 
   app.post("/v1/projects/:projectId/composition-choices", async (request, reply) => {

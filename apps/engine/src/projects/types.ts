@@ -12,6 +12,7 @@ import type {
   SuggestedProjectConfig,
 } from "../../../../packages/project-runtime/src/project-types.js";
 import type { ProjectCompositionGraph } from "../../../../packages/project-runtime/src/composition-graph.js";
+import type { ProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
 
 /** The Local API contract is the source of truth for exposed lifecycle values. */
 export type ProjectStatus = components["schemas"]["ProjectSummary"]["status"];
@@ -64,6 +65,13 @@ export type LocalApiProjectCompositionGraphContractParity = Assert<
   MutuallyAssignable<Mutable<ProjectCompositionGraph>, ApiCompositionGraph>
 >;
 
+type ApiSubscriptions = components["schemas"]["ProjectSubscriptionsV1"];
+
+/** Ticket #54's derived read model must stay isomorphic with the wire schema. */
+export type LocalApiProjectSubscriptionsContractParity = Assert<
+  MutuallyAssignable<Mutable<ProjectSubscriptions>, ApiSubscriptions>
+>;
+
 export interface ProjectSummary {
   readonly id: string;
   readonly name: string;
@@ -100,3 +108,7 @@ export type {
   SuggestedProjectConfig,
 } from "../../../../packages/project-runtime/src/project-types.js";
 export type { ProjectCompositionGraph } from "../../../../packages/project-runtime/src/composition-graph.js";
+export type {
+  ProjectOpenSubscription,
+  ProjectSubscriptions,
+} from "../../../../packages/project-runtime/src/project-subscriptions.js";
