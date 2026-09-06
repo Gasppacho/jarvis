@@ -1,0 +1,46 @@
+mission: MISSION-0022
+ticket: 47
+team:
+  - role: repo-analyst
+    task: >
+      Read docs/contracts/PROJECT_CONFIG_V1.md around its candidates non-disclosure rule, the
+      ProjectResourceChoices and ProjectResourceBindingChoice schemas in contracts/openapi/
+      local-api.v1.yaml, packages/project-runtime/src/composition-validator.ts and project-types.ts
+      for how eligibility and the five statuses are already computed, apps/engine/src/projects/
+      {service,routes}.ts for how binding-candidates is served, the existing ADRs under docs/adr/ for
+      their format and numbering, and the harness tests covering binding candidates. Report exactly
+      where the grant filter is applied today, which ineligible cases are currently dropped, and
+      which of them the recorded decision permits to surface. Read nothing under apps/macos/.build,
+      node_modules or dist. Write no code.
+  - role: implementer
+    task: >
+      Write the ADR recording the disclosure decision — rationale, threat boundary, compatibility and
+      versioning consequences — using the next free number and the existing ADR format. Then surface,
+      for a granted-but-ineligible resource, the Engine-owned reason alongside the existing status,
+      keeping every non-granted resource entirely absent from the response. Extend the existing
+      binding-candidates surface and its schemas rather than adding a parallel path; make every wire
+      addition OPTIONAL. Update PROJECT_CONFIG_V1.md, LOCAL_API_V1.md, examples and the OpenAPI
+      together, then regenerate with pnpm generate — never hand-edit generated files. The Engine alone
+      computes eligibility and reasons. Add no SwiftUI view, presentation model or Swift test.
+  - role: test-engineer
+    task: >
+      Extend the Application Harness in apps/engine/test with real project-scoped grants and
+      resources. Prove an eligible resource carries its status; prove each permitted ineligible case
+      (missing capability, wrong kind, partial capability match) is named with the Engine's reason;
+      and prove a resource granted to another Project but not to this one is absent from the response
+      entirely — no entry, no identifier, no count, no placeholder. Assert the generated client
+      decodes the versioned result. Assert the response stays deterministic and ordered by Slot.
+  - role: reviewer
+    task: >
+      Run `pnpm verify` in full with a bounded poll — never `tail -f`; route through `rtk proxy` if a
+      bare `pnpm <script>` gets rewritten into a nonexistent ESLint call — and report each stage with
+      its actual result. Confirm the ADR states the threat boundary, that no non-granted resource
+      leaks in any form, that no wire addition was made required, that no generated file was
+      hand-edited, that no Swift UI or presentation code was added, and that no commit message carries
+      a Fixes/Closes/Resolves keyword. State explicitly "no visual change - engine, contracts and ADR
+      only". Reap orphaned xctest / swift-test processes before the Swift stage. Work on
+      agent/47-resource-eligibility-reasons from the start — never stage on main. Stage explicit paths
+      only, never `git add -A`. Commit, merge --no-ff into main, re-verify on merged main, push as a
+      plain fast-forward, confirm origin/main equals local main. Commit this mission's reports
+      alongside the code. Create, edit, label, comment on or close NO GitHub issue. Write
+      reports/review-report.md and reports/retro.md.

@@ -41,6 +41,7 @@ import type {
   ProjectCompositionReview,
   PortableProjectConfiguration,
   ProjectBindings,
+  ProjectIneligibleResource,
   ProjectResourceCandidate,
   ProjectResourceChoices,
   ProjectResourceGrantPort,
@@ -568,10 +569,18 @@ function resourceChoices(
     .map((slotId) => {
       const requirements = slotRequirements(configuration, modules, slotId);
       const requiredCapabilities = requirements.capabilities;
-      const candidates = scopedCandidates.filter((candidate) =>
-        requiredCapabilities.every((capability) => candidate.capabilities.includes(capability)),
-      );
       const binding = project.slotBindings[slotId];
+      const candidates = scopedCandidates.filter(
+        (candidate) =>
+          requiredCapabilities.every((capability) => candidate.capabilities.includes(capability)) &&
+          // Same ref, wrong kind: this Slot's own binding says which kind that
+          // ref must be. Named as ineligible (ADR 0014), never left eligible.
+          !(
+            binding !== undefined &&
+            candidate.ref === binding.ref &&
+            candidate.kind !== binding.kind
+          ),
+      );
       const sameResource =
         binding === undefined
           ? undefined
@@ -605,6 +614,12 @@ function resourceChoices(
           : `Module Instances ${affected.join(
               ", ",
             )} cannot run their configured behavior without ${requiredCapabilities.join(", ")}.`;
+      const ineligibleGrantedResources = ineligibleGrantedResourcesFor(
+        scopedCandidates,
+        candidates,
+        requiredCapabilities,
+        binding,
+      );
       return {
         slotId,
         requiredCapabilities,
@@ -612,6 +627,7 @@ function resourceChoices(
         status,
         impact,
         repairAction: repairAction(status, slotId, requiredCapabilities),
+        ...(ineligibleGrantedResources.length === 0 ? {} : { ineligibleGrantedResources }),
       };
     });
   const eligibleIds = new Set(slots.flatMap((slot) => slot.candidates.map(resourceCandidateId)));
@@ -664,6 +680,47 @@ function repairAction(
   }
   const exhaustive: never = status;
   return exhaustive;
+}
+
+/**
+ * ADR 0014: names every candidate already granted to this Project (present in
+ * `scopedCandidates`, itself bounded by `ProjectResourceGrantPort` — never a
+ * resource this Project has no grant for) that this Slot's own eligibility
+ * filter excluded from `candidates`, together with the Engine's reason. A
+ * resource outside `scopedCandidates` is never considered here, so it can
+ * never be named, counted or hinted at.
+ */
+function ineligibleGrantedResourcesFor(
+  scopedCandidates: readonly ProjectResourceCandidate[],
+  eligibleCandidates: readonly ProjectResourceCandidate[],
+  requiredCapabilities: readonly string[],
+  binding: { readonly kind: string; readonly ref: string } | undefined,
+): readonly ProjectIneligibleResource[] {
+  return scopedCandidates
+    .filter((candidate) => !eligibleCandidates.includes(candidate))
+    .flatMap((candidate) => {
+      const reason = ineligibilityReason(candidate, requiredCapabilities, binding);
+      return reason === undefined ? [] : [{ candidate, reason }];
+    })
+    .sort((left, right) => compareResourceCandidate(left.candidate, right.candidate));
+}
+
+function ineligibilityReason(
+  candidate: ProjectResourceCandidate,
+  requiredCapabilities: readonly string[],
+  binding: { readonly kind: string; readonly ref: string } | undefined,
+): string | undefined {
+  if (binding !== undefined && candidate.ref === binding.ref && candidate.kind !== binding.kind) {
+    return `This Slot's binding expects kind "${binding.kind}" for ref ${binding.ref}, but the resource granted under that ref is kind "${candidate.kind}".`;
+  }
+  const satisfied = requiredCapabilities.filter((capability) =>
+    candidate.capabilities.includes(capability),
+  );
+  if (satisfied.length === requiredCapabilities.length) return undefined;
+  if (satisfied.length === 0) {
+    return `This resource provides none of the required capabilities: ${requiredCapabilities.join(", ")}.`;
+  }
+  return `This resource provides only ${satisfied.join(", ")} of the required capabilities: ${requiredCapabilities.join(", ")}.`;
 }
 
 function resourceCandidateId(candidate: ProjectResourceCandidate): string {

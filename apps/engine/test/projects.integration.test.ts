@@ -23,6 +23,7 @@ import { parse as parseYaml } from "yaml";
 import { explain, localApiValidator } from "./contract.js";
 import { startEngine, type Harness } from "./harness.js";
 import { makeNodeRepositoryFixture, makeRepositoryFixture } from "./repository-fixture.js";
+import type { components } from "../src/api/generated/local-api.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
@@ -1987,6 +1988,24 @@ capabilities:
         }),
       ],
     });
+
+    // ADR 0014: the "github" Module Instance is granted (it is this Project's
+    // own configuration) but satisfies only one of sourceControl's two
+    // required capabilities, so it is named with the Engine's reason instead
+    // of silently vanishing. The generated Local API types (the same types a
+    // client decodes the response against) accept the shape without a cast.
+    const resourceChoices = candidates as components["schemas"]["ProjectResourceChoices"];
+    const sourceControl = resourceChoices.slots.find((slot) => slot.slotId === "sourceControl");
+    expect(sourceControl?.ineligibleGrantedResources).toEqual([
+      expect.objectContaining({
+        candidate: expect.objectContaining({ ref: "github", kind: "module-instance" }),
+        reason: expect.stringContaining("scm.change-request.manage"),
+      }),
+    ]);
+    // A Slot the "github" instance fully satisfies carries no such entry.
+    expect(
+      resourceChoices.slots.find((slot) => slot.slotId === "tickets")?.ineligibleGrantedResources,
+    ).toBeUndefined();
 
     const initial = (await (
       await engine.call(`/v1/projects/${created.id}/bindings`)
