@@ -324,6 +324,38 @@ public struct EngineClient: Sendable {
         }
     }
 
+    /// Ticket #55: activates the Project whose current composition and Local
+    /// Bindings produced `compositionFingerprint` on a successful validation
+    /// report. The engine — not this client — decides whether that report is
+    /// still current; a stale or missing one is a stable error code, not a
+    /// silent revalidation.
+    public func activateProject(
+        projectId: String,
+        compositionFingerprint: String
+    ) async throws -> Project {
+        let operation = "POST /v1/projects/\(projectId)/activate"
+        let output = try await underlying.activateProject(
+            .init(
+                path: .init(projectId: projectId),
+                body: .json(.init(compositionFingerprint: compositionFingerprint))))
+        switch output {
+        case .ok(let ok):
+            let payload = try ok.body.json
+            return Project(
+                id: payload.id,
+                name: payload.name,
+                status: payload.status.asDomain,
+                moduleCount: payload.moduleCount,
+                activeExecutions: payload.activeExecutions)
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
     public func deleteProject(id: String) async throws {
         let operation = "DELETE /v1/projects/\(id)"
         let output = try await underlying.deleteProject(

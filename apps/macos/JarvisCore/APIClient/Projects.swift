@@ -557,6 +557,11 @@ public struct ProjectValidationReport: Sendable, Equatable {
     public let requestRoutes: [ProjectRequestRoute]
     public let satisfiedCapabilities: [ProjectSatisfiedCapability]
     public let findings: [ProjectValidationFinding]
+    /// Optional on the wire (contracts/openapi/local-api.v1.yaml): making it
+    /// required broke every fixture that predates it. `POST .../activate`
+    /// takes this back and refuses activation when it is absent or stale
+    /// rather than silently revalidating (ticket #55).
+    public let compositionFingerprint: String?
 
     init(payload: Components.Schemas.ProjectValidationReportV1) throws {
         guard let data = try? JSONEncoder().encode(payload),
@@ -572,6 +577,7 @@ public struct ProjectValidationReport: Sendable, Equatable {
         kind = wire.kind
         projectId = wire.projectId
         valid = wire.valid
+        compositionFingerprint = wire.compositionFingerprint
         requestRoutes = try wire.requestRoutes.map { route in
             ProjectRequestRoute(
                 contract: try Self.contract(route.contract),
@@ -929,6 +935,7 @@ private struct WireProjectValidationReport: Decodable {
     let requestRoutes: [Route]
     let satisfiedCapabilities: [SatisfiedCapability]
     let findings: [Finding]
+    let compositionFingerprint: String?
 }
 
 private struct WireProjectCompositionReview: Decodable {

@@ -2,6 +2,17 @@ import Foundation
 import JarvisAPI
 import Observation
 
+/// Ticket #55: the Wizard's Activate affordance, reflecting exactly what the
+/// engine decided. `nil` code marks a client-side refusal (no current report,
+/// or one with no `compositionFingerprint`) — never a guessed engine code.
+public enum ProjectActivationState: Sendable, Equatable {
+    case idle
+    case activating
+    case succeeded
+    case rejected(code: String?, message: String)
+    case transportFailure(String)
+}
+
 public struct ProjectConfigurationState: Sendable, Equatable {
     public var detail: ProjectDetail?
     public var localBindings: LocalProjectBindings?
@@ -11,6 +22,7 @@ public struct ProjectConfigurationState: Sendable, Equatable {
     public var compositionReview: ProjectCompositionReview?
     public var compositionGraph: ProjectCompositionGraph?
     public var validation: ProjectValidationState = .unvalidated
+    public var activation: ProjectActivationState = .idle
     public var draft: ProjectConfigurationDraft?
     public var isDraftSaved = false
     public var isLoading = false
@@ -27,10 +39,12 @@ public final class ProjectConfigurationModel {
 
     typealias ValidationReportProvider = @Sendable (String) async throws
         -> ProjectValidationReport
+    typealias ActivationProvider = @Sendable (String, String) async throws -> Project
 
     private let session: EngineSessionModel
     private let projects: ProjectsModel
     private let validationReportProvider: ValidationReportProvider?
+    private let activationProvider: ActivationProvider?
     private var compositionRevisions: [String: Int] = [:]
     private var validationRevisions: [String: Int] = [:]
     private var lastValidationReports: [String: ProjectValidationReport] = [:]
@@ -39,16 +53,19 @@ public final class ProjectConfigurationModel {
         self.session = session
         self.projects = projects
         validationReportProvider = nil
+        activationProvider = nil
     }
 
     init(
         session: EngineSessionModel,
         projects: ProjectsModel,
-        validationReportProvider: @escaping ValidationReportProvider
+        validationReportProvider: ValidationReportProvider? = nil,
+        activationProvider: ActivationProvider? = nil
     ) {
         self.session = session
         self.projects = projects
         self.validationReportProvider = validationReportProvider
+        self.activationProvider = activationProvider
     }
 
     private var client: EngineClient? { session.client }
@@ -410,6 +427,8 @@ public final class ProjectConfigurationModel {
             _ = await saveDraft(projectId: projectId, writeToRepository: true)
         case .validate:
             await validate(projectId: projectId)
+        case .activate:
+            await activate(projectId: projectId)
         case .confirmProjectDeletion:
             _ = await deleteProject(projectId: projectId)
         }
@@ -457,6 +476,56 @@ public final class ProjectConfigurationModel {
                 $0.validation = .failed(
                     "Validation report is unavailable, so Project readiness cannot be determined. \(cause) Retry validation after correcting the problem.")
                 $0.errorMessage = nil
+            }
+        }
+    }
+
+    /// Ticket #55: turns the #45 readiness signal into a real request. Only
+    /// the exact report the Wizard currently shows for this Project can
+    /// activate — its `compositionFingerprint` travels back verbatim, and its
+    /// absence refuses activation locally rather than guessing or omitting
+    /// it. The engine alone decides whether that fingerprint is still current;
+    /// this method only reflects and forwards its answer.
+    public func activate(projectId: String) async {
+        guard case .valid(let report) = state(for: projectId).validation,
+            report.projectId == projectId
+        else {
+            update(projectId) {
+                $0.activation = .rejected(
+                    code: nil,
+                    message:
+                        "No current successful validation report is displayed for this Project. Validate again before activating.")
+            }
+            return
+        }
+        guard let fingerprint = report.compositionFingerprint else {
+            update(projectId) {
+                $0.activation = .rejected(
+                    code: nil,
+                    message:
+                        "The displayed validation report carries no composition fingerprint, so activation was refused rather than guessed. Validate again.")
+            }
+            return
+        }
+        let provider: ActivationProvider
+        if let activationProvider {
+            provider = activationProvider
+        } else if let client {
+            provider = { try await client.activateProject(projectId: $0, compositionFingerprint: $1) }
+        } else {
+            update(projectId) { $0.activation = .transportFailure(Self.engineUnavailable) }
+            return
+        }
+        update(projectId) { $0.activation = .activating }
+        do {
+            _ = try await provider(projectId, fingerprint)
+            update(projectId) { $0.activation = .succeeded }
+            await projects.refresh()
+        } catch let EngineClientError.engineError(_, code, message) {
+            update(projectId) { $0.activation = .rejected(code: code, message: message) }
+        } catch {
+            update(projectId) {
+                $0.activation = .transportFailure(ProjectsModel.describe(error))
             }
         }
     }
@@ -620,9 +689,9 @@ public final class ProjectConfigurationModel {
         }
         if let report {
             lastValidationReports[projectId] = report
-            update(projectId) { $0.validation = .stale(report) }
+            update(projectId) { $0.validation = .stale(report); $0.activation = .idle }
         } else {
-            update(projectId) { $0.validation = .unvalidated }
+            update(projectId) { $0.validation = .unvalidated; $0.activation = .idle }
         }
     }
 
