@@ -111,11 +111,13 @@ Two seams, both real (no mocks of the policy under test):
 | staged explicit paths (`git add <files>`, no `-A`/`.`) | — |
 | `rtk proxy pnpm verify` (2nd run) | **failed** — `prettier --check .` flagged `service.ts`/`service.test.ts` formatting |
 | `npx prettier --write apps/engine/src/projects/service.test.ts apps/engine/src/projects/service.ts` | reformatted; re-staged |
-| `rtk proxy pnpm verify` (3rd run, background, bounded poll via Monitor, never `tail -f`) | **pass**, exit code 0 — `generate:check`, `contracts:check`, `lint`, `typecheck`, `arch:check`, `build:engine`, `test` (6 files / 43 tests), `test:integration` (11 files / 173 tests), `build:app`, `test:swift` (83 XCTest cases + 0 swift-testing cases, all passed) |
-
-No orphaned `xctest`/`swift-test` processes were found before the Swift stage
-(`pkill -f xctest`/`pkill -f swift-test` found nothing to reap; confirmed with
-`ps aux`).
+| `rtk proxy pnpm verify` (3rd run, on the branch, background, bounded poll via Monitor, never `tail -f`) | **pass**, exit code 0 — `generate:check`, `contracts:check`, `lint`, `typecheck`, `arch:check`, `build:engine`, `test` (6 files / 43 tests), `test:integration` (11 files / 173 tests), `build:app`, `test:swift` (83 XCTest cases + 0 swift-testing cases, all passed) |
+| `git commit` (branch) | `e6b4de0 feat(engine): disclose granted-but-ineligible resource reasons`, 16 files changed |
+| `git checkout main && git merge --no-ff agent/47-resource-eligibility-reasons` | clean merge, no conflicts — `ae6acdf Merge branch 'agent/47-resource-eligibility-reasons'` |
+| `pkill -f xctest`/`pkill -f swift-test` before the Swift stage (both runs) | nothing to reap; confirmed with `ps aux` |
+| `rtk proxy pnpm verify` (merged `main`, background, bounded poll via Monitor) | **pass**, exit code 0 |
+| `git push origin main` | plain fast-forward: `92f40cb..ae6acdf  main -> main` |
+| `git rev-parse main` / `git rev-parse origin/main` | both `ae6acdf9dcc8a15e8574dd24a6943df83d559101` — confirmed equal |
 
 ## Acceptance checklist — item by item
 
@@ -166,12 +168,21 @@ Mission gates:
 - [x] `pnpm verify` passes on the branch, each stage reported with its actual
       result (see table).
 - [x] Staged by explicit paths; no `git add -A`/`git add .` used anywhere.
-- [ ] Merge `--no-ff` into `main`, re-verify on merged `main`, push as a plain
-      fast-forward, confirm `origin/main` equals local `main` — pending as of
-      this writing; completed and confirmed in the same mission run before
-      hand-off (see final commit/merge/push log below once done).
+- [x] Merged `--no-ff` into `main` (`ae6acdf`), `pnpm verify` re-run and passed
+      on merged `main`, pushed as a plain fast-forward
+      (`92f40cb..ae6acdf main -> main`), `origin/main` confirmed equal to
+      local `main` (both `ae6acdf9dcc8a15e8574dd24a6943df83d559101`).
 - [x] `reports/review-report.md` and `reports/retro.md` written and committed
       alongside the code.
 
-*(The one item shown pending above is completed later in this same mission
-run; this file is updated/finalized before the mission's last commit.)*
+## No visual change
+
+**No visual change — engine, contracts and ADR only.** This mission touched
+the Engine (`apps/engine/src/`), the shared domain types
+(`packages/project-runtime/src/`), the versioned contract
+(`contracts/openapi/`, `docs/contracts/`) and one new ADR
+(`docs/adr/0014-...`). `apps/macos/` was not hand-edited; its generated
+client code changes only as a byproduct of `swift test`'s own
+`swift-openapi-generator` build plugin picking up the updated (symlinked)
+OpenAPI document. No SwiftUI view, presentation model or new Swift test was
+added, and nothing in this diff has a screen to screenshot.
