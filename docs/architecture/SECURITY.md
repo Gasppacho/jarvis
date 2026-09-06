@@ -80,6 +80,10 @@ Les tools sensibles ne doivent pas être exposés simplement parce qu'un MCP les
 - Body limits et validation OpenAPI.
 - Shutdown et actions sensibles auditables.
 
+## Build-time test seams
+
+Le harness applicatif (`docs/architecture/TESTING.md`) a besoin d'un point de crash déterministe (`JARVIS_FAILPOINT`) et d'une surface HTTP `/test/*` (`JARVIS_ENABLE_TEST_HOOKS`) pour prouver la reprise après crash. Comme le MVP n'utilise pas App Sandbox (voir Distribution ci-dessous), un process local non privilégié pourrait sinon armer ce mécanisme sur l'app signée via `launchctl setenv`. Ce mécanisme est donc absent du moteur de production par construction — éliminé à la compilation, pas seulement inatteignable au runtime — et l'Engine Supervisor filtre en plus ces deux noms de l'environnement hérité. Voir ADR 0015.
+
 ## Modules
 
 Le MVP charge uniquement des modules officiels intégrés au bundle et enregistrés à build time. Aucun `npm install` ou chargement arbitraire depuis le filesystem en production.

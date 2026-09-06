@@ -222,6 +222,61 @@ final class EngineSupervisorTests: XCTestCase {
         await second.terminate()
     }
 
+    func testJarvisFailpointAndTestHooksNeverReachTheChildEnvironment() async throws {
+        // Ticket #58 review fix (defense in depth): an unprivileged
+        // `launchctl setenv JARVIS_FAILPOINT ...` persists across this app's
+        // own launches and would otherwise be inherited here exactly like
+        // JARVIS_PORT is above. The production engine this app ships already
+        // has the failpoint/test-hooks mechanism compiled out entirely
+        // (tsup.config.ts's `__JARVIS_TEST_HOOKS__` define), so proving the
+        // strip against that build would prove nothing either way. This test
+        // uses `dist/engine/engine.test-bundle.mjs` instead — the build the
+        // Application Harness runs, which genuinely implements both names —
+        // so a leaked value would be observable: the engine would register
+        // `/test/*` routes it must not have with these vars merely inherited
+        // from this test process rather than explicitly configured per call.
+        setenv("JARVIS_ENABLE_TEST_HOOKS", "1", 1)
+        setenv("JARVIS_FAILPOINT", "after-outbox-commit", 1)
+        defer {
+            unsetenv("JARVIS_ENABLE_TEST_HOOKS")
+            unsetenv("JARVIS_FAILPOINT")
+        }
+
+        let development = EngineResources.developmentBuild()
+        let testHooksBundle = development.bundle
+            .deletingLastPathComponent()
+            .appending(path: "engine.test-bundle.mjs")
+        let testHooksResources = EngineResources(
+            nodeExecutable: development.nodeExecutable,
+            bundle: testHooksBundle
+        )
+        let testSupervisor = EngineSupervisor(resources: testHooksResources, dataRoot: dataRoot)
+        let session = try await testSupervisor.start()
+        defer { Task { await testSupervisor.terminate() } }
+
+        // Stripped: the engine came up healthy (an armed JARVIS_FAILPOINT
+        // reaching the child would not by itself crash it — only publishing
+        // through `/test/events` would — so the decisive check is the next
+        // one) and never registered the test-only routes.
+        let health = try await session.client.health()
+        XCTAssertEqual(health.status, .ready)
+
+        var request = URLRequest(
+            url: URL(string: "http://127.0.0.1:\(session.port)/test/projects")!
+        )
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(session.token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["id": "jarvis-strip-check"])
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+        let httpResponse = try XCTUnwrap(response as? HTTPURLResponse)
+        XCTAssertEqual(
+            httpResponse.statusCode, 404,
+            "JARVIS_ENABLE_TEST_HOOKS leaked from the parent environment into the child"
+        )
+    }
+
     func testARestartIsNotMisreportedAsACrashFromTheOldEngine() async throws {
         // The old process's termination handler spawns an unstructured Task
         // that is never awaited. If it runs after a fast restart has already

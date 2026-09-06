@@ -27,6 +27,13 @@ mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
 cp "$BINARY" "$CONTENTS/MacOS/Jarvis"
 # The engine tree, exactly as TECHNOLOGY_STACK.md "Build outputs" describes it.
 cp -R "$ROOT/dist/engine" "$CONTENTS/Resources/engine"
+# ADR 0015: dist/engine also carries engine.test-bundle.mjs, the Application
+# Harness's build with the failpoint/test-hooks mechanism compiled in. Only
+# engine.bundle.mjs (defined __JARVIS_TEST_HOOKS__ false) is production; strip
+# the test bundle explicitly so it can never ship even if this copy step ever
+# changes.
+rm -f "$CONTENTS/Resources/engine/engine.test-bundle.mjs" \
+      "$CONTENTS/Resources/engine/engine.test-bundle.mjs.map"
 
 VERSION="$(node -p "require('$ROOT/package.json').version")"
 

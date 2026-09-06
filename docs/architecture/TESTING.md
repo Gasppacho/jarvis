@@ -83,7 +83,7 @@ Pour chaque ticket :
 - `FakeAgentRuntime` : script de modifications déterministe.
 - `FakeGitHubAdapter` : store in-memory/persisté de Work Items et Change Requests.
 - `ControllableClock` et `DeterministicIdGenerator`.
-- `Failpoint` persistence pour simuler crash aux frontières transactionnelles.
+- `Failpoint` persistence pour simuler crash aux frontières transactionnelles. Compilé uniquement dans le bundle de test (`engine.test-bundle.mjs`, `apps/engine/tsup.config.ts`) via le flag `__JARVIS_TEST_HOOKS__` ; absent par construction du bundle de production que `scripts/build-app.sh` empaquette (ADR 0015).
 
 Ne pas mocker SQLite, Git ou Eventing dans le test principal.
 

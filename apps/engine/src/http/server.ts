@@ -13,6 +13,16 @@ import {
 } from "../projects/routes.js";
 import type { ModuleHost } from "../../../../packages/kernel/src/module-host.js";
 import { capabilityCatalog } from "../../../../packages/kernel/src/capability-catalog.js";
+import {
+  registerDurabilityTestRoutes,
+  type DurabilityTestHooks,
+} from "../test-support/durability-test-routes.js";
+
+/** See apps/engine/src/events/dispatcher.ts's identical declaration for why
+ * this exists and how tsup.config.ts's `define` makes it eliminate
+ * `registerDurabilityTestRoutes` — and with it every `/test/*` string — from
+ * the production bundle. */
+declare const __JARVIS_TEST_HOOKS__: boolean | undefined;
 
 type HealthResponse = components["schemas"]["HealthResponse"];
 
@@ -27,6 +37,13 @@ export interface ServerDependencies {
   readonly isShuttingDown: () => boolean;
   /** Invoked after the 202 has been flushed to the caller. */
   readonly onShutdownRequested: () => void;
+  /**
+   * Ticket #58: present only when main.ts armed `JARVIS_ENABLE_TEST_HOOKS`.
+   * `undefined` — always, on a normally launched engine — means
+   * `registerDurabilityTestRoutes` is never called and the `/test/*` routes
+   * do not exist.
+   */
+  readonly durabilityTestHooks?: DurabilityTestHooks;
 }
 
 const CORRELATION_HEADER = "x-jarvis-correlation-id";
@@ -127,6 +144,12 @@ export function buildServer(deps: ServerDependencies): FastifyInstance {
     repositoryDiscovery: deps.repositoryDiscovery,
     projects: deps.projects,
   });
+
+  if (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) {
+    if (deps.durabilityTestHooks !== undefined) {
+      registerDurabilityTestRoutes(app, deps.durabilityTestHooks);
+    }
+  }
 
   return app;
 }

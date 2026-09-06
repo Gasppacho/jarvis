@@ -1,9 +1,12 @@
-import { writeSync } from "node:fs";
+import { readFileSync, writeSync } from "node:fs";
 import type { AddressInfo } from "node:net";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 import { SystemClock } from "../../../packages/kernel/src/clock.js";
+import { SystemIdGenerator } from "../../../packages/kernel/src/id-generator.js";
+import { EventEnvelopeContractRegistry } from "../../../packages/eventing/src/envelope.js";
+import { deriveProjectSubscriptions } from "../../../packages/project-runtime/src/project-subscriptions.js";
 import { SavedProjectCompositionValidator } from "../../../packages/project-runtime/src/composition-validator.js";
 import { ConfigError, loadConfig } from "./config.js";
 import { openDatabase, type DatabaseState, type OpenedDatabase } from "./db/open.js";
@@ -16,6 +19,26 @@ import { ProjectService, RepositoryDiscoveryService } from "./projects/service.j
 import { EmptyProjectResourceGrants } from "./projects/resource-grants.js";
 import { ProjectStore } from "./projects/store.js";
 import { loadBundledModuleHost } from "./modules/bundled-module-registry.js";
+import { EventPublisher } from "./events/publisher.js";
+import {
+  DEFAULT_LEASE_MS,
+  OutboxDispatcher,
+  type OpenSubscriptionsPort,
+} from "./events/dispatcher.js";
+import { startEventLoop } from "./events/dispatch-loop.js";
+import { DeliveryConsumer, type ModuleHandlerLookup } from "./executions/delivery-consumer.js";
+import {
+  SAMPLE_PROBE_MODULE_ID,
+  SAMPLE_PROBE_PINGED,
+  createSampleProbeSchema,
+  sampleProbeHandler,
+} from "./executions/sample-probe-module.js";
+import type { DurabilityTestHooks } from "./test-support/durability-test-routes.js";
+
+/** See apps/engine/src/events/dispatcher.ts's identical declaration for why
+ * this exists and how tsup.config.ts's `define` makes it eliminate the
+ * `JARVIS_ENABLE_TEST_HOOKS` check below from the production bundle. */
+declare const __JARVIS_TEST_HOOKS__: boolean | undefined;
 
 const SHUTDOWN_GRACE_MS = 5_000;
 const STDERR_FD = 2;
@@ -64,6 +87,7 @@ async function main(): Promise<void> {
   let app: FastifyInstance | undefined;
   let shuttingDown = false;
   let announced = false;
+  let stopEventLoop: (() => void) | undefined;
 
   /** Returns false when the WAL could not be checkpointed. */
   function closeDatabase(): boolean {
@@ -93,6 +117,9 @@ async function main(): Promise<void> {
 
     let code = exitCode;
     try {
+      // Stopped before the database closes: a tick that started while the
+      // engine listened must not run against a handle that has since closed.
+      stopEventLoop?.();
       if (app !== undefined) await app.close();
     } catch (error) {
       report(`jarvis-engine: shutdown failed.\n${String(error)}\n`);
@@ -149,17 +176,93 @@ async function main(): Promise<void> {
   const database = opened;
   const repositoryDiscovery = new RepositoryDiscoveryService();
   const resourceGrants = new EmptyProjectResourceGrants();
+  const projectStore =
+    database === undefined ? undefined : new ProjectStore(database.db, new SystemClock());
   const projects =
-    database === undefined
+    database === undefined || projectStore === undefined
       ? undefined
       : new ProjectService(
-          new ProjectStore(database.db, new SystemClock()),
+          projectStore,
           modules,
           new AtomicProjectConfigurationWriter(),
           resourceGrants,
           new SavedProjectCompositionValidator(modules),
           new LocalRepositoryAccessibility(),
         );
+
+  // Ticket #58 ("the whole durable path must be demonstrable end to end"):
+  // Outbox dispatcher, Delivery consumer and their loop are wired for real,
+  // unconditionally, using the same `ProjectStore`/`ModuleHost` routing a real
+  // Module Instance would resolve through (docs/architecture/EVENTS.md
+  // "Routing > Facts"). Nothing publishes an Event in production yet — no
+  // route accepts one, and every official Module Package's handler is still a
+  // build-time stub (#57's wiring note) — so this loop always finds the
+  // Outbox and `deliveries` empty on a real installation; it exists so the
+  // pipeline is genuinely reachable the moment either changes, rather than
+  // being wired in whichever ticket first needs it.
+  //
+  // `JARVIS_ENABLE_TEST_HOOKS=1` additively registers the one thing a running
+  // engine cannot yet trigger on its own: an inbound publication. See
+  // test-support/durability-test-routes.ts's module doc comment for why that
+  // is test-only rather than a product API.
+  //
+  // Review fix for ticket #58: the `JARVIS_ENABLE_TEST_HOOKS` check itself is
+  // gated behind the same compile-time `__JARVIS_TEST_HOOKS__` flag
+  // dispatcher.ts and delivery-consumer.ts declare (tsup.config.ts's
+  // `define`), so the production entry never even carries this env var name
+  // as a string — an ambient `launchctl setenv JARVIS_ENABLE_TEST_HOOKS 1`
+  // has nothing to turn on there.
+  let testHooksEnabled = false;
+  if (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) {
+    testHooksEnabled = process.env["JARVIS_ENABLE_TEST_HOOKS"] === "1";
+  }
+  let durabilityTestHooks: DurabilityTestHooks | undefined;
+  if (database !== undefined && projectStore !== undefined) {
+    const clock = new SystemClock();
+    const ids = new SystemIdGenerator();
+    const envelopeSchemaPath = join(
+      runtimeRoot,
+      "contracts",
+      "schemas",
+      "event-envelope.v1.schema.json",
+    );
+    const envelopes = new EventEnvelopeContractRegistry({
+      eventEnvelopeV1: JSON.parse(readFileSync(envelopeSchemaPath, "utf8")) as object,
+    });
+    const publisher = new EventPublisher(database.db, clock, ids, envelopes);
+    const openSubscriptions: OpenSubscriptionsPort = (projectId) =>
+      deriveProjectSubscriptions(
+        projectId,
+        projectStore.getResolvedProject(projectId)?.moduleInstances ?? [],
+        {
+          composition: (moduleId) =>
+            modules.composition(moduleId) ??
+            (testHooksEnabled && moduleId === SAMPLE_PROBE_MODULE_ID
+              ? { consumes: [SAMPLE_PROBE_PINGED] }
+              : undefined),
+        },
+      ).items;
+    // Test tuning only (docs/engineering/TEST_FIXTURES.md): a normally
+    // launched engine never sets this, and the default matches the
+    // production lease `OutboxDispatcher` has always used.
+    const leaseMs = parseLeaseMs(process.env["JARVIS_OUTBOX_LEASE_MS"]) ?? DEFAULT_LEASE_MS;
+    const dispatcher = new OutboxDispatcher(
+      database.db,
+      clock,
+      ids,
+      envelopes,
+      openSubscriptions,
+      leaseMs,
+    );
+    const handlers: ModuleHandlerLookup = (moduleId) =>
+      testHooksEnabled && moduleId === SAMPLE_PROBE_MODULE_ID ? sampleProbeHandler : undefined;
+    if (testHooksEnabled) createSampleProbeSchema(database.db);
+    const consumer = new DeliveryConsumer(database.db, clock, ids, publisher, handlers);
+    stopEventLoop = startEventLoop({ db: database.db, dispatcher, consumer });
+    if (testHooksEnabled) {
+      durabilityTestHooks = { db: database.db, store: projectStore, publisher, consumer };
+    }
+  }
 
   app = buildServer({
     config,
@@ -171,6 +274,7 @@ async function main(): Promise<void> {
     onShutdownRequested: () => {
       void shutdown(0);
     },
+    ...(durabilityTestHooks === undefined ? {} : { durabilityTestHooks }),
   });
 
   try {
@@ -193,6 +297,12 @@ async function main(): Promise<void> {
     })}\n`,
   );
   announced = true;
+}
+
+/** `undefined` for unset/empty/non-numeric, same convention as config.ts's `parsePort`. */
+function parseLeaseMs(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === "" || !/^\d+$/.test(raw)) return undefined;
+  return Number(raw);
 }
 
 main().catch((error: unknown) => {
