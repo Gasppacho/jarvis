@@ -12,6 +12,7 @@ import {
   type LocalRepositoryDiscovery,
 } from "../projects/routes.js";
 import type { ModuleHost } from "../../../../packages/kernel/src/module-host.js";
+import { capabilityCatalog } from "../../../../packages/kernel/src/capability-catalog.js";
 
 type HealthResponse = components["schemas"]["HealthResponse"];
 
@@ -118,6 +119,8 @@ export function buildServer(deps: ServerDependencies): FastifyInstance {
   });
 
   app.get("/v1/module-catalog", async () => ({ items: deps.modules.catalog() }));
+
+  app.get("/v1/capability-catalog", async () => capabilityCatalog());
 
   registerProjectRoutes(app, {
     databaseState: deps.databaseState,

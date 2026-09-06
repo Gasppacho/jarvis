@@ -16,6 +16,11 @@ import { startEngine, type Harness } from "./harness.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
+interface CatalogCapabilityRequirement {
+  readonly id: string;
+  readonly binding?: string;
+}
+
 interface CatalogItem {
   readonly moduleId: string;
   readonly version: string;
@@ -24,7 +29,7 @@ interface CatalogItem {
   readonly categories: string[];
   readonly consumes: string[];
   readonly produces: string[];
-  readonly requires: string[];
+  readonly requires: CatalogCapabilityRequirement[];
   readonly provides: string[];
   readonly configurationSchemaRef: string | null;
   readonly configurationSchema: Record<string, unknown> | null;
@@ -123,7 +128,7 @@ describe("bundled Module Package catalogue", () => {
         categories: ["agentic", "decision"],
         consumes: ["scm.change-request.created.v1"],
         produces: [],
-        requires: ["agent.execute"],
+        requires: [{ id: "agent.execute", binding: "agentRuntime" }],
         provides: [],
         configurationSchemaRef: null,
         configurationSchemaTitle: null,
@@ -141,13 +146,13 @@ describe("bundled Module Package catalogue", () => {
           "scm.change-request.creation-requested.v1",
         ],
         requires: [
-          "repository.write",
-          "git.branch",
-          "git.commit",
-          "git.push",
-          "shell.execute",
-          "work-items.read",
-          "agent.execute",
+          { id: "repository.write", binding: "repository" },
+          { id: "git.branch", binding: "repository" },
+          { id: "git.commit", binding: "repository" },
+          { id: "git.push", binding: "repository" },
+          { id: "shell.execute" },
+          { id: "work-items.read", binding: "tickets" },
+          { id: "agent.execute", binding: "agentRuntime" },
         ],
         provides: [],
         configurationSchemaRef: "contracts/module-config/development.v1.schema.json",
@@ -165,7 +170,7 @@ describe("bundled Module Package catalogue", () => {
           "scm.change-request.created.v1",
           "scm.change-request.creation-failed.v1",
         ],
-        requires: ["github.api"],
+        requires: [{ id: "github.api", binding: "sourceControl" }],
         provides: ["scm.change-request.manage", "work-items.read"],
         configurationSchemaRef: "contracts/module-config/github.v1.schema.json",
         configurationSchemaTitle: "GitHub Module Config v1",
@@ -216,6 +221,50 @@ describe("bundled Module Package catalogue", () => {
       properties: {
         rules: { title: "Automation Rules", description: expect.any(String), minItems: 1 },
       },
+    });
+  });
+
+  it("serves the versioned capability catalogue matching the documented meaning (ticket 48)", async () => {
+    const engine = await startEngine();
+    started.push(engine);
+    const validateCatalog = localApiValidator("CapabilityCatalogV1");
+
+    const response = await engine.call("/v1/capability-catalog");
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      apiVersion: string;
+      kind: string;
+      capabilities: Array<{ id: string; meaning: string; owner: string | null }>;
+    };
+    expect(validateCatalog(body), explain(validateCatalog)).toBe(true);
+    expect(body.apiVersion).toBe("jarvis.dev/capability-catalog/v1");
+    expect(body.kind).toBe("CapabilityCatalog");
+    const byId = Object.fromEntries(body.capabilities.map((entry) => [entry.id, entry]));
+
+    // Every capability id every bundled Manifest declares must resolve to served
+    // guidance, or the guided controls would show "unavailable" for real vocabulary.
+    for (const id of [
+      "repository.write",
+      "git.branch",
+      "git.commit",
+      "git.push",
+      "shell.execute",
+      "work-items.read",
+      "agent.execute",
+      "github.api",
+    ]) {
+      expect(byId[id]?.meaning, `capability ${id} must be served`).toBeTruthy();
+    }
+
+    expect(byId["repository.write"]).toEqual({
+      id: "repository.write",
+      meaning: "Modify files inside the leased workspace",
+      owner: "Workspace",
+    });
+    expect(byId["agent.execute"]).toEqual({
+      id: "agent.execute",
+      meaning: "Start a session on the bound Agent Runtime",
+      owner: null,
     });
   });
 

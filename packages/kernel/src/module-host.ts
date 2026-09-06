@@ -1,6 +1,13 @@
 import type { ValidateFunction } from "ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
 
+/** Capability id and manifest binding name together (ticket 48): the binding name
+ * is never discarded on the wire, so a client can offer it without inventing one. */
+export interface ModuleCatalogCapabilityRequirement {
+  readonly id: string;
+  readonly binding?: string;
+}
+
 export interface ModuleCatalogEntry {
   readonly moduleId: string;
   readonly version: string;
@@ -9,7 +16,7 @@ export interface ModuleCatalogEntry {
   readonly categories: readonly string[];
   readonly consumes: readonly string[];
   readonly produces: readonly string[];
-  readonly requires: readonly string[];
+  readonly requires: readonly ModuleCatalogCapabilityRequirement[];
   readonly provides: readonly string[];
   readonly configurationSchemaRef: string | null;
   readonly configurationSchema: Readonly<Record<string, unknown>> | null;
@@ -402,7 +409,11 @@ function toCatalogEntry(
     categories: manifest.metadata.categories,
     consumes: manifest.contracts.consumes.map(eventId),
     produces: manifest.contracts.produces.map(eventId),
-    requires: manifest.capabilities.requires.map((capability) => capability.id),
+    requires: manifest.capabilities.requires.map((capability) =>
+      capability.binding === undefined
+        ? { id: capability.id }
+        : { id: capability.id, binding: capability.binding },
+    ),
     provides: manifest.capabilities.provides.map((capability) => capability.id),
     configurationSchemaRef,
     configurationSchema,

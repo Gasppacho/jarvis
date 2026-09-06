@@ -109,7 +109,7 @@ describe("project composition choices", () => {
         description: string;
         consumes: string[];
         produces: string[];
-        requires: string[];
+        requires: Array<{ id: string; binding?: string }>;
       }>;
       moduleInstances: unknown[];
     };
@@ -131,7 +131,10 @@ describe("project composition choices", () => {
         displayName: "Development",
         description: "Implements a requested work item in an isolated Git workspace.",
         consumes: ["development.implementation.requested.v1"],
-        requires: expect.arrayContaining(["agent.execute", "repository.write"]),
+        requires: expect.arrayContaining([
+          { id: "agent.execute", binding: "agentRuntime" },
+          { id: "repository.write", binding: "repository" },
+        ]),
       }),
     );
     expect(fresh.moduleInstances).toEqual([]);

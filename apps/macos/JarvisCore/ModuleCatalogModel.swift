@@ -14,6 +14,9 @@ public final class ModuleCatalogModel {
     }
 
     public private(set) var packages: [ModulePackage] = []
+    /// Served, versioned human meaning for capability ids (ticket 48). Empty
+    /// until loaded; a capability id absent here is unavailable, not guessed.
+    public private(set) var capabilityGuidance: [CapabilityGuidance] = []
     public private(set) var state: State = .idle
 
     private let session: EngineSessionModel
@@ -30,6 +33,7 @@ public final class ModuleCatalogModel {
         state = .loading
         do {
             packages = try await client.listModuleCatalog()
+            capabilityGuidance = try await client.getCapabilityCatalog()
             state = .loaded
         } catch {
             state = .failed(Self.describe(error))

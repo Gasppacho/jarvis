@@ -68,7 +68,7 @@ Une ressource globale n'est pas visible des agents du projet sans ce binding. Po
 
 Chaque ligne `Resources` nomme les capabilities requises et les Module Instances du Draft qui référencent le Slot par un binding ou un `runtimeSlot`, avec le nom et la description de leur Module Package. Elle affiche tel quel le statut Engine `bound`, `available`, `missing`, `inaccessible` ou `incompatible`. Pour un état non résolu, la conséquence (`impact`) puis la prochaine action (`repairAction`) précèdent tout choix de ressource. Quand l'Engine ne retourne aucun candidat éligible, la ligne explique l'indisponibilité avec ce statut et cette action plutôt que d'afficher un picker `Unbound` vide. Recharger les candidats ou changer un Local Binding rafraîchit aussi les ressources manquantes et les choix Event sans remplacer les autres valeurs du Draft.
 
-Le contrôle de capability d'un Slot propose uniquement l'union des identifiants déclarés par `ModulePackage.requires` dans le Module Catalog chargé. Une valeur libre reste accessible sous `Advanced`; le shell n'invente ni identifiant ni explication humaine absente du catalogue servi.
+Le contrôle de capability d'un Slot propose uniquement l'union des identifiants déclarés par `ModulePackage.requires[].id` dans le Module Catalog chargé, avec sa signification humaine lue depuis `GET /v1/capability-catalog` (ticket 48) sous le picker. Une valeur libre reste accessible sous `Advanced`; le shell n'invente ni identifiant, ni nom de binding, ni explication humaine absente du catalogue servi — un identifiant inconnu du catalogue affiche « Unavailable » plutôt qu'une signification devinée.
 
 Choisir un template n'accorde jamais de ressource locale. Le picker modifie uniquement `ProjectBindings`; la Portable Configuration reste inchangée. Sauvegarder puis rouvrir recharge séparément les documents canoniques `jarvis.dev/project/v1` et `jarvis.dev/project-bindings/v1`.
 
@@ -176,6 +176,10 @@ propriété et ne crée ni nom de Slot ni capability factice : le nom reste sais
 la capability est offerte depuis le Module Catalog ou explicitement saisie sous `Advanced`.
 La sauvegarde sérialise uniquement la Module Configuration canonique, sans état de contrôle
 propre au shell.
+
+Le contrôle de binding d'une Module Instance propose de même les noms déclarés par
+`ModulePackage.requires[].binding` du Module Package sélectionné (ticket 48) — jamais une
+liste inventée par le shell — avec un nom saisi explicitement sous `Advanced`.
 
 ## Overview projet
 

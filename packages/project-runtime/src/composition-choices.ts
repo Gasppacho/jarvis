@@ -227,7 +227,7 @@ function moduleInstances(
         description: modulePackage.description,
         consumes: modulePackage.consumes,
         produces: modulePackage.produces,
-        requiredCapabilities: modulePackage.requires,
+        requiredCapabilities: modulePackage.requires.map((requirement) => requirement.id),
         compatibility:
           validation.issues.length === 0 ? ("compatible" as const) : ("incompatible" as const),
         missingResources,

@@ -102,6 +102,7 @@ public struct ProjectDetailView: View {
             detail: state.detail,
             state: state,
             packages: moduleCatalog.packages,
+            capabilityGuidance: moduleCatalog.capabilityGuidance,
             isDeleting: isDeleting)
     }
 
@@ -287,6 +288,11 @@ public struct ProjectDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if !currentValue.isEmpty {
+                Text(presentation.capabilityGuidance[currentValue] ?? "Unavailable")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             DisclosureGroup("Advanced") {
                 TextField("Custom capability ID", text: selection)
                     .textFieldStyle(.roundedBorder)
@@ -365,7 +371,10 @@ public struct ProjectDetailView: View {
                 ForEach(projectSlots, id: \.self) { Text($0).tag($0) }
             }
 
-            bindingRows(module, options: ["main"] + projectSlots)
+            bindingRows(
+                module, options: ["main"] + projectSlots,
+                nameOptions: presentation.moduleCards.first { $0.id == module.id }?
+                    .declaredBindingNames ?? [])
             configurationFields(module)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -374,12 +383,16 @@ public struct ProjectDetailView: View {
         .id("module-instance-\(module.instanceId)")
     }
 
-    private func bindingRows(_ module: ProjectModuleDraft, options: [String]) -> some View {
+    private func bindingRows(
+        _ module: ProjectModuleDraft, options: [String], nameOptions: [String]
+    ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Module bindings").font(.subheadline.weight(.semibold))
             ForEach(module.bindings.keys.sorted(), id: \.self) { key in
-                HStack {
-                    TextField("Binding name", text: moduleBindingName(module.id, key))
+                HStack(alignment: .top) {
+                    bindingNameControl(
+                        selection: moduleBindingName(module.id, key),
+                        currentValue: key, options: nameOptions)
                     Picker("Target", selection: moduleBindingValue(module.id, key)) {
                         ForEach(options, id: \.self) { Text($0).tag($0) }
                     }
@@ -393,6 +406,35 @@ public struct ProjectDetailView: View {
             }
             let edit = ProjectDetailPresentation.Action.Edit.addModuleBinding(module.id)
             Button(edit.label) { perform(.edit(edit), bindingOptions: options) }
+        }
+    }
+
+    /// Offers the binding names declared by the selected Module Package's
+    /// manifest (ticket 48) — never a name invented by the shell — with an
+    /// explicit `Advanced` path for a custom binding name.
+    private func bindingNameControl(
+        selection: Binding<String>, currentValue: String, options: [String]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Picker("Binding name", selection: selection) {
+                if !options.contains(currentValue) {
+                    Text(currentValue).tag(currentValue)
+                }
+                ForEach(options, id: \.self) { name in
+                    Text(name).tag(name)
+                }
+            }
+            .labelsHidden()
+            if options.isEmpty {
+                Text("No declared binding name.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            DisclosureGroup("Advanced") {
+                TextField("Custom binding name", text: selection)
+                    .textFieldStyle(.roundedBorder)
+            }
+            .font(.caption2)
         }
     }
 

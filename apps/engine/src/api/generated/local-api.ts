@@ -387,6 +387,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/capability-catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getCapabilityCatalog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{projectId}/configuration": {
         parameters: {
             query?: never;
@@ -935,12 +951,30 @@ export interface components {
             categories: string[];
             consumes: string[];
             produces: string[];
-            requires: string[];
+            requires: components["schemas"]["ModuleCapabilityRequirementV1"][];
             provides: string[];
             configurationSchemaRef: string | null;
             configurationSchema: {
                 [key: string]: unknown;
             } | null;
+        };
+        /** @description A Module Package requirement's capability id and the manifest binding name it resolves through (ticket 48). `binding` is omitted, never guessed, when the manifest requirement declares none. */
+        ModuleCapabilityRequirementV1: {
+            id: string;
+            binding?: string;
+        };
+        CapabilityCatalogEntryV1: {
+            id: string;
+            meaning: string;
+            owner: string | null;
+        };
+        /** @description Served, versioned human meaning for every documented capability id (ticket 48). Reproduces docs/contracts/CAPABILITY_CATALOG_V1.md; clients read this instead of copying prose from that document. */
+        CapabilityCatalogV1: {
+            /** @constant */
+            apiVersion: "jarvis.dev/capability-catalog/v1";
+            /** @constant */
+            kind: "CapabilityCatalog";
+            capabilities: components["schemas"]["CapabilityCatalogEntryV1"][];
         };
         ProjectMetadata: {
             id: string;
@@ -1796,6 +1830,28 @@ export interface operations {
                     "application/json": {
                         items: components["schemas"]["ModulePackage"][];
                     };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getCapabilityCatalog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Served, versioned human meaning for every documented capability id, so clients stop reading prose out of docs/contracts/CAPABILITY_CATALOG_V1.md. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CapabilityCatalogV1"];
                 };
             };
             401: components["responses"]["Unauthorized"];
