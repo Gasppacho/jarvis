@@ -1037,6 +1037,11 @@ export interface components {
             items: components["schemas"]["ProjectResourceCandidate"][];
             slots: components["schemas"]["ProjectResourceBindingChoice"][];
         };
+        /** @description A resource explicitly granted to this Project but ineligible for this Slot (missing capability, wrong `kind`, or only a partial capability match), named with the Engine's reason (ADR 0014). Never populated from a resource this Project has no grant for. */
+        ProjectIneligibleResource: {
+            candidate: components["schemas"]["ProjectResourceCandidate"];
+            reason: string;
+        };
         ProjectResourceBindingChoice: {
             slotId: string;
             requiredCapabilities: string[];
@@ -1046,6 +1051,8 @@ export interface components {
             status: "bound" | "available" | "missing" | "inaccessible" | "incompatible";
             impact: string;
             repairAction: string;
+            /** @description Optional (ADR 0014): resources already granted to this Project but ineligible for this Slot, named with the Engine's reason. Omitted when there is none; a resource never granted to this Project is never present here, in `candidates`, or anywhere else in this response. */
+            ineligibleGrantedResources?: components["schemas"]["ProjectIneligibleResource"][];
         };
         ProjectSlotBinding: {
             /** @enum {string} */

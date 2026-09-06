@@ -322,6 +322,153 @@ describe("Project deletion", () => {
   });
 });
 
+describe("Granted-but-ineligible resource disclosure (ADR 0014)", () => {
+  it("names each permitted ineligible case with the Engine's reason and never leaks another Project's grant", () => {
+    const repository = mkdtempSync(join(tmpdir(), "jarvis-ineligible-disclosure-"));
+    roots.push(repository);
+    const db = projectDatabase();
+    databases.push(db);
+    const store = new ProjectStore(db, clock);
+    const configuration = exampleConfiguration();
+    store.createProject({
+      id: "token-warehouse",
+      name: configuration.metadata.name,
+      status: "draft",
+      portableConfig: configuration,
+      repositoryPath: repository,
+    });
+
+    const OTHER_PROJECT_REF = "runtime/other-project-secret";
+    const grants: ProjectResourceGrantPort = {
+      grantedToProject: (projectId) => {
+        if (projectId === "token-warehouse") {
+          return [
+            // Eligible: fully satisfies agentRuntime, bound below -> "bound".
+            {
+              ref: "runtime/codex-primary",
+              kind: "runtime" as const,
+              displayName: "Primary runtime",
+              capabilities: ["agent.execute"],
+            },
+            // Same ref as the bound resource above, but the wrong `kind`.
+            {
+              ref: "runtime/codex-primary",
+              kind: "connection" as const,
+              displayName: "Mistyped runtime registration",
+              capabilities: ["agent.execute"],
+            },
+            // sourceControl requires both github.api and scm.change-request.manage:
+            // this grant provides only one -> partial capability match.
+            {
+              ref: "connection/github-partial",
+              kind: "connection" as const,
+              displayName: "GitHub, half-scoped",
+              capabilities: ["scm.change-request.manage"],
+            },
+            // tickets requires work-items.read: this grant provides neither it
+            // nor anything else required -> missing capability.
+            {
+              ref: "mcp/wrong-tool",
+              kind: "mcp" as const,
+              displayName: "Unrelated ticket tool",
+              capabilities: ["issue.export"],
+            },
+          ];
+        }
+        if (projectId === "other-project") {
+          return [
+            {
+              ref: OTHER_PROJECT_REF,
+              kind: "runtime" as const,
+              displayName: "Other Project's secret runtime",
+              capabilities: ["agent.execute"],
+            },
+          ];
+        }
+        return [];
+      },
+    };
+
+    const service = new ProjectService(
+      store,
+      moduleHost(),
+      new AtomicProjectConfigurationWriter(),
+      grants,
+      new SavedProjectCompositionValidator(moduleHost()),
+      new LocalRepositoryAccessibility(),
+    );
+
+    service.replaceProjectBindings({
+      projectId: "token-warehouse",
+      bindings: {
+        apiVersion: "jarvis.dev/project-bindings/v1",
+        kind: "ProjectBindings",
+        projectId: "token-warehouse",
+        repositories: { main: { path: repository, bookmarkRef: null } },
+        slots: {
+          agentRuntime: { kind: "runtime", ref: "runtime/codex-primary" },
+        },
+      },
+    });
+
+    const choices = service.getProjectResourceChoices("token-warehouse");
+
+    // Eligible resource carries its status.
+    const agentRuntime = choices.slots.find((slot) => slot.slotId === "agentRuntime");
+    expect(agentRuntime).toMatchObject({ status: "bound" });
+    expect(agentRuntime?.candidates).toContainEqual(
+      expect.objectContaining({ ref: "runtime/codex-primary", kind: "runtime" }),
+    );
+
+    // Wrong kind: named on the Slot it was bound for, absent from its candidates.
+    expect(agentRuntime?.candidates).not.toContainEqual(
+      expect.objectContaining({ kind: "connection", ref: "runtime/codex-primary" }),
+    );
+    expect(agentRuntime?.ineligibleGrantedResources).toContainEqual(
+      expect.objectContaining({
+        candidate: expect.objectContaining({ kind: "connection", ref: "runtime/codex-primary" }),
+        reason: expect.stringContaining('kind "connection"'),
+      }),
+    );
+
+    // Partial capability match: named on sourceControl, absent from its candidates.
+    const sourceControl = choices.slots.find((slot) => slot.slotId === "sourceControl");
+    expect(sourceControl?.candidates).not.toContainEqual(
+      expect.objectContaining({ ref: "connection/github-partial" }),
+    );
+    expect(sourceControl?.ineligibleGrantedResources).toContainEqual(
+      expect.objectContaining({
+        candidate: expect.objectContaining({ ref: "connection/github-partial" }),
+        reason: expect.stringContaining("scm.change-request.manage"),
+      }),
+    );
+
+    // Missing capability entirely: named on tickets, absent from its candidates.
+    const tickets = choices.slots.find((slot) => slot.slotId === "tickets");
+    expect(tickets?.candidates).not.toContainEqual(
+      expect.objectContaining({ ref: "mcp/wrong-tool" }),
+    );
+    expect(tickets?.ineligibleGrantedResources).toContainEqual(
+      expect.objectContaining({
+        candidate: expect.objectContaining({ ref: "mcp/wrong-tool" }),
+        reason: expect.stringContaining("none of the required capabilities"),
+      }),
+    );
+
+    // Deterministic, ordered by Slot.
+    expect(choices.slots.map((slot) => slot.slotId)).toEqual(
+      [...choices.slots.map((slot) => slot.slotId)].sort((left, right) =>
+        left.localeCompare(right),
+      ),
+    );
+    expect(service.getProjectResourceChoices("token-warehouse")).toEqual(choices);
+
+    // A resource granted to another Project, never this one, is absent everywhere,
+    // not merely from the candidate arrays.
+    expect(JSON.stringify(choices)).not.toContain(OTHER_PROJECT_REF);
+  });
+});
+
 function projectDatabase(): Database.Database {
   const db = new Database(":memory:");
   db.pragma("foreign_keys = ON");

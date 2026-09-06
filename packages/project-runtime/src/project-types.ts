@@ -14,6 +14,17 @@ export interface ProjectResourceCandidate {
 export type ProjectResourceBindingStatus =
   "bound" | "available" | "missing" | "inaccessible" | "incompatible";
 
+/**
+ * A resource explicitly granted to this Project but ineligible for one Slot
+ * (missing capability, wrong `kind`, or only a partial capability match),
+ * named with the Engine's own reason (ADR 0014). Never populated from a
+ * resource this Project has no grant for — see `ProjectResourceGrantPort`.
+ */
+export interface ProjectIneligibleResource {
+  readonly candidate: ProjectResourceCandidate;
+  readonly reason: string;
+}
+
 /** Engine-owned eligibility and repair guidance for one Portable Configuration Slot. */
 export interface ProjectResourceBindingChoice {
   readonly slotId: string;
@@ -22,6 +33,12 @@ export interface ProjectResourceBindingChoice {
   readonly status: ProjectResourceBindingStatus;
   readonly impact: string;
   readonly repairAction: string;
+  /**
+   * Optional (ADR 0014): granted-but-ineligible resources for this Slot,
+   * named with the Engine's reason. Omitted, never empty-and-present, when
+   * there is none, so a fixture predating this field keeps decoding.
+   */
+  readonly ineligibleGrantedResources?: readonly ProjectIneligibleResource[];
 }
 
 export interface ProjectResourceChoices {

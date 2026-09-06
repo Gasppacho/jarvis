@@ -98,6 +98,7 @@ export type {
   ProjectCompositionChoices,
   ProjectCompositionReview,
   PortableProjectConfiguration,
+  ProjectIneligibleResource,
   ProjectResourceCandidate,
   ProjectResourceCandidateRegistry,
   ProjectResourceChoices,

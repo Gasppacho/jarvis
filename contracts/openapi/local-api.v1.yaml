@@ -2023,6 +2023,21 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ProjectResourceBindingChoice"
+    ProjectIneligibleResource:
+      description: >-
+        A resource explicitly granted to this Project but ineligible for this
+        Slot (missing capability, wrong `kind`, or only a partial capability
+        match), named with the Engine's reason (ADR 0014). Never populated
+        from a resource this Project has no grant for.
+      type: object
+      additionalProperties: false
+      required: [candidate, reason]
+      properties:
+        candidate:
+          $ref: "#/components/schemas/ProjectResourceCandidate"
+        reason:
+          type: string
+          minLength: 1
     ProjectResourceBindingChoice:
       type: object
       additionalProperties: false
@@ -2049,6 +2064,16 @@ components:
         repairAction:
           type: string
           minLength: 1
+        ineligibleGrantedResources:
+          description: >-
+            Optional (ADR 0014): resources already granted to this Project but
+            ineligible for this Slot, named with the Engine's reason. Omitted
+            when there is none; a resource never granted to this Project is
+            never present here, in `candidates`, or anywhere else in this
+            response.
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectIneligibleResource"
     ProjectSlotBinding:
       type: object
       additionalProperties: false
