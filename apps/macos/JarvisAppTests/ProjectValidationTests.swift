@@ -218,13 +218,14 @@ final class ProjectValidationTests: XCTestCase {
                 case .saveLocal: return "save-local"
                 case .saveRepository: return "save-repository"
                 case .validate: return "validate"
+                case .activate: return "activate"
                 case .confirmProjectDeletion: return "confirm-project-deletion"
                 }
             })
         XCTAssertEqual(
             callableOperations,
-            ["save-local", "save-repository", "validate", "confirm-project-deletion"],
-            "step 5 must expose readiness without adding a callable activation request")
+            ["activate", "save-local", "save-repository", "validate", "confirm-project-deletion"],
+            "step 5 (#55) exposes readiness through a real, callable Activate request")
     }
 
     @MainActor

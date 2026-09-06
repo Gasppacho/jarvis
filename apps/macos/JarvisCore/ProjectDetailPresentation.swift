@@ -149,9 +149,28 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         public let errorMessage: String?
         public let isReadyToActivate: Bool
         public let activationReadinessExplanation: String
+        /// The exact report's fingerprint, carried through so #55's Activate
+        /// affordance can forward the one the Wizard is actually showing —
+        /// `nil` whenever no report is displayed, or the displayed one
+        /// carries none (the wire field is optional).
+        public let compositionFingerprint: String?
         public let findings: [Finding]
         public let requestRoutes: [RequestRoute]
         public let satisfiedCapabilities: [SatisfiedCapability]
+    }
+
+    /// Ticket #55: the Activate affordance itself, distinct from `Validation`
+    /// so an engine rejection can never be mistaken for a validation finding.
+    public struct Activation: Sendable, Equatable {
+        public enum Status: Sendable, Equatable {
+            case unavailable, ready, activating, succeeded, rejected, transportFailure
+        }
+
+        public let status: Status
+        public let isEnabled: Bool
+        public let title: String
+        public let explanation: String
+        public let accessibilityLabel: String
     }
 
     public struct DeletionConfirmation: Sendable, Equatable {
@@ -357,6 +376,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 case saveLocal
                 case saveRepository
                 case validate
+                case activate
                 case confirmProjectDeletion
             }
 
@@ -377,6 +397,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 .saveRepository,
                 label: "Save and write .jarvis/project.yaml")
             public static let validate = Self(.validate, label: "Validate Project")
+            public static let activate = Self(.activate, label: "Activate")
             public static let confirmProjectDeletion = Self(
                 .confirmProjectDeletion,
                 label: "Delete Project")
@@ -448,6 +469,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
     public let deletionConfirmation: DeletionConfirmation
     public let reviewRows: [ReviewRow]
     public let validation: Validation
+    public let activation: Activation
     public let compositionOutline: ProjectCompositionOutline?
     public let isSaveEnabled: Bool
     public let isReadyForValidation: Bool
@@ -678,6 +700,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 .asynchronous(.saveLocal),
                 .asynchronous(.saveRepository),
                 .asynchronous(.validate),
+                .asynchronous(.activate),
                 .confirmation(.deleteProject),
                 .asynchronous(.confirmProjectDeletion),
                 .noOp(.cancelProjectDeletion),
@@ -689,6 +712,10 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         validation = Self.validation(
             from: state.validation,
             selectedProjectId: project.id)
+        activation = Self.activation(
+            from: state.activation,
+            validation: validation,
+            projectStatus: project.status)
         compositionOutline = state.compositionGraph.map(ProjectCompositionOutline.init(graph:))
         deletionConfirmation = DeletionConfirmation(
             title: "Delete “\(project.name)”?",
@@ -718,6 +745,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 isReadyToActivate: false,
                 activationReadinessExplanation:
                     "Validation is required before this Project can be ready to activate.",
+                compositionFingerprint: nil,
                 findings: [],
                 requestRoutes: [],
                 satisfiedCapabilities: [])
@@ -729,6 +757,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 isReadyToActivate: false,
                 activationReadinessExplanation:
                     "Validation is still running. Readiness will be available after it succeeds.",
+                compositionFingerprint: nil,
                 findings: [],
                 requestRoutes: [],
                 satisfiedCapabilities: [])
@@ -768,6 +797,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 isReadyToActivate: false,
                 activationReadinessExplanation:
                     "Validation is stale because the Project composition or Local Bindings changed. Validate again.",
+                compositionFingerprint: nil,
                 findings: [],
                 requestRoutes: [],
                 satisfiedCapabilities: [])
@@ -779,6 +809,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 isReadyToActivate: false,
                 activationReadinessExplanation:
                     "Validation failed. Correct the API problem and retry validation.",
+                compositionFingerprint: nil,
                 findings: [],
                 requestRoutes: [],
                 satisfiedCapabilities: [])
@@ -803,6 +834,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             errorMessage: nil,
             isReadyToActivate: isReadyToActivate,
             activationReadinessExplanation: activationReadinessExplanation,
+            compositionFingerprint: report.compositionFingerprint,
             findings: findings,
             requestRoutes: report.requestRoutes.map { route in
                 Validation.RequestRoute(
@@ -816,6 +848,85 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                     capability: capability.capability,
                     detail: "\(capability.target.reference) ← \(capability.source.reference)")
             })
+    }
+
+    /// Ticket #55: the readiness signal #45 built decides when Activate is
+    /// even conceivable; this only adds the two conditions unique to sending
+    /// the request — a current fingerprint to carry, and the engine's own
+    /// outcome of the last attempt. It invents no second readiness vocabulary:
+    /// every "not ready yet" sentence below is `activationReadinessExplanation`
+    /// itself.
+    private static func activation(
+        from state: ProjectActivationState,
+        validation: Validation,
+        projectStatus: Project.Status
+    ) -> Activation {
+        if projectStatus == .active {
+            return Activation(
+                status: .succeeded,
+                isEnabled: false,
+                title: "Activated",
+                explanation: "This Project is already active.",
+                accessibilityLabel: "Activated")
+        }
+        let canAttempt = validation.isReadyToActivate && validation.compositionFingerprint != nil
+        switch state {
+        case .activating:
+            return Activation(
+                status: .activating,
+                isEnabled: false,
+                title: "Activating…",
+                explanation: "Activation is in progress.",
+                accessibilityLabel: "Activating")
+        case .succeeded:
+            return Activation(
+                status: .succeeded,
+                isEnabled: false,
+                title: "Activated",
+                explanation:
+                    "Activation succeeded. Reload the Project list to see it reflected everywhere.",
+                accessibilityLabel: "Activated")
+        case .rejected(let code, let message):
+            return Activation(
+                status: .rejected,
+                isEnabled: canAttempt,
+                title: "Activation failed",
+                explanation: code.map { "\(message) (\($0))" } ?? message,
+                accessibilityLabel: "Activation failed. \(message)")
+        case .transportFailure(let message):
+            return Activation(
+                status: .transportFailure,
+                isEnabled: canAttempt,
+                title: "Activation failed",
+                explanation: message,
+                accessibilityLabel: "Activation failed. \(message)")
+        case .idle:
+            guard validation.isReadyToActivate else {
+                return Activation(
+                    status: .unavailable,
+                    isEnabled: false,
+                    title: "Activate",
+                    explanation: validation.activationReadinessExplanation,
+                    accessibilityLabel:
+                        "Not ready to activate. \(validation.activationReadinessExplanation)")
+            }
+            guard validation.compositionFingerprint != nil else {
+                let explanation =
+                    "The current validation report carries no composition fingerprint, so activation is refused rather than guessed. Validate again."
+                return Activation(
+                    status: .unavailable,
+                    isEnabled: false,
+                    title: "Activate",
+                    explanation: explanation,
+                    accessibilityLabel: "Not ready to activate. \(explanation)")
+            }
+            return Activation(
+                status: .ready,
+                isEnabled: true,
+                title: "Activate",
+                explanation: validation.activationReadinessExplanation,
+                accessibilityLabel: "Ready to activate")
+        }
     }
 
     private static func validationFinding(

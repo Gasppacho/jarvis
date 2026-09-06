@@ -1,0 +1,52 @@
+mission: MISSION-0021
+ticket: 55
+team:
+  - role: repo-analyst
+    task: >
+      Read apps/macos/JarvisCore/ProjectDetailPresentation.swift around activationReadinessExplanation
+      for the readiness signal #45 already built and the vocabulary it uses, ProjectConfigurationModel
+      .swift for how a Wizard action calls the Local API and how staleness revokes readiness,
+      ProjectDetailView.swift around its validationReport section for where the affordance belongs,
+      the generated JarvisAPI types for activateProject and for compositionFingerprint on the report,
+      docs/contracts/ERROR_CODES_V1.md for project.activation-not-validated and
+      project.activation-report-stale, and ProjectValidationTests.swift for the test style. Report how
+      the fingerprint reaches the client, where activation state belongs, and how an engine error is
+      kept distinct from a validation finding. Read nothing under apps/macos/.build, node_modules or
+      dist. Write no production code.
+  - role: implementer
+    task: >
+      Check the GUI session FIRST with `ioreg -n Root -d1 -a | grep -A1 CGSSessionScreenIsLocked`;
+      <true/> means stop and report before building. Turn the existing readiness signal into a real
+      Activate action: enabled only for the selected Project whose current report succeeded, carrying
+      that exact report's compositionFingerprint, refusing to activate when it has none. Reuse the
+      readiness vocabulary for every unavailable state instead of inventing a second one. Revoke the
+      affordance immediately on any composition or Local Bindings edit, through the same path that
+      already marks the report stale. Show the resulting active state in the Wizard and the Project
+      list. Present a rejected activation as a structured, actionable explanation distinct from a
+      validation finding. Recompute no engine decision in Swift; touch nothing under apps/engine,
+      packages or contracts.
+  - role: test-engineer
+    task: >
+      Add XCTest in apps/macos/JarvisAppTests covering the affordance states — enabled only on a
+      current successful report; unavailable with its explanation for unvalidated, validating,
+      invalid, stale and API-error states; revoked immediately after a composition edit and after a
+      Local Bindings edit; refused when the report carries no fingerprint. Cover the transition to
+      active on success, and each rejection (project.activation-not-validated,
+      project.activation-report-stale, a transport failure) rendering as an activation failure rather
+      than a validation finding, with the displayed state left consistent with the engine.
+  - role: reviewer
+    task: >
+      Build and launch the packaged app; capture with `screencapture -x -o` into
+      .agentic/missions/MISSION-0021/reports/: Activate enabled on a valid report, the Project shown
+      active after a successful activation, and a rejected activation showing its explanation.
+      Recapture rather than accept a shot that does not show the change; delete any capture carrying
+      personal information and report it. Use a disposable fixture Project, never the user's own
+      jarvis Project; if you must touch a real one, revert it and say so. Reap orphaned xctest /
+      swift-test processes, run `pnpm verify` in full with a bounded poll — never `tail -f` — and
+      report each stage with its actual result. Record the affordance and its failure states in
+      docs/product/UX.md in the document's French voice. Work on agent/55-wizard-activate from the
+      start — never stage on main. Stage explicit paths only, never `git add -A`. Commit with no
+      Fixes/Closes/Resolves keyword, merge --no-ff into main, re-verify on merged main, push as a
+      plain fast-forward, confirm origin/main equals local main. Commit this mission's reports
+      alongside the code. Create, edit, label, comment on or close NO GitHub issue. Write
+      reports/review-report.md and reports/retro.md.
