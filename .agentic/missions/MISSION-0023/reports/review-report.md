@@ -124,6 +124,25 @@ Captured into this directory, using the disposable `fixture-project-0023` fixtur
 
 Each was reviewed full-resolution before being kept; none shows personal information, the user's own `jarvis` Project's content, or any other application.
 
+## Integration result
+
+- Commit on branch: `820d158` "feat(contracts): serve capability vocabulary and module binding names" — no `Fixes`/`Closes`/`Resolves` keyword; includes this mission's `.agentic/missions/MISSION-0023/reports/` alongside the code (23 files changed).
+- `main` before merge: `fbb1b973` (verified equal to `origin/main` before merging — confirms `main` had not moved since the branch was cut).
+- Merge: `git checkout main && git merge --no-ff agent/48-configuration-vocabulary` → merge commit `8d16001`.
+- Re-verify on merged `main`: full `pnpm verify`, exit 0 — every stage green (`generate:check`, `contracts:check`, `lint`, `typecheck`, `arch:check`, `build:engine`, `test`, `test:integration`, `build:app`, `test:swift`; Swift: `Executed 83 tests, with 0 failures`). Log: `verify-merged-main.log`.
+- Push: `git push origin main` → `fbb1b97..8d16001 main -> main`, a plain fast-forward (no `--force`).
+- Confirmed equal: `git rev-parse main origin/main` → both `8d16001cc9b8482f71bfc2e4b9afa3dbce1860cc`.
+
+## Left on disk (scratchpad — not part of the repo)
+
+Per instruction, disclosing what this mission leaves behind in the session scratchpad so it can be deleted if unwanted:
+
+- `.../scratchpad/fixture-project-0023/` — the disposable fixture git repository used for the capture step. Registered inside the packaged Jarvis app's local project database as project `fixture-project-0023` (draft, never activated). Safe to delete the directory; the app will simply report that Project's repository as unreachable on next launch, same as any other project whose folder moved.
+- Numerous intermediate screenshots and verify/build logs from this mission's own work (`00-initial.png` through `26-capability-advanced2.png`, `build-app.log`, `swift-build.log`, `swift-test.log`, `verify-branch.log`, `verify-branch2.log`, `verify-merged-main.log`, `vitest-full.log`) — superseded by the three named captures and this report; safe to delete.
+- The scratchpad also still holds unrelated logs and captures from prior missions (Sept 4–6, e.g. `verify-branch-2.log`, `verify-branch-3.log`, `test-swift-*.log`) predating this mission — see the attribution note above; left untouched as out of this mission's scope.
+
+Nothing was written outside the session scratchpad and the repository itself.
+
 ## Acceptance checklist — item by item
 
 ### Ticket criteria
