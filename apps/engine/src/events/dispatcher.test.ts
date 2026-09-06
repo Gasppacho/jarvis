@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Clock } from "../../../../packages/kernel/src/clock.js";
 import { EventEnvelopeContractRegistry } from "../../../../packages/eventing/src/envelope.js";
 import { deriveProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
@@ -10,7 +10,6 @@ import type {
   StoredPortableProjectConfiguration,
 } from "../../../../packages/project-runtime/src/project-types.js";
 import { applyMigrations } from "../db/test-migrations.js";
-import { EngineError } from "../errors.js";
 import { ProjectStore, type ResolvedProjectSnapshot } from "../projects/store.js";
 import { OutboxDispatcher, type OpenSubscriptionsPort } from "./dispatcher.js";
 import { EventPublisher } from "./publisher.js";
@@ -248,69 +247,94 @@ describe("EventPublisher + OutboxDispatcher pipeline", () => {
     ).toEqual({ n: 1 });
   });
 
-  it("leaves no journal entry, no Delivery and the Outbox row still pending when routing resolution fails mid-dispatch", () => {
-    const clock = new ControllableClock(new Date("2026-08-28T08:00:00.000Z"));
-    const ids = new DeterministicIdGenerator();
-    const { db: database, store } = openDb(clock);
-    activate(store, "project-a", [
-      { instanceId: "rules-1", moduleId: "jarvis.module.automation-rules", enabled: true },
-    ]);
+  it(
+    "leaves no journal entry, no Delivery and the Outbox row still pending — and does not throw " +
+      "or take other rows down with it — when routing resolution fails mid-dispatch",
+    () => {
+      // Review fix (major) for ticket #58: a per-row failure here used to
+      // propagate out of `dispatchPending()` as a thrown exception, which is
+      // exactly what let one bad Outbox row crash the always-on dispatch
+      // loop (apps/engine/src/events/dispatch-loop.ts) and, since the row
+      // stays `pending`, crash-loop the engine forever. It is now isolated
+      // per row and logged instead.
+      const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      try {
+        const clock = new ControllableClock(new Date("2026-08-28T08:00:00.000Z"));
+        const ids = new DeterministicIdGenerator();
+        const { db: database, store } = openDb(clock);
+        activate(store, "project-a", [
+          { instanceId: "rules-1", moduleId: "jarvis.module.automation-rules", enabled: true },
+        ]);
 
-    const registry = new EventEnvelopeContractRegistry({ eventEnvelopeV1: envelopeSchema });
-    const publisher = new EventPublisher(database, clock, ids, registry);
-    const failingRouting: OpenSubscriptionsPort = () => {
-      throw new Error("routing collaborator failed");
-    };
-    const dispatcher = new OutboxDispatcher(database, clock, ids, registry, failingRouting);
+        const registry = new EventEnvelopeContractRegistry({ eventEnvelopeV1: envelopeSchema });
+        const publisher = new EventPublisher(database, clock, ids, registry);
+        const failingRouting: OpenSubscriptionsPort = () => {
+          throw new Error("routing collaborator failed");
+        };
+        const dispatcher = new OutboxDispatcher(database, clock, ids, registry, failingRouting);
 
-    const envelope = database.transaction(() => publisher.publish(factInput("project-a")))();
+        const envelope = database.transaction(() => publisher.publish(factInput("project-a")))();
 
-    expect(() => dispatcher.dispatchPending()).toThrow("routing collaborator failed");
+        expect(dispatcher.dispatchPending()).toEqual([]);
+        expect(
+          stderr.mock.calls.some(([chunk]) =>
+            String(chunk).includes("routing collaborator failed"),
+          ),
+        ).toBe(true);
 
-    expect(database.prepare("SELECT 1 FROM events WHERE id = ?").get(envelope.id)).toBeUndefined();
-    expect(
-      database.prepare("SELECT 1 FROM deliveries WHERE event_id = ?").get(envelope.id),
-    ).toBeUndefined();
-    expect(
-      database.prepare("SELECT status FROM outbox WHERE event_id = ?").get(envelope.id),
-    ).toEqual({
-      status: "pending",
-    });
-  });
+        expect(
+          database.prepare("SELECT 1 FROM events WHERE id = ?").get(envelope.id),
+        ).toBeUndefined();
+        expect(
+          database.prepare("SELECT 1 FROM deliveries WHERE event_id = ?").get(envelope.id),
+        ).toBeUndefined();
+        expect(
+          database.prepare("SELECT status FROM outbox WHERE event_id = ?").get(envelope.id),
+        ).toEqual({
+          status: "pending",
+        });
+      } finally {
+        stderr.mockRestore();
+      }
+    },
+  );
 
-  it("rejects an invalid envelope at dispatch time with event.envelope-invalid", () => {
-    const clock = new ControllableClock(new Date("2026-08-28T08:00:00.000Z"));
-    const ids = new DeterministicIdGenerator();
-    const { db: database, store } = openDb(clock);
-    activate(store, "project-a", []);
-
-    // Bypasses EventPublisher to plant an outbox row whose stored envelope
-    // does not satisfy the v1 contract, proving the dispatcher's own runtime
-    // validation (docs/engineering/CONTRACT_VALIDATION.md "before journal commit").
-    database
-      .prepare(
-        `INSERT INTO outbox (event_id, project_id, envelope, status, created_at)
-         VALUES ('evt_corrupt', 'project-a', '{"not":"an envelope"}', 'pending', ?)`,
-      )
-      .run(clock.now().toISOString());
-
-    const registry = new EventEnvelopeContractRegistry({ eventEnvelopeV1: envelopeSchema });
-    const dispatcher = new OutboxDispatcher(
-      database,
-      clock,
-      ids,
-      registry,
-      openSubscriptionsPort(store),
-    );
-
-    let error: unknown;
+  it("logs (rather than throws) event.envelope-invalid for an invalid envelope at dispatch time", () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
-      dispatcher.dispatchPending();
-    } catch (caught) {
-      error = caught;
+      const clock = new ControllableClock(new Date("2026-08-28T08:00:00.000Z"));
+      const ids = new DeterministicIdGenerator();
+      const { db: database, store } = openDb(clock);
+      activate(store, "project-a", []);
+
+      // Bypasses EventPublisher to plant an outbox row whose stored envelope
+      // does not satisfy the v1 contract, proving the dispatcher's own runtime
+      // validation (docs/engineering/CONTRACT_VALIDATION.md "before journal commit").
+      database
+        .prepare(
+          `INSERT INTO outbox (event_id, project_id, envelope, status, created_at)
+           VALUES ('evt_corrupt', 'project-a', '{"not":"an envelope"}', 'pending', ?)`,
+        )
+        .run(clock.now().toISOString());
+
+      const registry = new EventEnvelopeContractRegistry({ eventEnvelopeV1: envelopeSchema });
+      const dispatcher = new OutboxDispatcher(
+        database,
+        clock,
+        ids,
+        registry,
+        openSubscriptionsPort(store),
+      );
+
+      expect(dispatcher.dispatchPending()).toEqual([]);
+      expect(
+        stderr.mock.calls.some(([chunk]) => String(chunk).includes("event.envelope-invalid")),
+      ).toBe(true);
+      expect(
+        database.prepare("SELECT 1 FROM events WHERE id = 'evt_corrupt'").get(),
+      ).toBeUndefined();
+    } finally {
+      stderr.mockRestore();
     }
-    expect(error).toBeInstanceOf(EngineError);
-    expect((error as EngineError).code).toBe("event.envelope-invalid");
-    expect(database.prepare("SELECT 1 FROM events WHERE id = 'evt_corrupt'").get()).toBeUndefined();
   });
 });

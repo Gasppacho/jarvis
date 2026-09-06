@@ -12,6 +12,19 @@ import {
   type RoutedConsumer,
 } from "../../../../packages/eventing/src/routing.js";
 import { EngineError } from "../errors.js";
+import { failpoint } from "../test-support/failpoint.js";
+
+/**
+ * Review fix for ticket #58: substituted by tsup's `define` (tsup.config.ts)
+ * with a literal `false` for the entry `scripts/build-app.sh` packages, which
+ * lets esbuild drop the `failpoint()` call below — and, with nothing else
+ * referencing it, the whole `test-support/failpoint.ts` module — from the
+ * production bundle. `typeof` guards the reference so unbundled execution
+ * (typecheck, unit tests importing this module directly) never throws on an
+ * identifier that only tsup ever defines; undefined there is treated as "on",
+ * matching this file's behavior before this flag existed.
+ */
+declare const __JARVIS_TEST_HOOKS__: boolean | undefined;
 
 /** The event's own Project's open subscriptions — never another Project's
  * (issue #56 "every written row carries projectId and is unreachable across
@@ -34,7 +47,9 @@ interface ClaimedOutboxRow {
   readonly envelope: string;
 }
 
-const DEFAULT_LEASE_MS = 30_000;
+/** Exported so the composition root (main.ts) can share this literal instead
+ * of duplicating it when computing an overridable lease duration. */
+export const DEFAULT_LEASE_MS = 30_000;
 
 /**
  * Ticket #56 (docs/architecture/PERSISTENCE.md "Outbox dispatcher"): claims
@@ -54,7 +69,39 @@ export class OutboxDispatcher {
   ) {}
 
   public dispatchPending(limit = 50): readonly DispatchedEvent[] {
-    return this.claim(limit).map((row) => this.dispatchOne(row));
+    const claimed = this.claim(limit);
+    // Ticket #58 acceptance criterion 5: a declared boundary between the
+    // lease-claim transaction's commit (above) and journaling/Delivery
+    // creation (below). A process killed here leaves the row `pending` under
+    // a live lease — reclaimable once that lease expires, never stranded.
+    if (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) {
+      failpoint("after-outbox-claim");
+    }
+    // Review fix (major) for ticket #58: one row per `try`, not `.map()` over
+    // the whole claimed batch. A single malformed envelope (`requireEnvelope`
+    // throwing) must not also strand every row claimed after it in this same
+    // batch — `.map()` aborts on the first throw, and since a reclaim after
+    // lease expiry re-batches the same bad row ahead of the same later rows
+    // every time, that would starve them forever, not just this one tick.
+    // Left `pending` under its lease, reclaimed and retried next tick;
+    // actually resolving it is #17 (retries/backoff/dead letters).
+    const dispatched: DispatchedEvent[] = [];
+    for (const row of claimed) {
+      try {
+        dispatched.push(this.dispatchOne(row));
+      } catch (error) {
+        // The stable code (event.envelope-invalid, ...) is worth keeping in
+        // the log even once stringified — it is the only thing distinguishing
+        // "malformed envelope" from an arbitrary routing failure once this is
+        // just a line of stderr.
+        const detail =
+          error instanceof EngineError ? `${error.code}: ${error.message}` : String(error);
+        process.stderr.write(
+          `jarvis-engine: dispatching outbox row ${row.eventId} failed: ${detail}\n`,
+        );
+      }
+    }
+    return dispatched;
   }
 
   /** One short transaction: claiming must not race a concurrent dispatcher

@@ -279,7 +279,23 @@ public actor EngineSupervisor {
         // deliberately absent: it is the only verbosity knob, and stripping it
         // would pin the engine to `info` with no way to raise it while
         // diagnosing a start failure.
-        let supervisorOwnedKeys = ["JARVIS_PORT", "JARVIS_SESSION_ID", "JARVIS_DATA_ROOT"]
+        //
+        // JARVIS_FAILPOINT and JARVIS_ENABLE_TEST_HOOKS are not values this
+        // supervisor ever sets — they are the ticket #58 test-only
+        // crash-recovery seam (apps/engine/src/test-support/failpoint.ts,
+        // durability-test-routes.ts). That mechanism is compiled out of the
+        // production engine entry entirely (tsup.config.ts's
+        // `__JARVIS_TEST_HOOKS__` define), so these two names have nothing
+        // to turn on there already. They are stripped here too as defense in
+        // depth: `ProcessInfo.processInfo.environment` is inherited from
+        // whatever launched this app, and an unprivileged `launchctl setenv`
+        // persists across launches — this line is what keeps such a value
+        // from ever reaching the child even if a future build reintroduces
+        // the mechanism unconditionally.
+        let supervisorOwnedKeys = [
+            "JARVIS_PORT", "JARVIS_SESSION_ID", "JARVIS_DATA_ROOT",
+            "JARVIS_FAILPOINT", "JARVIS_ENABLE_TEST_HOOKS",
+        ]
         for key in supervisorOwnedKeys {
             environment.removeValue(forKey: key)
         }

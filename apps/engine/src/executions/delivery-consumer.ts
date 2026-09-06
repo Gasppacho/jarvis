@@ -7,6 +7,12 @@ import type {
 } from "../../../../packages/eventing/src/envelope.js";
 import { EventPublisher, type PublishEventInput } from "../events/publisher.js";
 import { EngineError } from "../errors.js";
+import { failpoint } from "../test-support/failpoint.js";
+
+/** See apps/engine/src/events/dispatcher.ts's identical declaration for why
+ * this exists and how tsup.config.ts's `define` makes it eliminate the
+ * failpoint calls below from the production bundle. */
+declare const __JARVIS_TEST_HOOKS__: boolean | undefined;
 
 /**
  * Ticket #57 (docs/architecture/PERSISTENCE.md "Consume and publish";
@@ -154,12 +160,34 @@ export class DeliveryConsumer {
         // rows are applied (acceptance criterion 2).
         const handlerResult = handler(this.buildContext(delivery, envelope));
 
+        // Ticket #58 acceptance criterion 3: a declared boundary inside the
+        // handler's own transaction, after the handler mutated state but
+        // before any of Execution, Inbox or Delivery-consumed is written and
+        // before this transaction's COMMIT. A process killed here leaves the
+        // whole transaction — including the handler's own state mutation —
+        // rolled back: no partial handler effect survives.
+        if (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) {
+          failpoint("before-handler-commit");
+        }
+
         this.insertExecution(executionId, delivery, envelope, "completed", startedAt, null);
         this.insertInbox(delivery, "completed", handlerResult);
         this.markDeliveryConsumed(delivery);
 
         return handlerResult;
       })();
+
+      // Ticket #58 acceptance criterion 4: a declared boundary right after
+      // the handler's transaction commits (state, Execution, Inbox and
+      // Delivery-consumed are all durable at this point — PERSISTENCE.md's
+      // "Consume and publish" commits them together) and before this method
+      // acknowledges the Delivery to its caller. A process killed here still
+      // leaves everything above committed, so a subsequent redelivery of the
+      // same (project, module instance, event) finds the Inbox record and
+      // returns its recorded result without re-running the handler.
+      if (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) {
+        failpoint("after-handler-commit");
+      }
 
       return { executionId, status: "completed", result, redelivered: false };
     } catch (error) {
