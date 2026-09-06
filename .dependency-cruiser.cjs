@@ -59,6 +59,14 @@ module.exports = {
       to: { path: "^packages/modules/" },
     },
     {
+      name: "no-eventing-to-module",
+      severity: "error",
+      comment:
+        "Eventing routes and validates envelopes; it never imports a concrete module's code.",
+      from: { path: "^packages/eventing/" },
+      to: { path: "^packages/modules/" },
+    },
+    {
       name: "no-circular",
       severity: "error",
       from: {},

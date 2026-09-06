@@ -2563,10 +2563,14 @@ capabilities:
         await engine.dispose();
         expect(resolvedCompositionRows(dataRoot, other.id)).toHaveLength(0);
         // Activation only ever writes projects, project_bindings and the Resolved
-        // Project table this ticket's migration adds — never a subscription or
-        // event/execution store, which do not exist in this schema at all.
+        // Project table; the Eventing tables ticket #56 adds (deliveries,
+        // events, outbox) exist but stay empty — activation alone never
+        // inserts a row into any of them.
         expect(tableNames(dataRoot)).toEqual([
+          "deliveries",
           "engine_metadata",
+          "events",
+          "outbox",
           "project_bindings",
           "project_resolved_compositions",
           "projects",
@@ -2783,7 +2787,10 @@ capabilities:
 
           await engine.dispose();
           expect(tableNames(dataRoot)).toEqual([
+            "deliveries",
             "engine_metadata",
+            "events",
+            "outbox",
             "project_bindings",
             "project_resolved_compositions",
             "projects",

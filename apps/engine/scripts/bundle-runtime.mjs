@@ -30,6 +30,7 @@ for (const schema of [
   "project-config.v1.schema.json",
   "project-bindings.v1.schema.json",
   "module-manifest.v1.schema.json",
+  "event-envelope.v1.schema.json",
 ]) {
   cpSync(join(engineRoot, "..", "..", "contracts", "schemas", schema), join(contractsOut, schema));
 }
