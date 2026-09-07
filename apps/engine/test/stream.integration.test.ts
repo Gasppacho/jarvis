@@ -143,6 +143,16 @@ async function waitForEventCount(
   }
 }
 
+async function waitFor(condition: () => boolean, what: string, timeoutMs = 5_000): Promise<void> {
+  const startedAt = Date.now();
+  while (!condition()) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error(`${what} did not arrive within ${timeoutMs}ms.`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
 async function waitForStatus(stream: SseConnection, timeoutMs = 5_000): Promise<number> {
   const startedAt = Date.now();
   for (;;) {
@@ -224,6 +234,25 @@ describe("GET /v1/stream", () => {
       authorization: `Bearer ${engine.token}`,
     });
     expect(nonLoopback.status).toBe(403);
+  });
+
+  it("makes an idle connection observable at once, before any Live Update exists", async () => {
+    const engine = await setupEngine();
+    const stream = engine.openStream();
+    expect(await waitForStatus(stream)).toBe(200);
+
+    // Flushed headers alone are not enough for every client: URLSession, which
+    // the macOS shell uses, withholds the response from its delegate until the
+    // first body byte arrives, so a shell watching a quiet Project would sit at
+    // "Reconnecting…" on a healthy connection. An SSE comment is body content
+    // that carries no event, so it makes the open connection observable without
+    // inventing a message type or spending a sequence number.
+    await waitFor(() => stream.rawText().includes(":"), "the opening SSE comment");
+    expect(stream.rawText().startsWith(":")).toBe(true);
+    // It is a comment, not an event: no parser sees a message from it.
+    expect(stream.messages).toEqual([]);
+
+    stream.close();
   });
 
   it("answers with the correlation id header every other operation carries", async () => {

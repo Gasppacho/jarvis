@@ -67,6 +67,9 @@ export interface SseConnection {
    * hijacked SSE reply writes its own head, so this is how a test checks the
    * head carries what every other operation's does. */
   headers(): Readonly<Record<string, string | string[] | undefined>> | undefined;
+  /** Every byte received so far, before `data:` parsing — the only way to
+   * observe framing that carries no event, such as the opening comment. */
+  rawText(): string;
   /** Resolves once `messages.length >= count`; rejects if that never happens in time. */
   waitForCount(count: number, timeoutMs?: number): Promise<readonly unknown[]>;
   /** Resolves once the HTTP response ends or the socket closes, from either end. */
@@ -257,6 +260,7 @@ function openSseConnection(port: number, path: string, token: string): SseConnec
   let headers: Readonly<Record<string, string | string[] | undefined>> | undefined;
   let closed = false;
   let buffer = "";
+  let raw = "";
 
   const settleClose = (): void => {
     if (closed) return;
@@ -277,6 +281,7 @@ function openSseConnection(port: number, path: string, token: string): SseConnec
       headers = res.headers;
       res.setEncoding("utf8");
       res.on("data", (chunk: string) => {
+        raw += chunk;
         buffer += chunk;
         let boundary = buffer.indexOf("\n\n");
         while (boundary >= 0) {
@@ -304,6 +309,7 @@ function openSseConnection(port: number, path: string, token: string): SseConnec
     messages,
     status: () => status,
     headers: () => headers,
+    rawText: () => raw,
     closed: () => closed,
     waitForCount: (count, timeoutMs = 5_000) =>
       new Promise<readonly unknown[]>((resolve, reject) => {

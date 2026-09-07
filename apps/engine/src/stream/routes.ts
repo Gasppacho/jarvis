@@ -47,6 +47,16 @@ export function registerStreamRoutes(app: FastifyInstance, hub: LiveUpdateHub): 
     // happens to fire. Flushing here is what makes "the connection is open"
     // observable immediately, independent of when the first message arrives.
     reply.raw.flushHeaders();
+    // Flushed headers alone are not enough for every client. `curl` surfaces
+    // them at once, but URLSession — which the macOS shell uses (issue #62)
+    // — withholds the response from its delegate until the first *body* byte
+    // arrives, so a shell watching a quiet Project would sit at
+    // "Reconnecting…" indefinitely on a connection that is in fact healthy.
+    // An SSE comment is body content that carries no event: every conformant
+    // parser ignores a line starting with `:` (WHATWG "Server-sent events"),
+    // so this makes the open connection observable without inventing a
+    // message type or spending a sequence number.
+    reply.raw.write(": connected\n\n");
 
     const send = (frame: string): void => {
       reply.raw.write(frame);

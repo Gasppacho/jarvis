@@ -20,6 +20,16 @@ public final class EngineSessionModel {
     /// the views stop showing the project surface with it.
     public var client: EngineClient? { session?.client }
 
+    /// Ticket #62: the loopback coordinates for `/v1/stream`, so a caller can
+    /// open a transport independent of `client`'s 5-second timeouts
+    /// (`EngineClient.requestTimeout`) without this model exposing the token
+    /// any more broadly than `client` already implies. `nil` under the same
+    /// condition `client` is.
+    public var streamEndpoint: (port: Int, token: String)? {
+        guard let session else { return nil }
+        return (session.port, session.token)
+    }
+
     private let supervisor: EngineSupervisor
     private var session: EngineSession?
 

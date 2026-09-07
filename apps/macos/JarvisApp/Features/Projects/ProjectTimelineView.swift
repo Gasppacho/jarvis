@@ -1,10 +1,14 @@
 import JarvisCore
 import SwiftUI
 
-/// Ticket #61: the Project's durable truth — Events and Executions from
-/// ticket #59, read as one chronological reading grouped by correlation.
-/// Snapshot from the Local API only; the user refreshes to see new work
-/// (no live channel until ticket #62).
+/// Ticket #61/#62: the Project's durable truth — Events and Executions from
+/// ticket #59, read as one chronological reading grouped by correlation —
+/// kept live by subscribing to the Engine's live channel
+/// (`ProjectTimelineModel.watchLive`). A dropped connection, a sequence gap
+/// or a new Engine Session discards whatever was accumulated incrementally
+/// and reloads the REST snapshot rather than patching over a hole
+/// (apps/macos/CONTEXT.md: Live Update is ephemeral, durable truth is
+/// queryable).
 struct ProjectTimelineView: View {
     let timeline: ProjectTimelineModel
     let projectId: String
@@ -50,8 +54,13 @@ struct ProjectTimelineView: View {
         // refires whenever the shown Project changes while this tab stays
         // open (findings-review #61-1). Moved here from `ProjectDetailView`,
         // which fired on every sidebar click regardless of the selected tab.
+        // Cancelled by SwiftUI on Project switch or when this screen
+        // disappears — `ProjectTimelineModel.watchLive` closes the stream in
+        // that same cancellation (`EngineEventStream.connect`'s
+        // `onTermination`), so leaving the screen leaves no retained
+        // connection or background work.
         .task(id: projectId) {
-            await timeline.refresh(projectId: projectId)
+            await timeline.watchLive(projectId: projectId)
         }
     }
 
@@ -69,6 +78,8 @@ struct ProjectTimelineView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                    Spacer()
+                    connectionStateBadge
                 }
                 ForEach(presentation.groups) { group in
                     groupCard(group)
@@ -77,6 +88,23 @@ struct ProjectTimelineView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(24)
         }
+    }
+
+    /// Ticket #62: live vs. reconnecting vs. failed, so a stale view never
+    /// passes for a current one. Durable content (`timelineList` above)
+    /// keeps showing regardless of this badge — a Timeline that cannot go
+    /// live still shows correct content from the last snapshot.
+    private var connectionStateBadge: some View {
+        let (label, symbol, color): (String, String, Color) =
+            switch timeline.connectionState {
+            case .live: ("Live", "dot.radiowaves.left.and.right", .green)
+            case .reconnecting: ("Reconnecting…", "arrow.triangle.2.circlepath", .orange)
+            case .failed: ("Not connected", "exclamationmark.triangle.fill", .red)
+            }
+        return Label(label, systemImage: symbol)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(color)
+            .accessibilityLabel("Live updates: \(label)")
     }
 
     private var presentation: ProjectTimelinePresentation {
