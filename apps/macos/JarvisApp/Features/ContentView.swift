@@ -9,6 +9,7 @@ struct ContentView: View {
     let projects: ProjectsModel
     let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
+    let timeline: ProjectTimelineModel
 
     var body: some View {
         switch session.state {
@@ -19,7 +20,8 @@ struct ContentView: View {
             RootView(
                 projects: projects,
                 projectConfiguration: projectConfiguration,
-                moduleCatalog: moduleCatalog)
+                moduleCatalog: moduleCatalog,
+                timeline: timeline)
         }
     }
 }

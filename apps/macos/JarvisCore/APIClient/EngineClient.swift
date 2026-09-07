@@ -243,6 +243,44 @@ public struct EngineClient: Sendable {
         }
     }
 
+    /// Ticket #61: the Project's durable Event journal, newest first.
+    public func listProjectEvents(projectId: String) async throws -> [TimelineEvent] {
+        let operation = "GET /v1/projects/\(projectId)/events"
+        let output = try await underlying.listProjectEvents(
+            .init(path: .init(projectId: projectId))
+        )
+        switch output {
+        case .ok(let ok):
+            let payload = try ok.body.json
+            return payload.items.map(TimelineEvent.init(payload:))
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
+    /// Ticket #61: the Project's Executions from the Execution Ledger, newest first.
+    public func listProjectExecutions(projectId: String) async throws -> [TimelineExecution] {
+        let operation = "GET /v1/projects/\(projectId)/executions"
+        let output = try await underlying.listProjectExecutions(
+            .init(path: .init(projectId: projectId))
+        )
+        switch output {
+        case .ok(let ok):
+            let payload = try ok.body.json
+            return payload.items.map(TimelineExecution.init(payload:))
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
     public func previewProjectCompositionChoices(
         projectId: String,
         portableConfig: Components.Schemas.PortableProjectConfiguration? = nil

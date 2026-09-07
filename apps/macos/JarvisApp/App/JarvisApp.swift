@@ -12,12 +12,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let projects: ProjectsModel
     let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
+    let timeline: ProjectTimelineModel
 
     override init() {
         session = EngineSessionModel.bundled()
         projects = ProjectsModel(session: session)
         projectConfiguration = ProjectConfigurationModel(session: session, projects: projects)
         moduleCatalog = ModuleCatalogModel(session: session)
+        timeline = ProjectTimelineModel(session: session)
         super.init()
     }
 
@@ -44,7 +46,8 @@ struct JarvisApp: App {
                 session: delegate.session,
                 projects: delegate.projects,
                 projectConfiguration: delegate.projectConfiguration,
-                moduleCatalog: delegate.moduleCatalog)
+                moduleCatalog: delegate.moduleCatalog,
+                timeline: delegate.timeline)
                 .frame(minWidth: 520, minHeight: 320)
                 .task { await delegate.session.start() }
         }

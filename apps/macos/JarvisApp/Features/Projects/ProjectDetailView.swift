@@ -5,29 +5,86 @@ import SwiftUI
 /// Project composition editor. All repeated controls are driven by the module
 /// catalogue, configuration schemas, Project slots and eligible candidate arrays.
 public struct ProjectDetailView: View {
+    /// Ticket #61: the Project detail's first sub-navigation — Composition
+    /// (everything this screen showed before) beside the new Timeline.
+    private enum Tab: Hashable {
+        case composition
+        case timeline
+    }
+
     let projects: ProjectsModel
     let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
+    let timeline: ProjectTimelineModel
     let project: Project
 
     @State private var isDeleteConfirmationPresented = false
     @State private var newSlotName = ""
     @State private var newSlotRequirement = ""
     @State private var selectedCompositionID: String?
+    // Not reset per Project: RootView constructs this view in the same
+    // switch-case slot for every Project, so SwiftUI preserves this state
+    // across a Project switch rather than losing the selected tab.
+    @State private var selectedTab: Tab = .composition
 
     public init(
         projects: ProjectsModel,
         projectConfiguration: ProjectConfigurationModel,
         moduleCatalog: ModuleCatalogModel,
+        timeline: ProjectTimelineModel,
         project: Project
     ) {
         self.projects = projects
         self.projectConfiguration = projectConfiguration
         self.moduleCatalog = moduleCatalog
+        self.timeline = timeline
         self.project = project
     }
 
     public var body: some View {
+        VStack(spacing: 0) {
+            Picker("View", selection: $selectedTab) {
+                Text("Composition").tag(Tab.composition)
+                Text("Timeline").tag(Tab.timeline)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding([.horizontal, .top], 24)
+            .padding(.bottom, 12)
+
+            switch selectedTab {
+            case .composition:
+                compositionTab
+            case .timeline:
+                // Timeline's own project-scoped state means switching to a
+                // different Project can never show this Project's rows for
+                // that other one, including while it is still loading
+                // (ProjectTimelineModel keys state by projectId).
+                ProjectTimelineView(timeline: timeline, projectId: project.id)
+            }
+        }
+        .task(id: refreshID) {
+            await projectConfiguration.refresh(
+                projectId: project.id, packages: moduleCatalog.packages)
+        }
+        .alert(
+            presentation.deletionConfirmation.title,
+            isPresented: $isDeleteConfirmationPresented
+        ) {
+            Button(presentation.deletionConfirmation.cancelAction.label, role: .cancel) {
+                perform(.noOp(presentation.deletionConfirmation.cancelAction))
+            }
+            Button(presentation.deletionConfirmation.confirmAction.label, role: .destructive) {
+                perform(.asynchronous(presentation.deletionConfirmation.confirmAction))
+            }
+        } message: {
+            Text(presentation.deletionConfirmation.message)
+        }
+    }
+
+    /// Everything this screen showed before ticket #61, unchanged: moved
+    /// wholesale into the Composition tab, not rewritten.
+    private var compositionTab: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -68,23 +125,6 @@ public struct ProjectDetailView: View {
                 .padding(24)
                 .disabled(state.isSaving || isDeleting)
             }
-        }
-        .task(id: refreshID) {
-            await projectConfiguration.refresh(
-                projectId: project.id, packages: moduleCatalog.packages)
-        }
-        .alert(
-            presentation.deletionConfirmation.title,
-            isPresented: $isDeleteConfirmationPresented
-        ) {
-            Button(presentation.deletionConfirmation.cancelAction.label, role: .cancel) {
-                perform(.noOp(presentation.deletionConfirmation.cancelAction))
-            }
-            Button(presentation.deletionConfirmation.confirmAction.label, role: .destructive) {
-                perform(.asynchronous(presentation.deletionConfirmation.confirmAction))
-            }
-        } message: {
-            Text(presentation.deletionConfirmation.message)
         }
     }
 
