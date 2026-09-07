@@ -8,6 +8,7 @@ struct RootView: View {
     let projects: ProjectsModel
     let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
+    let timeline: ProjectTimelineModel
 
     private let selectionPolicy = ProjectSelectionReconciliationPolicy()
     @State private var selection: SidebarSelection?
@@ -112,6 +113,7 @@ struct RootView: View {
                     projects: projects,
                     projectConfiguration: projectConfiguration,
                     moduleCatalog: moduleCatalog,
+                    timeline: timeline,
                     project: project)
             } else {
                 ContentUnavailableView(
