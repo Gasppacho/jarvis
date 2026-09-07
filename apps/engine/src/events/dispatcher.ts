@@ -40,6 +40,11 @@ export interface DispatchedEvent {
   readonly version: number;
   readonly kind: "request" | "fact";
   readonly deliveries: readonly RoutedConsumer[];
+  /** Ticket #60: the envelope this call just journaled, so a caller (the
+   * dispatch loop) can build the stream's `event.recorded` Live Update
+   * (`events/timeline.ts`'s `summarizeEventEnvelope`) from data already in
+   * hand, post-commit, without a second read of `events`. */
+  readonly envelope: EventEnvelope;
 }
 
 interface ClaimedOutboxRow {
@@ -214,6 +219,7 @@ export class OutboxDispatcher {
         version: envelope.version,
         kind: envelope.kind,
         deliveries: consumers,
+        envelope,
       };
     })();
   }

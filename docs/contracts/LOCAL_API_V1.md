@@ -150,12 +150,35 @@ lit `events`, l'Execution Ledger lit `executions`, et ni l'une ni l'autre opéra
 la table de l'autre contexte directement — la corrélation d'une Execution est obtenue en
 demandant à Eventing, jamais en lisant `events` depuis l'Execution Ledger.
 
-Le streaming temps réel, la cancellation, les dead letters et le replay ne sont pas
-introduits par ce ticket (#17, #18).
+La cancellation, les dead letters et le replay ne sont pas introduits par ce ticket
+(#17, #18).
 
 ### Stream
 
-Notifications de session. Le stream n'est pas source de vérité ; après reconnexion, le client recharge les snapshots.
+Ticket #60 : `GET /v1/stream` tient une connexion SSE par Engine Session, protégée
+comme toute autre opération (loopback + bearer, refusée avant toute ouverture de
+flux). Chaque `StreamMessage` porte un `sequence` qui augmente de façon monotone et
+sans trou sur toute la session, tous types et Projects confondus — un compteur
+unique, pas un par type ni par Project — et un `sessionId` optionnel et additif
+identifiant l'Engine Session qui l'a émis, pour qu'un client ne confonde jamais le
+flux d'un Engine redémarré avec la continuation du précédent.
+
+`type` énumère exactement le vocabulaire émis par ce ticket : `event.recorded`
+(payload `EventSummary`) quand l'Engine journalise un Event, et `execution.changed`
+(payload `ExecutionSummary`) quand l'Execution Ledger enregistre une Execution. Le
+payload reprend le même contenu que `listProjectEvents`/`listProjectExecutions`
+servent pour cette même ligne — pas une forme parallèle. `/v1/stream` n'est pas
+scopé par Project : chaque message porte son propre `projectId` et c'est au client
+de filtrer.
+
+L'émission suit toujours le commit de la ligne qu'elle rapporte, jamais ne le
+précède : perdre la connexion, ou ne jamais l'ouvrir, laisse le journal, le Ledger
+et la timeline REST identiques à une exécution avec un client connecté. Le stream
+n'est pas source de vérité ; après reconnexion ou gap de séquence, le client
+recharge les snapshots via REST. Les messages `system.health-changed`,
+`project.status-changed`, `module.status-changed` et `execution.log-appended`
+(docs/architecture/OBSERVABILITY.md "Real-time channel"), ainsi que toute politique
+de reconnexion côté client, ne sont pas introduits par ce ticket.
 
 ## Error envelope
 

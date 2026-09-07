@@ -126,3 +126,28 @@ function toSummary(row: EventRow): EventSummary {
     subjectRef: envelope.subject.ref,
   };
 }
+
+/**
+ * Ticket #60: the same `EventSummary` shape `toSummary` above builds from a
+ * journaled row, built instead from the envelope the Outbox dispatcher just
+ * committed (`OutboxDispatcher.dispatchOne`, events/dispatcher.ts) — so the
+ * stream's `event.recorded` Live Update reuses this exact mapping rather
+ * than a parallel one, without a second read of `events` for a row this
+ * process just wrote. `envelope.correlationId` is safe to read here (unlike
+ * the note on `toSummary` above): it is the very value dispatchOne just
+ * wrote into the row's `correlation_id` column, in the same transaction that
+ * committed before this is ever called.
+ */
+export function summarizeEventEnvelope(envelope: EventEnvelope): EventSummary {
+  return {
+    id: envelope.id,
+    type: envelope.type,
+    version: envelope.version,
+    kind: envelope.kind,
+    occurredAt: envelope.occurredAt,
+    producer: envelope.producer.moduleInstanceId,
+    correlationId: envelope.correlationId,
+    causationId: envelope.causationId,
+    subjectRef: envelope.subject.ref,
+  };
+}

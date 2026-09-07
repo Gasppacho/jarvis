@@ -36,6 +36,7 @@ import {
   sampleProbeHandler,
 } from "./executions/sample-probe-module.js";
 import type { DurabilityTestHooks } from "./test-support/durability-test-routes.js";
+import { LiveUpdateHub } from "./stream/hub.js";
 
 /** See apps/engine/src/events/dispatcher.ts's identical declaration for why
  * this exists and how tsup.config.ts's `define` makes it eliminate the
@@ -77,6 +78,11 @@ async function main(): Promise<void> {
   process.stderr.on("error", () => {});
 
   const config = loadConfig(process.env);
+  // Ticket #60: one per Engine Session, keyed by the same `sessionId` the
+  // ready handshake already reports to the shell (config.ts) — the Engine
+  // Session identifier this ticket's stream reuses rather than inventing a
+  // second one.
+  const liveUpdates = new LiveUpdateHub(config.sessionId);
   const runtimeRoot = dirname(fileURLToPath(import.meta.url));
   const modules = loadBundledModuleHost(runtimeRoot);
   for (const diagnostic of modules.diagnostics()) {
@@ -122,6 +128,12 @@ async function main(): Promise<void> {
       // Stopped before the database closes: a tick that started while the
       // engine listened must not run against a handle that has since closed.
       stopEventLoop?.();
+      // Ticket #60: Fastify's default `forceCloseConnections: "idle"` does
+      // not consider an open SSE response idle (it is a request Fastify is
+      // still actively responding to), so `app.close()` below would wait on
+      // it indefinitely. Ending every open stream first is what keeps
+      // shutdown prompt with a client still attached.
+      liveUpdates.closeAll();
       if (app !== undefined) await app.close();
     } catch (error) {
       report(`jarvis-engine: shutdown failed.\n${String(error)}\n`);
@@ -262,7 +274,7 @@ async function main(): Promise<void> {
       testHooksEnabled && moduleId === SAMPLE_PROBE_MODULE_ID ? sampleProbeHandler : undefined;
     if (testHooksEnabled) createSampleProbeSchema(database.db);
     const consumer = new DeliveryConsumer(database.db, clock, ids, publisher, handlers);
-    stopEventLoop = startEventLoop({ db: database.db, dispatcher, consumer });
+    stopEventLoop = startEventLoop({ db: database.db, dispatcher, consumer, liveUpdates });
     if (testHooksEnabled) {
       durabilityTestHooks = { db: database.db, store: projectStore, publisher, consumer };
     }
@@ -278,6 +290,7 @@ async function main(): Promise<void> {
     onShutdownRequested: () => {
       void shutdown(0);
     },
+    liveUpdates,
     ...(durabilityTestHooks === undefined ? {} : { durabilityTestHooks }),
   });
 
