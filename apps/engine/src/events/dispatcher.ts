@@ -153,8 +153,10 @@ export class OutboxDispatcher {
 
       this.db
         .prepare(
-          `INSERT INTO events (id, project_id, type, version, kind, envelope, occurred_at, recorded_at)
-           VALUES (@id, @projectId, @type, @version, @kind, @envelope, @occurredAt, @recordedAt)
+          `INSERT INTO events
+             (id, project_id, type, version, kind, envelope, occurred_at, recorded_at, correlation_id)
+           VALUES
+             (@id, @projectId, @type, @version, @kind, @envelope, @occurredAt, @recordedAt, @correlationId)
            ON CONFLICT (id) DO NOTHING`,
         )
         .run({
@@ -166,6 +168,12 @@ export class OutboxDispatcher {
           envelope: JSON.stringify(envelope),
           occurredAt: envelope.occurredAt,
           recordedAt,
+          // Ticket #59 (0008_events_correlation_id.sql): written alongside the
+          // envelope itself rather than left to the migration's backfill, so
+          // the indexed `correlationId` filter in GET
+          // /v1/projects/{projectId}/events is correct for every row a
+          // running engine ever journals, not only rows that predate it.
+          correlationId: envelope.correlationId,
         });
 
       // ponytail: Requests must resolve to exactly one consumer via

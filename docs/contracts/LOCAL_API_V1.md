@@ -121,6 +121,38 @@ Catalogue global et instances par projet.
 
 Timeline, filtres, détail, cancellation et dead letters.
 
+`GET /v1/projects/{projectId}/events` (ticket #59) renvoie le journal durable des Events
+du Project : `id`, `type`, `version`, `kind`, la Module Instance productrice
+(`producer`, l'id de la Module Instance, pas du Module), `subjectRef`, `occurredAt`,
+`correlationId` et `causationId` (`null` pour une racine de chaîne). L'ordre est le plus
+récent d'abord, par `occurredAt` décroissant puis par `id` décroissant en cas d'égalité de
+timestamp — cet ordre de repli reste stable d'un appel à l'autre — et `limit` (1 à 500,
+défaut 100) tronque cet ordre à son extrémité la plus ancienne. Le filtre `correlationId`
+renvoie exactement les Events de cette chaîne dans le même ordre ; un `correlationId`
+inconnu renvoie `items: []`, jamais une erreur.
+
+`GET /v1/projects/{projectId}/executions` (ticket #59) renvoie les Executions du Project
+telles que tenues par l'Execution Ledger, dans le même ordre le plus récent d'abord (par
+`createdAt` puis `id` décroissants), et le même `limit` (1 à 500, défaut 100) que
+`/events` tronque cet ordre à son extrémité la plus ancienne — sans lui, une lecture de
+tout le Ledger d'un Project bloquerait le thread unique du moteur le temps de la requête
+(revue de code du ticket #59, finding 1). `status` reflète l'état stocké par le Ledger pour
+chacun des sept états du schéma, y compris `timed-out` dont l'orthographe stockée diffère
+(`timed_out`). `ExecutionSummary` porte aussi `inputEventId` et `correlationId` : la
+référence vers l'Event qui a causé l'Execution et la corrélation de cet Event, pour
+qu'un client relie une Execution à l'Event qui l'a déclenchée sans deviner à partir des
+timestamps ou de la Module Instance. Ces deux propriétés sont additives et optionnelles :
+un client qui ignore la forme antérieure au ticket #59 reste valide.
+
+La lecture du journal des Events et celle du Ledger des Executions respectent
+l'ownership des tables (docs/architecture/PERSISTENCE.md "Logical ownership") : Eventing
+lit `events`, l'Execution Ledger lit `executions`, et ni l'une ni l'autre opération ne lit
+la table de l'autre contexte directement — la corrélation d'une Execution est obtenue en
+demandant à Eventing, jamais en lisant `events` depuis l'Execution Ledger.
+
+Le streaming temps réel, la cancellation, les dead letters et le replay ne sont pas
+introduits par ce ticket (#17, #18).
+
 ### Stream
 
 Notifications de session. Le stream n'est pas source de vérité ; après reconnexion, le client recharge les snapshots.

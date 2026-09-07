@@ -16,6 +16,8 @@ import { API_VERSION } from "./version.js";
 import { AtomicProjectConfigurationWriter } from "./projects/repository-config-writer.js";
 import { LocalRepositoryAccessibility } from "./projects/repository-accessibility.js";
 import { ProjectService, RepositoryDiscoveryService } from "./projects/service.js";
+import { EventJournalReader } from "./events/timeline.js";
+import { ExecutionLedgerReader } from "./executions/ledger.js";
 import { EmptyProjectResourceGrants } from "./projects/resource-grants.js";
 import { ProjectStore } from "./projects/store.js";
 import { loadBundledModuleHost } from "./modules/bundled-module-registry.js";
@@ -188,6 +190,8 @@ async function main(): Promise<void> {
           resourceGrants,
           new SavedProjectCompositionValidator(modules),
           new LocalRepositoryAccessibility(),
+          new EventJournalReader(database.db),
+          new ExecutionLedgerReader(database.db),
         );
 
   // Ticket #58 ("the whole durable path must be demonstrable end to end"):

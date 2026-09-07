@@ -15,6 +15,10 @@ import type {
   ProjectSummary,
   ProjectValidationReport,
   RepositoryDiscovery,
+  EventSummary,
+  ExecutionSummary,
+  ListEventsQuery,
+  ListExecutionsQuery,
 } from "./types.js";
 import type { ProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
 
@@ -32,6 +36,11 @@ export type LocalProjectRegistry = ProjectRegistry<
     compositionReview(id: unknown, proposedConfiguration: unknown): ProjectCompositionReview;
     compositionGraph(id: unknown, proposedConfiguration: unknown): ProjectCompositionGraph;
     listProjectSubscriptions(id: unknown): ProjectSubscriptions;
+    listProjectEvents(id: unknown, query: ListEventsQuery): { readonly items: EventSummary[] };
+    listProjectExecutions(
+      id: unknown,
+      query: ListExecutionsQuery,
+    ): { readonly items: ExecutionSummary[] };
   };
 export type LocalRepositoryDiscovery = RepositoryDiscoveryPort<RepositoryDiscovery>;
 
@@ -111,6 +120,24 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
     const service = requireDatabaseReady(deps);
     const params = request.params as { projectId?: unknown } | undefined;
     return reply.code(200).send(service.listProjectSubscriptions(params?.projectId));
+  });
+
+  app.get("/v1/projects/:projectId/events", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    const query = request.query as { correlationId?: unknown; limit?: unknown } | undefined;
+    return reply
+      .code(200)
+      .send(service.listProjectEvents(params?.projectId, parseListEventsQuery(query)));
+  });
+
+  app.get("/v1/projects/:projectId/executions", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    const query = request.query as { limit?: unknown } | undefined;
+    return reply
+      .code(200)
+      .send(service.listProjectExecutions(params?.projectId, parseListExecutionsQuery(query)));
   });
 
   app.post("/v1/projects/:projectId/composition-choices", async (request, reply) => {
@@ -202,6 +229,60 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
       }),
     );
   });
+}
+
+const DEFAULT_LIST_LIMIT = 100;
+const MIN_LIST_LIMIT = 1;
+const MAX_LIST_LIMIT = 500;
+
+/** Fastify parses the querystring as strings; the contract's `limit` is an
+ * integer 1..500 defaulting to 100 for both `/events` and `/executions`
+ * (issue #59 code review, finding 1 — the same contract, shared here rather
+ * than copied). An out-of-range or non-integer value is a client error, not a
+ * silent clamp. */
+function parseLimit(rawLimit: unknown): number {
+  if (rawLimit === undefined) return DEFAULT_LIST_LIMIT;
+  const raw = typeof rawLimit === "string" ? rawLimit : String(rawLimit);
+  const limit = Number(raw);
+  if (!Number.isInteger(limit) || limit < MIN_LIST_LIMIT || limit > MAX_LIST_LIMIT) {
+    throw new EngineError(
+      "api.invalid-request",
+      400,
+      `limit must be an integer between ${MIN_LIST_LIMIT} and ${MAX_LIST_LIMIT}.`,
+    );
+  }
+  return limit;
+}
+
+/** Fastify parses a repeated `?correlationId=a&correlationId=b` as an array,
+ * not a string. Silently ignoring that (as a bare `typeof === "string"` check
+ * does) drops the filter and hands the client the Project's whole journal
+ * with no 400 and no signal (issue #59 code review, finding 4) — so anything
+ * other than a single string value is rejected outright. An absent param
+ * stays absent (no filter); an empty string is treated the same as absent,
+ * unchanged from before this fix. */
+function parseCorrelationId(rawCorrelationId: unknown): string | undefined {
+  if (rawCorrelationId === undefined) return undefined;
+  if (typeof rawCorrelationId !== "string") {
+    throw new EngineError(
+      "api.invalid-request",
+      400,
+      "correlationId must be a single string value.",
+    );
+  }
+  return rawCorrelationId === "" ? undefined : rawCorrelationId;
+}
+
+function parseListEventsQuery(
+  query: { correlationId?: unknown; limit?: unknown } | undefined,
+): ListEventsQuery {
+  const correlationId = parseCorrelationId(query?.correlationId);
+  const limit = parseLimit(query?.limit);
+  return { limit, ...(correlationId === undefined ? {} : { correlationId }) };
+}
+
+function parseListExecutionsQuery(query: { limit?: unknown } | undefined): ListExecutionsQuery {
+  return { limit: parseLimit(query?.limit) };
 }
 
 /** The live probe, so a database handle that fails mid-session degrades too. */

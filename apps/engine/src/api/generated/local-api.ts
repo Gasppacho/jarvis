@@ -264,6 +264,7 @@ export interface paths {
             };
             cookie?: never;
         };
+        /** @description Ticket #59: the Project's durable Event journal. Ordered newest first by `occurredAt`, tie-broken by `id` descending so two Events sharing an occurrence timestamp never swap order between calls; `limit` truncates that order at its oldest end. `correlationId`, when given, returns exactly the Events of that chain in the same order; an unknown `correlationId` returns an empty `items` rather than an error. */
         get: operations["listProjectEvents"];
         put?: never;
         post?: never;
@@ -282,6 +283,7 @@ export interface paths {
             };
             cookie?: never;
         };
+        /** @description Ticket #59: the Project's Executions from the Execution Ledger, ordered newest first by `createdAt`, tie-broken by `id` descending for the same reason `listProjectEvents` is. `inputEventId` and `correlationId` attach each Execution to the Event that caused it, so a client never has to guess from timestamps or Module Instance. `limit` bounds this read the same way `listProjectEvents`'s does (issue #59 code review, finding 1). */
         get: operations["listProjectExecutions"];
         put?: never;
         post?: never;
@@ -927,6 +929,10 @@ export interface components {
             createdAt: string;
             /** Format: date-time */
             completedAt?: string | null;
+            /** @description Ticket #59: the id of the Event that caused this Execution (0007_inbox_execution_ledger.sql `input_event_id`). Optional so a client relying on the pre-#59 shape still validates. */
+            inputEventId?: string;
+            /** @description Ticket #59: the correlationId of this Execution's input Event, so a client can attach the Execution to its Event without guessing from timestamps or Module Instance. Optional for the same reason `inputEventId` is. */
+            correlationId?: string;
         };
         ResourceDescriptor: {
             id: string;
@@ -1163,6 +1169,7 @@ export interface components {
     };
     parameters: {
         ProjectId: string;
+        Limit: number;
     };
     requestBodies: never;
     headers: never;
@@ -1613,7 +1620,7 @@ export interface operations {
         parameters: {
             query?: {
                 correlationId?: string;
-                limit?: number;
+                limit?: components["parameters"]["Limit"];
             };
             header?: never;
             path: {
@@ -1636,11 +1643,14 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
         };
     };
     listProjectExecutions: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: components["parameters"]["Limit"];
+            };
             header?: never;
             path: {
                 projectId: components["parameters"]["ProjectId"];
@@ -1662,6 +1672,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
         };
     };
     cancelExecution: {

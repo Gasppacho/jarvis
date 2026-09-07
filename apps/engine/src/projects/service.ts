@@ -9,6 +9,8 @@ import {
 import { previewProjectCompositionChoices } from "../../../../packages/project-runtime/src/composition-choices.js";
 import { buildProjectCompositionGraph } from "../../../../packages/project-runtime/src/composition-graph.js";
 import { deriveProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
+import { EventJournalReader, type ListEventsQuery } from "../events/timeline.js";
+import { ExecutionLedgerReader, type ListExecutionsQuery } from "../executions/ledger.js";
 import type {
   ActivateProjectRequest,
   ImportProjectRequest,
@@ -50,6 +52,8 @@ import type {
   ProjectSummary,
   StoredPortableProjectConfiguration,
   RepositoryDiscovery,
+  EventSummary,
+  ExecutionSummary,
 } from "./types.js";
 import type { ProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
 
@@ -80,6 +84,8 @@ export class ProjectService implements ProjectRegistry<
     private readonly resourceGrants: ProjectResourceGrantPort,
     private readonly compositionValidator: ProjectCompositionValidationPort,
     private readonly repositoryAccessibility: RepositoryAccessibilityPort,
+    private readonly eventJournal: EventJournalReader,
+    private readonly executionLedger: ExecutionLedgerReader,
   ) {}
 
   importProject(request: ImportProjectRequest): ProjectDetail {
@@ -229,6 +235,49 @@ export class ProjectService implements ProjectRegistry<
     const project = this.requireProject(id);
     const resolved = this.store.getResolvedProject(project.id);
     return deriveProjectSubscriptions(project.id, resolved?.moduleInstances ?? [], this.modules);
+  }
+
+  /**
+   * Ticket #59: the durable Event journal, scoped to this Project and
+   * delegated to Eventing's own reader (`EventJournalReader`) rather than
+   * queried here — this method's only job is the 404 guard every
+   * project-scoped read already does (docs/architecture/PERSISTENCE.md
+   * "Logical ownership").
+   */
+  listProjectEvents(id: unknown, query: ListEventsQuery): { readonly items: EventSummary[] } {
+    const project = this.requireProject(id);
+    return { items: this.eventJournal.list(project.id, query) };
+  }
+
+  /**
+   * Ticket #59: the Execution Ledger's rows for this Project, plus each
+   * Execution's correlation — looked up through Eventing's own reader from
+   * the `inputEventId` the Ledger already carries, never by this method
+   * reading `events` itself (docs/architecture/PERSISTENCE.md "Logical
+   * ownership"). `query.limit` carries the same bound `listProjectEvents`
+   * already enforces (issue #59 code review, finding 1).
+   */
+  listProjectExecutions(
+    id: unknown,
+    query: ListExecutionsQuery,
+  ): { readonly items: ExecutionSummary[] } {
+    const project = this.requireProject(id);
+    const executions = this.executionLedger.list(project.id, query);
+    const correlationIds = this.eventJournal.correlationIdsByEventId(
+      project.id,
+      executions.map((execution) => execution.inputEventId),
+    );
+    return {
+      items: executions.map((execution) => {
+        const correlationId = correlationIds.get(execution.inputEventId);
+        // `exactOptionalPropertyTypes` (tsconfig.json): an always-present
+        // `correlationId: undefined` key is not assignable to
+        // `ExecutionSummary`'s optional `correlationId?: string`, so it is
+        // conditionally spread rather than passed through directly (mirrors
+        // executions/delivery-consumer.ts's `buildContext`).
+        return { ...execution, ...(correlationId === undefined ? {} : { correlationId }) };
+      }),
+    };
   }
 
   previewCompositionChoices(

@@ -30,6 +30,8 @@ import {
 import { EmptyProjectResourceGrants } from "./resource-grants.js";
 import { ProjectService } from "./service.js";
 import { ProjectStore } from "./store.js";
+import { EventJournalReader } from "../events/timeline.js";
+import { ExecutionLedgerReader } from "../executions/ledger.js";
 
 const ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
 const roots: string[] = [];
@@ -97,6 +99,8 @@ describe("Project configuration replacement", () => {
       grants,
       new SavedProjectCompositionValidator(moduleHost()),
       new LocalRepositoryAccessibility(),
+      new EventJournalReader(db),
+      new ExecutionLedgerReader(db),
     );
 
     const choices = service.getProjectResourceChoices("token-warehouse");
@@ -157,6 +161,8 @@ describe("Project configuration replacement", () => {
       new EmptyProjectResourceGrants(),
       new SavedProjectCompositionValidator(moduleHost()),
       new LocalRepositoryAccessibility(),
+      new EventJournalReader(db),
+      new ExecutionLedgerReader(db),
     );
 
     expect(() =>
@@ -203,6 +209,8 @@ describe("Project configuration replacement", () => {
       new EmptyProjectResourceGrants(),
       new SavedProjectCompositionValidator(moduleHost()),
       new LocalRepositoryAccessibility(),
+      new EventJournalReader(db),
+      new ExecutionLedgerReader(db),
     );
 
     expect(() =>
@@ -243,6 +251,8 @@ describe("Project configuration replacement", () => {
       new EmptyProjectResourceGrants(),
       new SavedProjectCompositionValidator(moduleHost()),
       new LocalRepositoryAccessibility(),
+      new EventJournalReader(db),
+      new ExecutionLedgerReader(db),
     );
 
     expect(() =>
@@ -270,6 +280,8 @@ describe("Project configuration replacement", () => {
       new EmptyProjectResourceGrants(),
       new SavedProjectCompositionValidator(moduleHost()),
       new LocalRepositoryAccessibility(),
+      new EventJournalReader(db),
+      new ExecutionLedgerReader(db),
     );
     expect(() =>
       unsafeService.replaceProjectConfiguration({
@@ -303,6 +315,8 @@ describe("Project deletion", () => {
       new EmptyProjectResourceGrants(),
       new SavedProjectCompositionValidator(moduleHost()),
       new LocalRepositoryAccessibility(),
+      new EventJournalReader(db),
+      new ExecutionLedgerReader(db),
     );
 
     expect(() => service.deleteProject("active-project")).toThrowError(
@@ -396,6 +410,8 @@ describe("Granted-but-ineligible resource disclosure (ADR 0014)", () => {
       grants,
       new SavedProjectCompositionValidator(moduleHost()),
       new LocalRepositoryAccessibility(),
+      new EventJournalReader(db),
+      new ExecutionLedgerReader(db),
     );
 
     service.replaceProjectBindings({
