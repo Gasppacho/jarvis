@@ -94,7 +94,13 @@ execution.log-appended
 module.status-changed
 ```
 
-Chaque message porte un sequence number de session. Après gap/reconnexion, le client recharge le snapshot via REST.
+Chaque message porte un sequence number de session. À l'ouverture, le moteur écrit un
+commentaire SSE `: connected`, puis un commentaire `: keep-alive` environ toutes les
+15 secondes. Les commentaires sont ignorés par les parseurs SSE et ne consomment aucun
+sequence number ; ils maintiennent une connexion saine observable quand aucun message
+n'est émis. Le client SSE a une limite de sécurité de cinq minutes pour l'inactivité et
+la ressource, puis ferme, reconnecte et recharge le snapshot via REST si aucun octet
+n'arrive plus. Après gap/reconnexion, le client recharge également le snapshot via REST.
 
 ## Diagnostic bundle
 

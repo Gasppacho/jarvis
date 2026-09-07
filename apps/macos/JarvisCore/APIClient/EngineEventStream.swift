@@ -1,12 +1,12 @@
 import Foundation
 
 /// Ticket #62: opens `/v1/stream` (ticket #60) on its own `URLSession` —
-/// deliberately not `EngineClient`'s. That session sets
-/// `timeoutIntervalForRequest`/`timeoutIntervalForResource` to 5 seconds
-/// (`EngineClient.requestTimeout`) so a loopback REST call fails fast; the
-/// same setting would kill a stream meant to stay open for the whole Engine
-/// Session. This type never touches `EngineClient`'s session, so that
-/// timeout is unaffected for ordinary calls.
+/// deliberately not `EngineClient`'s. Ordinary loopback REST calls keep their
+/// five-second timeout; this stream session instead uses a five-minute
+/// inactivity/resource safety limit because the Engine sends SSE comments
+/// every 15 seconds while it is healthy. This type never touches
+/// `EngineClient`'s session, so opening the stream cannot relax ordinary
+/// calls or make them wait for a long-lived response.
 ///
 /// Parses SSE frames itself (MACOS_APP.md: "un parseur dédié") rather than
 /// through a generated decode step: the contract's response schema for this
@@ -30,9 +30,20 @@ enum EngineEventStream {
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
 
         let delegate = StreamDelegate()
-        // A fresh, unconfigured session: default (long) timeouts, exactly
-        // the point of giving the stream its own transport (see above).
-        let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+        // A fresh session with explicit stream timeouts. URLSession's
+        // `timeoutIntervalForRequest` is an inactivity limit: it is reset by
+        // received bytes and can terminate a quiet response mid-stream;
+        // `timeoutIntervalForResource` is the overall safety limit. The
+        // Engine probes healthy idle connections with an SSE comment every
+        // 15 seconds (docs/contracts/LOCAL_API_V1.md,
+        // docs/architecture/OBSERVABILITY.md), so five minutes is ample for
+        // a healthy stream and still bounds a stream the Engine has genuinely
+        // stopped keeping alive — the shell's reload-and-reconnect recovers
+        // from that. A shared five-second REST session would be wrong here.
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 5 * 60
+        configuration.timeoutIntervalForResource = 5 * 60
+        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
         let task = session.dataTask(with: request)
 
         // Wired before `resume()`, so no chunk the delegate hands off can

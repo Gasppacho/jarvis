@@ -75,7 +75,14 @@ public final class ProjectTimelineModel {
                 return try await (events, executions)
             }
         } else {
-            states[projectId] = ProjectTimelineState(errorMessage: Self.engineUnavailable)
+            // Losing the Engine client is the same failed-refresh case as a
+            // transport error: keep the last durable rows visible and surface
+            // the unavailable-engine message beside them instead of blanking
+            // a Timeline that was already loaded.
+            var state = states[projectId] ?? ProjectTimelineState()
+            state.isLoading = false
+            state.errorMessage = Self.engineUnavailable
+            states[projectId] = state
             return
         }
         states[projectId, default: ProjectTimelineState()].isLoading = true
@@ -94,8 +101,16 @@ public final class ProjectTimelineModel {
             states[projectId]?.isLoading = false
         } catch {
             guard revisions[projectId] == revision else { return }
-            states[projectId] = ProjectTimelineState(
-                isLoading: false, errorMessage: Self.describe(error))
+            // A failed reload must not empty the screen: a Timeline that
+            // already shows rows keeps them, with the failure surfaced
+            // alongside (findings-review #62-4) — the snapshot is still the
+            // last durable truth, it is only possibly out of date. A first
+            // load that never got anything has no rows to keep and becomes
+            // the full-pane failure.
+            var state = states[projectId] ?? ProjectTimelineState()
+            state.isLoading = false
+            state.errorMessage = Self.describe(error)
+            states[projectId] = state
         }
     }
 
@@ -113,9 +128,19 @@ public final class ProjectTimelineModel {
     /// result can never duplicate a row or show one the durable API would
     /// not also return.
     public func watchLive(projectId: String, reconnectDelay: Duration = .seconds(1)) async {
+        // Never begin from a stale state: a Project switch cancels the
+        // previous watch without resetting `connectionState` (cancellation is
+        // not a state change), so this one must claim ".reconnecting" up
+        // front — the badge has to read "Reconnecting…" until this watch's
+        // connection is actually up, whatever the previous watch left behind
+        // (findings-review #62-6).
+        setConnectionState(.reconnecting)
+        // The initial durable snapshot, unconditional: a Timeline that cannot
+        // go live still shows correct durable content from the last snapshot
+        // (acceptance criterion — `connectorError` never reaches the stream).
         await refresh(projectId: projectId)
         guard let connector = resolvedConnector() else {
-            connectionState = .failed
+            setConnectionState(.failed)
             return
         }
 
@@ -123,26 +148,44 @@ public final class ProjectTimelineModel {
         var lastSessionId: String?
 
         while !Task.isCancelled {
-            connectionState = .reconnecting
+            setConnectionState(.reconnecting)
             let stream: AsyncThrowingStream<TimelineStreamMessage, Error>
             do {
                 stream = try await connector()
             } catch {
+                // A cancelled watch (a Project switch) must not report its
+                // failure over the incoming watch's state: the cancellation
+                // check comes first, and the write is guarded anyway
+                // (findings-review #62-6).
+                if Task.isCancelled { return }
                 if Self.isTerminal(error) {
-                    connectionState = .failed
+                    setConnectionState(.failed)
                     return
                 }
-                if Task.isCancelled { return }
                 try? await Task.sleep(for: reconnectDelay)
                 continue
             }
 
-            connectionState = .live
+            setConnectionState(.live)
+            // The reload happens after the connect, not before it: an update
+            // committed between a pre-connect snapshot and this connect is in
+            // neither the snapshot nor the live stream (the hub replays
+            // nothing, and a fresh connection's sequence baseline cannot see
+            // the hole), and the next reload — which would close the gap —
+            // only happens after the next drop. Reloading here closes exactly
+            // that window, on every connection including the first
+            // (findings-review #62-2). Messages that arrive while the reload
+            // is in flight sit buffered in the stream; the upsert-by-id in
+            // `apply` makes draining them afterwards safe. There is no
+            // reload after the drop instead: a snapshot fetched while
+            // disconnected leaves the very same (snapshot → connect) window
+            // open on the way back.
+            await refresh(projectId: projectId)
             // A fresh connection starts a fresh baseline: whether it is the
             // very first connection or a reconnect, there is nothing to
             // compare the next message's sequence against yet, and the
-            // disconnect that just happened (if any) already triggered its
-            // own reload below.
+            // disconnect that just happened (if any) is covered by the
+            // reload above.
             lastSequence = nil
             lastSessionId = nil
 
@@ -179,10 +222,22 @@ public final class ProjectTimelineModel {
             }
 
             if Task.isCancelled { return }
-            connectionState = .reconnecting
-            await refresh(projectId: projectId)
+            setConnectionState(.reconnecting)
+            // No reload here: the next iteration reloads right after it
+            // reconnects. A snapshot fetched before the reconnect would
+            // leave the same (snapshot → connect) window open again
+            // (findings-review #62-2).
             try? await Task.sleep(for: reconnectDelay)
         }
+    }
+
+    /// Every connection-state write goes through here: a cancelled watch (a
+    /// Project switch) can still slip past the loop's `Task.isCancelled`
+    /// checks while suspended in its connector, and must not overwrite the
+    /// incoming watch's state — findings-review #62-6.
+    private func setConnectionState(_ state: TimelineConnectionState) {
+        guard !Task.isCancelled else { return }
+        connectionState = state
     }
 
     /// Upserts by id rather than always appending: `execution.changed` is

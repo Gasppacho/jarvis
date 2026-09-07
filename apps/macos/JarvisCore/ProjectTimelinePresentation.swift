@@ -16,6 +16,13 @@ public struct ProjectTimelinePresentation: Sendable, Equatable {
         case loaded
         case empty
         case failed(String)
+        /// A refresh failed, but the Timeline already showed rows: those rows
+        /// — the last successful snapshot, still the durable truth — stay on
+        /// screen, with the failure surfaced alongside them (findings-review
+        /// #62-4). A first load that never got anything is `.failed` instead,
+        /// with the full-pane message: there is no content a blanking failure
+        /// could lose.
+        case stale(String)
     }
 
     /// The Event a row is shown against: the Execution that names the Event
@@ -95,8 +102,14 @@ public struct ProjectTimelinePresentation: Sendable, Equatable {
             return
         }
         if let errorMessage {
-            status = .failed(errorMessage)
-            groups = []
+            // A failed reload must not blank a Timeline that already shows
+            // rows: the snapshot stays, the failure is surfaced alongside it
+            // (`.stale`, findings-review #62-4). Only a state with nothing
+            // loaded — a first load that never succeeded — gets the full-pane
+            // `.failed`.
+            let built = Self.buildGroups(events: events, executions: executions)
+            groups = built
+            status = built.isEmpty ? .failed(errorMessage) : .stale(errorMessage)
             return
         }
         let built = Self.buildGroups(events: events, executions: executions)

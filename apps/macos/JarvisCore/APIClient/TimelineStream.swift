@@ -72,14 +72,17 @@ extension TimelineStreamMessage {
         }
     }
 
-    /// Matches swift-openapi-runtime's own default date handling
-    /// (`Configuration().dateTranscoder == .iso8601`, no fractional
-    /// seconds) — the same format the generated client already assumes for
-    /// `EventSummary`/`ExecutionSummary` over REST, reused here rather than
-    /// hand-rolling an ISO-8601 parser.
+    /// The contract's `date-time` is RFC 3339; the engine always emits the
+    /// fractional form (`new Date().toISOString()`), fixtures and examples
+    /// may carry the whole-second form. `FlexibleISO8601DateTranscoder`
+    /// accepts both — the same transcoder the generated REST client uses
+    /// (`EngineClient`), so a stream row and its REST twin can never
+    /// disagree about an instant. The pinned runtime's default transcoder
+    /// (`.iso8601`, whole-second only) cannot parse the engine's own
+    /// timestamps, which is why the client carries its own.
     private static let streamDecoder: JSONDecoder = {
         let decoder = JSONDecoder()
-        let transcoder = ISO8601DateTranscoder.iso8601
+        let transcoder = FlexibleISO8601DateTranscoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
             let string = try container.decode(String.self)

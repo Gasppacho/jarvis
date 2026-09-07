@@ -63,11 +63,34 @@ public struct EngineClient: Sendable {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = Self.requestTimeout
         configuration.timeoutIntervalForResource = Self.requestTimeout
-        underlying = Client(
+        self.init(
             serverURL: URL(string: "http://127.0.0.1:\(port)")!,
             transport: URLSessionTransport(
                 configuration: .init(session: URLSession(configuration: configuration))),
-            middlewares: [SessionTokenMiddleware(token: token)]
+            middlewares: [SessionTokenMiddleware(token: token)])
+    }
+
+    /// Test seam: the full `Client` construction (same server URL, transport
+    /// and middlewares as the convenience init above) with an injectable
+    /// `ClientTransport`, so the generated REST client's decoding can be
+    /// asserted against exact wire bytes — the engine's own JSON, with its
+    /// fractional-second `occurredAt` — without a socket. The fractional-
+    /// seconds regression lived exactly below this seam: the stream decoder
+    /// fixed, the REST reads broken.
+    init(
+        serverURL: URL,
+        transport: any ClientTransport,
+        middlewares: [any ClientMiddleware] = []
+    ) {
+        underlying = Client(
+            serverURL: serverURL,
+            // The `Configuration` default decodes dates with
+            // `ISO8601DateTranscoder.iso8601` — whole-second only — which
+            // cannot parse the engine's `toISOString()` stamps; see
+            // `FlexibleISO8601DateTranscoder`.
+            configuration: Configuration(dateTranscoder: FlexibleISO8601DateTranscoder()),
+            transport: transport,
+            middlewares: middlewares
         )
     }
 

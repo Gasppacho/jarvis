@@ -175,10 +175,17 @@ L'émission suit toujours le commit de la ligne qu'elle rapporte, jamais ne le
 précède : perdre la connexion, ou ne jamais l'ouvrir, laisse le journal, le Ledger
 et la timeline REST identiques à une exécution avec un client connecté. Le stream
 n'est pas source de vérité ; après reconnexion ou gap de séquence, le client
-recharge les snapshots via REST. Les messages `system.health-changed`,
-`project.status-changed`, `module.status-changed` et `execution.log-appended`
-(docs/architecture/OBSERVABILITY.md "Real-time channel"), ainsi que toute politique
-de reconnexion côté client, ne sont pas introduits par ce ticket.
+recharge les snapshots via REST. La réponse commence par un commentaire SSE
+`: connected` puis le moteur envoie périodiquement un commentaire `: keep-alive`
+(environ toutes les 15 secondes). Ces lignes `:` sont ignorées par les parseurs SSE,
+ne représentent aucun `StreamMessage` et ne consomment donc aucun `sequence` ; elles
+maintiennent seulement une connexion saine observable pendant une période sans
+Event ni Execution. Le client SSE utilise une limite de sécurité d'inactivité et de
+ressource de cinq minutes ; si aucun octet n'arrive plus, il ferme puis reconnecte et
+rehydrate depuis REST. Les messages `system.health-changed`, `project.status-changed`,
+`module.status-changed` et `execution.log-appended`
+(docs/architecture/OBSERVABILITY.md "Real-time channel"), ainsi que toute autre
+politique de reconnexion côté client, ne sont pas introduits par ce ticket.
 
 ## Error envelope
 

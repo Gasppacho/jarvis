@@ -271,7 +271,24 @@ final class ProjectTimelineTests: XCTestCase {
         XCTAssertEqual(presentation.groups[0].rows.map(\.id), ["event:evt-cached"])
     }
 
-    func testFailureShowsTheEnginesMessageAndNeverAPartiallyPopulatedTimeline() {
+    func testAFailedFirstLoadWithNothingCachedShowsTheFullPaneFailure() {
+        let presentation = ProjectTimelinePresentation(
+            events: [], executions: [], isLoading: false,
+            errorMessage: "The engine did not answer (GET /v1/projects/p/events returned 503).")
+
+        XCTAssertEqual(
+            presentation.status,
+            .failed("The engine did not answer (GET /v1/projects/p/events returned 503)."))
+        XCTAssertTrue(presentation.groups.isEmpty)
+    }
+
+    /// findings-review #62-4: a reload that failed after the Timeline already
+    /// showed rows must not blank the screen — the last snapshot stays, with
+    /// the engine's message surfaced alongside it (never the full-pane
+    /// failure, which would lose the content). The intent of the original
+    /// #61 test — "shows the engine's message" — is preserved in both halves
+    /// of this split.
+    func testAFailedReloadWithRowsCachedShowsThemAlongsideTheEnginesMessage() {
         let stale = makeEvent(id: "evt-stale", occurredAt: t0, correlationId: "corr-1")
 
         let presentation = ProjectTimelinePresentation(
@@ -280,8 +297,10 @@ final class ProjectTimelineTests: XCTestCase {
 
         XCTAssertEqual(
             presentation.status,
-            .failed("The engine did not answer (GET /v1/projects/p/events returned 503)."))
-        XCTAssertTrue(presentation.groups.isEmpty)
+            .stale("The engine did not answer (GET /v1/projects/p/events returned 503)."))
+        XCTAssertEqual(presentation.groups.map(\.id), ["corr-1"])
+        guard let group = presentation.groups.first else { return }
+        XCTAssertEqual(group.rows.map(\.id), ["event:evt-stale"])
     }
 
     // MARK: - Accessibility text

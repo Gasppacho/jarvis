@@ -55,6 +55,17 @@ export function encodeFrame(message: StreamMessage): string {
   return `data: ${JSON.stringify(message)}\n\n`;
 }
 
+/** The keep-alive probe for idle connections (findings-review #62-3): an
+ * SSE comment — a `:` line that the WHATWG "Server-sent events" spec says
+ * conformant parsers ignore. That is what makes it free: it carries no
+ * message and spends no sequence number, while a byte on the wire keeps the
+ * client-side inactivity timers (URLSession's, the shell's own 5-minute
+ * safety net, docs/contracts/LOCAL_API_V1.md) from killing a healthy but
+ * quiet connection. A stream the engine has genuinely stopped keeping
+ * alive reads as dead to the shell, and the shell's reload-and-reconnect
+ * recovers from that. */
+export const KEEPALIVE_FRAME = ": keep-alive\n\n";
+
 interface Client {
   /** Takes the already-encoded SSE frame, not the message: encoding happens
    * once per `publish` rather than once per client, so a payload that cannot
@@ -76,8 +87,15 @@ interface Client {
 export class LiveUpdateHub implements LiveUpdatePort {
   private sequence = 0;
   private readonly clients = new Map<symbol, Client>();
+  private keepaliveTimer: NodeJS.Timeout | null = null;
 
-  public constructor(private readonly sessionId: string) {}
+  public constructor(
+    private readonly sessionId: string,
+    /** How often idle connections are probed (findings-review #62-3).
+     * Injectable so tests do not sleep a minute; the production default
+     * (15 s) sits well under every client-side inactivity timer. */
+    private readonly keepaliveIntervalMs = 15_000,
+  ) {}
 
   public publish(input: PublishLiveUpdateInput): void {
     try {
@@ -119,12 +137,7 @@ export class LiveUpdateHub implements LiveUpdatePort {
           // — a client left holding an open connection that never delivers
           // again cannot detect the gap and reload over REST, which is the
           // recovery path docs/contracts/LOCAL_API_V1.md promises it.
-          this.clients.delete(id);
-          try {
-            client.end();
-          } catch {
-            /* the connection is already gone */
-          }
+          this.dropClient(id);
         }
       }
     } catch {
@@ -140,7 +153,11 @@ export class LiveUpdateHub implements LiveUpdatePort {
   public connect(client: Client): () => void {
     const id = Symbol("jarvis-stream-client");
     this.clients.set(id, client);
-    return () => this.clients.delete(id);
+    this.startKeepaliveTimer();
+    return () => {
+      this.clients.delete(id);
+      this.stopKeepaliveTimerIfIdle();
+    };
   }
 
   /** Engine shutdown (main.ts): ends every open stream before `app.close()`
@@ -148,13 +165,55 @@ export class LiveUpdateHub implements LiveUpdatePort {
    * `forceCloseConnections: "idle"` does not consider idle — can never leave
    * shutdown waiting on it. */
   public closeAll(): void {
+    this.stopKeepaliveTimer();
+    for (const id of this.clients.keys()) this.dropClient(id);
+  }
+
+  /** Removes one client and best-effort closes its response. All send-failure
+   * paths use the same cleanup so a client cannot remain registered after its
+   * socket stops accepting frames. */
+  private dropClient(id: symbol): void {
+    const client = this.clients.get(id);
+    this.clients.delete(id);
+    if (client === undefined) return;
+    try {
+      client.end();
+    } catch {
+      /* the connection is already gone */
+    }
+  }
+
+  // The keep-alive probes (findings-review #62-3). One timer for the whole
+  // hub — the frame is identical for every client — started on the first
+  // connection, stopped when the last one leaves or on `closeAll`.
+  private startKeepaliveTimer(): void {
+    if (this.keepaliveTimer !== null) return;
+    this.keepaliveTimer = setInterval(() => this.emitKeepalive(), this.keepaliveIntervalMs);
+    // Never let the probe hold the process open at shutdown: `closeAll`
+    // clears it explicitly, and an unref'd timer cannot keep Node alive.
+    this.keepaliveTimer.unref();
+  }
+
+  private stopKeepaliveTimer(): void {
+    if (this.keepaliveTimer === null) return;
+    clearInterval(this.keepaliveTimer);
+    this.keepaliveTimer = null;
+  }
+
+  private stopKeepaliveTimerIfIdle(): void {
+    if (this.clients.size === 0) this.stopKeepaliveTimer();
+  }
+
+  private emitKeepalive(): void {
     for (const [id, client] of this.clients) {
-      this.clients.delete(id);
       try {
-        client.end();
+        client.send(KEEPALIVE_FRAME);
       } catch {
-        /* the connection is already gone */
+        // The same broken-socket handling as `publish`: end and drop this
+        // client alone, keep serving the rest.
+        this.dropClient(id);
       }
     }
+    this.stopKeepaliveTimerIfIdle();
   }
 }

@@ -1,5 +1,7 @@
 import Foundation
+import HTTPTypes
 import Network
+import OpenAPIRuntime
 import XCTest
 
 @testable import JarvisCore
@@ -33,6 +35,63 @@ final class EngineClientTransportTests: XCTestCase {
         XCTAssertLessThan(
             elapsed, 15,
             "health() took \(elapsed)s — the 5-second EngineClient.requestTimeout appears to have been relaxed toward URLSession's 60-second default")
+    }
+
+    /// findings-review #62-1: the engine stamps every `occurredAt` with
+    /// `new Date().toISOString()` — always three fractional digits — while
+    /// the `Configuration` default transcoder (whole-second only) cannot
+    /// parse that shape. Before `FlexibleISO8601DateTranscoder` was wired
+    /// into the generated client, a REST answer from a running engine
+    /// decoded to nothing: the regression lived below the seam this test
+    /// injects.
+    func testRestDecodingAcceptsTheEnginesFractionalSecondTimestamps() async throws {
+        let responseJSON = """
+            {
+              "items": [
+                {
+                  "id": "evt-1",
+                  "type": "scm.work-item.tag-added",
+                  "version": 1,
+                  "kind": "request",
+                  "occurredAt": "2026-09-07T10:15:30.123Z",
+                  "producer": "github-connector",
+                  "correlationId": "corr-1",
+                  "subjectRef": "issue-42"
+                }
+              ]
+            }
+            """
+
+        let client = EngineClient(
+            serverURL: URL(string: "http://127.0.0.1:1")!,
+            transport: CannedTransport(
+                status: .ok,
+                contentType: "application/json",
+                body: HTTPBody(Array(responseJSON.utf8))))
+
+        let events = try await client.listProjectEvents(projectId: "proj-1")
+        XCTAssertEqual(events.map(\.id), ["evt-1"])
+        guard let first = events.first else { return }
+        XCTAssertEqual(first.correlationId, "corr-1")
+        XCTAssertEqual(first.occurredAt.timeIntervalSince1970, 1_788_776_130.123, accuracy: 0.001)
+    }
+}
+
+/// A canned Local API answer: the exact bytes the engine would write, with
+/// no socket involved — the only way to assert the generated client's
+/// decoding against the engine's own JSON without running the engine.
+private struct CannedTransport: ClientTransport {
+    let status: HTTPResponse.Status
+    let contentType: String
+    let body: HTTPBody
+
+    func send(
+        _ request: HTTPRequest, body: HTTPBody?, baseURL: URL, operationID: String
+    ) async throws -> (HTTPResponse, HTTPBody?) {
+        let response = HTTPResponse(
+            status: status,
+            headerFields: [HTTPField.Name("Content-Type")!: contentType])
+        return (response, self.body)
     }
 }
 

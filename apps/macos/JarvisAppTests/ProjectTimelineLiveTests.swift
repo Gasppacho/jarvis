@@ -29,9 +29,12 @@ final class ProjectTimelineLiveTests: XCTestCase {
         _ = await watch.result
 
         XCTAssertEqual(harness.model.state(for: "proj-a").events.map(\.id), ["evt-new"])
-        // Only the initial load fetched from REST — the new row arrived live.
+        // Two fetches from REST: the initial snapshot and the reload that
+        // follows the connect — it closes the window between the two
+        // (findings-review #62-2). The new row arrived live, and nothing
+        // else triggered a reload.
         let refreshCount = await harness.refreshCount
-        XCTAssertEqual(refreshCount, 1)
+        XCTAssertEqual(refreshCount, 2)
     }
 
     func testExecutionChangedForTheShownProjectAppearsWithoutRefresh() async throws {
@@ -72,7 +75,9 @@ final class ProjectTimelineLiveTests: XCTestCase {
 
         XCTAssertEqual(harness.model.state(for: "proj-a").events.map(\.id), ["evt-own"])
         let refreshCount = await harness.refreshCount
-        XCTAssertEqual(refreshCount, 1, "another Project's message must never trigger a reload")
+        XCTAssertEqual(
+            refreshCount, 2,
+            "the two initial loads only (snapshot + post-connect) — another Project's message must never trigger a reload")
     }
 
     // MARK: - Gap detection: the subtle part
@@ -107,8 +112,8 @@ final class ProjectTimelineLiveTests: XCTestCase {
 
         let refreshCount = await harness.refreshCount
         XCTAssertEqual(
-            refreshCount, 1,
-            "a skip explained by another Project's message must never be treated as a gap")
+            refreshCount, 2,
+            "the two initial loads only — a skip explained by another Project's message must never be treated as a gap")
     }
 
     func testAGenuineSequenceGapTriggersResetAndReload() async throws {
@@ -134,7 +139,9 @@ final class ProjectTimelineLiveTests: XCTestCase {
         _ = await watch.result
 
         let refreshCount = await harness.refreshCount
-        XCTAssertEqual(refreshCount, 2, "the gap must trigger exactly one reload")
+        XCTAssertEqual(
+            refreshCount, 3,
+            "the two initial loads (snapshot + post-connect) plus exactly one gap reload")
         // The reload's own REST snapshot is what ends up on screen, upserted
         // with the message that revealed the gap — never the pre-gap rows.
         XCTAssertTrue(harness.model.state(for: "proj-a").events.map(\.id).contains("evt-durable"))
@@ -153,13 +160,20 @@ final class ProjectTimelineLiveTests: XCTestCase {
             harness.message(
                 sequence: 1, projectId: "proj-a",
                 event: makeEvent(id: "evt-1", correlationId: "corr-1")))
+        // The reload that follows the connect (findings-review #62-2)
+        // already fetched the reloaded snapshot, so the live row sits next
+        // to it — wait for it to appear, not for it to be the only row.
         await harness.waitUntil {
-            harness.model.state(for: "proj-a").events.map(\.id) == ["evt-1"]
+            harness.model.state(for: "proj-a").events.map(\.id).contains("evt-1")
         }
 
         // The connection just ends — no error, no more messages.
         await harness.finishCurrentStream()
-        await harness.waitUntil { await harness.refreshCount == 2 }
+        await harness.waitUntil {
+            await harness.refreshCount == 3
+                && harness.model.connectionState == .live
+                && harness.model.state(for: "proj-a").events.map(\.id) == ["evt-durable"]
+        }
 
         XCTAssertEqual(harness.model.connectionState, .live, "the reconnect already succeeded")
         watch.cancel()
@@ -195,7 +209,9 @@ final class ProjectTimelineLiveTests: XCTestCase {
         _ = await watch.result
 
         let refreshCount = await harness.refreshCount
-        XCTAssertEqual(refreshCount, 2)
+        XCTAssertEqual(
+            refreshCount, 3,
+            "the two initial loads (snapshot + post-connect) plus exactly one session-change reload")
     }
 
     // MARK: - No duplicate / no phantom row after reconnection
@@ -276,6 +292,148 @@ final class ProjectTimelineLiveTests: XCTestCase {
         XCTAssertEqual(harness.model.state(for: "proj-a").events.map(\.id), ["evt-cached"])
     }
 
+    // MARK: - Rehydration window (findings-review #62-2): the reload follows the connect
+
+    func testAnUpdatePublishedBetweenTheInitialSnapshotAndTheConnectStillLands() async throws {
+        // The first connect is gated, so the test controls the instant it
+        // happens. An update committed after the initial snapshot but
+        // before the connect is in neither the snapshot nor the live
+        // stream (the hub replays nothing, and the fresh connection's
+        // sequence baseline cannot see the hole) — only the reload that
+        // follows the connect can bring it in.
+        let late = makeEvent(id: "evt-late", correlationId: "corr-1")
+        let harness = Harness(
+            initialEvents: [], initialExecutions: [],
+            reloadedEvents: [late],
+            gateConnectAttempt: 1)
+        let watch = harness.startWatching(projectId: "proj-a")
+
+        // The initial snapshot is already taken.
+        await harness.waitUntil { await harness.refreshCount == 1 }
+        // The engine commits and emits `evt-late` now — after the
+        // snapshot, before the connect. It is delivered to nothing (no
+        // connection yet); the reload after the connect is the only way
+        // it can reach the Timeline.
+        await harness.emit(harness.message(sequence: 1, projectId: "proj-a", event: late))
+        await harness.openGate("connect-1")
+
+        await harness.waitUntil {
+            harness.model.state(for: "proj-a").events.map(\.id).contains("evt-late")
+        }
+        await harness.finishCurrentStream()
+        watch.cancel()
+        _ = await watch.result
+
+        XCTAssertTrue(
+            harness.model.state(for: "proj-a").events.map(\.id).contains("evt-late"),
+            "an update published between the snapshot and the connect must still land in the Timeline")
+    }
+
+    func testAnUpdateCommittedWhileDisconnectedLandsOnceTheReconnectReloads() async throws {
+        // The provider returns a mutable "durable" array; committing into
+        // it models the engine having committed an update — a snapshot
+        // taken before that moment cannot contain it, whichever side of
+        // the reconnect the snapshot is fetched on.
+        let preDrop = makeEvent(id: "evt-pre", correlationId: "corr-1")
+        let late = makeEvent(id: "evt-late", correlationId: "corr-1")
+        let harness = Harness(
+            initialEvents: [], initialExecutions: [],
+            liveDurableState: [preDrop],
+            gateConnectAttempt: 2,
+            gateRefreshAttempt: 2)
+        let watch = harness.startWatching(projectId: "proj-a")
+        await harness.waitUntilLive()
+
+        // The connection drops.
+        await harness.finishCurrentStream()
+        // The reload's snapshot is taken now — the engine has not
+        // committed `evt-late` yet, so it cannot be in it.
+        await harness.waitUntil { await harness.refreshCount == 2 }
+        await harness.openGate("refresh-2")
+        // ...and only now does the engine commit it, still disconnected.
+        await harness.commit(late)
+        // The reconnect happens after that.
+        await harness.openGate("connect-2")
+
+        await harness.waitUntil {
+            harness.model.state(for: "proj-a").events.map(\.id).contains("evt-late")
+        }
+        await harness.finishCurrentStream()
+        watch.cancel()
+        _ = await watch.result
+
+        XCTAssertTrue(
+            harness.model.state(for: "proj-a").events.map(\.id).contains("evt-late"),
+            "the reload must follow the reconnect, not precede it: a snapshot fetched while disconnected cannot contain an update committed in the gap")
+    }
+
+    // MARK: - Connection-state lifecycle (findings-review #62-6)
+
+    func testAReentryBeginsReconnectingNeverWithAStaleLiveState() async throws {
+        // The provider sleeps, so the entry window is observable: between
+        // the watch starting and its first connect, the badge must read
+        // "reconnecting" — never the stale "live" the previous watch left
+        // behind (cancellation is not a state reset).
+        let harness = Harness(
+            initialEvents: [], initialExecutions: [],
+            refreshDelay: .milliseconds(300))
+        let first = harness.startWatching(projectId: "proj-a")
+        await harness.waitUntilLive()
+        first.cancel()
+        _ = await first.result
+        XCTAssertEqual(
+            harness.model.connectionState, .live,
+            "the state is left as the previous watch's — the next watch must reset it")
+
+        let second = harness.startWatching(projectId: "proj-a")
+        // The entry snapshot is in flight (the provider is sleeping) —
+        // this watch has not connected yet.
+        await harness.waitUntil { await harness.refreshCount >= 3 }
+        XCTAssertEqual(
+            harness.model.connectionState, .reconnecting,
+            "a watch that has not connected yet must not read as the previous watch's live")
+
+        await harness.waitUntil(timeout: 3) { harness.model.connectionState == .live }
+        second.cancel()
+        _ = await second.result
+    }
+
+    func testACancelledWatchCannotOverwriteTheIncomingWatchesState() async throws {
+        // A Project switch: the outgoing watch is cancelled while its
+        // reconnect is suspended inside the connector; the incoming watch
+        // goes live; then the outgoing connector fails terminally. Its
+        // `.failed` must not overwrite the incoming watch's `.live`.
+        let harness = Harness(
+            initialEvents: [], initialExecutions: [],
+            connectorError: EngineClientError.unauthorized(operation: "GET /v1/stream"),
+            terminalOnAttempt: 2,
+            gateConnectAttempt: 2)
+        let outgoing = harness.startWatching(projectId: "proj-a")
+        await harness.waitUntilLive()
+
+        await harness.finishCurrentStream()
+        // The outgoing watch is now suspended inside its (terminal)
+        // reconnect attempt.
+        await harness.waitUntil { await harness.connectAttempts >= 2 }
+        outgoing.cancel()
+
+        let incoming = harness.startWatching(projectId: "proj-a")
+        await harness.waitUntil { harness.model.connectionState == .live }
+        // Release the outgoing connector: it throws its terminal error
+        // now — but it was cancelled, so it must stay silent.
+        await harness.openGate("connect-2")
+        // Give the outgoing watch a turn to (not) write.
+        await Task.yield()
+        await Task.yield()
+
+        XCTAssertEqual(
+            harness.model.connectionState, .live,
+            "a cancelled watch's terminal failure must not overwrite the incoming watch's state")
+        await harness.finishCurrentStream()
+        incoming.cancel()
+        _ = await incoming.result
+    }
+
     // MARK: - Fixtures
 
     private func makeEvent(
@@ -309,7 +467,7 @@ private struct TransientConnectFailure: Error, Sendable {}
 private final class Harness {
     let model: ProjectTimelineModel
     private let reconnectDelay: Duration
-    private let box = Box()
+    private let box: Box
 
     /// Counters and the in-flight continuation, actor-isolated because the
     /// `@Sendable` `provider`/`streamConnector` closures run on the model's
@@ -318,7 +476,14 @@ private final class Harness {
     private actor Box {
         var refreshCount = 0
         var connectAttempts = 0
+        var durable: [TimelineEvent] = []
+        var openGates: Set<String> = []
+        var gateWaiters: [String: CheckedContinuation<Void, Never>] = [:]
         var currentContinuation: AsyncThrowingStream<TimelineStreamMessage, Error>.Continuation?
+
+        init(durable: [TimelineEvent]) {
+            self.durable = durable
+        }
 
         func recordRefresh() -> Int {
             refreshCount += 1
@@ -344,31 +509,99 @@ private final class Harness {
             currentContinuation?.finish()
             currentContinuation = nil
         }
+
+        func commit(_ event: TimelineEvent) {
+            durable.append(event)
+        }
+
+        /// The test controls when a gated call proceeds. Opening a gate
+        /// before anyone waits simply records it: the waiter passes
+        /// straight through. The check and the waiter registration are
+        /// one synchronous actor step, so no open can slip between them.
+        func awaitGate(_ name: String) async {
+            if openGates.contains(name) { return }
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                gateWaiters[name] = continuation
+            }
+        }
+
+        func openGate(_ name: String) {
+            if let waiter = gateWaiters[name] {
+                gateWaiters[name] = nil
+                waiter.resume()
+            } else {
+                openGates.insert(name)
+            }
+        }
     }
 
     init(
         initialEvents: [TimelineEvent], initialExecutions: [TimelineExecution],
         reloadedEvents: [TimelineEvent]? = nil,
+        /// When set, the provider returns this mutable "durable" array (the
+        /// test commits into it) instead of the scripted
+        /// `initialEvents`/`reloadedEvents` fiction — the only way to make
+        /// a snapshot's content depend on *when* it is fetched, which the
+        /// findings-review #62-2 window tests need.
+        liveDurableState: [TimelineEvent]? = nil,
         connectorError: (any Error & Sendable)? = nil,
         failOnAttempt: Int? = nil,
+        /// Only on this attempt, the connector throws `connectorError`
+        /// (a terminal rejection) — after suspending at the connect gate,
+        /// so a test can cancel the watch mid-connect and then release it.
+        terminalOnAttempt: Int? = nil,
+        /// The connector suspends before returning on this attempt, until
+        /// the test calls `openGate("connect-\(attempt)")` — the test
+        /// controls the instant the (re)connect happens.
+        gateConnectAttempt: Int? = nil,
+        /// The provider suspends before reading the snapshot on this
+        /// attempt, until the test calls
+        /// `openGate("refresh-\(attempt)")` — the test controls the instant
+        /// the snapshot is taken.
+        gateRefreshAttempt: Int? = nil,
+        /// The provider sleeps after recording its call, modelling an
+        /// in-flight snapshot (the findings-review #62-6 entry-window test
+        /// observes the badge during this sleep).
+        refreshDelay: Duration = .zero,
         reconnectDelay: Duration = .zero
     ) {
         self.reconnectDelay = reconnectDelay
         let session = EngineSessionModel(
             supervisor: EngineSupervisor(resources: .developmentBuild()))
-        let box = self.box
+        let box = Box(durable: liveDurableState ?? [])
+        self.box = box
 
         let provider: ProjectTimelineModel.TimelineProvider = { _ in
             let attempt = await box.recordRefresh()
-            let events = attempt == 1 ? initialEvents : (reloadedEvents ?? initialEvents)
+            if let gateRefreshAttempt, attempt == gateRefreshAttempt {
+                await box.awaitGate("refresh-\(attempt)")
+            }
+            if refreshDelay > .zero {
+                // A snapshot that takes a while: a window during which the
+                // test can observe the badge, or publish on the stream.
+                try? await Task.sleep(for: refreshDelay)
+            }
+            let events: [TimelineEvent]
+            if liveDurableState != nil {
+                events = await box.durable
+            } else {
+                events = attempt == 1 ? initialEvents : (reloadedEvents ?? initialEvents)
+            }
             return (events: events, executions: initialExecutions)
         }
         let connector: ProjectTimelineModel.StreamConnector = {
             let attempt = await box.recordConnectAttempt()
+            if let gateConnectAttempt, attempt == gateConnectAttempt {
+                await box.awaitGate("connect-\(attempt)")
+            }
             if attempt == failOnAttempt {
                 throw TransientConnectFailure()
             }
-            if let connectorError {
+            if let terminalOnAttempt {
+                if attempt == terminalOnAttempt {
+                    throw (connectorError ?? TransientConnectFailure())
+                }
+            } else if let connectorError {
                 throw connectorError
             }
             let (stream, continuation) =
@@ -415,6 +648,14 @@ private final class Harness {
 
     func finishCurrentStream() async {
         await box.finish()
+    }
+
+    func commit(_ event: TimelineEvent) async {
+        await box.commit(event)
+    }
+
+    func openGate(_ name: String) async {
+        await box.openGate(name)
     }
 
     func waitUntil(

@@ -24,6 +24,8 @@ function parse(frame: string): StreamMessage {
   return JSON.parse(frame.replace(/^data: /, "").trim()) as StreamMessage;
 }
 
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
 const anEvent = {
   type: "event.recorded",
   projectId: "demo",
@@ -99,6 +101,44 @@ describe("LiveUpdateHub", () => {
 
     expect(leaving.frames).toEqual([]);
     expect(staying.frames).toHaveLength(1);
+  });
+
+  // findings-review #62-3: an idle connection is dead to the client's
+  // inactivity timers (URLSession's 60 s, the shell's 5 min safety net), so
+  // the hub probes it. The probe is an SSE comment — a `:` line the WHATWG
+  // spec says conformant parsers ignore — which is what makes it free: no
+  // message, no sequence, no new contract type.
+  it("probes idle connections with a keep-alive comment that spends no sequence", async () => {
+    const hub = new LiveUpdateHub("ses_1", 25); // injectable interval: no minute-long test
+    const a = recordingClient();
+    hub.connect(a.client);
+
+    await sleep(100);
+
+    expect(a.frames.length).toBeGreaterThan(0);
+    expect(a.frames.every((frame) => frame.startsWith(":"))).toBe(true);
+
+    // A real message still costs exactly sequence 1, not 2 — and the
+    // probes that got here do not show up in its numbering.
+    hub.publish({ ...anEvent, payload: { id: "evt_1" } });
+    const dataFrames = a.frames.filter((frame) => frame.startsWith("data: "));
+    expect(dataFrames.map((frame) => parse(frame).sequence)).toEqual([1]);
+    expect(a.ended()).toBe(false);
+    hub.closeAll();
+  });
+
+  it("closeAll stops the keep-alive probes", async () => {
+    const hub = new LiveUpdateHub("ses_1", 25);
+    const a = recordingClient();
+    hub.connect(a.client);
+
+    await sleep(100);
+    const seen = a.frames.length;
+    expect(seen).toBeGreaterThan(0);
+
+    hub.closeAll();
+    await sleep(100);
+    expect(a.frames.length).toBe(seen);
   });
 
   it("ends every open client on closeAll so shutdown never waits on one", () => {

@@ -71,7 +71,12 @@ Tous les exécutables et native addons sont signés avec le bundle. Le moteur ut
 - correlation client pour diagnostics ;
 - décodage d'erreur standardisé.
 
-Le SSE peut utiliser URLSession bytes et un parseur dédié ; les payloads d'événements UI sont versionnés dans l'OpenAPI.
+Le SSE peut utiliser URLSession bytes et un parseur dédié ; les payloads d'événements UI sont versionnés dans l'OpenAPI. Le flux utilise une URLSession
+séparée du transport REST : les appels loopback ordinaires expirent après cinq
+secondes, tandis que le flux SSE dispose d'une limite d'inactivité/ressource de
+cinq minutes. Le moteur envoie des commentaires SSE environ toutes les 15 secondes
+pour maintenir une connexion saine observable ; ces commentaires sont ignorés et
+ne sont pas des mises à jour métier.
 
 ## State management
 

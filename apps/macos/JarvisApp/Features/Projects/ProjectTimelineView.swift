@@ -18,37 +18,56 @@ struct ProjectTimelineView: View {
         // row maps and group sort from scratch on every access — findings-
         // review #61-4.
         let presentation = presentation
-        Group {
-            switch presentation.status {
-            case .loading:
-                ProgressView("Loading Timeline…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            case .failed(let message):
-                ContentUnavailableView {
-                    Label("Timeline unavailable", systemImage: "exclamationmark.triangle.fill")
-                } description: {
-                    Text(message)
-                } actions: {
-                    Button("Retry") { Task { await timeline.refresh(projectId: projectId) } }
-                }
-            case .empty:
-                ContentUnavailableView {
-                    Label("Nothing has happened yet", systemImage: "clock")
-                } description: {
-                    Text("Events and Executions will appear here once this Project runs.")
-                } actions: {
-                    Button("Refresh") { Task { await timeline.refresh(projectId: projectId) } }
-                }
-            case .loaded, .refreshing:
-                // `.refreshing` renders the same previous, complete snapshot
-                // as `.loaded`, plus a subdued in-place cue — never the
-                // full-pane spinner, which would blank a long Timeline and
-                // lose scroll position on every "Refresh Timeline" click
-                // (findings-review #61-2).
-                timelineList(presentation)
+        VStack(spacing: 0) {
+            // findings-review #62-5: the connection badge shows in every
+            // state — `.loading`, `.failed`, `.empty`, the list: the
+            // screen's live status is independent of whether the durable
+            // content is empty, loading or failed, so a stale view can never
+            // pass for a current one.
+            HStack(spacing: 8) {
+                Spacer()
+                connectionStateBadge
             }
+            .padding(.horizontal, 24)
+            .padding(.top, 12)
+            Group {
+                switch presentation.status {
+                case .loading:
+                    ProgressView("Loading Timeline…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .failed(let message):
+                    ContentUnavailableView {
+                        Label("Timeline unavailable", systemImage: "exclamationmark.triangle.fill")
+                    } description: {
+                        Text(message)
+                    } actions: {
+                        Button("Retry") { Task { await timeline.refresh(projectId: projectId) } }
+                    }
+                case .empty:
+                    ContentUnavailableView {
+                        Label("Nothing has happened yet", systemImage: "clock")
+                    } description: {
+                        Text("Events and Executions will appear here once this Project runs.")
+                    } actions: {
+                        Button("Refresh") { Task { await timeline.refresh(projectId: projectId) } }
+                    }
+                case .loaded, .refreshing:
+                    // `.refreshing` renders the same previous, complete snapshot
+                    // as `.loaded`, plus a subdued in-place cue — never the
+                    // full-pane spinner, which would blank a long Timeline and
+                    // lose scroll position on every "Refresh Timeline" click
+                    // (findings-review #61-2).
+                    timelineList(presentation)
+                case .stale(let message):
+                    // findings-review #62-4: a failed reload over an already
+                    // loaded Timeline renders the last snapshot with the
+                    // failure alongside it — never the full-pane failure,
+                    // which would lose the content.
+                    timelineList(presentation, staleMessage: message)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         // Follows the tab actually being shown, in both directions: it never
         // fires for a Project whose Timeline tab is never opened, and it
         // refires whenever the shown Project changes while this tab stays
@@ -64,9 +83,19 @@ struct ProjectTimelineView: View {
         }
     }
 
-    private func timelineList(_ presentation: ProjectTimelinePresentation) -> some View {
+    /// The durable rows. `staleMessage` is set only by the `.stale` status:
+    /// the last good snapshot, with the failed reload surfaced above it
+    /// (findings-review #62-4).
+    private func timelineList(
+        _ presentation: ProjectTimelinePresentation, staleMessage: String? = nil
+    ) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                if let staleMessage {
+                    Label(staleMessage, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
                 HStack(spacing: 8) {
                     Button("Refresh Timeline") {
                         Task { await timeline.refresh(projectId: projectId) }
@@ -79,7 +108,6 @@ struct ProjectTimelineView: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    connectionStateBadge
                 }
                 ForEach(presentation.groups) { group in
                     groupCard(group)
@@ -91,9 +119,10 @@ struct ProjectTimelineView: View {
     }
 
     /// Ticket #62: live vs. reconnecting vs. failed, so a stale view never
-    /// passes for a current one. Durable content (`timelineList` above)
-    /// keeps showing regardless of this badge — a Timeline that cannot go
-    /// live still shows correct content from the last snapshot.
+    /// passes for a current one. Shown in the screen's chrome in every state
+    /// (findings-review #62-5) — durable content keeps showing regardless of
+    /// the badge: a Timeline that cannot go live still shows correct content
+    /// from the last snapshot.
     private var connectionStateBadge: some View {
         let (label, symbol, color): (String, String, Color) =
             switch timeline.connectionState {
