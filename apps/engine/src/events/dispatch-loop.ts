@@ -1,11 +1,18 @@
 import type Database from "better-sqlite3";
 import type { ClaimedDelivery, DeliveryConsumer } from "../executions/delivery-consumer.js";
+import type { LiveUpdatePort } from "../stream/hub.js";
+import { summarizeEventEnvelope } from "./timeline.js";
 import type { OutboxDispatcher } from "./dispatcher.js";
 
 export interface EventLoopDependencies {
   readonly db: Database.Database;
   readonly dispatcher: OutboxDispatcher;
   readonly consumer: DeliveryConsumer;
+  /** Ticket #60: fed one Live Update per journaled Event and per recorded
+   * Execution, always after that row's own transaction has already
+   * committed (see the two call sites below) — never before, so a rolled
+   * back attempt can never produce one. */
+  readonly liveUpdates: LiveUpdatePort;
 }
 
 /**
@@ -46,6 +53,17 @@ export function tickEventLoop(deps: EventLoopDependencies): void {
         `jarvis-engine: dispatched ${dispatched.length} pending outbox row(s)\n`,
       );
     }
+    // Ticket #60: each of these already committed inside `dispatchOne`'s own
+    // transaction (dispatcher.ts) before `dispatchPending` returned it here —
+    // this loop only ever reads back what is already durable.
+    for (const event of dispatched) {
+      deps.liveUpdates.publish({
+        type: "event.recorded",
+        projectId: event.projectId,
+        occurredAt: event.envelope.occurredAt,
+        payload: summarizeEventEnvelope(event.envelope),
+      });
+    }
   } catch (error) {
     process.stderr.write(
       `jarvis-engine: dispatching pending outbox rows failed: ${String(error)}\n`,
@@ -60,6 +78,18 @@ export function tickEventLoop(deps: EventLoopDependencies): void {
           `moduleInstance=${delivery.moduleInstanceId} event=${delivery.eventId} ` +
           `status=${outcome.status} redelivered=${String(outcome.redelivered)}\n`,
       );
+      // Ticket #60: `null` on a redelivery — no new Execution was created,
+      // so there is nothing new to report (`consume()`'s doc comment). Also
+      // already committed, for the same reason the dispatch side above is.
+      if (outcome.executionSummary !== null) {
+        const summary = outcome.executionSummary;
+        deps.liveUpdates.publish({
+          type: "execution.changed",
+          projectId: delivery.projectId,
+          occurredAt: summary.completedAt ?? summary.createdAt,
+          payload: summary,
+        });
+      }
     } catch (error) {
       // A delivery this loop cannot consume must not take the whole engine
       // down with it (no other tick depends on this one) or strand every

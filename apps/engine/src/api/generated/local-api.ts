@@ -348,6 +348,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** @description Ticket #60: one bearer-protected loopback SSE connection for the Engine Session. Pushes a `StreamMessage` whenever the Engine journals an Event (`event.recorded`) or records an Execution (`execution.changed`), each carrying the same summary shape `listProjectEvents`/`listProjectExecutions` serve for that row. Not Project-scoped: every message carries its own `projectId` and the client filters. The stream is never a source of truth — losing the connection costs nothing durable, and a client reconnects by rereading the REST timeline. */
         get: operations["streamUpdates"];
         put?: never;
         post?: never;
@@ -942,11 +943,20 @@ export interface components {
             capabilities: string[];
         };
         StreamMessage: {
+            /** @description Ticket #60: monotonic and gapless across every message of one Engine Session, whatever their type or Project — one counter, not one per type or Project. Restarts at 1 in a new Engine Session. */
             sequence: number;
-            type: string;
+            /**
+             * @description Ticket #60: the vocabulary this stream actually emits. `event.recorded` payloads are an `EventSummary`; `execution.changed` payloads are an `ExecutionSummary`. Health, project/module status and execution log messages (docs/architecture/OBSERVABILITY.md "Real-time channel") are not emitted by this ticket.
+             *
+             *     The enum is closed rather than an open string, which is safe here only because the Engine ships inside `Jarvis.app` as one signed artifact (docs/architecture/MACOS_APP.md "Engine bundle", ADR 0013) and shell and Engine additionally verify `apiVersion` at the handshake: a shell can never meet an Engine it did not ship with, so a generated client's frozen enum cannot be stranded by an unknown value. A later ticket that emits one of the remaining message types MUST extend this enum in the same change.
+             * @enum {string}
+             */
+            type: "event.recorded" | "execution.changed";
             /** Format: date-time */
             occurredAt: string;
             projectId?: string | null;
+            /** @description Ticket #60: the Engine Session that produced this message (the same id the ready handshake reports), so a client cannot mistake a restarted Engine's stream for a continuation of the previous one. Additive and optional so a caller relying on the pre-#60 shape still validates. */
+            sessionId?: string;
             payload: Record<string, never>;
         };
         ModulePackage: {

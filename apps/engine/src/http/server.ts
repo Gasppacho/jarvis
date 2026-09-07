@@ -17,6 +17,9 @@ import {
   registerDurabilityTestRoutes,
   type DurabilityTestHooks,
 } from "../test-support/durability-test-routes.js";
+import { registerStreamRoutes } from "../stream/routes.js";
+import type { LiveUpdateHub } from "../stream/hub.js";
+import { CORRELATION_HEADER } from "./correlation.js";
 
 /** See apps/engine/src/events/dispatcher.ts's identical declaration for why
  * this exists and how tsup.config.ts's `define` makes it eliminate
@@ -37,6 +40,12 @@ export interface ServerDependencies {
   readonly isShuttingDown: () => boolean;
   /** Invoked after the 202 has been flushed to the caller. */
   readonly onShutdownRequested: () => void;
+  /** Ticket #60: one per Engine Session, fed by the dispatch loop after a
+   * commit. Registered unconditionally — `GET /v1/stream` exists even while
+   * the engine runs degraded, the same as `/v1/health` — but it only ever
+   * emits once the dispatch loop is wired (main.ts), which needs the
+   * database. */
+  readonly liveUpdates: LiveUpdateHub;
   /**
    * Ticket #58: present only when main.ts armed `JARVIS_ENABLE_TEST_HOOKS`.
    * `undefined` — always, on a normally launched engine — means
@@ -46,7 +55,6 @@ export interface ServerDependencies {
   readonly durabilityTestHooks?: DurabilityTestHooks;
 }
 
-const CORRELATION_HEADER = "x-jarvis-correlation-id";
 const SHUTDOWN_PATH = "/v1/system/shutdown";
 
 export function buildServer(deps: ServerDependencies): FastifyInstance {
@@ -138,6 +146,8 @@ export function buildServer(deps: ServerDependencies): FastifyInstance {
   app.get("/v1/module-catalog", async () => ({ items: deps.modules.catalog() }));
 
   app.get("/v1/capability-catalog", async () => capabilityCatalog());
+
+  registerStreamRoutes(app, deps.liveUpdates);
 
   registerProjectRoutes(app, {
     databaseState: deps.databaseState,

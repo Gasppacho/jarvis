@@ -48,6 +48,33 @@ export interface Harness {
   waitForExit(): Promise<number>;
   /** Kills the engine if still running and removes the data root. */
   dispose(): Promise<void>;
+  /**
+   * Opens `GET /v1/stream` and parses each SSE `data:` frame as JSON, in
+   * arrival order. No helper for this existed before ticket #60: `callRaw`
+   * buffers the whole response body until the connection ends, which never
+   * happens for a stream.
+   */
+  openStream(path?: string): SseConnection;
+}
+
+/** One open Server-Sent Events connection opened through `Harness.openStream`. */
+export interface SseConnection {
+  /** Parsed `data:` payloads, in arrival order. Grows while the connection is open. */
+  readonly messages: readonly unknown[];
+  /** The response status once headers arrive; `undefined` before that. */
+  status(): number | undefined;
+  /** The response headers once they arrive; `undefined` before that. A
+   * hijacked SSE reply writes its own head, so this is how a test checks the
+   * head carries what every other operation's does. */
+  headers(): Readonly<Record<string, string | string[] | undefined>> | undefined;
+  /** Resolves once `messages.length >= count`; rejects if that never happens in time. */
+  waitForCount(count: number, timeoutMs?: number): Promise<readonly unknown[]>;
+  /** Resolves once the HTTP response ends or the socket closes, from either end. */
+  waitForClose(timeoutMs?: number): Promise<void>;
+  /** True once the connection has ended, from either end. */
+  closed(): boolean;
+  /** Abruptly destroys the client socket, simulating a dropped connection. */
+  close(): void;
 }
 
 export interface StartEngineOptions {
@@ -151,6 +178,7 @@ export async function startEngine(options: StartEngineOptions = {}): Promise<Har
     call: (path, init = {}) => request(path, init, true),
     callRaw: (path, headers) => rawRequest(handshake.port, path, headers),
     callUnauthenticated: (path, init = {}) => request(path, init, false),
+    openStream: (path = "/v1/stream") => openSseConnection(handshake.port, path, token),
     waitForExit: () =>
       Promise.race([
         exited,
@@ -216,6 +244,108 @@ function isReadyHandshake(value: unknown): value is ReadyHandshake {
     typeof candidate["apiVersion"] === "string" &&
     typeof candidate["sessionId"] === "string"
   );
+}
+
+/** ticket #60: `rawRequest` above buffers the whole body until the response
+ * ends, which a Server-Sent Events response never does on its own — so this
+ * parses `data:` frames incrementally off the raw socket instead. */
+function openSseConnection(port: number, path: string, token: string): SseConnection {
+  const messages: unknown[] = [];
+  const waiters: { count: number; resolve: () => void }[] = [];
+  const closeWaiters: (() => void)[] = [];
+  let status: number | undefined;
+  let headers: Readonly<Record<string, string | string[] | undefined>> | undefined;
+  let closed = false;
+  let buffer = "";
+
+  const settleClose = (): void => {
+    if (closed) return;
+    closed = true;
+    for (const resolve of closeWaiters.splice(0)) resolve();
+  };
+
+  const req = httpRequest(
+    {
+      host: "127.0.0.1",
+      port,
+      path,
+      method: "GET",
+      headers: { authorization: `Bearer ${token}` },
+    },
+    (res) => {
+      status = res.statusCode;
+      headers = res.headers;
+      res.setEncoding("utf8");
+      res.on("data", (chunk: string) => {
+        buffer += chunk;
+        let boundary = buffer.indexOf("\n\n");
+        while (boundary >= 0) {
+          const frame = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          const dataLine = frame.split("\n").find((line) => line.startsWith("data:"));
+          if (dataLine !== undefined) {
+            messages.push(JSON.parse(dataLine.slice("data:".length).trim()));
+            for (const waiter of waiters.splice(0)) {
+              if (messages.length >= waiter.count) waiter.resolve();
+              else waiters.push(waiter);
+            }
+          }
+          boundary = buffer.indexOf("\n\n");
+        }
+      });
+      res.on("end", settleClose);
+      res.on("close", settleClose);
+    },
+  );
+  req.on("error", settleClose);
+  req.end();
+
+  return {
+    messages,
+    status: () => status,
+    headers: () => headers,
+    closed: () => closed,
+    waitForCount: (count, timeoutMs = 5_000) =>
+      new Promise<readonly unknown[]>((resolve, reject) => {
+        if (messages.length >= count) {
+          resolve(messages);
+          return;
+        }
+        const timer = setTimeout(() => {
+          const index = waiters.findIndex((waiter) => waiter.resolve === onReady);
+          if (index >= 0) waiters.splice(index, 1);
+          reject(
+            new Error(
+              `SSE stream ${path} did not reach ${count} message(s) within ${timeoutMs}ms ` +
+                `(saw ${messages.length}).`,
+            ),
+          );
+        }, timeoutMs);
+        timer.unref();
+        function onReady(): void {
+          clearTimeout(timer);
+          resolve(messages);
+        }
+        waiters.push({ count, resolve: onReady });
+      }),
+    waitForClose: (timeoutMs = 5_000) =>
+      new Promise<void>((resolve, reject) => {
+        if (closed) {
+          resolve();
+          return;
+        }
+        const timer = setTimeout(
+          () => reject(new Error(`SSE stream ${path} did not close within ${timeoutMs}ms.`)),
+          timeoutMs,
+        );
+        timer.unref();
+        closeWaiters.push(() => {
+          clearTimeout(timer);
+          resolve();
+        });
+      }),
+    close: () => req.destroy(),
+  };
 }
 
 function rawRequest(

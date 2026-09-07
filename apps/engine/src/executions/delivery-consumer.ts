@@ -8,6 +8,7 @@ import type {
 import { EventPublisher, type PublishEventInput } from "../events/publisher.js";
 import { EngineError } from "../errors.js";
 import { failpoint } from "../test-support/failpoint.js";
+import type { LedgerExecutionSummary } from "./ledger.js";
 
 /** See apps/engine/src/events/dispatcher.ts's identical declaration for why
  * this exists and how tsup.config.ts's `define` makes it eliminate the
@@ -90,6 +91,13 @@ export interface ConsumeResult {
   readonly status: "completed" | "failed";
   readonly result: unknown;
   readonly redelivered: boolean;
+  /** Ticket #60: the Ledger row this call just committed, in the REST
+   * `ExecutionSummary` shape plus the input Event's correlation — `null` on
+   * a redelivery, since no new Execution was created and there is nothing
+   * new to report as a Live Update. Built from the exact values just written
+   * to `executions`, never a second read, so it cannot drift from the row
+   * this call committed. */
+  readonly executionSummary: (LedgerExecutionSummary & { readonly correlationId: string }) | null;
 }
 
 interface InboxRow {
@@ -137,6 +145,7 @@ export class DeliveryConsumer {
         status: existing.status,
         result: JSON.parse(existing.result) as unknown,
         redelivered: true,
+        executionSummary: null,
       };
     }
 
@@ -150,7 +159,7 @@ export class DeliveryConsumer {
         throw new Error(`No handler registered for Module ${delivery.moduleId}.`);
       }
 
-      const result = this.db.transaction(() => {
+      const { handlerResult: result, executionRow } = this.db.transaction(() => {
         // Consume-and-publish (docs/architecture/PERSISTENCE.md): the
         // handler mutates its own Module state and publishes outgoing
         // Outbox rows through `ctx.publish`, all inside this one
@@ -170,11 +179,18 @@ export class DeliveryConsumer {
           failpoint("before-handler-commit");
         }
 
-        this.insertExecution(executionId, delivery, envelope, "completed", startedAt, null);
+        const executionRow = this.insertExecution(
+          executionId,
+          delivery,
+          envelope,
+          "completed",
+          startedAt,
+          null,
+        );
         this.insertInbox(delivery, "completed", handlerResult);
         this.markDeliveryConsumed(delivery);
 
-        return handlerResult;
+        return { handlerResult, executionRow };
       })();
 
       // Ticket #58 acceptance criterion 4: a declared boundary right after
@@ -189,7 +205,13 @@ export class DeliveryConsumer {
         failpoint("after-handler-commit");
       }
 
-      return { executionId, status: "completed", result, redelivered: false };
+      return {
+        executionId,
+        status: "completed",
+        result,
+        redelivered: false,
+        executionSummary: { ...executionRow, correlationId: envelope.correlationId },
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       // Deliberately a second, separate transaction: it must commit even
@@ -198,11 +220,20 @@ export class DeliveryConsumer {
       // criterion 2's "leaves none of them applied and the Execution
       // recorded as failed"; #17's retries/backoff/dead letters are out of
       // scope — this is the terminal record, not a retry schedule).
+      let executionRow: LedgerExecutionSummary;
       try {
-        this.db.transaction(() => {
-          this.insertExecution(executionId, delivery, envelope, "failed", startedAt, message);
+        executionRow = this.db.transaction(() => {
+          const row = this.insertExecution(
+            executionId,
+            delivery,
+            envelope,
+            "failed",
+            startedAt,
+            message,
+          );
           this.insertInbox(delivery, "failed", { error: message });
           this.markDeliveryConsumed(delivery);
+          return row;
         })();
       } catch (recordingError) {
         // A failure while recording a failure (constraint violation, disk
@@ -227,7 +258,13 @@ export class DeliveryConsumer {
         );
       }
 
-      return { executionId, status: "failed", result: { error: message }, redelivered: false };
+      return {
+        executionId,
+        status: "failed",
+        result: { error: message },
+        redelivered: false,
+        executionSummary: { ...executionRow, correlationId: envelope.correlationId },
+      };
     }
   }
 
@@ -261,6 +298,9 @@ export class DeliveryConsumer {
     };
   }
 
+  /** Returns the row just written, in the REST Ledger shape — ticket #60
+   * builds the stream's `execution.changed` Live Update from this return
+   * value rather than a second read of `executions`. */
   private insertExecution(
     id: string,
     delivery: ClaimedDelivery,
@@ -268,7 +308,7 @@ export class DeliveryConsumer {
     status: "completed" | "failed",
     startedAt: string,
     error: string | null,
-  ): void {
+  ): LedgerExecutionSummary {
     const completedAt = this.clock.now().toISOString();
     this.db
       .prepare(
@@ -288,6 +328,16 @@ export class DeliveryConsumer {
         startedAt,
         completedAt,
       });
+    return {
+      id,
+      projectId: delivery.projectId,
+      moduleInstanceId: delivery.moduleInstanceId,
+      status,
+      attempt: 1,
+      createdAt: startedAt,
+      completedAt,
+      inputEventId: envelope.id,
+    };
   }
 
   private insertInbox(
