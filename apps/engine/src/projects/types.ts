@@ -13,6 +13,7 @@ import type {
 } from "../../../../packages/project-runtime/src/project-types.js";
 import type { ProjectCompositionGraph } from "../../../../packages/project-runtime/src/composition-graph.js";
 import type { ProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
+import type { ExecutionApiStatus } from "../executions/ledger.js";
 
 /** The Local API contract is the source of truth for exposed lifecycle values. */
 export type ProjectStatus = components["schemas"]["ProjectSummary"]["status"];
@@ -113,3 +114,29 @@ export type {
   ProjectOpenSubscription,
   ProjectSubscriptions,
 } from "../../../../packages/project-runtime/src/project-subscriptions.js";
+export type { EventSummary, ListEventsQuery } from "../events/timeline.js";
+export type { ListExecutionsQuery } from "../executions/ledger.js";
+export type { ExecutionApiStatus };
+
+/**
+ * `ExecutionSummary` (contracts/openapi/local-api.v1.yaml) extended with the
+ * input Event reference and its correlation (issue #59), so a client can
+ * attach an Execution to the Event that caused it. Additive: `inputEventId`
+ * and `correlationId` are optional in the contract, so a caller relying only
+ * on the pre-#59 shape still validates.
+ */
+export interface ExecutionSummary {
+  readonly id: string;
+  readonly projectId: string;
+  readonly moduleInstanceId: string;
+  readonly status: ExecutionApiStatus;
+  readonly attempt: number;
+  readonly createdAt: string;
+  readonly completedAt: string | null;
+  readonly inputEventId: string;
+  /** Optional per the additive contract change (issue #59 decision), even
+   * though `executions.input_event_id` cascades from `events.id`
+   * (0007_inbox_execution_ledger.sql) so today's Ledger never has an
+   * Execution outliving its input Event: the reader always populates this. */
+  readonly correlationId?: string;
+}

@@ -418,18 +418,20 @@ paths:
       - $ref: "#/components/parameters/ProjectId"
     get:
       operationId: listProjectEvents
+      description: >-
+        Ticket #59: the Project's durable Event journal. Ordered newest first
+        by `occurredAt`, tie-broken by `id` descending so two Events sharing
+        an occurrence timestamp never swap order between calls; `limit`
+        truncates that order at its oldest end. `correlationId`, when given,
+        returns exactly the Events of that chain in the same order; an
+        unknown `correlationId` returns an empty `items` rather than an
+        error.
       parameters:
         - name: correlationId
           in: query
           schema:
             type: string
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 500
-            default: 100
+        - $ref: "#/components/parameters/Limit"
       responses:
         "200":
           description: Durable event timeline.
@@ -443,6 +445,8 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/EventSummary"
+        default:
+          $ref: "#/components/responses/Error"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -452,6 +456,16 @@ paths:
       - $ref: "#/components/parameters/ProjectId"
     get:
       operationId: listProjectExecutions
+      description: >-
+        Ticket #59: the Project's Executions from the Execution Ledger,
+        ordered newest first by `createdAt`, tie-broken by `id` descending
+        for the same reason `listProjectEvents` is. `inputEventId` and
+        `correlationId` attach each Execution to the Event that caused it,
+        so a client never has to guess from timestamps or Module Instance.
+        `limit` bounds this read the same way `listProjectEvents`'s does
+        (issue #59 code review, finding 1).
+      parameters:
+        - $ref: "#/components/parameters/Limit"
       responses:
         "200":
           description: Project executions.
@@ -465,6 +479,8 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/ExecutionSummary"
+        default:
+          $ref: "#/components/responses/Error"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -891,6 +907,17 @@ components:
       required: true
       schema:
         type: string
+    # Ticket #59 code review, finding 1: `listProjectEvents` and
+    # `listProjectExecutions` share this exact contract — declared once here
+    # so they cannot drift apart the way a copy in each operation could.
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 100
   responses:
     Error:
       description: Error response.
@@ -1741,6 +1768,19 @@ components:
         completedAt:
           type: [string, "null"]
           format: date-time
+        inputEventId:
+          type: string
+          description: >-
+            Ticket #59: the id of the Event that caused this Execution
+            (0007_inbox_execution_ledger.sql `input_event_id`). Optional so a
+            client relying on the pre-#59 shape still validates.
+        correlationId:
+          type: string
+          description: >-
+            Ticket #59: the correlationId of this Execution's input Event,
+            so a client can attach the Execution to its Event without
+            guessing from timestamps or Module Instance. Optional for the
+            same reason `inputEventId` is.
     ResourceDescriptor:
       type: object
       required: [id, kind, displayName, status, capabilities]
