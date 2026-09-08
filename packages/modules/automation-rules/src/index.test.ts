@@ -44,6 +44,7 @@ function context(
       configuration,
       signal: new AbortController().signal,
       capabilities: {},
+      recordCheckpoint: () => {},
       publish: (input) => {
         published.push(input);
         return event;
@@ -315,6 +316,7 @@ describe("handleWorkItemTagAdded", () => {
         configuration: { rules },
         signal: new AbortController().signal,
         capabilities: {},
+        recordCheckpoint: () => {},
         publish: (input) => {
           published.push(input);
           return event;
