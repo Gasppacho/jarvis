@@ -50,9 +50,7 @@ export class WorkspaceReconciler {
   private readonly clock: Clock;
   private readonly manager: WorkspaceManager;
 
-  public constructor(
-    private readonly options: WorkspaceManagerOptions,
-  ) {
+  public constructor(private readonly options: WorkspaceManagerOptions) {
     this.clock = options.clock ?? new SystemClock();
     this.manager = new WorkspaceManager(options);
     this.dataRoot = realpathSync(resolve(options.dataRoot));
