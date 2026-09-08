@@ -1,11 +1,21 @@
 import type Database from "better-sqlite3";
 import type { Clock } from "../../../../packages/kernel/src/clock.js";
 import type { IdGenerator } from "../../../../packages/kernel/src/id-generator.js";
+import type { EventEnvelope } from "../../../../packages/eventing/src/envelope.js";
 import type {
-  EventEnvelope,
-  EventEnvelopeSubject,
-} from "../../../../packages/eventing/src/envelope.js";
-import { EventPublisher, type PublishEventInput } from "../events/publisher.js";
+  ModuleConfigurationLookup,
+  ModuleHandlerContext,
+  ModuleHandlerLookup,
+  ModuleHandlerPublishInput,
+  ModuleRepositoryDefaultBranchLookup,
+} from "../../../../packages/module-sdk/src/index.js";
+
+export type ModulePublishedContract = Pick<ModuleHandlerPublishInput, "type" | "version" | "kind">;
+
+export type ModulePublishedContractsLookup = (
+  moduleId: string,
+) => readonly ModulePublishedContract[] | undefined;
+import { EventPublisher } from "../events/publisher.js";
 import { EngineError } from "../errors.js";
 import { failpoint } from "../test-support/failpoint.js";
 import type { LedgerExecutionSummary } from "./ledger.js";
@@ -21,61 +31,22 @@ declare const __JARVIS_TEST_HOOKS__: boolean | undefined;
  * Delivery into exactly one Module handler invocation, recorded in the
  * Inbox and the Execution Ledger.
  *
- * Composition-root wiring: NOT wired into `apps/engine/src/main.ts` /
- * `http/server.ts`. Nothing in a running engine ever calls
- * `EventPublisher.publish` (no HTTP route accepts an inbound Event, and
- * every official Module Package's entrypoint under packages/modules is still
- * a build-time stub) or `OutboxDispatcher.dispatchPending` (no scheduled
- * loop exists). Wiring `DeliveryConsumer` in now would add a
- * `ModuleHandlerLookup` with no real handler to register and no caller that
- * could ever reach it — dead code with nothing to demonstrate it against.
- * The Application Harness test below is the only reachable seam until a
- * later ticket gives a real Module a real handler and an entry point that
- * publishes an Event.
+ * Composition-root wiring in `apps/engine/src/main.ts` supplies the handler
+ * and project-scoped configuration lookups. The Application Harness reaches
+ * the same consumer through the test-only inbound trigger; production module
+ * adapters use the same Outbox/Inbox/Execution transaction.
  */
 
-/** The Module SDK vocabulary (packages/module-sdk/CONTEXT.md "Handler",
- * "Module Context") kept local to the engine, the same way `dispatcher.ts`
- * keeps `OpenSubscriptionsPort` a structural mirror instead of an import:
- * there is exactly one caller of this shape today, so a separate package is
- * not yet worth its build/tsconfig/vitest scaffolding. Promote it into
- * `packages/module-sdk` when a real Module Package needs to implement
- * `ModuleHandler` itself. */
-export interface ModuleHandlerPublishInput {
-  readonly type: string;
-  readonly version: number;
-  readonly kind: "request" | "fact";
-  readonly producer: { readonly moduleId: string; readonly moduleInstanceId: string };
-  readonly subject: EventEnvelopeSubject;
-  readonly repositoryId?: string;
-  readonly target?: PublishEventInput["target"];
-  readonly idempotencyKey?: string;
-  readonly payload: Readonly<Record<string, unknown>>;
-  readonly metadata?: PublishEventInput["metadata"];
-}
-
-export interface ModuleHandlerContext {
-  readonly projectId: string;
-  readonly moduleInstanceId: string;
-  readonly event: EventEnvelope;
-  /** Scoped to the module's own tables by convention
-   * (docs/architecture/PERSISTENCE.md "Logical ownership"); nothing enforces
-   * that at this layer, the same way it isn't enforced for a real Module's
-   * migration today. */
-  readonly db: Database.Database;
-  /** Publishes within the ambient consume-and-publish transaction. Always
-   * carries the consumed event as causation and its correlationId — a
-   * handler cannot override either, which is what makes acceptance
-   * criterion 6 (causation/correlation) a pipeline guarantee rather than a
-   * per-handler discipline. */
-  readonly publish: (input: ModuleHandlerPublishInput) => EventEnvelope;
-}
-
-export type ModuleHandler = (ctx: ModuleHandlerContext) => unknown;
-
-/** Resolves a Module's Handler by Module Package id; `undefined` when none is
- * registered. Mirrors `OpenSubscriptionsPort`'s function-port shape. */
-export type ModuleHandlerLookup = (moduleId: string) => ModuleHandler | undefined;
+/** The Module SDK handler contract is shared with real Module Packages. */
+export type {
+  ModuleConfiguration,
+  ModuleConfigurationLookup,
+  ModuleHandler,
+  ModuleHandlerContext,
+  ModuleHandlerLookup,
+  ModuleHandlerPublishInput,
+  ModuleRepositoryDefaultBranchLookup,
+} from "../../../../packages/module-sdk/src/index.js";
 
 export interface ClaimedDelivery {
   readonly projectId: string;
@@ -107,8 +78,8 @@ interface InboxRow {
 
 /**
  * Ticket #57: one claimed Delivery in, one terminal Execution and Inbox
- * record out. See the module doc comment above for why this is not wired
- * into the composition root yet.
+ * record out. The handler's own state changes and published Outbox rows share
+ * the same transaction as the terminal Inbox and Execution records.
  */
 export class DeliveryConsumer {
   public constructor(
@@ -117,6 +88,9 @@ export class DeliveryConsumer {
     private readonly ids: IdGenerator,
     private readonly publisher: EventPublisher,
     private readonly handlers: ModuleHandlerLookup,
+    private readonly configurations: ModuleConfigurationLookup = () => ({}),
+    private readonly repositoryDefaultBranches: ModuleRepositoryDefaultBranchLookup = () => "main",
+    private readonly publishedContracts: ModulePublishedContractsLookup = () => undefined,
   ) {}
 
   public consume(delivery: ClaimedDelivery): ConsumeResult {
@@ -272,14 +246,24 @@ export class DeliveryConsumer {
     return {
       projectId: delivery.projectId,
       moduleInstanceId: delivery.moduleInstanceId,
+      repositoryId: envelope.repositoryId,
+      repositoryDefaultBranch: this.repositoryDefaultBranches(
+        delivery.projectId,
+        envelope.repositoryId,
+      ),
       event: envelope,
-      db: this.db,
-      publish: (input) =>
-        this.publisher.publish({
+      configuration: this.configurations(delivery.projectId, delivery.moduleInstanceId) ?? {},
+      publish: (input) => {
+        this.assertPublishedContract(delivery.moduleId, input);
+        return this.publisher.publish({
           type: input.type,
           version: input.version,
           kind: input.kind,
-          producer: input.producer,
+          // A handler cannot impersonate another Module Instance.
+          producer: {
+            moduleId: delivery.moduleId,
+            moduleInstanceId: delivery.moduleInstanceId,
+          },
           subject: input.subject,
           payload: input.payload,
           projectId: delivery.projectId,
@@ -293,9 +277,27 @@ export class DeliveryConsumer {
           ...(input.repositoryId === undefined ? {} : { repositoryId: input.repositoryId }),
           ...(input.target === undefined ? {} : { target: input.target }),
           ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
-          ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
-        }),
+          ...(input.metadata === undefined ? {} : { metadata: { ...input.metadata } }),
+        });
+      },
     };
+  }
+
+  private assertPublishedContract(moduleId: string, input: ModuleHandlerPublishInput): void {
+    const contracts = this.publishedContracts(moduleId);
+    if (
+      contracts !== undefined &&
+      !contracts.some(
+        (contract) =>
+          contract.type === input.type &&
+          contract.version === input.version &&
+          contract.kind === input.kind,
+      )
+    ) {
+      throw new Error(
+        `Module ${moduleId} cannot publish undeclared ${input.kind} ${input.type}.v${input.version}.`,
+      );
+    }
   }
 
   /** Returns the row just written, in the REST Ledger shape — ticket #60

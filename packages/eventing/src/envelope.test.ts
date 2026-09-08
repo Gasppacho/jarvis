@@ -7,6 +7,9 @@ const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const schema = JSON.parse(
   readFileSync(`${ROOT}/contracts/schemas/event-envelope.v1.schema.json`, "utf8"),
 ) as object;
+const tagAddedPayloadSchema = JSON.parse(
+  readFileSync(`${ROOT}/contracts/events/scm.work-item.tag-added.v1.schema.json`, "utf8"),
+) as object;
 
 function validEnvelope(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -74,5 +77,18 @@ describe("EventEnvelopeContractRegistry", () => {
     expect(() => registry.requireEnvelope(validEnvelope({ unexpectedField: "nope" }))).toThrow(
       InvalidEventEnvelopeError,
     );
+  });
+
+  it("validates a known event payload when its contract is registered", () => {
+    const registryWithPayload = new EventEnvelopeContractRegistry({
+      eventEnvelopeV1: schema,
+      eventPayloads: [
+        { type: "scm.work-item.tag-added", version: 1, schema: tagAddedPayloadSchema },
+      ],
+    });
+
+    expect(() =>
+      registryWithPayload.requireEnvelope(validEnvelope({ payload: { tag: "agent:ready" } })),
+    ).toThrow(/payload.*workItemRef/);
   });
 });

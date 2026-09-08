@@ -15,13 +15,19 @@ import { ProjectStore, type ResolvedProjectSnapshot } from "../projects/store.js
 import { OutboxDispatcher, type OpenSubscriptionsPort } from "../events/dispatcher.js";
 import { EventPublisher } from "../events/publisher.js";
 import { ControllableClock, DeterministicIdGenerator } from "../events/test-doubles.js";
-import { DeliveryConsumer, type ModuleHandlerLookup } from "./delivery-consumer.js";
+import {
+  DeliveryConsumer,
+  type ModuleConfigurationLookup,
+  type ModuleHandlerContext,
+  type ModuleHandlerLookup,
+  type ModulePublishedContractsLookup,
+} from "./delivery-consumer.js";
 import {
   SAMPLE_PROBE_MODULE_ID,
   SAMPLE_PROBE_PINGED,
   SAMPLE_PROBE_PONGED,
   createSampleProbeSchema,
-  sampleProbeHandler,
+  createSampleProbeHandler,
 } from "./sample-probe-module.js";
 
 /**
@@ -124,13 +130,18 @@ interface Harness {
   readonly consumer: DeliveryConsumer;
 }
 
-function harness(handlers: ModuleHandlerLookup = () => sampleProbeHandler): Harness {
+function harness(
+  handlers?: ModuleHandlerLookup,
+  configurations?: ModuleConfigurationLookup,
+  publishedContracts?: ModulePublishedContractsLookup,
+): Harness {
   const clock = new ControllableClock(new Date("2026-09-06T08:00:00.000Z"));
   const ids = new DeterministicIdGenerator();
   const database = openDb();
   const store = new ProjectStore(database, clock);
   const registry = new EventEnvelopeContractRegistry({ eventEnvelopeV1: envelopeSchema });
   const publisher = new EventPublisher(database, clock, ids, registry);
+  const registeredHandlers = handlers ?? (() => createSampleProbeHandler(database));
   const dispatcher = new OutboxDispatcher(
     database,
     clock,
@@ -138,11 +149,71 @@ function harness(handlers: ModuleHandlerLookup = () => sampleProbeHandler): Harn
     registry,
     openSubscriptionsPort(store),
   );
-  const consumer = new DeliveryConsumer(database, clock, ids, publisher, handlers);
+  const consumer = new DeliveryConsumer(
+    database,
+    clock,
+    ids,
+    publisher,
+    registeredHandlers,
+    configurations,
+    undefined,
+    publishedContracts,
+  );
   return { db: database, clock, ids, store, publisher, dispatcher, consumer };
 }
 
 describe("DeliveryConsumer", () => {
+  it("passes project-scoped configuration alongside the event context and defaults missing configuration to empty", () => {
+    const seen: ModuleHandlerContext[] = [];
+    const handler = (context: ModuleHandlerContext) => {
+      seen.push(context);
+      return { accepted: true };
+    };
+    const { store, publisher, dispatcher, consumer } = harness(
+      () => handler,
+      (projectId, moduleInstanceId) =>
+        projectId === "project-a" && moduleInstanceId === "probe-1"
+          ? { enabled: true, rules: [{ id: "rule-1" }] }
+          : undefined,
+    );
+    activate(store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+    activate(store, "project-b", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+
+    const published = publisher.publish(pingInput("project-a"));
+    const publishedWithoutConfiguration = publisher.publish(pingInput("project-b"));
+    dispatcher.dispatchPending();
+    const outcome = consumer.consume({
+      projectId: "project-a",
+      moduleInstanceId: "probe-1",
+      moduleId: SAMPLE_PROBE_MODULE_ID,
+      eventId: published.id,
+    });
+    consumer.consume({
+      projectId: "project-b",
+      moduleInstanceId: "probe-1",
+      moduleId: SAMPLE_PROBE_MODULE_ID,
+      eventId: publishedWithoutConfiguration.id,
+    });
+
+    expect(outcome.status).toBe("completed");
+    expect(seen.find((context) => context.projectId === "project-a")).toMatchObject({
+      projectId: "project-a",
+      moduleInstanceId: "probe-1",
+      event: { id: published.id },
+      configuration: { enabled: true, rules: [{ id: "rule-1" }] },
+    });
+    expect(seen.find((context) => context.projectId === "project-b")).toMatchObject({
+      projectId: "project-b",
+      moduleInstanceId: "probe-1",
+      event: { id: publishedWithoutConfiguration.id },
+      configuration: {},
+    });
+  });
+
   it("runs the sample Module's handler once, records one completed Execution, and publishes a caused/correlated fact", () => {
     const { db: database, store, publisher, dispatcher, consumer } = harness();
     activate(store, "project-a", [
@@ -214,6 +285,77 @@ describe("DeliveryConsumer", () => {
     // Dispatching the echoed fact proves it lands in the existing dispatcher too.
     const secondDispatch = dispatcher.dispatchPending();
     expect(secondDispatch).toHaveLength(1);
+  });
+
+  it("derives the producer identity from the claimed Delivery", () => {
+    const handler = (context: ModuleHandlerContext) =>
+      context.publish({
+        type: SAMPLE_PROBE_PONGED.type,
+        version: SAMPLE_PROBE_PONGED.version,
+        kind: SAMPLE_PROBE_PONGED.kind,
+        subject: context.event.subject,
+        payload: {},
+      });
+    const { db: database, store, publisher, dispatcher, consumer } = harness(() => handler);
+    activate(store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+
+    const consumed = database.transaction(() => publisher.publish(pingInput("project-a")))();
+    dispatcher.dispatchPending();
+    consumer.consume({
+      projectId: "project-a",
+      moduleInstanceId: "probe-1",
+      moduleId: SAMPLE_PROBE_MODULE_ID,
+      eventId: consumed.id,
+    });
+
+    const emitted = database
+      .prepare("SELECT envelope FROM outbox WHERE event_id != ?")
+      .get(consumed.id) as { readonly envelope: string };
+    expect(JSON.parse(emitted.envelope)).toMatchObject({
+      producer: { moduleId: SAMPLE_PROBE_MODULE_ID, moduleInstanceId: "probe-1" },
+    });
+  });
+
+  it("rejects an outgoing event absent from the Module manifest", () => {
+    const handler = (context: ModuleHandlerContext) =>
+      context.publish({
+        type: "scm.work-item.tag-added",
+        version: 1,
+        kind: "fact",
+        subject: context.event.subject,
+        payload: {},
+      });
+    const {
+      db: database,
+      store,
+      publisher,
+      dispatcher,
+      consumer,
+    } = harness(
+      () => handler,
+      undefined,
+      () => [],
+    );
+    activate(store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+
+    const consumed = database.transaction(() => publisher.publish(pingInput("project-a")))();
+    dispatcher.dispatchPending();
+    const outcome = consumer.consume({
+      projectId: "project-a",
+      moduleInstanceId: "probe-1",
+      moduleId: SAMPLE_PROBE_MODULE_ID,
+      eventId: consumed.id,
+    });
+
+    expect(outcome.status).toBe("failed");
+    expect(outcome.result).toMatchObject({
+      error: expect.stringContaining("cannot publish undeclared"),
+    });
+    expect(database.prepare("SELECT COUNT(*) AS n FROM outbox").get()).toEqual({ n: 1 });
   });
 
   it("delivers the same event to two different Module Instances and runs both handlers — Inbox uniqueness is per consumer, not per event", () => {

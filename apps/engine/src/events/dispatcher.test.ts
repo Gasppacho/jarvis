@@ -4,6 +4,11 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Clock } from "../../../../packages/kernel/src/clock.js";
 import { EventEnvelopeContractRegistry } from "../../../../packages/eventing/src/envelope.js";
+import {
+  RequestRoutingError,
+  resolveRequestConsumer,
+  type RequestEnvelope,
+} from "../../../../packages/eventing/src/routing.js";
 import { deriveProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
 import type {
   ProjectModuleInstanceConfiguration,
@@ -16,12 +21,13 @@ import { EventPublisher } from "./publisher.js";
 import { ControllableClock, DeterministicIdGenerator } from "./test-doubles.js";
 
 /**
- * Ticket #56's highest realistic seam: no Module exists yet to trigger a
- * publish over HTTP (that lands with #57/#58), so this exercises the real
- * pipeline — real SQLite, the real `ProjectStore`/`deriveProjectSubscriptions`
- * a Module would activate through, and the real `EventPublisher` +
- * `OutboxDispatcher` — end to end in one process, no mocks. "Restart-free"
- * per the ticket's test seam: one open connection throughout.
+ * Ticket #56's highest realistic seam: production inbound adapters are added
+ * by later tickets, so this invokes the real `EventPublisher` directly and
+ * exercises the real pipeline — SQLite, the real
+ * `ProjectStore`/`deriveProjectSubscriptions` a Module activates through,
+ * and `EventPublisher` + `OutboxDispatcher` — end to end in one process, no
+ * mocks. "Restart-free" per the ticket's test seam: one open connection
+ * throughout.
  */
 
 const ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
@@ -60,6 +66,11 @@ function draftConfig(id: string): StoredPortableProjectConfiguration {
 
 /** Manifest metadata `deriveProjectSubscriptions` needs — a plain lookup, no ModuleHost. */
 const TAG_ADDED = { type: "scm.work-item.tag-added", version: 1, kind: "fact" as const };
+const IMPLEMENTATION_REQUEST = {
+  type: "development.implementation.requested",
+  version: 1,
+  kind: "request" as const,
+};
 const COMPOSITIONS: Record<string, { consumes: readonly (typeof TAG_ADDED)[] }> = {
   "jarvis.module.automation-rules": { consumes: [TAG_ADDED] },
 };
@@ -68,6 +79,7 @@ function activate(
   store: ProjectStore,
   projectId: string,
   instances: readonly ProjectModuleInstanceConfiguration[],
+  overrides: Partial<Pick<ResolvedProjectSnapshot, "bindings" | "requestRoutes">> = {},
 ): void {
   store.createProject({
     id: projectId,
@@ -79,8 +91,11 @@ function activate(
   const snapshot: ResolvedProjectSnapshot = {
     composition: draftConfig(projectId),
     moduleInstances: instances,
-    bindings: { slots: {}, repository: { path: `/tmp/${projectId}`, bookmarkRef: null } },
-    requestRoutes: [],
+    bindings: overrides.bindings ?? {
+      slots: {},
+      repository: { path: `/tmp/${projectId}`, bookmarkRef: null },
+    },
+    requestRoutes: overrides.requestRoutes ?? [],
   };
   store.activateProject(projectId, "fingerprint-1", snapshot);
 }
@@ -106,6 +121,27 @@ function factInput(projectId: string, overrides: Record<string, unknown> = {}) {
     causationId: null,
     payload: {},
     ...overrides,
+  };
+}
+
+function requestInput(
+  projectId: string,
+  target: { readonly binding?: string; readonly moduleInstanceId?: string },
+  suffix = target.moduleInstanceId ?? target.binding ?? "target",
+) {
+  return {
+    ...IMPLEMENTATION_REQUEST,
+    projectId,
+    producer: {
+      moduleId: "jarvis.module.automation-rules",
+      moduleInstanceId: "automation-rules",
+    },
+    subject: { type: "work-item", ref: `github://acme/${projectId}/issues/1` },
+    correlationId: "corr_01K0000000000000000000",
+    causationId: null,
+    target,
+    idempotencyKey: `${projectId}:request:${suffix}`,
+    payload: { workItemRef: "github://acme/token-warehouse/issues/1" },
   };
 }
 
@@ -174,6 +210,145 @@ describe("EventPublisher + OutboxDispatcher pipeline", () => {
     expect(
       database.prepare("SELECT status FROM outbox WHERE event_id = ?").get(consumed.id),
     ).toEqual({ status: "dispatched" });
+  });
+
+  it("creates exactly one Delivery for a direct or binding-targeted request", () => {
+    const clock = new ControllableClock(new Date("2026-08-28T08:00:00.000Z"));
+    const ids = new DeterministicIdGenerator();
+    const { db: database, store } = openDb(clock);
+    const requestRoute = {
+      contract: IMPLEMENTATION_REQUEST,
+      producer: { instanceId: "automation-rules", moduleId: "jarvis.module.automation-rules" },
+      consumer: { instanceId: "development", moduleId: "jarvis.module.development" },
+    };
+    activate(
+      store,
+      "project-a",
+      [
+        {
+          instanceId: "automation-rules",
+          moduleId: "jarvis.module.automation-rules",
+          enabled: true,
+          bindings: { implementation: "implementation-slot" },
+        },
+        { instanceId: "development", moduleId: "jarvis.module.development", enabled: true },
+      ],
+      {
+        bindings: {
+          slots: { "implementation-slot": { kind: "module-instance", ref: "development" } },
+          repository: { path: "/tmp/project-a", bookmarkRef: null },
+        },
+        requestRoutes: [requestRoute],
+      },
+    );
+    activate(
+      store,
+      "project-b",
+      [
+        {
+          instanceId: "automation-rules",
+          moduleId: "jarvis.module.automation-rules",
+          enabled: true,
+          bindings: { implementation: "implementation-slot" },
+        },
+        { instanceId: "development", moduleId: "jarvis.module.development", enabled: true },
+      ],
+      {
+        bindings: {
+          slots: { "implementation-slot": { kind: "module-instance", ref: "development" } },
+          repository: { path: "/tmp/project-b", bookmarkRef: null },
+        },
+        requestRoutes: [requestRoute],
+      },
+    );
+
+    const registry = new EventEnvelopeContractRegistry({ eventEnvelopeV1: envelopeSchema });
+    const publisher = new EventPublisher(database, clock, ids, registry);
+    const requestResolver = (projectId: string, envelope: RequestEnvelope) => {
+      const snapshot = store.getResolvedProject(projectId);
+      return snapshot === undefined ? undefined : resolveRequestConsumer(envelope, snapshot);
+    };
+    const dispatcher = new OutboxDispatcher(
+      database,
+      clock,
+      ids,
+      registry,
+      openSubscriptionsPort(store),
+      30_000,
+      requestResolver,
+    );
+
+    const direct = database.transaction(() =>
+      publisher.publish(requestInput("project-a", { moduleInstanceId: "development" })),
+    )();
+    const binding = database.transaction(() =>
+      publisher.publish(requestInput("project-a", { binding: "implementation" })),
+    )();
+    const otherProject = database.transaction(() =>
+      publisher.publish(requestInput("project-b", { moduleInstanceId: "development" })),
+    )();
+
+    expect(dispatcher.dispatchPending()).toHaveLength(3);
+    for (const event of [direct, binding, otherProject]) {
+      expect(
+        database
+          .prepare("SELECT module_instance_id, module_id FROM deliveries WHERE event_id = ?")
+          .all(event.id),
+      ).toEqual([{ module_instance_id: "development", module_id: "jarvis.module.development" }]);
+    }
+  });
+
+  it("keeps a request pending and logs the routing error for zero or multiple consumers", () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const clock = new ControllableClock(new Date("2026-08-28T08:00:00.000Z"));
+      const ids = new DeterministicIdGenerator();
+      const { db: database, store } = openDb(clock);
+      activate(store, "project-a", []);
+      const registry = new EventEnvelopeContractRegistry({ eventEnvelopeV1: envelopeSchema });
+      const publisher = new EventPublisher(database, clock, ids, registry);
+      const routing = (_projectId: string, envelope: RequestEnvelope) => {
+        throw new RequestRoutingError(
+          envelope.target?.moduleInstanceId === "missing"
+            ? "request-consumer-not-found"
+            : "request-consumer-ambiguous",
+          "request target resolution failed",
+        );
+      };
+      const dispatcher = new OutboxDispatcher(
+        database,
+        clock,
+        ids,
+        registry,
+        openSubscriptionsPort(store),
+        30_000,
+        routing,
+      );
+      const zero = database.transaction(() =>
+        publisher.publish(requestInput("project-a", { moduleInstanceId: "missing" }, "zero")),
+      )();
+      const multiple = database.transaction(() =>
+        publisher.publish(
+          requestInput("project-a", { moduleInstanceId: "development" }, "multiple"),
+        ),
+      )();
+
+      expect(dispatcher.dispatchPending()).toEqual([]);
+      expect(
+        stderr.mock.calls.filter(([chunk]) =>
+          String(chunk).includes("request target resolution failed"),
+        ),
+      ).toHaveLength(2);
+      expect(database.prepare("SELECT status FROM outbox WHERE event_id = ?").get(zero.id)).toEqual(
+        { status: "pending" },
+      );
+      expect(
+        database.prepare("SELECT status FROM outbox WHERE event_id = ?").get(multiple.id),
+      ).toEqual({ status: "pending" });
+      expect(database.prepare("SELECT COUNT(*) AS n FROM events").get()).toEqual({ n: 0 });
+    } finally {
+      stderr.mockRestore();
+    }
   });
 
   it("does not duplicate the journal entry or Deliveries when the same event id is dispatched a second time", () => {

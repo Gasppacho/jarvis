@@ -45,6 +45,12 @@ export interface EventEnvelope {
   readonly metadata?: EventEnvelopeMetadata;
 }
 
+export interface EventPayloadContract {
+  readonly type: string;
+  readonly version: number;
+  readonly schema: object;
+}
+
 export class InvalidEventEnvelopeError extends Error {
   public constructor(public readonly issues: readonly string[]) {
     super(`Invalid Event Envelope: ${issues.join("; ")}`);
@@ -61,11 +67,24 @@ export class InvalidEventEnvelopeError extends Error {
  */
 export class EventEnvelopeContractRegistry {
   private readonly validateEventEnvelopeV1: ValidateFunction<EventEnvelope>;
+  private readonly validatePayloadByEvent = new Map<
+    string,
+    ValidateFunction<Readonly<Record<string, unknown>>>
+  >();
 
-  public constructor(contracts: { readonly eventEnvelopeV1: object }) {
+  public constructor(contracts: {
+    readonly eventEnvelopeV1: object;
+    readonly eventPayloads?: readonly EventPayloadContract[];
+  }) {
     const ajv = new Ajv2020({ strict: true, strictRequired: false, allErrors: true });
     addFormats(ajv);
     this.validateEventEnvelopeV1 = ajv.compile<EventEnvelope>(contracts.eventEnvelopeV1);
+    for (const contract of contracts.eventPayloads ?? []) {
+      this.validatePayloadByEvent.set(
+        eventKey(contract.type, contract.version),
+        ajv.compile<Readonly<Record<string, unknown>>>(contract.schema),
+      );
+    }
   }
 
   /** Throws `InvalidEventEnvelopeError` rather than returning a boolean: every
@@ -79,6 +98,21 @@ export class EventEnvelopeContractRegistry {
       );
       throw new InvalidEventEnvelopeError(issues);
     }
-    return candidate;
+    const envelope = candidate;
+    const validatePayload = this.validatePayloadByEvent.get(
+      eventKey(envelope.type, envelope.version),
+    );
+    if (validatePayload !== undefined && !validatePayload(envelope.payload)) {
+      const issues = (validatePayload.errors ?? []).map(
+        (error) =>
+          `/payload${error.instancePath === "" ? "" : error.instancePath} ${error.message ?? "is invalid"}`,
+      );
+      throw new InvalidEventEnvelopeError(issues);
+    }
+    return envelope;
   }
+}
+
+function eventKey(type: string, version: number): string {
+  return `${type}.v${version}`;
 }

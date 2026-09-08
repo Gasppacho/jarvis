@@ -1,3 +1,5 @@
+import type { EventEnvelope } from "./envelope.js";
+
 /**
  * Ticket #56 docs/architecture/EVENTS.md "Routing > Facts": a fact is
  * delivered to zero, one or many active consumers whose open subscription
@@ -23,6 +25,125 @@ export interface EventingOpenSubscription {
 export interface RoutedConsumer {
   readonly moduleInstanceId: string;
   readonly moduleId: string;
+}
+
+/** Structural view of a frozen Project request route. */
+export interface EventingRequestRoute {
+  readonly contract: {
+    readonly type: string;
+    readonly version: number;
+    readonly kind: "request";
+  };
+  readonly producer: {
+    readonly instanceId: string;
+    readonly moduleId: string;
+  };
+  readonly consumer: {
+    readonly instanceId: string;
+    readonly moduleId: string;
+  };
+}
+
+/** Only the producer fields needed to resolve a target binding. */
+export interface EventingRequestModuleInstance {
+  readonly instanceId: string;
+  readonly moduleId: string;
+  readonly bindings?: Readonly<Record<string, string>>;
+}
+
+export interface EventingRequestSlotBinding {
+  readonly kind: string;
+  readonly ref: string;
+}
+
+/** Structural view of `ResolvedProjectSnapshot`, keeping eventing decoupled. */
+export interface EventingRequestRoutingSnapshot {
+  readonly moduleInstances: readonly EventingRequestModuleInstance[];
+  readonly bindings: {
+    readonly slots: Readonly<Record<string, EventingRequestSlotBinding>>;
+  };
+  readonly requestRoutes: readonly EventingRequestRoute[];
+}
+
+export type RequestRoutingErrorCode =
+  | "request-target-missing"
+  | "request-consumer-not-found"
+  | "request-consumer-ambiguous"
+  | "request-routing-unconfigured";
+
+export class RequestRoutingError extends Error {
+  public constructor(
+    public readonly code: RequestRoutingErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "RequestRoutingError";
+  }
+}
+
+export type RequestEnvelope = Pick<
+  EventEnvelope,
+  "projectId" | "type" | "version" | "kind" | "producer" | "target"
+> & { readonly kind: "request" };
+
+/**
+ * Resolve one request against the immutable Project snapshot. Facts keep the
+ * broadcast resolver above; requests never fall back to subscription fan-out.
+ */
+export function resolveRequestConsumer(
+  envelope: RequestEnvelope,
+  snapshot: EventingRequestRoutingSnapshot,
+): RoutedConsumer {
+  const target = envelope.target;
+  if (target === undefined) {
+    throw new RequestRoutingError(
+      "request-target-missing",
+      `Request ${envelope.type}.v${envelope.version} has no target.`,
+    );
+  }
+
+  const routes = snapshot.requestRoutes.filter(
+    (route) =>
+      route.contract.type === envelope.type &&
+      route.contract.version === envelope.version &&
+      route.producer.moduleId === envelope.producer.moduleId &&
+      route.producer.instanceId === envelope.producer.moduleInstanceId &&
+      (target.moduleInstanceId === undefined ||
+        route.consumer.instanceId === target.moduleInstanceId) &&
+      (target.binding === undefined ||
+        route.consumer.instanceId === resolveBindingTarget(envelope, target.binding, snapshot)),
+  );
+
+  if (routes.length === 0) {
+    throw new RequestRoutingError(
+      "request-consumer-not-found",
+      `Request ${envelope.type}.v${envelope.version} from ${envelope.producer.moduleInstanceId} has no target consumer.`,
+    );
+  }
+  if (routes.length > 1) {
+    throw new RequestRoutingError(
+      "request-consumer-ambiguous",
+      `Request ${envelope.type}.v${envelope.version} from ${envelope.producer.moduleInstanceId} has multiple target consumers.`,
+    );
+  }
+
+  const consumer = routes[0]!.consumer;
+  return { moduleInstanceId: consumer.instanceId, moduleId: consumer.moduleId };
+}
+
+function resolveBindingTarget(
+  envelope: RequestEnvelope,
+  binding: string,
+  snapshot: EventingRequestRoutingSnapshot,
+): string | undefined {
+  const producer = snapshot.moduleInstances.find(
+    (instance) =>
+      instance.instanceId === envelope.producer.moduleInstanceId &&
+      instance.moduleId === envelope.producer.moduleId,
+  );
+  const slot = producer?.bindings?.[binding] ?? binding;
+  const slotBinding = snapshot.bindings.slots[slot];
+  return slotBinding?.kind === "module-instance" ? slotBinding.ref : undefined;
 }
 
 /**

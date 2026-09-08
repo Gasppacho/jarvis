@@ -1,13 +1,21 @@
-import { readFileSync, writeSync } from "node:fs";
+import { readdirSync, readFileSync, writeSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 import { SystemClock } from "../../../packages/kernel/src/clock.js";
 import { SystemIdGenerator } from "../../../packages/kernel/src/id-generator.js";
-import { EventEnvelopeContractRegistry } from "../../../packages/eventing/src/envelope.js";
+import {
+  EventEnvelopeContractRegistry,
+  type EventPayloadContract,
+} from "../../../packages/eventing/src/envelope.js";
+import { resolveRequestConsumer as resolveProjectRequestConsumer } from "../../../packages/eventing/src/routing.js";
 import { deriveProjectSubscriptions } from "../../../packages/project-runtime/src/project-subscriptions.js";
 import { SavedProjectCompositionValidator } from "../../../packages/project-runtime/src/composition-validator.js";
+import {
+  AUTOMATION_RULES_MODULE_ID,
+  handleWorkItemTagAdded,
+} from "../../../packages/modules/automation-rules/src/index.js";
 import { ConfigError, loadConfig } from "./config.js";
 import { openDatabase, type DatabaseState, type OpenedDatabase } from "./db/open.js";
 import { buildServer } from "./http/server.js";
@@ -25,15 +33,23 @@ import { EventPublisher } from "./events/publisher.js";
 import {
   DEFAULT_LEASE_MS,
   OutboxDispatcher,
+  type RequestConsumerResolver,
   type OpenSubscriptionsPort,
 } from "./events/dispatcher.js";
 import { startEventLoop } from "./events/dispatch-loop.js";
-import { DeliveryConsumer, type ModuleHandlerLookup } from "./executions/delivery-consumer.js";
+import {
+  DeliveryConsumer,
+  type ModuleConfigurationLookup,
+  type ModuleHandler,
+  type ModuleHandlerLookup,
+  type ModulePublishedContractsLookup,
+  type ModuleRepositoryDefaultBranchLookup,
+} from "./executions/delivery-consumer.js";
 import {
   SAMPLE_PROBE_MODULE_ID,
   SAMPLE_PROBE_PINGED,
   createSampleProbeSchema,
-  sampleProbeHandler,
+  createSampleProbeHandler,
 } from "./executions/sample-probe-module.js";
 import type { DurabilityTestHooks } from "./test-support/durability-test-routes.js";
 import { LiveUpdateHub } from "./stream/hub.js";
@@ -45,6 +61,13 @@ declare const __JARVIS_TEST_HOOKS__: boolean | undefined;
 
 const SHUTDOWN_GRACE_MS = 5_000;
 const STDERR_FD = 2;
+const REQUEST_WORKER_MODULE_ID = "jarvis.test.request-worker";
+const REQUEST_WORKER_CONTRACT = {
+  type: "development.implementation.requested",
+  version: 1,
+  kind: "request" as const,
+};
+const requestWorkerHandler: ModuleHandler = () => ({ handled: true });
 /**
  * Measured on macOS rather than argued from the docs, because two readings of
  * them disagreed:
@@ -210,17 +233,15 @@ async function main(): Promise<void> {
   // Outbox dispatcher, Delivery consumer and their loop are wired for real,
   // unconditionally, using the same `ProjectStore`/`ModuleHost` routing a real
   // Module Instance would resolve through (docs/architecture/EVENTS.md
-  // "Routing > Facts"). Nothing publishes an Event in production yet — no
-  // route accepts one, and every official Module Package's handler is still a
-  // build-time stub (#57's wiring note) — so this loop always finds the
-  // Outbox and `deliveries` empty on a real installation; it exists so the
-  // pipeline is genuinely reachable the moment either changes, rather than
-  // being wired in whichever ticket first needs it.
+  // "Routing > Facts"). The Automation Rules handler is registered here;
+  // provider adapters will become additional production event sources in
+  // later tickets. The loop is also reachable through the test-only inbound
+  // publication route below, without making that route part of the product API.
   //
-  // `JARVIS_ENABLE_TEST_HOOKS=1` additively registers the one thing a running
-  // engine cannot yet trigger on its own: an inbound publication. See
-  // test-support/durability-test-routes.ts's module doc comment for why that
-  // is test-only rather than a product API.
+  // `JARVIS_ENABLE_TEST_HOOKS=1` additively registers an inbound publication
+  // route for the Application Harness. See test-support/
+  // durability-test-routes.ts's module doc comment for why that is test-only
+  // rather than a product API.
   //
   // Review fix for ticket #58: the `JARVIS_ENABLE_TEST_HOOKS` check itself is
   // gated behind the same compile-time `__JARVIS_TEST_HOOKS__` flag
@@ -244,20 +265,49 @@ async function main(): Promise<void> {
     );
     const envelopes = new EventEnvelopeContractRegistry({
       eventEnvelopeV1: JSON.parse(readFileSync(envelopeSchemaPath, "utf8")) as object,
+      eventPayloads: loadEventPayloadContracts(runtimeRoot),
     });
     const publisher = new EventPublisher(database.db, clock, ids, envelopes);
+    const sampleProbeHandler = createSampleProbeHandler(database.db);
     const openSubscriptions: OpenSubscriptionsPort = (projectId) =>
       deriveProjectSubscriptions(
         projectId,
         projectStore.getResolvedProject(projectId)?.moduleInstances ?? [],
         {
-          composition: (moduleId) =>
-            modules.composition(moduleId) ??
-            (testHooksEnabled && moduleId === SAMPLE_PROBE_MODULE_ID
-              ? { consumes: [SAMPLE_PROBE_PINGED] }
-              : undefined),
+          composition: (moduleId) => {
+            const bundled = modules.composition(moduleId);
+            if (bundled !== undefined) return bundled;
+            if (!testHooksEnabled) return undefined;
+            if (moduleId === SAMPLE_PROBE_MODULE_ID) return { consumes: [SAMPLE_PROBE_PINGED] };
+            if (moduleId === REQUEST_WORKER_MODULE_ID) {
+              return { consumes: [REQUEST_WORKER_CONTRACT] };
+            }
+            return undefined;
+          },
         },
       ).items;
+    const requestConsumerResolver: RequestConsumerResolver = (projectId, envelope) => {
+      const snapshot = projectStore.getResolvedProject(projectId);
+      return snapshot === undefined ? undefined : resolveProjectRequestConsumer(envelope, snapshot);
+    };
+    const configurations: ModuleConfigurationLookup = (projectId, moduleInstanceId) =>
+      projectStore
+        .getResolvedProject(projectId)
+        ?.moduleInstances.find((instance) => instance.instanceId === moduleInstanceId)
+        ?.configuration;
+    const repositoryDefaultBranches: ModuleRepositoryDefaultBranchLookup = (
+      projectId,
+      repositoryId,
+    ) => {
+      const repositories =
+        projectStore.getResolvedProject(projectId)?.composition.repositories ?? [];
+      return (
+        repositories.find((repository) => repository.id === repositoryId)?.defaultBranch ??
+        repositories[0]?.defaultBranch
+      );
+    };
+    const publishedContracts: ModulePublishedContractsLookup = (moduleId) =>
+      modules.composition(moduleId)?.produces;
     // Test tuning only (docs/engineering/TEST_FIXTURES.md): a normally
     // launched engine never sets this, and the default matches the
     // production lease `OutboxDispatcher` has always used.
@@ -269,11 +319,25 @@ async function main(): Promise<void> {
       envelopes,
       openSubscriptions,
       leaseMs,
+      requestConsumerResolver,
     );
-    const handlers: ModuleHandlerLookup = (moduleId) =>
-      testHooksEnabled && moduleId === SAMPLE_PROBE_MODULE_ID ? sampleProbeHandler : undefined;
+    const handlers: ModuleHandlerLookup = (moduleId) => {
+      if (moduleId === AUTOMATION_RULES_MODULE_ID) return handleWorkItemTagAdded;
+      if (testHooksEnabled && moduleId === SAMPLE_PROBE_MODULE_ID) return sampleProbeHandler;
+      if (testHooksEnabled && moduleId === REQUEST_WORKER_MODULE_ID) return requestWorkerHandler;
+      return undefined;
+    };
     if (testHooksEnabled) createSampleProbeSchema(database.db);
-    const consumer = new DeliveryConsumer(database.db, clock, ids, publisher, handlers);
+    const consumer = new DeliveryConsumer(
+      database.db,
+      clock,
+      ids,
+      publisher,
+      handlers,
+      configurations,
+      repositoryDefaultBranches,
+      publishedContracts,
+    );
     stopEventLoop = startEventLoop({ db: database.db, dispatcher, consumer, liveUpdates });
     if (testHooksEnabled) {
       durabilityTestHooks = { db: database.db, store: projectStore, publisher, consumer };
@@ -314,6 +378,25 @@ async function main(): Promise<void> {
     })}\n`,
   );
   announced = true;
+}
+
+function loadEventPayloadContracts(runtimeRoot: string): readonly EventPayloadContract[] {
+  return readdirSync(join(runtimeRoot, "contracts", "events"), { withFileTypes: true }).flatMap(
+    (entry) => {
+      if (!entry.isFile()) return [];
+      const match = /^(.*)\.v(\d+)\.schema\.json$/.exec(entry.name);
+      if (match === null) return [];
+      return [
+        {
+          type: match[1]!,
+          version: Number(match[2]),
+          schema: JSON.parse(
+            readFileSync(join(runtimeRoot, "contracts", "events", entry.name), "utf8"),
+          ) as object,
+        },
+      ];
+    },
+  );
 }
 
 /** `undefined` for unset/empty/non-numeric, same convention as config.ts's `parsePort`. */

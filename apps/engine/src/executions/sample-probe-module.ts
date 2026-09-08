@@ -6,9 +6,9 @@ import type { ModuleHandler, ModuleHandlerContext } from "./delivery-consumer.js
  * sample Module carries the handler so the behavior is observable without any
  * real business module"; "the sample Module is a deterministic test fixture
  * and ships no business behavior"). It is not a real Module Package: it has
- * no `module.manifest.yaml`, is not in `module-registry.json`, and is never
- * reachable from a running engine (see delivery-consumer.ts's module doc
- * comment for why). It exists only for this ticket's — and #58's — tests.
+ * no `module.manifest.yaml`, is not in `module-registry.json`, and is only
+ * reachable through test hooks. It exists only for this ticket's — and #58's
+ * — tests.
  */
 export const SAMPLE_PROBE_MODULE_ID = "jarvis.module.sample-probe";
 export const SAMPLE_PROBE_PINGED = {
@@ -55,35 +55,34 @@ export function createSampleProbeSchema(db: Database.Database): void {
  * redelivery-of-a-failure and rollback tests need. No randomness, no clock or
  * network dependency: the same input always produces the same outcome.
  */
-export const sampleProbeHandler: ModuleHandler = (ctx: ModuleHandlerContext): SampleProbeResult => {
-  const row = ctx.db
-    .prepare(
-      `SELECT ping_count FROM sample_probe_state WHERE project_id = ? AND module_instance_id = ?`,
-    )
-    .get(ctx.projectId, ctx.moduleInstanceId) as { ping_count: number } | undefined;
-  const nextCount = (row?.ping_count ?? 0) + 1;
+export function createSampleProbeHandler(db: Database.Database): ModuleHandler {
+  return (ctx: ModuleHandlerContext): SampleProbeResult => {
+    const row = db
+      .prepare(
+        `SELECT ping_count FROM sample_probe_state WHERE project_id = ? AND module_instance_id = ?`,
+      )
+      .get(ctx.projectId, ctx.moduleInstanceId) as { ping_count: number } | undefined;
+    const nextCount = (row?.ping_count ?? 0) + 1;
 
-  ctx.db
-    .prepare(
+    db.prepare(
       `INSERT INTO sample_probe_state (project_id, module_instance_id, ping_count)
-       VALUES (@projectId, @moduleInstanceId, @nextCount)
-       ON CONFLICT (project_id, module_instance_id)
-       DO UPDATE SET ping_count = @nextCount`,
-    )
-    .run({ projectId: ctx.projectId, moduleInstanceId: ctx.moduleInstanceId, nextCount });
+         VALUES (@projectId, @moduleInstanceId, @nextCount)
+         ON CONFLICT (project_id, module_instance_id)
+         DO UPDATE SET ping_count = @nextCount`,
+    ).run({ projectId: ctx.projectId, moduleInstanceId: ctx.moduleInstanceId, nextCount });
 
-  if (ctx.event.payload["shouldFail"] === true) {
-    throw new Error("sample-probe: deterministic failure requested by payload.shouldFail");
-  }
+    if (ctx.event.payload["shouldFail"] === true) {
+      throw new Error("sample-probe: deterministic failure requested by payload.shouldFail");
+    }
 
-  const echoed = ctx.publish({
-    type: SAMPLE_PROBE_PONGED.type,
-    version: SAMPLE_PROBE_PONGED.version,
-    kind: SAMPLE_PROBE_PONGED.kind,
-    producer: { moduleId: SAMPLE_PROBE_MODULE_ID, moduleInstanceId: ctx.moduleInstanceId },
-    subject: ctx.event.subject,
-    payload: { pingCount: nextCount },
-  });
+    const echoed = ctx.publish({
+      type: SAMPLE_PROBE_PONGED.type,
+      version: SAMPLE_PROBE_PONGED.version,
+      kind: SAMPLE_PROBE_PONGED.kind,
+      subject: ctx.event.subject,
+      payload: { pingCount: nextCount },
+    });
 
-  return { pingCount: nextCount, echoedEventId: echoed.id };
-};
+    return { pingCount: nextCount, echoedEventId: echoed.id };
+  };
+}

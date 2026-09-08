@@ -7,8 +7,10 @@ import {
   type EventEnvelope,
 } from "../../../../packages/eventing/src/envelope.js";
 import {
+  RequestRoutingError,
   resolveConsumers,
   type EventingOpenSubscription,
+  type RequestEnvelope,
   type RoutedConsumer,
 } from "../../../../packages/eventing/src/routing.js";
 import { EngineError } from "../errors.js";
@@ -32,6 +34,16 @@ declare const __JARVIS_TEST_HOOKS__: boolean | undefined;
  * (packages/project-runtime/src/project-subscriptions.ts) plus
  * `ProjectStore.getResolvedProject`; the dispatcher never rederives it. */
 export type OpenSubscriptionsPort = (projectId: string) => readonly EventingOpenSubscription[];
+
+/**
+ * Request routing is supplied by the composition root because only it owns
+ * the ProjectStore. The resolver must return the single target consumer from
+ * the frozen Project snapshot; `undefined` is rejected by the dispatcher.
+ */
+export type RequestConsumerResolver = (
+  projectId: string,
+  envelope: RequestEnvelope,
+) => RoutedConsumer | undefined;
 
 export interface DispatchedEvent {
   readonly eventId: string;
@@ -71,6 +83,7 @@ export class OutboxDispatcher {
     private readonly envelopes: EventEnvelopeContractRegistry,
     private readonly openSubscriptions: OpenSubscriptionsPort,
     private readonly leaseMs: number = DEFAULT_LEASE_MS,
+    private readonly requestConsumerResolver?: RequestConsumerResolver,
   ) {}
 
   public dispatchPending(limit = 50): readonly DispatchedEvent[] {
@@ -100,7 +113,11 @@ export class OutboxDispatcher {
         // "malformed envelope" from an arbitrary routing failure once this is
         // just a line of stderr.
         const detail =
-          error instanceof EngineError ? `${error.code}: ${error.message}` : String(error);
+          error instanceof EngineError
+            ? `${error.code}: ${error.message}`
+            : error instanceof RequestRoutingError
+              ? `${error.code}: ${error.message}`
+              : String(error);
         process.stderr.write(
           `jarvis-engine: dispatching outbox row ${row.eventId} failed: ${detail}\n`,
         );
@@ -181,15 +198,10 @@ export class OutboxDispatcher {
           correlationId: envelope.correlationId,
         });
 
-      // ponytail: Requests must resolve to exactly one consumer via
-      // target/binding resolution (EVENTS.md "Routing > Requests"), which
-      // needs Project Runtime's binding resolution, not subscription
-      // fan-out. Out of #56's scope — no acceptance criterion exercises a
-      // request here, so it journals with zero Deliveries until that lands.
       const consumers =
         envelope.kind === "fact"
           ? resolveConsumers(envelope, this.openSubscriptions(envelope.projectId))
-          : [];
+          : [this.resolveRequestConsumer(envelope as RequestEnvelope)];
 
       for (const consumer of consumers) {
         this.db
@@ -235,5 +247,22 @@ export class OutboxDispatcher {
       }
       throw error;
     }
+  }
+
+  private resolveRequestConsumer(envelope: RequestEnvelope): RoutedConsumer {
+    if (this.requestConsumerResolver === undefined) {
+      throw new RequestRoutingError(
+        "request-routing-unconfigured",
+        `Request ${envelope.type}.v${envelope.version} cannot be routed because no request resolver is configured.`,
+      );
+    }
+    const consumer = this.requestConsumerResolver(envelope.projectId, envelope);
+    if (consumer === undefined) {
+      throw new RequestRoutingError(
+        "request-consumer-not-found",
+        `Request ${envelope.type}.v${envelope.version} has no target consumer.`,
+      );
+    }
+    return consumer;
   }
 }

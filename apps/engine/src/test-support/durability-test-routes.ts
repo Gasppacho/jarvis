@@ -1,12 +1,23 @@
 import type Database from "better-sqlite3";
 import type { FastifyInstance } from "fastify";
-import type { StoredPortableProjectConfiguration } from "../../../../packages/project-runtime/src/project-types.js";
+import type { PortableProjectConfiguration } from "../../../../packages/project-runtime/src/project-types.js";
 import type { ClaimedDelivery } from "../executions/delivery-consumer.js";
 import { SAMPLE_PROBE_MODULE_ID } from "../executions/sample-probe-module.js";
 import { EventPublisher, type PublishEventInput } from "../events/publisher.js";
 import { ProjectStore, type ResolvedProjectSnapshot } from "../projects/store.js";
 import { DeliveryConsumer } from "../executions/delivery-consumer.js";
 import { failpoint } from "./failpoint.js";
+
+const AUTOMATION_RULES_MODULE_ID = "jarvis.module.automation-rules";
+const AUTOMATION_RULE_BINDING = "implementation";
+const AUTOMATION_RULE_SLOT = "implementation-slot";
+const REQUEST_WORKER_MODULE_ID = "jarvis.test.request-worker";
+const REQUEST_WORKER_INSTANCE_ID = "request-worker";
+const IMPLEMENTATION_REQUESTED_CONTRACT = {
+  type: "development.implementation.requested",
+  version: 1,
+  kind: "request" as const,
+};
 
 export interface DurabilityTestHooks {
   readonly db: Database.Database;
@@ -31,22 +42,29 @@ export interface DurabilityTestHooks {
  * `DeliveryConsumer`) — no test double, no bypass of Outbox/Inbox/Execution
  * Ledger. What it bypasses is Project Runtime's composition *validation*
  * (`ProjectService`), the same way `dispatcher.test.ts`/
- * `delivery-consumer.test.ts` call `ProjectStore` directly: the sample Module
- * fixture has no Module Manifest and could never pass that validation, and
- * teaching it one would make it a real Module Package, which is out of scope.
+ * `delivery-consumer.test.ts` call `ProjectStore` directly: the sample and
+ * request-worker fixtures have no Module Manifest and could never pass that
+ * validation, and teaching them one would make them real Module Packages,
+ * which is out of scope.
  */
 export function registerDurabilityTestRoutes(
   app: FastifyInstance,
   hooks: DurabilityTestHooks,
 ): void {
-  // Seeds a Project whose Resolved Project already has one enabled Module
-  // Instance of the sample-probe fixture consuming `sample.probe.pinged` —
-  // the minimum a real activation would have produced, had the fixture been
-  // a real Module Package.
+  // Seeds either the sample-probe fixture or the Automation Rules vertical
+  // slice. Both are the minimum snapshots a real activation would have
+  // produced, had the test fixtures been real Module Packages.
   app.post("/test/projects", async (request, reply) => {
-    const body = request.body as { readonly id: string; readonly moduleInstanceId?: string };
-    const moduleInstanceId = body.moduleInstanceId ?? "probe-1";
-    const config = sampleProjectConfig(body.id);
+    const body = request.body as {
+      readonly id: string;
+      readonly kind?: "sample" | "automation";
+      readonly moduleInstanceId?: string;
+    };
+    const automation = body.kind === "automation";
+    const moduleInstanceId = body.moduleInstanceId ?? (automation ? "automation-rules" : "probe-1");
+    const config = automation
+      ? automationProjectConfig(body.id, moduleInstanceId)
+      : sampleProjectConfig(body.id);
     hooks.store.createProject({
       id: body.id,
       name: body.id,
@@ -56,14 +74,37 @@ export function registerDurabilityTestRoutes(
     });
     const snapshot: ResolvedProjectSnapshot = {
       composition: config,
-      moduleInstances: [
-        { instanceId: moduleInstanceId, moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
-      ],
-      bindings: { slots: {}, repository: { path: `/tmp/${body.id}`, bookmarkRef: null } },
-      requestRoutes: [],
+      moduleInstances: automation
+        ? config.modules
+        : [{ instanceId: moduleInstanceId, moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true }],
+      bindings: {
+        slots: {
+          [AUTOMATION_RULE_SLOT]: {
+            kind: "module-instance",
+            ref: REQUEST_WORKER_INSTANCE_ID,
+          },
+        },
+        repository: { path: `/tmp/${body.id}`, bookmarkRef: null },
+      },
+      requestRoutes: automation
+        ? [
+            {
+              contract: IMPLEMENTATION_REQUESTED_CONTRACT,
+              producer: { instanceId: moduleInstanceId, moduleId: AUTOMATION_RULES_MODULE_ID },
+              consumer: {
+                instanceId: REQUEST_WORKER_INSTANCE_ID,
+                moduleId: REQUEST_WORKER_MODULE_ID,
+              },
+            },
+          ]
+        : [],
     };
     hooks.store.activateProject(body.id, "test-fingerprint", snapshot);
-    void reply.code(201).send({ id: body.id, moduleInstanceId });
+    void reply.code(201).send({
+      id: body.id,
+      moduleInstanceId,
+      ...(automation ? { workerModuleInstanceId: REQUEST_WORKER_INSTANCE_ID } : {}),
+    });
   });
 
   // The inbound trigger: publishes one Event through the real
@@ -94,7 +135,44 @@ export function registerDurabilityTestRoutes(
   });
 }
 
-function sampleProjectConfig(id: string): StoredPortableProjectConfiguration {
+function sampleProjectConfig(id: string): PortableProjectConfiguration {
+  return baseProjectConfig(id);
+}
+
+function automationProjectConfig(
+  id: string,
+  automationInstanceId: string,
+): PortableProjectConfiguration {
+  return {
+    ...baseProjectConfig(id),
+    modules: [
+      {
+        instanceId: automationInstanceId,
+        moduleId: AUTOMATION_RULES_MODULE_ID,
+        enabled: true,
+        configuration: {
+          rules: [
+            {
+              id: "ready-label-starts-development",
+              when: {
+                eventType: "scm.work-item.tag-added",
+                equals: { "payload.tag": "agent:ready" },
+              },
+              emit: {
+                type: IMPLEMENTATION_REQUESTED_CONTRACT.type,
+                target: { binding: AUTOMATION_RULE_BINDING },
+              },
+            },
+          ],
+        },
+        bindings: { [AUTOMATION_RULE_BINDING]: AUTOMATION_RULE_SLOT },
+      },
+      { instanceId: REQUEST_WORKER_INSTANCE_ID, moduleId: REQUEST_WORKER_MODULE_ID, enabled: true },
+    ],
+  };
+}
+
+function baseProjectConfig(id: string): PortableProjectConfiguration {
   return {
     apiVersion: "jarvis.dev/project/v1",
     kind: "Project",

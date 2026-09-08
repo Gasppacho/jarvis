@@ -1,7 +1,52 @@
 import { describe, expect, it } from "vitest";
-import { resolveConsumers, type EventingOpenSubscription } from "./routing.js";
+import {
+  resolveConsumers,
+  resolveRequestConsumer,
+  type EventingOpenSubscription,
+  type EventingRequestRoutingSnapshot,
+} from "./routing.js";
 
 const fact = { type: "scm.work-item.tag-added", version: 1, kind: "fact" as const };
+const request = {
+  type: "development.implementation.requested",
+  version: 1,
+  kind: "request" as const,
+  projectId: "project-a",
+  producer: {
+    moduleId: "jarvis.module.automation-rules",
+    moduleInstanceId: "automation-rules",
+  },
+};
+
+const requestRoute = {
+  contract: { type: request.type, version: request.version, kind: request.kind },
+  producer: {
+    moduleId: request.producer.moduleId,
+    instanceId: request.producer.moduleInstanceId,
+  },
+  consumer: { moduleId: "jarvis.module.development", instanceId: "development" },
+};
+
+function requestSnapshot(
+  overrides: Partial<EventingRequestRoutingSnapshot> = {},
+): EventingRequestRoutingSnapshot {
+  return {
+    moduleInstances: [
+      {
+        instanceId: request.producer.moduleInstanceId,
+        moduleId: request.producer.moduleId,
+        bindings: { implementation: "development-slot" },
+      },
+    ],
+    bindings: {
+      slots: {
+        "development-slot": { kind: "module-instance", ref: "development" },
+      },
+    },
+    requestRoutes: [requestRoute],
+    ...overrides,
+  };
+}
 
 function subscription(
   instanceId: string,
@@ -43,5 +88,43 @@ describe("resolveConsumers", () => {
   it("ignores a subscription declared for the request side of the same contract name", () => {
     const subs = [subscription("other", { kind: "request" })];
     expect(resolveConsumers(fact, subs)).toEqual([]);
+  });
+});
+
+describe("resolveRequestConsumer", () => {
+  it("resolves a direct module-instance target from the frozen request route", () => {
+    expect(
+      resolveRequestConsumer(
+        { ...request, target: { moduleInstanceId: "development" } },
+        requestSnapshot(),
+      ),
+    ).toEqual({ moduleInstanceId: "development", moduleId: "jarvis.module.development" });
+  });
+
+  it("resolves a binding target through the producer alias and frozen slot binding", () => {
+    expect(
+      resolveRequestConsumer(
+        { ...request, target: { binding: "implementation" } },
+        requestSnapshot(),
+      ),
+    ).toEqual({ moduleInstanceId: "development", moduleId: "jarvis.module.development" });
+  });
+
+  it("fails clearly when the target has no matching consumer", () => {
+    expect(() =>
+      resolveRequestConsumer(
+        { ...request, target: { moduleInstanceId: "missing" } },
+        requestSnapshot(),
+      ),
+    ).toThrowError(/has no target consumer/);
+  });
+
+  it("fails clearly when the frozen snapshot contains multiple target routes", () => {
+    expect(() =>
+      resolveRequestConsumer(
+        { ...request, target: { moduleInstanceId: "development" } },
+        requestSnapshot({ requestRoutes: [requestRoute, requestRoute] }),
+      ),
+    ).toThrowError(/has multiple target consumers/);
   });
 });
