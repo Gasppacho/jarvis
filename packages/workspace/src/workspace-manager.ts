@@ -1,11 +1,18 @@
 import { lstatSync, mkdirSync, realpathSync, readdirSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { GitRunner, type GitCommandResult } from "./git-runner.js";
-import { WorkspaceLeaseRepository, type WorkspaceLease } from "./lease-repository.js";
+import {
+  WorkspaceLeaseRepository,
+  type WorkspaceLease,
+  type WorkspaceLeaseClaim,
+} from "./lease-repository.js";
 
 export interface WorkspaceProjectConfiguration {
   readonly git: { readonly branchPattern: string };
-  readonly workspace: { readonly retainOnFailureDays: number };
+  readonly workspace: {
+    readonly maxConcurrentExecutions: number;
+    readonly retainOnFailureDays: number;
+  };
 }
 
 export interface WorkspaceBranchContext {
@@ -40,7 +47,11 @@ export interface WorkspaceAllocation {
 }
 
 export type WorkspaceAllocationErrorCode =
-  "workspace.path-violation" | "workspace.allocation-failed" | "git.base-not-found";
+  | "workspace.path-violation"
+  | "workspace.allocation-failed"
+  | "workspace.branch-conflict"
+  | "workspace.concurrency-limit"
+  | "git.base-not-found";
 
 export interface WorkspaceAllocationErrorOptions {
   readonly details?: Readonly<Record<string, boolean | number | string | null>>;
@@ -124,6 +135,18 @@ export class WorkspaceManager {
       );
     }
 
+    if (
+      !Number.isInteger(input.project.workspace.maxConcurrentExecutions) ||
+      input.project.workspace.maxConcurrentExecutions < 1
+    ) {
+      throw new WorkspaceAllocationError(
+        "workspace.allocation-failed",
+        "The project workspace concurrency limit is invalid.",
+      );
+    }
+    const existing = this.options.leases.findActiveByExecution(input.projectId, input.executionId);
+    if (existing !== undefined) return allocationFromLease(existing);
+
     assertTargetPathIsSafe(workspacePath);
 
     const git = new GitRunner({
@@ -152,9 +175,59 @@ export class WorkspaceManager {
       );
     }
 
+    let claim: WorkspaceLeaseClaim;
+    try {
+      claim = this.options.leases.claim(
+        {
+          projectId: input.projectId,
+          executionId: input.executionId,
+          repositoryId: input.repositoryId,
+          workingBranch,
+          baseRevisionSha,
+          workspacePath,
+          expiresAt: input.expiresAt ?? ACTIVE_LEASE_EXPIRY,
+          cleanupPolicy:
+            input.project.workspace.retainOnFailureDays > 0
+              ? "retain-on-failure"
+              : "delete-on-failure",
+          ownerPid: process.pid,
+        },
+        input.project.workspace.maxConcurrentExecutions,
+      );
+    } catch {
+      throw new WorkspaceAllocationError(
+        "workspace.allocation-failed",
+        "The workspace lease could not be claimed.",
+        { details: { operation: "claim-lease" }, retryable: true },
+      );
+    }
+
+    if (claim.kind === "existing") return allocationFromLease(claim.lease);
+    if (claim.kind === "branch-conflict") {
+      throw new WorkspaceAllocationError(
+        "workspace.branch-conflict",
+        "The working branch is already leased by another execution.",
+        {
+          details: { repositoryId: input.repositoryId, workingBranch },
+          retryable: false,
+        },
+      );
+    }
+    if (claim.kind === "concurrency-limit") {
+      throw new WorkspaceAllocationError(
+        "workspace.concurrency-limit",
+        `The project workspace concurrency limit is ${claim.maxConcurrentExecutions}; release an active workspace before allocating another.`,
+        {
+          details: { maxConcurrentExecutions: claim.maxConcurrentExecutions },
+          retryable: false,
+        },
+      );
+    }
+
     try {
       mkdirSync(workspaceRoot, { recursive: true });
     } catch {
+      releaseLease(this.options.leases, input.projectId, claim.lease.id);
       throw new WorkspaceAllocationError(
         "workspace.allocation-failed",
         "The project workspace directory could not be prepared.",
@@ -162,43 +235,49 @@ export class WorkspaceManager {
       );
     }
 
-    await requireGit(
-      git.run(["worktree", "add", "--quiet", "-b", workingBranch, workspacePath, baseRevisionSha]),
-      "create worktree",
-    );
-
     try {
-      const lease = this.options.leases.create({
-        projectId: input.projectId,
-        executionId: input.executionId,
-        repositoryId: input.repositoryId,
-        workingBranch,
-        baseRevisionSha,
-        workspacePath,
-        expiresAt: input.expiresAt ?? ACTIVE_LEASE_EXPIRY,
-        cleanupPolicy:
-          input.project.workspace.retainOnFailureDays > 0
-            ? "retain-on-failure"
-            : "delete-on-failure",
-        ownerPid: process.pid,
-      });
-
-      return { path: workspacePath, workingBranch, baseRevisionSha, lease };
-    } catch {
-      const cleanup = await removeCreatedWorktree(git, workspacePath, workingBranch);
-      throw new WorkspaceAllocationError(
-        "workspace.allocation-failed",
-        "The workspace lease could not be stored; the worktree was rolled back.",
-        {
-          details: {
-            operation: "store-lease",
-            cleanupSucceeded: cleanup,
-          },
-          retryable: false,
-        },
+      await requireGit(
+        git.run([
+          "worktree",
+          "add",
+          "--quiet",
+          "-b",
+          workingBranch,
+          workspacePath,
+          baseRevisionSha,
+        ]),
+        "create worktree",
       );
+    } catch (error: unknown) {
+      releaseLease(this.options.leases, input.projectId, claim.lease.id);
+      throw error;
     }
+
+    return allocationFromLease(claim.lease);
   }
+}
+
+function allocationFromLease(lease: WorkspaceLease): WorkspaceAllocation {
+  return {
+    path: lease.workspacePath,
+    workingBranch: lease.workingBranch,
+    baseRevisionSha: lease.baseRevisionSha,
+    lease,
+  };
+}
+
+function releaseLease(leases: WorkspaceLeaseRepository, projectId: string, leaseId: string): void {
+  try {
+    const released = leases.release(projectId, leaseId);
+    if (released?.status === "released") return;
+  } catch {
+    // Fall through to the typed failure below; a live leaked claim must not be hidden.
+  }
+  throw new WorkspaceAllocationError(
+    "workspace.allocation-failed",
+    "The workspace lease could not be released after allocation failed.",
+    { details: { operation: "release-lease", leaseId }, retryable: true },
+  );
 }
 
 function assertIdentifier(value: string, subject: string): void {
@@ -302,15 +381,4 @@ function assertTargetPathIsSafe(workspacePath: string): void {
       "The workspace target could not be inspected.",
     );
   }
-}
-
-async function removeCreatedWorktree(
-  git: GitRunner,
-  workspacePath: string,
-  workingBranch: string,
-): Promise<boolean> {
-  const removed = await git.run(["worktree", "remove", "--force", workspacePath]);
-  const deletedBranch = await git.run(["branch", "-D", workingBranch]);
-  await git.run(["worktree", "prune", "--expire", "now"]);
-  return removed.ok && deletedBranch.ok;
 }
