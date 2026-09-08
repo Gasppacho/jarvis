@@ -4,7 +4,13 @@
 
 Le tracker cible est **GitHub Issues** du remote courant. Utiliser `gh` pour lire, créer, modifier et relier les issues après vérification de `git remote -v` et `gh auth status`.
 
-Le compte `gh` actif par défaut (`QServicesEntreprise`) n'a que le droit `READ` sur `Gasppacho/jarvis`. Toute écriture (issue, label, commentaire) exige `gh auth switch --user Gasppacho` avant, puis un retour au compte précédent après.
+Utiliser le compte `Gasppacho` pour toute opération sur le tracker, lecture comme écriture (issue, label, commentaire, lien de blocage) :
+
+```bash
+gh auth switch --user Gasppacho
+```
+
+Ne pas revenir au compte précédent ensuite : un aller-retour ne servait qu'à contourner une restriction `READ` qui n'existe plus, et il répartissait les issues et commentaires d'une même tâche entre deux auteurs.
 
 ## Fallback local
 
