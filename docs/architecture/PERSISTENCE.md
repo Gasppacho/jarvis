@@ -113,10 +113,10 @@ Le lease conserve repository, branch, base SHA, PID éventuel, expiration et cle
 
 Au démarrage, après les migrations et avant le handshake `ready`, le Workspace
 réconcilie les leases actives ou retenues expirées avec les répertoires présents.
-Les workspaces orphelins sont supprimés, les leases correspondantes sont
-fermées et les enregistrements Git sont élagués. Une réconciliation partielle
-est signalée par des codes stables sans chemin utilisateur et ne bloque pas les
-autres projets.
+Les workspaces orphelins sont supprimés, les leases actives ou retenues expirées
+sont fermées, les retenues valides restent intactes et les enregistrements Git
+sont élagués. Une réconciliation partielle est signalée par des codes stables
+sans chemin utilisateur et ne bloque pas les autres projets.
 
 Valeurs MVP proposées :
 
