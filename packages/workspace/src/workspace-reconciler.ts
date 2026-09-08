@@ -3,7 +3,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { SystemClock, type Clock } from "../../kernel/src/clock.js";
 import { GitRunner } from "./git-runner.js";
 import { WorkspaceLeaseRepository, type WorkspaceLease } from "./lease-repository.js";
-import { WorkspaceManager } from "./workspace-manager.js";
+import { WorkspaceManager, type WorkspaceManagerOptions } from "./workspace-manager.js";
 
 export interface WorkspaceReconciliationProject {
   readonly id: string;
@@ -51,12 +51,7 @@ export class WorkspaceReconciler {
   private readonly manager: WorkspaceManager;
 
   public constructor(
-    private readonly options: {
-      readonly dataRoot: string;
-      readonly leases: WorkspaceLeaseRepository;
-      readonly clock?: Clock;
-      readonly gitExecutable?: string;
-    },
+    private readonly options: WorkspaceManagerOptions,
   ) {
     this.clock = options.clock ?? new SystemClock();
     this.manager = new WorkspaceManager(options);
@@ -221,7 +216,7 @@ function safeDirectory(path: string): "missing" | "present" | "unsafe" {
       return "unsafe";
     return "present";
   } catch (error: unknown) {
-    return (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "unsafe";
+    return errorCode(error) === "ENOENT" ? "missing" : "unsafe";
   }
 }
 
@@ -231,8 +226,14 @@ function safePath(root: string, path: string): "missing" | "present" | "unsafe" 
     if (!stats.isDirectory() || stats.isSymbolicLink()) return "unsafe";
     return isContained(root, realpathSync(path)) ? "present" : "unsafe";
   } catch (error: unknown) {
-    return (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "unsafe";
+    return errorCode(error) === "ENOENT" ? "missing" : "unsafe";
   }
+}
+
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+  const code = error.code;
+  return typeof code === "string" ? code : undefined;
 }
 
 function readChildren(root: string): Dirent[] | undefined {
