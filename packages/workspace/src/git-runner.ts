@@ -34,6 +34,8 @@ export type GitCommandResult = GitCommandSuccess | GitCommandFailure;
 
 export interface GitRunnerOptions {
   readonly cwd: string;
+  /** Optional absolute executable path for deterministic adapter tests. */
+  readonly executablePath?: string;
   readonly timeoutMs?: number;
   readonly outputLimitBytes?: number;
 }
@@ -103,8 +105,17 @@ function gitEnvironment(): NodeJS.ProcessEnv {
   };
 }
 
-function resolveGitExecutable(): string | undefined {
+function resolveGitExecutable(requestedPath?: string): string | undefined {
   const executable = process.platform === "win32" ? "git.exe" : "git";
+  if (requestedPath !== undefined) {
+    if (!isAbsolute(requestedPath)) return undefined;
+    try {
+      accessSync(requestedPath, constants.X_OK);
+      return statSync(requestedPath).isFile() ? requestedPath : undefined;
+    } catch {
+      return undefined;
+    }
+  }
   const systemCandidates =
     process.platform === "win32"
       ? []
@@ -178,11 +189,13 @@ function stopProcess(child: ReturnType<typeof spawn>): void {
 
 export class GitRunner {
   private readonly cwd: string;
+  private readonly executablePath: string | undefined;
   private readonly timeoutMs: number;
   private readonly outputLimitBytes: number;
 
   constructor(options: GitRunnerOptions) {
     this.cwd = options.cwd;
+    this.executablePath = options.executablePath;
     this.timeoutMs = bounded(options.timeoutMs, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS);
     this.outputLimitBytes = bounded(
       options.outputLimitBytes,
@@ -215,7 +228,7 @@ export class GitRunner {
       return Promise.resolve(failure("git.cancelled", "Git command was cancelled.", null));
     }
 
-    const executable = resolveGitExecutable();
+    const executable = resolveGitExecutable(this.executablePath);
     if (executable === undefined) {
       return Promise.resolve(
         failure("git.executable-not-found", "Git executable is not available.", null),
