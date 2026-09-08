@@ -58,7 +58,13 @@ export function registerDurabilityTestRoutes(
     const automation = body.kind === "automation";
     const moduleInstanceId = body.moduleInstanceId ?? (automation ? "automation-rules" : "probe-1");
     const config = automation
-      ? automationProjectConfig(body.id, moduleInstanceId, body.targetMode, body.ruleTag)
+      ? automationProjectConfig(
+          body.id,
+          moduleInstanceId,
+          body.targetMode,
+          body.ruleTag,
+          body.rules,
+        )
       : sampleProjectConfig(body.id, moduleInstanceId);
     const repositoryPath = join(hooks.testRepositoryRoot, "repositories", body.id);
     mkdirSync(repositoryPath, { recursive: true });
@@ -137,11 +143,16 @@ function sampleProjectConfig(id: string, moduleInstanceId: string): PortableProj
   };
 }
 
+/** Ticket #65: `rules`, when given, replaces the single reference Rule so a
+ * scenario can compose a Rule Set (ordering, a later match, an emission whose
+ * payload the Request contract rejects) through the real Project Service and
+ * the real configuration schema — no second code path for tests. */
 function automationProjectConfig(
   id: string,
   automationInstanceId: string,
   targetMode: "binding" | "direct",
   ruleTag: string,
+  rules: readonly Record<string, unknown>[] | undefined,
 ): PortableProjectConfiguration {
   return {
     ...baseProjectConfig(id, {
@@ -153,7 +164,7 @@ function automationProjectConfig(
         moduleId: AUTOMATION_RULES_MODULE_ID,
         enabled: true,
         configuration: {
-          rules: [
+          rules: rules ?? [
             {
               id: "ready-label-starts-development",
               when: {
@@ -205,6 +216,7 @@ function readTestProjectRequest(value: unknown): {
   readonly moduleInstanceId?: string;
   readonly targetMode: "binding" | "direct";
   readonly ruleTag: string;
+  readonly rules?: readonly Record<string, unknown>[];
 } {
   if (!isRecord(value)) {
     throw new EngineError("api.invalid-request", 400, "Test Project request must be an object.");
@@ -214,6 +226,10 @@ function readTestProjectRequest(value: unknown): {
   const moduleInstanceId = value["moduleInstanceId"];
   const targetMode = value["targetMode"] ?? "binding";
   const ruleTag = value["ruleTag"] ?? "agent:ready";
+  const rules = value["rules"];
+  if (rules !== undefined && (!Array.isArray(rules) || !rules.every(isRecord))) {
+    throw new EngineError("api.invalid-request", 400, "Test Project rules are invalid.");
+  }
   if (
     typeof id !== "string" ||
     !/^[a-z0-9][a-z0-9._-]{0,99}$/.test(id) ||
@@ -234,6 +250,7 @@ function readTestProjectRequest(value: unknown): {
     ...(moduleInstanceId === undefined ? {} : { moduleInstanceId }),
     targetMode,
     ruleTag,
+    ...(rules === undefined ? {} : { rules: rules as readonly Record<string, unknown>[] }),
   };
 }
 

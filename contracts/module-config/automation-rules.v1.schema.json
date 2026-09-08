@@ -10,7 +10,7 @@
   "properties": {
     "rules": {
       "title": "Automation Rules",
-      "description": "Ordered, repeatable Fact-to-Request rules.",
+      "description": "Ordered Fact-to-Request rules. Rules are evaluated in this order and evaluation stops at the first match, so one Fact emits at most one Request.",
       "type": "array",
       "minItems": 1,
       "$comment": "jarvis:automation-rule-set",
@@ -55,7 +55,7 @@
               },
               "equals": {
                 "title": "Bounded match",
-                "description": "Exact scalar payload fields that must match before emission.",
+                "description": "Exact scalar payload fields that must all match before emission. Each key is a top-level input payload field written as `payload.<field>`; a field absent from the Fact never matches, including against an explicit null.",
                 "type": "object",
                 "examples": [
                   {
@@ -70,6 +70,9 @@
                     "boolean",
                     "null"
                   ]
+                },
+                "propertyNames": {
+                  "pattern": "^payload\\.[A-Za-z0-9_-]+$"
                 }
               }
             }
@@ -135,7 +138,7 @@
               },
               "payload": {
                 "title": "Request payload",
-                "description": "Static JSON object merged into the emitted Request payload.",
+                "description": "Static JSON object merged into the emitted Request payload. These values win over the derived ones; fields left unset are derived from the input Fact and the activated Project. Omit it to derive the whole payload.",
                 "type": "object",
                 "examples": [
                   {}
