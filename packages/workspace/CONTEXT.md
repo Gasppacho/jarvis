@@ -22,5 +22,7 @@ The branch owned by one Development-like execution.
 ### Cleanup Policy
 The project rule deciding when a terminal Workspace is removed or retained.
 
+For the MVP, success removes the Worktree and prunes its Git record while keeping the Working Branch. Failure and cancellation retain the Workspace for `retainOnFailureDays`; cancellation follows the failure rule by default.
+
 ### Workspace Leak
 A path or Git worktree record left without a valid active or retained lease.
