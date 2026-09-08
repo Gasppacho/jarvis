@@ -522,7 +522,7 @@ final class ProjectConfigurationTests: XCTestCase {
             state.compositionGuide?.moduleInstances.first(where: {
                 $0.instanceId == "development"
             })?.missingResources,
-            ["agent.execute", "shell.execute", "work-items.read"])
+            ["agent.execute"])
         let presentation = ProjectDetailPresentation(
             project: imported,
             detail: state.detail,
@@ -544,7 +544,7 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(developmentCard.compatibility, "compatible")
         XCTAssertEqual(
             developmentCard.missingResources,
-            "agent.execute, shell.execute, work-items.read")
+            "agent.execute")
         XCTAssertTrue(developmentCard.technicalDetails.contains("jarvis.module.development"))
         XCTAssertTrue(developmentCard.technicalDetails.contains("1.0.0"))
         XCTAssertTrue(
