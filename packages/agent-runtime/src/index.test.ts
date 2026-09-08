@@ -25,6 +25,7 @@ function request(
   workingDirectory: string,
   scenario?: string,
   outputLimitBytes = 1_000_000,
+  timeoutMs = 10_000,
 ): AgentRunRequest {
   return {
     projectId: "project-1",
@@ -35,7 +36,7 @@ function request(
     contextArtifacts: [],
     allowedMcpBindings: [],
     environment: scenario === undefined ? {} : { JARVIS_FAKE_SCENARIO: scenario },
-    timeoutMs: 10_000,
+    timeoutMs,
     outputLimitBytes,
   };
 }
@@ -239,6 +240,10 @@ describe("FakeRuntime", () => {
       expect(
         events.some(({ type, message }) => type === "warning" && message?.includes("truncated")),
       ).toBe(true);
+      const capturedBytes = events
+        .filter((event) => event.type === "stdout" || event.type === "stderr")
+        .reduce((total, event) => total + Buffer.byteLength(event.chunk ?? "", "utf8"), 0);
+      expect(capturedBytes).toBeLessThanOrEqual(64);
       expect(events.at(-1)).toMatchObject({ type: "completed", result });
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -264,6 +269,41 @@ describe("FakeRuntime", () => {
       expect(events.at(-1)).toMatchObject({ type: "failed", result: { status: "cancelled" } });
       await expectProcessGone(run.processId);
       await expectProcessGone(childPid);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("times out a child through the same bounded process-group termination", async () => {
+    const root = await mkdtemp(join(tmpdir(), "jarvis-fake-runtime-timeout-"));
+    try {
+      const run = (await new FakeRuntime().start(
+        request(root, "ignore-terminate", 1_000_000, 100),
+        new AbortController().signal,
+      )) as FakeAgentRun;
+      const childPid = await waitForPid(join(root, "fake-runtime-child.pid"));
+      const eventsPromise = collectEvents(run);
+
+      const result = await run.result();
+      const events = await eventsPromise;
+
+      expect(result).toMatchObject({ status: "timed-out", changedFiles: [] });
+      expect(events.at(-1)).toMatchObject({ type: "failed", result: { status: "timed-out" } });
+      await expectProcessGone(run.processId);
+      await expectProcessGone(childPid);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("completes a run that finishes before its timeout", async () => {
+    const root = await mkdtemp(join(tmpdir(), "jarvis-fake-runtime-deadline-"));
+    try {
+      const run = await new FakeRuntime().start(
+        request(root, undefined, 1_000_000, 1_000),
+        new AbortController().signal,
+      );
+      await expect(run.result()).resolves.toMatchObject({ status: "completed" });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

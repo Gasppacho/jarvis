@@ -17,7 +17,9 @@ export const DEVELOPMENT_IMPLEMENTATION_REQUESTED = {
 } as const;
 
 const DEFAULT_TIMEOUT_MS = 300_000;
+const MAX_TIMEOUT_MS = 3_600_000;
 const DEFAULT_OUTPUT_LIMIT_BYTES = 1_048_576;
+const MAX_OUTPUT_LIMIT_BYTES = 10_485_760;
 const SECRET_ENVIRONMENT_NAME =
   /(?:secret|token|password|passwd|credential|private[_-]?key|api[_-]?key)/i;
 
@@ -76,10 +78,15 @@ export const handleImplementationRequested: ModuleHandler = async (
       environmentAllowlist: stringArray(ctx.configuration["environmentAllowlist"]),
       projectBindings,
       mcpSlotNames: [],
-      timeoutMs: positiveConfigNumber(ctx.configuration["timeoutMs"], DEFAULT_TIMEOUT_MS),
-      outputLimitBytes: positiveConfigNumber(
+      timeoutMs: boundedPositiveConfigNumber(
+        ctx.configuration["timeoutMs"],
+        DEFAULT_TIMEOUT_MS,
+        MAX_TIMEOUT_MS,
+      ),
+      outputLimitBytes: boundedPositiveConfigNumber(
         ctx.configuration["outputLimitBytes"],
         DEFAULT_OUTPUT_LIMIT_BYTES,
+        MAX_OUTPUT_LIMIT_BYTES,
       ),
       secretValues: processSecretValues(),
     });
@@ -150,8 +157,10 @@ function stringArray(value: unknown): readonly string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : [];
 }
 
-function positiveConfigNumber(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : fallback;
+function boundedPositiveConfigNumber(value: unknown, fallback: number, maximum: number): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+    ? Math.min(value, maximum)
+    : fallback;
 }
 
 async function repositoryInstructions(workspacePath: string): Promise<string> {

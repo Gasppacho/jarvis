@@ -38,10 +38,8 @@ interface ExecutionRow {
 
 /** 0007_inbox_execution_ledger.sql's CHECK spells this state `timed_out`;
  * the OpenAPI contract spells it `timed-out`. Every other state is spelled
- * identically in both places. Only `completed`/`failed` are ever written by
- * today's `DeliveryConsumer` (executions/delivery-consumer.ts) — the other
- * five are reserved for #17 — so this map's five untested branches are
- * exercised by ledger.test.ts, not the Application Harness. */
+ * identically in both places. The DeliveryConsumer writes cancellation and
+ * timeout states when the runtime/module result is terminal. */
 export const STATUS_TO_API: Record<string, ExecutionApiStatus> = {
   queued: "queued",
   running: "running",

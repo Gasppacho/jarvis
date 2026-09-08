@@ -106,16 +106,16 @@ export class FakeAgentRun implements AgentRun {
   private readonly eventWaiters = new Set<() => void>();
   private readonly resultPromise: Promise<AgentRunResult>;
   private readonly observedChangedFiles: string[] = [];
-  private interruptPromise: Promise<void> | undefined;
+  private terminationPromise: Promise<void> | undefined;
   private stdoutBuffer = "";
   private stderrBuffer = "";
   private stderrSummary = "";
   private outputBytes = 0;
-  private capturedRawBytes = 0;
+  private capturedOutputBytes = 0;
   private outputLimitWarned = false;
   private nextSequence = 1;
   private terminal = false;
-  private interruptionRequested = false;
+  private terminationReason: "cancelled" | "timed-out" | undefined;
   private pendingResult: AgentRunResult | undefined;
 
   public constructor(
@@ -135,9 +135,14 @@ export class FakeAgentRun implements AgentRun {
     this.emit({ type: "started" });
     this.resultPromise = this.readResult();
     this.child.stdin.end(JSON.stringify({ scenario: request.environment["JARVIS_FAKE_SCENARIO"] }));
+    this.timeoutTimer = setTimeout(() => {
+      void this.requestTermination("timed-out").catch(() => {});
+    }, request.timeoutMs);
     if (signal.aborted) void this.interrupt();
     else signal.addEventListener("abort", () => void this.interrupt(), { once: true });
   }
+
+  private readonly timeoutTimer: NodeJS.Timeout;
 
   public async *events(): AsyncIterable<AgentRunEvent> {
     let index = 0;
@@ -157,15 +162,19 @@ export class FakeAgentRun implements AgentRun {
   }
 
   public async interrupt(): Promise<void> {
-    if (this.interruptPromise === undefined && !this.terminal) {
-      this.interruptionRequested = true;
-      this.interruptPromise = this.interruptChild();
-    }
-    await this.interruptPromise;
+    await this.requestTermination("cancelled");
     await this.resultPromise;
   }
 
-  private async interruptChild(): Promise<void> {
+  private async requestTermination(reason: "cancelled" | "timed-out"): Promise<void> {
+    if (this.terminationPromise === undefined && !this.terminal) {
+      this.terminationReason = reason;
+      this.terminationPromise = this.terminateChild();
+    }
+    await this.terminationPromise;
+  }
+
+  private async terminateChild(): Promise<void> {
     this.signalChild("SIGTERM");
     await Promise.race([this.resultPromise, delay(FORCE_KILL_DELAY_MS)]);
     if (!this.terminal) this.signalChild("SIGKILL");
@@ -180,7 +189,9 @@ export class FakeAgentRun implements AgentRun {
       const finish = (result: AgentRunResult): void => {
         if (settled) return;
         settled = true;
-        const finalResult = this.interruptionRequested ? cancelledResult() : result;
+        clearTimeout(this.timeoutTimer);
+        const finalResult =
+          this.terminationReason === undefined ? result : terminatedResult(this.terminationReason);
         this.finish(finalResult);
         resolveResult(finalResult);
       };
@@ -316,7 +327,8 @@ export class FakeAgentRun implements AgentRun {
         if (typeof record["message"] !== "string") {
           this.emit({ type: "warning", message: "Fake Runtime emitted an invalid message line." });
         } else {
-          this.emit({ type: "message", message: sanitizeOutput(record["message"], this.request) });
+          const message = this.captureOutput(sanitizeOutput(record["message"], this.request));
+          if (message !== "") this.emit({ type: "message", message });
         }
         return;
       case "file-changed": {
@@ -359,11 +371,19 @@ export class FakeAgentRun implements AgentRun {
     const bytes = Buffer.from(text, "utf8");
     const remaining = Math.max(
       0,
-      Math.floor(this.request.outputLimitBytes - this.capturedRawBytes),
+      Math.floor(this.request.outputLimitBytes - this.capturedOutputBytes),
     );
     const visible = bytes.subarray(0, remaining).toString("utf8");
-    this.capturedRawBytes += Buffer.byteLength(visible, "utf8");
+    this.capturedOutputBytes += Buffer.byteLength(visible, "utf8");
     if (visible !== "") this.emit({ type, chunk: visible });
+  }
+
+  private captureOutput(value: string): string {
+    const bytes = Buffer.from(value, "utf8");
+    const remaining = Math.max(0, this.request.outputLimitBytes - this.capturedOutputBytes);
+    const visible = bytes.subarray(0, remaining).toString("utf8");
+    this.capturedOutputBytes += Buffer.byteLength(visible, "utf8");
+    return visible;
   }
 
   private emit(event: Omit<AgentRunEvent, "sequence" | "timestamp">): void {
@@ -450,10 +470,10 @@ function failedResult(code: string, message: string, retryable: boolean): AgentR
   };
 }
 
-function cancelledResult(): AgentRunResult {
+function terminatedResult(status: "cancelled" | "timed-out"): AgentRunResult {
   return {
-    status: "cancelled",
-    summary: "Fake Runtime cancelled.",
+    status,
+    summary: status === "cancelled" ? "Fake Runtime cancelled." : "Fake Runtime timed out.",
     changedFiles: [],
   };
 }

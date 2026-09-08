@@ -64,7 +64,7 @@ export interface ConsumeResult {
   /** `null` on a redelivery: no second Execution is created (acceptance
    * criterion 3), so there is no new id to report. */
   readonly executionId: string | null;
-  readonly status: "completed" | "failed" | "cancelled";
+  readonly status: "completed" | "failed" | "cancelled" | "timed-out";
   readonly result: unknown;
   readonly redelivered: boolean;
   /** Ticket #60: the Ledger row this call just committed, in the REST
@@ -77,7 +77,7 @@ export interface ConsumeResult {
 }
 
 interface InboxRow {
-  readonly status: "completed" | "failed" | "cancelled";
+  readonly status: "completed" | "failed" | "cancelled" | "timed_out";
   readonly result: string;
 }
 
@@ -210,7 +210,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
       // (acceptance criterion 3).
       return {
         executionId: null,
-        status: existing.status,
+        status: inboxStatusToApi(existing.status),
         result: JSON.parse(existing.result) as unknown,
         redelivered: true,
         executionSummary: null,
@@ -332,6 +332,9 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
   ): ConsumeResult {
     if (signal.aborted) {
       return this.recordCancelled(delivery, envelope, executionId, startedAt, true);
+    }
+    if (isTimedOutResult(result)) {
+      return this.recordTimedOut(delivery, envelope, executionId, startedAt, true);
     }
 
     const { executionRow } = this.db.transaction(() => {
@@ -470,6 +473,31 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
       executionId,
       status: "cancelled",
       result: { cancelled: true },
+      redelivered: false,
+      executionSummary: { ...executionRow, correlationId: envelope.correlationId },
+    };
+  }
+
+  private recordTimedOut(
+    delivery: ClaimedDelivery,
+    envelope: EventEnvelope,
+    executionId: string,
+    startedAt: string,
+    running: boolean,
+  ): ConsumeResult {
+    const executionRow = this.db.transaction(() => {
+      const row = running
+        ? this.updateExecution(executionId, "timed_out", null)
+        : this.insertExecution(executionId, delivery, envelope, "timed_out", startedAt, null);
+      this.insertInbox(delivery, "timed_out", { timedOut: true });
+      this.markDeliveryConsumed(delivery);
+      return row;
+    })();
+    this.failAfterHandlerCommit();
+    return {
+      executionId,
+      status: "timed-out",
+      result: { timedOut: true },
       redelivered: false,
       executionSummary: { ...executionRow, correlationId: envelope.correlationId },
     };
@@ -635,7 +663,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     id: string,
     delivery: ClaimedDelivery,
     envelope: EventEnvelope,
-    status: "running" | "completed" | "failed" | "cancelled",
+    status: "running" | "completed" | "failed" | "cancelled" | "timed_out",
     startedAt: string,
     error: string | null,
   ): LedgerExecutionSummary {
@@ -662,7 +690,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
       id,
       projectId: delivery.projectId,
       moduleInstanceId: delivery.moduleInstanceId,
-      status,
+      status: status === "timed_out" ? "timed-out" : status,
       attempt: 1,
       createdAt: startedAt,
       completedAt,
@@ -672,7 +700,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
 
   private updateExecution(
     executionId: string,
-    status: "completed" | "failed" | "cancelled",
+    status: "completed" | "failed" | "cancelled" | "timed_out",
     error: string | null,
   ): LedgerExecutionSummary {
     const completedAt = this.clock.now().toISOString();
@@ -693,7 +721,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
 
   private insertInbox(
     delivery: ClaimedDelivery,
-    status: "completed" | "failed" | "cancelled",
+    status: "completed" | "failed" | "cancelled" | "timed_out",
     result: unknown,
   ): void {
     this.db
@@ -749,6 +777,20 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
     return false;
   }
   return typeof (value as { then?: unknown }).then === "function";
+}
+
+function isTimedOutResult(value: unknown): value is { readonly status: "timed-out" } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { status?: unknown }).status === "timed-out"
+  );
+}
+
+function inboxStatusToApi(
+  status: InboxRow["status"],
+): "completed" | "failed" | "cancelled" | "timed-out" {
+  return status === "timed_out" ? "timed-out" : status;
 }
 
 function readExecutionSummary(

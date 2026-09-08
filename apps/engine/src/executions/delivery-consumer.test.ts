@@ -688,6 +688,40 @@ describe("DeliveryConsumer", () => {
     ]);
   });
 
+  it("records a timed-out async result as a distinct terminal outcome", async () => {
+    const handler = async () => ({
+      status: "timed-out" as const,
+      summary: "timed out",
+      changedFiles: [],
+    });
+    const { db: database, store, publisher, dispatcher, consumer } = harness(() => handler);
+    activate(store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+
+    const consumed = publisher.publish(pingInput("project-a"));
+    dispatcher.dispatchPending();
+    const delivery = {
+      projectId: "project-a",
+      moduleInstanceId: "probe-1",
+      moduleId: SAMPLE_PROBE_MODULE_ID,
+      eventId: consumed.id,
+    };
+    const outcome = await consumer.consume(delivery);
+
+    expect(outcome.status).toBe("timed-out");
+    expect(database.prepare("SELECT status FROM executions").get()).toEqual({
+      status: "timed_out",
+    });
+    expect(database.prepare("SELECT status FROM inbox").get()).toEqual({
+      status: "timed_out",
+    });
+    expect(consumer.consume(delivery)).toMatchObject({
+      redelivered: true,
+      status: "timed-out",
+    });
+  });
+
   it("records an async rejection as failed without committing buffered publications", async () => {
     const handler = async (context: ModuleHandlerContext) => {
       context.publish({
