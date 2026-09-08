@@ -537,6 +537,29 @@ describe("WorkspaceManager release", () => {
     },
   );
 
+  it("deletes a failed worktree when failure retention is disabled", async () => {
+    const harness = makeHarness({
+      project: {
+        git: { branchPattern: "agent/{workItemId}-{slug}" },
+        workspace: { maxConcurrentExecutions: 1, retainOnFailureDays: 0 },
+      },
+    });
+    const allocation = await harness.manager.allocate(harness.input);
+
+    const released = await harness.manager.release({
+      projectId: harness.input.projectId,
+      executionId: harness.input.executionId,
+      repositoryPath: harness.fixture.root,
+      project: harness.project,
+      outcome: "cancelled",
+    });
+
+    expect(existsSync(allocation.path)).toBe(false);
+    expect(released.status).toBe("released");
+    expect(harness.leases.listActive(harness.input.projectId)).toEqual([]);
+    expect(repositoryWorktreeCount(harness.fixture.root)).toBe(1);
+  });
+
   it("releases an already released lease without a second side effect", async () => {
     const harness = makeHarness({ clock: fixedTestClock() });
     await harness.manager.allocate(harness.input);

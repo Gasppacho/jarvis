@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -179,12 +179,73 @@ describe("Development Module tracer bullet", () => {
       database.close();
     }
   });
+
+  it("cancels the real runtime child, drains it, and retains the cancelled workspace", async () => {
+    const fixture = makeRealGitRepositoryFixture();
+    roots.push(fixture.root);
+    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-cancel-"));
+    roots.push(dataRoot);
+    const projectId = "development-cancel";
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: { JARVIS_ENABLE_TEST_HOOKS: "1", JARVIS_FAKE_SCENARIO: "ignore-terminate" },
+    });
+    engines.push(engine);
+
+    await activateProject(engine, projectId, fixture, true);
+    await publishTag(engine, projectId, "cancelled");
+    const running = await waitForExecution(engine, projectId, "development", "running");
+    const workspacePath = join(dataRoot, "projects", projectId, "workspaces", running.id);
+    const childPidPath = join(workspacePath, "fake-runtime-child.pid");
+    const childPid = await waitForPid(childPidPath);
+
+    const response = await engine.call(`/v1/executions/${running.id}/cancel`, { method: "POST" });
+    expect(response.status).toBe(202);
+    const cancelled = await waitForExecution(engine, projectId, "development", "cancelled");
+    expect(cancelled.id).toBe(running.id);
+
+    expect(existsSync(join(workspacePath, "fake-runtime-interrupt.txt"))).toBe(true);
+    expect(existsSync(workspacePath)).toBe(true);
+    await expectProcessGone(childPid);
+
+    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
+    try {
+      expect(
+        database
+          .prepare(
+            `SELECT status FROM workspace_leases
+             WHERE project_id = ? AND execution_id = ?`,
+          )
+          .get(projectId, running.id),
+      ).toEqual({ status: "retained" });
+      expect(
+        database
+          .prepare(
+            `SELECT COUNT(*) AS count FROM workspace_leases
+             WHERE project_id = ? AND status = 'active'`,
+          )
+          .get(projectId),
+      ).toEqual({ count: 0 });
+      expect(
+        database
+          .prepare(
+            `SELECT COUNT(*) AS count FROM outbox
+             WHERE json_extract(envelope, '$.type') IN ('development.implementation.completed', 'scm.change-request.creation-requested')`,
+          )
+          .get(),
+      ).toEqual({ count: 0 });
+    } finally {
+      database.close();
+    }
+  });
 });
 
 async function activateProject(
   engine: Harness,
   projectId: string,
   fixture: RealGitRepositoryFixture,
+  cancellationTest = false,
 ): Promise<void> {
   const portableConfig = {
     apiVersion: "jarvis.dev/project/v1",
@@ -233,7 +294,7 @@ async function activateProject(
           retainWorkspaceOnSuccess: false,
           timeoutMs: 300_000,
           outputLimitBytes: 1_048_576,
-          environmentAllowlist: [],
+          environmentAllowlist: cancellationTest ? ["JARVIS_FAKE_SCENARIO"] : [],
         },
       },
       {
@@ -344,6 +405,56 @@ async function waitForExecutions(
     if (Date.now() - startedAt > 10_000)
       throw new Error("Development executions did not complete in time.");
     await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+async function waitForExecution(
+  engine: Harness,
+  projectId: string,
+  moduleInstanceId: string,
+  status: string,
+): Promise<{ id: string; moduleInstanceId: string; status: string }> {
+  const startedAt = Date.now();
+  for (;;) {
+    const response = await engine.call(`/v1/projects/${projectId}/executions`);
+    const body = (await response.json()) as {
+      items: { id: string; moduleInstanceId: string; status: string }[];
+    };
+    const execution = body.items.find(
+      (candidate) => candidate.moduleInstanceId === moduleInstanceId && candidate.status === status,
+    );
+    if (execution !== undefined) return execution;
+    if (Date.now() - startedAt > 10_000) {
+      throw new Error(`Development execution did not reach ${status} in time.`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+async function waitForPid(path: string): Promise<number> {
+  const startedAt = Date.now();
+  for (;;) {
+    try {
+      const pid = Number.parseInt(readFileSync(path, "utf8"), 10);
+      if (Number.isInteger(pid) && pid > 0) return pid;
+    } catch {
+      // The child writes the marker after the workspace is allocated.
+    }
+    if (Date.now() - startedAt > 10_000) throw new Error(`PID marker ${path} was not written.`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function expectProcessGone(pid: number): Promise<void> {
+  const startedAt = Date.now();
+  for (;;) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    if (Date.now() - startedAt > 5_000) throw new Error(`Process ${pid} is still alive.`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }
 
