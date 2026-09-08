@@ -51,6 +51,13 @@ Errors crossing the Local API or stored as terminal Execution errors use stable 
 | `delivery.retry-exhausted` | No | Retry limit reached; delivery is dead-lettered |
 | `delivery.partition-busy` | Yes | Another worker holds the partition lease |
 
+## Executions
+
+| Code | Retryable | Meaning |
+|---|---:|---|
+| `execution.not-found` | No | No Execution with the requested ID exists |
+| `execution.not-cancellable` | No | The Execution is not in a cancellable running state |
+
 ## Workspace and Git
 
 | Code | Retryable | Meaning |

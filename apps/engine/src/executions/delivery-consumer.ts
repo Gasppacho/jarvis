@@ -18,7 +18,7 @@ export type ModulePublishedContractsLookup = (
 import { EventPublisher, type PublishEventInput } from "../events/publisher.js";
 import { EngineError } from "../errors.js";
 import { failpoint } from "../test-support/failpoint.js";
-import type { LedgerExecutionSummary } from "./ledger.js";
+import { STATUS_TO_API, type LedgerExecutionSummary } from "./ledger.js";
 
 /** See apps/engine/src/events/dispatcher.ts's identical declaration for why
  * this exists and how tsup.config.ts's `define` makes it eliminate the
@@ -59,7 +59,7 @@ export interface ConsumeResult {
   /** `null` on a redelivery: no second Execution is created (acceptance
    * criterion 3), so there is no new id to report. */
   readonly executionId: string | null;
-  readonly status: "completed" | "failed";
+  readonly status: "completed" | "failed" | "cancelled";
   readonly result: unknown;
   readonly redelivered: boolean;
   /** Ticket #60: the Ledger row this call just committed, in the REST
@@ -72,7 +72,7 @@ export interface ConsumeResult {
 }
 
 interface InboxRow {
-  readonly status: "completed" | "failed";
+  readonly status: "completed" | "failed" | "cancelled";
   readonly result: string;
 }
 
@@ -81,12 +81,34 @@ interface SuccessfulConsumption {
   readonly executionRow: LedgerExecutionSummary;
 }
 
+export interface ExecutionCancellationPort {
+  cancelExecution(executionId: unknown): LedgerExecutionSummary;
+}
+
+interface ActiveExecution {
+  readonly projectId: string;
+  readonly controller: AbortController;
+}
+
+interface ExecutionRow {
+  readonly id: string;
+  readonly project_id: string;
+  readonly module_instance_id: string;
+  readonly status: string;
+  readonly attempt: number;
+  readonly created_at: string;
+  readonly completed_at: string | null;
+  readonly input_event_id: string;
+}
+
 /**
  * Ticket #57: one claimed Delivery in, one terminal Execution and Inbox
  * record out. The handler's own state changes and published Outbox rows share
  * the same transaction as the terminal Inbox and Execution records.
  */
-export class DeliveryConsumer {
+export class DeliveryConsumer implements ExecutionCancellationPort {
+  private readonly activeExecutions = new Map<string, ActiveExecution>();
+
   public constructor(
     private readonly db: Database.Database,
     private readonly clock: Clock,
@@ -97,6 +119,57 @@ export class DeliveryConsumer {
     private readonly repositoryDefaultBranches: ModuleRepositoryDefaultBranchLookup = () => "main",
     private readonly publishedContracts: ModulePublishedContractsLookup = () => undefined,
   ) {}
+
+  public cancelExecution(executionId: unknown): LedgerExecutionSummary {
+    if (typeof executionId !== "string" || executionId.length === 0) {
+      throw new EngineError(
+        "execution.not-found",
+        404,
+        "No Execution with the requested ID exists.",
+      );
+    }
+
+    const summary = this.db.transaction(() => {
+      const current = readExecutionSummary(this.db, executionId);
+      if (current === undefined) {
+        throw new EngineError(
+          "execution.not-found",
+          404,
+          "No Execution with the requested ID exists.",
+        );
+      }
+      if (current.status === "cancelling") return current;
+      if (current.status !== "running" || !this.activeExecutions.has(executionId)) {
+        throw new EngineError(
+          "execution.not-cancellable",
+          409,
+          `Execution ${executionId} is not in a cancellable running state.`,
+        );
+      }
+
+      const written = this.db
+        .prepare(
+          `UPDATE executions
+           SET status = 'cancelling'
+           WHERE id = @id AND status = 'running'
+           RETURNING id, project_id, module_instance_id, status, attempt, created_at,
+                     completed_at, input_event_id`,
+        )
+        .get({ id: executionId }) as ExecutionRow | undefined;
+      if (written === undefined) {
+        throw new EngineError(
+          "execution.not-cancellable",
+          409,
+          `Execution ${executionId} is not in a cancellable running state.`,
+        );
+      }
+      return toExecutionSummary(written);
+    })();
+
+    // The durable transition is committed before the handler is interrupted.
+    this.activeExecutions.get(executionId)?.controller.abort();
+    return summary;
+  }
 
   /**
    * Compatibility contract for existing synchronous Module callers. When the
@@ -150,8 +223,10 @@ export class DeliveryConsumer {
     }
 
     const bufferedPublications: EventEnvelope[] = [];
+    const controller = new AbortController();
     let transactionOpen = true;
     let promiseResult: PromiseLike<unknown> | undefined;
+    let runningExecutionCommitted = false;
 
     try {
       const transactionResult = this.db.transaction(() => {
@@ -161,6 +236,7 @@ export class DeliveryConsumer {
             envelope,
             () => transactionOpen,
             bufferedPublications,
+            controller.signal,
           ),
         );
         if (isPromiseLike(handlerResult)) {
@@ -169,6 +245,7 @@ export class DeliveryConsumer {
           // commits; it is awaited only after the commit, then terminal
           // records are written in a new short transaction.
           promiseResult = handlerResult;
+          this.insertExecution(executionId, delivery, envelope, "running", startedAt, null);
           return undefined;
         }
 
@@ -184,19 +261,29 @@ export class DeliveryConsumer {
       transactionOpen = false;
 
       if (promiseResult !== undefined) {
-        return Promise.resolve(promiseResult).then(
-          (result) =>
-            this.commitAsyncSuccess(
-              delivery,
-              envelope,
-              executionId,
-              startedAt,
-              result,
-              bufferedPublications,
-            ),
-          (error) =>
-            this.recordFailure(delivery, envelope, executionId, startedAt, error),
-        );
+        runningExecutionCommitted = true;
+        this.activeExecutions.set(executionId, {
+          projectId: delivery.projectId,
+          controller,
+        });
+        return Promise.resolve(promiseResult)
+          .then(
+            (result) =>
+              this.commitAsyncSuccess(
+                delivery,
+                envelope,
+                executionId,
+                startedAt,
+                result,
+                bufferedPublications,
+                controller.signal,
+              ),
+            (error) =>
+              controller.signal.aborted
+                ? this.recordCancelled(delivery, envelope, executionId, startedAt, true)
+                : this.recordFailure(delivery, envelope, executionId, startedAt, error, true),
+          )
+          .finally(() => this.activeExecutions.delete(executionId));
       }
 
       const { handlerResult: result, executionRow } = transactionResult as SuccessfulConsumption;
@@ -204,7 +291,14 @@ export class DeliveryConsumer {
       return this.completedResult(executionId, envelope, result, executionRow);
     } catch (error) {
       transactionOpen = false;
-      return this.recordFailure(delivery, envelope, executionId, startedAt, error);
+      return this.recordFailure(
+        delivery,
+        envelope,
+        executionId,
+        startedAt,
+        error,
+        runningExecutionCommitted,
+      );
     }
   }
 
@@ -219,17 +313,24 @@ export class DeliveryConsumer {
     startedAt: string,
     result: unknown,
     bufferedPublications: readonly EventEnvelope[],
+    signal: AbortSignal,
   ): ConsumeResult {
-    const { executionRow } = this.db.transaction(() =>
-      this.commitSuccessfulConsumption(
-        delivery,
-        envelope,
-        executionId,
-        startedAt,
-        result,
-        bufferedPublications,
-      ),
-    )();
+    if (signal.aborted) {
+      return this.recordCancelled(delivery, envelope, executionId, startedAt, true);
+    }
+
+    const { executionRow } = this.db.transaction(() => {
+      for (const publication of bufferedPublications) {
+        this.insertBufferedPublication(publication);
+      }
+      if (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) {
+        failpoint("before-handler-commit");
+      }
+      const row = this.updateExecution(executionId, "completed", null);
+      this.insertInbox(delivery, "completed", result);
+      this.markDeliveryConsumed(delivery);
+      return { executionRow: row };
+    })();
     this.failAfterHandlerCommit();
     return this.completedResult(executionId, envelope, result, executionRow);
   }
@@ -288,6 +389,7 @@ export class DeliveryConsumer {
     executionId: string,
     startedAt: string,
     error: unknown,
+    running = false,
   ): ConsumeResult {
     const message = error instanceof Error ? error.message : String(error);
     // Deliberately a second, separate transaction: it must commit even
@@ -299,14 +401,9 @@ export class DeliveryConsumer {
     let executionRow: LedgerExecutionSummary;
     try {
       executionRow = this.db.transaction(() => {
-        const row = this.insertExecution(
-          executionId,
-          delivery,
-          envelope,
-          "failed",
-          startedAt,
-          message,
-        );
+        const row = running
+          ? this.updateExecution(executionId, "failed", message)
+          : this.insertExecution(executionId, delivery, envelope, "failed", startedAt, message);
         this.insertInbox(delivery, "failed", { error: message });
         this.markDeliveryConsumed(delivery);
         return row;
@@ -343,6 +440,31 @@ export class DeliveryConsumer {
     };
   }
 
+  private recordCancelled(
+    delivery: ClaimedDelivery,
+    envelope: EventEnvelope,
+    executionId: string,
+    startedAt: string,
+    running: boolean,
+  ): ConsumeResult {
+    const executionRow = this.db.transaction(() => {
+      const row = running
+        ? this.updateExecution(executionId, "cancelled", null)
+        : this.insertExecution(executionId, delivery, envelope, "cancelled", startedAt, null);
+      this.insertInbox(delivery, "cancelled", { cancelled: true });
+      this.markDeliveryConsumed(delivery);
+      return row;
+    })();
+    this.failAfterHandlerCommit();
+    return {
+      executionId,
+      status: "cancelled",
+      result: { cancelled: true },
+      redelivered: false,
+      executionSummary: { ...executionRow, correlationId: envelope.correlationId },
+    };
+  }
+
   private failAfterHandlerCommit(): void {
     // Ticket #58 acceptance criterion 4: a declared boundary right after
     // the handler's transaction commits and before this method acknowledges
@@ -357,6 +479,7 @@ export class DeliveryConsumer {
     envelope: EventEnvelope,
     transactionOpen: () => boolean,
     bufferedPublications: EventEnvelope[],
+    signal: AbortSignal,
   ): ModuleHandlerContext {
     return {
       projectId: delivery.projectId,
@@ -368,6 +491,7 @@ export class DeliveryConsumer {
       ),
       event: envelope,
       configuration: this.configurations(delivery.projectId, delivery.moduleInstanceId) ?? {},
+      signal,
       publish: (input) => {
         this.assertPublishedContract(delivery.moduleId, input);
         const publication = this.publisherInput(delivery, envelope, input);
@@ -477,11 +601,11 @@ export class DeliveryConsumer {
     id: string,
     delivery: ClaimedDelivery,
     envelope: EventEnvelope,
-    status: "completed" | "failed",
+    status: "running" | "completed" | "failed" | "cancelled",
     startedAt: string,
     error: string | null,
   ): LedgerExecutionSummary {
-    const completedAt = this.clock.now().toISOString();
+    const completedAt = status === "running" ? null : this.clock.now().toISOString();
     this.db
       .prepare(
         `INSERT INTO executions
@@ -512,9 +636,30 @@ export class DeliveryConsumer {
     };
   }
 
+  private updateExecution(
+    executionId: string,
+    status: "completed" | "failed" | "cancelled",
+    error: string | null,
+  ): LedgerExecutionSummary {
+    const completedAt = this.clock.now().toISOString();
+    const row = this.db
+      .prepare(
+        `UPDATE executions
+         SET status = @status, error = @error, completed_at = @completedAt
+         WHERE id = @id AND status IN ('running', 'cancelling')
+         RETURNING id, project_id, module_instance_id, status, attempt, created_at,
+                   completed_at, input_event_id`,
+      )
+      .get({ id: executionId, status, error, completedAt }) as ExecutionRow | undefined;
+    if (row === undefined) {
+      throw new Error(`Execution ${executionId} was not active when it was finalized.`);
+    }
+    return toExecutionSummary(row);
+  }
+
   private insertInbox(
     delivery: ClaimedDelivery,
-    status: "completed" | "failed",
+    status: "completed" | "failed" | "cancelled",
     result: unknown,
   ): void {
     this.db
@@ -570,4 +715,36 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
     return false;
   }
   return typeof (value as { then?: unknown }).then === "function";
+}
+
+function readExecutionSummary(
+  db: Database.Database,
+  executionId: string,
+): LedgerExecutionSummary | undefined {
+  const row = db
+    .prepare(
+      `SELECT id, project_id, module_instance_id, status, attempt, created_at, completed_at,
+              input_event_id
+       FROM executions WHERE id = @executionId`,
+    )
+    .get({ executionId }) as ExecutionRow | undefined;
+  if (row === undefined) return undefined;
+  return toExecutionSummary(row);
+}
+
+function toExecutionSummary(row: ExecutionRow): LedgerExecutionSummary {
+  const status = STATUS_TO_API[row.status];
+  if (status === undefined) {
+    throw new Error(`Execution ${row.id} has an unrecognized Ledger status "${row.status}".`);
+  }
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    moduleInstanceId: row.module_instance_id,
+    status,
+    attempt: row.attempt,
+    createdAt: row.created_at,
+    completedAt: row.completed_at,
+    inputEventId: row.input_event_id,
+  };
 }

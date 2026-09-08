@@ -644,9 +644,7 @@ describe("DeliveryConsumer", () => {
     const pending = consumer.consume(delivery);
 
     expect(started).toBe(true);
-    expect(
-      database.prepare("SELECT COUNT(*) AS n FROM executions").get(),
-    ).toEqual({ n: 0 });
+    expect(database.prepare("SELECT status FROM executions").get()).toEqual({ status: "running" });
     expect(database.prepare("SELECT COUNT(*) AS n FROM outbox").get()).toEqual({ n: 1 });
 
     release();
@@ -699,5 +697,46 @@ describe("DeliveryConsumer", () => {
       status: "failed",
       result: { error: "async deterministic failure" },
     });
+  });
+
+  it("cancels a running async handler through its AbortSignal and records cancelled", async () => {
+    let signal!: AbortSignal;
+    const handler = (context: ModuleHandlerContext) => {
+      signal = context.signal;
+      return new Promise<never>((_resolve, reject) => {
+        context.signal.addEventListener("abort", () => reject(new Error("handler aborted")), {
+          once: true,
+        });
+      });
+    };
+    const { db: database, store, publisher, dispatcher, consumer } = harness(() => handler);
+    activate(store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+
+    const consumed = publisher.publish(pingInput("project-a"));
+    dispatcher.dispatchPending();
+    const delivery = {
+      projectId: "project-a",
+      moduleInstanceId: "probe-1",
+      moduleId: SAMPLE_PROBE_MODULE_ID,
+      eventId: consumed.id,
+    };
+
+    const pending = consumer.consumeAsync(delivery);
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(database.prepare("SELECT status FROM executions").get()).toEqual({ status: "running" });
+
+    const execution = database.prepare("SELECT id FROM executions").get() as { id: string };
+    const cancelling = consumer.cancelExecution(execution.id);
+    expect(cancelling).toMatchObject({ id: expect.any(String), status: "cancelling" });
+    expect(signal.aborted).toBe(true);
+
+    const outcome = await pending;
+    expect(outcome.status).toBe("cancelled");
+    expect(database.prepare("SELECT status FROM executions").get()).toEqual({
+      status: "cancelled",
+    });
+    expect(database.prepare("SELECT COUNT(*) AS n FROM outbox").get()).toEqual({ n: 1 });
   });
 });

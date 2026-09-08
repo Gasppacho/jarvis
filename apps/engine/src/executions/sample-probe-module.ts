@@ -59,7 +59,27 @@ export function createSampleProbeSchema(db: Database.Database): void {
  * network dependency: the same input always produces the same outcome.
  */
 export function createSampleProbeHandler(db: Database.Database): ModuleHandler {
-  return (ctx: ModuleHandlerContext): SampleProbeResult => {
+  return (ctx: ModuleHandlerContext): SampleProbeResult | Promise<never> => {
+    if (ctx.event.payload["waitForCancellation"] === true) {
+      return new Promise<never>((_resolve, reject) => {
+        const onAbort = (): void => {
+          ctx.publish({
+            type: SAMPLE_PROBE_PONGED.type,
+            version: SAMPLE_PROBE_PONGED.version,
+            kind: SAMPLE_PROBE_PONGED.kind,
+            subject: ctx.event.subject,
+            payload: { shouldNotSurviveCancellation: true },
+          });
+          reject(new Error("sample-probe: cancellation observed"));
+        };
+        if (ctx.signal.aborted) {
+          onAbort();
+          return;
+        }
+        ctx.signal.addEventListener("abort", onAbort, { once: true });
+      });
+    }
+
     const row = db
       .prepare(
         `SELECT ping_count FROM sample_probe_state WHERE project_id = ? AND module_instance_id = ?`,

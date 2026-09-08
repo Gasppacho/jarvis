@@ -39,6 +39,7 @@ import {
 import { startEventLoop } from "./events/dispatch-loop.js";
 import {
   DeliveryConsumer,
+  type ExecutionCancellationPort,
   type ModuleConfigurationLookup,
   type ModuleHandler,
   type ModuleHandlerLookup,
@@ -302,6 +303,7 @@ async function main(): Promise<void> {
     }
   }
   let durabilityTestHooks: DurabilityTestHooks | undefined;
+  let executionCancellation: ExecutionCancellationPort | undefined;
   if (database !== undefined && projectStore !== undefined) {
     const clock = new SystemClock();
     const ids = new SystemIdGenerator();
@@ -402,6 +404,7 @@ async function main(): Promise<void> {
       repositoryDefaultBranches,
       publishedContracts,
     );
+    executionCancellation = consumer;
     stopEventLoop = startEventLoop({ db: database.db, dispatcher, consumer, liveUpdates });
     if (testHooksEnabled && projects !== undefined) {
       testWorkspaceManager = new WorkspaceManager({
@@ -427,6 +430,7 @@ async function main(): Promise<void> {
     projects,
     modules,
     isShuttingDown: () => shuttingDown,
+    executionCancellation,
     onShutdownRequested: () => {
       void shutdown(0);
     },

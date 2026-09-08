@@ -41,6 +41,7 @@ function context(
       repositoryDefaultBranch,
       event,
       configuration,
+      signal: new AbortController().signal,
       publish: (input) => {
         published.push(input);
         return event;
@@ -309,6 +310,7 @@ describe("handleWorkItemTagAdded", () => {
         repositoryDefaultBranch,
         event,
         configuration: { rules },
+        signal: new AbortController().signal,
         publish: (input) => {
           published.push(input);
           return event;

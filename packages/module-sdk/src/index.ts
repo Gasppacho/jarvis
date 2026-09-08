@@ -26,6 +26,7 @@ export interface ModuleHandlerContext {
   readonly repositoryDefaultBranch: string | undefined;
   readonly event: EventEnvelope;
   readonly configuration: ModuleConfiguration;
+  readonly signal: AbortSignal;
   readonly publish: (input: ModuleHandlerPublishInput) => EventEnvelope;
 }
 

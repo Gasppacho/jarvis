@@ -17,6 +17,8 @@ export type ErrorCode =
   | "project.active"
   | "project.activation-not-validated"
   | "project.activation-report-stale"
+  | "execution.not-found"
+  | "execution.not-cancellable"
   | "event.envelope-invalid"
   | "system.internal-error"
   | "system.storage-unavailable";

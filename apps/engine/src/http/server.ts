@@ -19,6 +19,7 @@ import {
 } from "../test-support/durability-test-routes.js";
 import { registerStreamRoutes } from "../stream/routes.js";
 import type { LiveUpdateHub } from "../stream/hub.js";
+import type { ExecutionCancellationPort } from "../executions/delivery-consumer.js";
 import { CORRELATION_HEADER } from "./correlation.js";
 
 /** See apps/engine/src/events/dispatcher.ts's identical declaration for why
@@ -40,6 +41,8 @@ export interface ServerDependencies {
   readonly isShuttingDown: () => boolean;
   /** Invoked after the 202 has been flushed to the caller. */
   readonly onShutdownRequested: () => void;
+  /** Engine-owned execution control; HTTP does not depend on ProjectService. */
+  readonly executionCancellation: ExecutionCancellationPort | undefined;
   /** Ticket #60: one per Engine Session, fed by the dispatch loop after a
    * commit. Registered unconditionally — `GET /v1/stream` exists even while
    * the engine runs degraded, the same as `/v1/health` — but it only ever
@@ -146,6 +149,18 @@ export function buildServer(deps: ServerDependencies): FastifyInstance {
   app.get("/v1/module-catalog", async () => ({ items: deps.modules.catalog() }));
 
   app.get("/v1/capability-catalog", async () => capabilityCatalog());
+
+  app.post("/v1/executions/:executionId/cancel", async (request, reply) => {
+    if (deps.databaseState() !== "ready" || deps.executionCancellation === undefined) {
+      throw new EngineError(
+        "engine.database-unavailable",
+        503,
+        "The local database is unavailable; execution operations are suspended until it recovers.",
+      );
+    }
+    const params = request.params as { executionId?: unknown } | undefined;
+    return reply.code(202).send(deps.executionCancellation.cancelExecution(params?.executionId));
+  });
 
   registerStreamRoutes(app, deps.liveUpdates);
 
