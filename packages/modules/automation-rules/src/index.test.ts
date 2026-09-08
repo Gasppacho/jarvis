@@ -169,7 +169,35 @@ describe("handleWorkItemTagAdded", () => {
       ],
     });
 
-    expect(handleWorkItemTagAdded(ctx)).toEqual({ matchedRuleIds: [], emittedEventIds: [] });
+    // Terminal, not a silent skip: under first-match-wins a dropped Rule would
+    // quietly promote whichever Rule follows it.
+    expect(() => handleWorkItemTagAdded(ctx)).toThrow(/unauthorized/);
+    expect(published).toEqual([]);
+  });
+
+  it("fails the Delivery rather than letting an unhonorable Rule promote the one behind it", () => {
+    const { ctx, published } = context({
+      rules: [
+        {
+          id: "undeclared-contract",
+          when: { eventType: "scm.work-item.tag-added", equals: { "payload.tag": "agent:ready" } },
+          emit: {
+            type: "scm.change-request.merge-requested",
+            target: { binding: "sourceControl" },
+          },
+        },
+        {
+          id: "would-win-if-dropped",
+          when: { eventType: "scm.work-item.tag-added", equals: { "payload.tag": "agent:ready" } },
+          emit: {
+            type: "development.implementation.requested",
+            target: { moduleInstanceId: "development" },
+          },
+        },
+      ],
+    });
+
+    expect(() => handleWorkItemTagAdded(ctx)).toThrow(/index 0 \(undeclared-contract\)/);
     expect(published).toEqual([]);
   });
 
@@ -226,5 +254,76 @@ describe("handleWorkItemTagAdded", () => {
       },
     });
     expect(published[0]?.idempotencyKey).toBe("token-warehouse:issue-42:development:1");
+  });
+  it("distinguishes a payload field that is absent from one explicitly set to null", () => {
+    const nullRule = {
+      id: "null-title",
+      when: {
+        eventType: "scm.work-item.tag-added",
+        equals: { "payload.tag": "agent:ready", "payload.title": null },
+      },
+      emit: {
+        type: "development.implementation.requested",
+        target: { moduleInstanceId: "development" },
+      },
+    };
+
+    // `title` is absent from the Fact: a predicate expecting an explicit null
+    // must not treat "no such field" as a match.
+    const absent = context({ rules: [nullRule] });
+    expect(handleWorkItemTagAdded(absent.ctx)).toEqual({ matchedRuleIds: [], emittedEventIds: [] });
+    expect(absent.published).toEqual([]);
+
+    const explicit = context(
+      { rules: [nullRule] },
+      {
+        ...fact,
+        payload: { ...fact.payload, title: null },
+      },
+    );
+    expect(handleWorkItemTagAdded(explicit.ctx)).toEqual({
+      matchedRuleIds: ["null-title"],
+      emittedEventIds: ["evt_tag_added_001"],
+    });
+  });
+
+  it("rejects rather than inventing a repository or branch the Project does not supply", () => {
+    const rules = [
+      {
+        id: "ready",
+        when: { eventType: "scm.work-item.tag-added", equals: { "payload.tag": "agent:ready" } },
+        emit: {
+          type: "development.implementation.requested",
+          target: { moduleInstanceId: "development" },
+        },
+      },
+    ];
+    // Built here rather than through `context`, whose default parameter would
+    // substitute a branch for the `undefined` these two cases are about.
+    const bare = (event: EventEnvelope, repositoryDefaultBranch: string | undefined) => {
+      const published: ModuleHandlerPublishInput[] = [];
+      const ctx: ModuleHandlerContext = {
+        projectId: event.projectId,
+        moduleInstanceId: "automation-rules",
+        repositoryId: event.repositoryId,
+        repositoryDefaultBranch,
+        event,
+        configuration: { rules },
+        publish: (input) => {
+          published.push(input);
+          return event;
+        },
+      };
+      return { ctx, published };
+    };
+    const { repositoryId: _unbound, ...withoutRepository } = fact;
+
+    const noBranch = bare(fact, undefined);
+    expect(() => handleWorkItemTagAdded(noBranch.ctx)).toThrow(/baseBranch/);
+    expect(noBranch.published).toEqual([]);
+
+    const noRepository = bare(withoutRepository, "main");
+    expect(() => handleWorkItemTagAdded(noRepository.ctx)).toThrow(/repositoryId/);
+    expect(noRepository.published).toEqual([]);
   });
 });

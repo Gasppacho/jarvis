@@ -114,21 +114,37 @@ export function resolveRequestConsumer(
         route.consumer.instanceId === resolveBindingTarget(envelope, target.binding, snapshot)),
   );
 
-  if (routes.length === 0) {
+  // Counted by distinct consumer, not by route: a producer that configures
+  // several emissions of one contract at the same consumer (an Automation Rules
+  // Rule Set matching different tags into one Development instance is the
+  // normal case) contributes one route per configured target, and those routes
+  // are identical. Ambiguity means genuinely *different* candidates — counting
+  // rows instead would reject every such Rule Set as ambiguous. Deduplicating
+  // here rather than only where the report is built also covers snapshots
+  // frozen into `resolved_project` before that dedupe existed.
+  const consumers = new Map<string, RoutedConsumer>();
+  for (const route of routes) {
+    const consumer = route.consumer;
+    consumers.set(`${consumer.moduleId}\u0000${consumer.instanceId}`, {
+      moduleInstanceId: consumer.instanceId,
+      moduleId: consumer.moduleId,
+    });
+  }
+
+  if (consumers.size === 0) {
     throw new RequestRoutingError(
       "request-consumer-not-found",
       `Request ${envelope.type}.v${envelope.version} from ${envelope.producer.moduleInstanceId} has no target consumer.`,
     );
   }
-  if (routes.length > 1) {
+  if (consumers.size > 1) {
     throw new RequestRoutingError(
       "request-consumer-ambiguous",
       `Request ${envelope.type}.v${envelope.version} from ${envelope.producer.moduleInstanceId} has multiple target consumers.`,
     );
   }
 
-  const consumer = routes[0]!.consumer;
-  return { moduleInstanceId: consumer.instanceId, moduleId: consumer.moduleId };
+  return [...consumers.values()][0]!;
 }
 
 function resolveBindingTarget(

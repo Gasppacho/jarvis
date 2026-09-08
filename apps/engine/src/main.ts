@@ -293,12 +293,17 @@ async function main(): Promise<void> {
       projectId,
       repositoryId,
     ) => {
-      const repositories =
-        projectStore.getResolvedProject(projectId)?.composition.repositories ?? [];
-      return (
-        repositories.find((repository) => repository.id === repositoryId)?.defaultBranch ??
-        repositories[0]?.defaultBranch
-      );
+      // Only the named repository's own branch, never a neighbour's: falling
+      // back to `repositories[0]` here would re-invent exactly what ticket #65
+      // stopped the Automation Rules handler from inventing, and would do it
+      // one layer lower where the handler's guard can no longer see it — an
+      // Event naming a repository this composition does not carry would emit a
+      // Request pairing that repository with a different one's default branch.
+      // `undefined` lets the calling handler reject instead.
+      return projectStore
+        .getResolvedProject(projectId)
+        ?.composition.repositories.find((repository) => repository.id === repositoryId)
+        ?.defaultBranch;
     };
     const publishedContracts: ModulePublishedContractsLookup = (moduleId) =>
       modules.composition(moduleId)?.produces;

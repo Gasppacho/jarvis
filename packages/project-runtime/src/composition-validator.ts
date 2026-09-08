@@ -371,6 +371,19 @@ export class SavedProjectCompositionValidator implements ProjectCompositionValid
     findings.sort(compareJson);
     requestRoutes.sort(compareJson);
     requestAttempts.sort(compareJson);
+    // Ticket #65: one producer may configure several Rules that all target the
+    // same consumer for the same contract (a Rule Set matching different tags
+    // into the same Development instance is the normal case). Each configured
+    // target pushed its own route above, and a route carries only
+    // contract/producer/consumer — so those extras are byte-identical and add
+    // nothing. Left in, `resolveRequestConsumer` counts them as several
+    // candidates and rejects every such emission as
+    // `request-consumer-ambiguous`. Deduplicated after the sort, so equal
+    // routes are already adjacent. `requestAttempts` carries the same one
+    // entry per configured target and is deduplicated for the same reason:
+    // otherwise the composition graph draws one identical edge per Rule.
+    dedupeSortedJson(requestRoutes);
+    dedupeSortedJson(requestAttempts);
     factDeliveries.sort(compareJson);
     satisfiedCapabilities.sort(compareJson);
     return {
@@ -522,6 +535,13 @@ function resolveCapabilityCandidate(
       candidate.ref === source.ref &&
       candidate.capabilities.includes(capability),
   );
+}
+
+/** Drops adjacent byte-identical entries from a `compareJson`-sorted array. */
+function dedupeSortedJson(sorted: unknown[]): void {
+  for (let index = sorted.length - 1; index > 0; index -= 1) {
+    if (compareJson(sorted[index], sorted[index - 1]) === 0) sorted.splice(index, 1);
+  }
 }
 
 function compareJson(left: unknown, right: unknown): number {

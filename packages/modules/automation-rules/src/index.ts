@@ -32,7 +32,6 @@ interface ImplementationRequestPayload {
   readonly workItemRef: string;
   readonly repositoryId: string;
   readonly baseBranch: string;
-  readonly requestedGeneration?: number;
 }
 
 export interface AutomationRulesResult {
@@ -71,13 +70,30 @@ export function handleWorkItemTagAdded(ctx: ModuleHandlerContext): AutomationRul
   return { matchedRuleIds, emittedEventIds };
 }
 
+/**
+ * Every configured Rule is honored or the whole Delivery fails. Dropping the
+ * ones this Module cannot parse would silently change which Rule wins under
+ * first-match-wins (packages/modules/automation-rules/CONTEXT.md "Rule Set"):
+ * a Rule Set whose first entry emits an undeclared contract would quietly
+ * promote the second, and the operator would see the Rule Set's documented
+ * order disagree with what actually ran, with no diagnostic anywhere.
+ */
 function readRules(configuration: ModuleHandlerContext["configuration"]): AutomationRule[] {
   const rules = configuration["rules"];
   if (!Array.isArray(rules)) {
     return [];
   }
 
-  return rules.map(readRule).filter((rule): rule is AutomationRule => rule !== undefined);
+  return rules.map((value, index) => readRule(value) ?? unhonorableRule(value, index));
+}
+
+/** Identifies the offending Rule by position and, when it has a schema-shaped
+ * one, its id — never by echoing configured values into the Ledger. */
+function unhonorableRule(value: unknown, index: number): never {
+  const id = isRecord(value) && typeof value["id"] === "string" ? value["id"] : undefined;
+  throw new Error(
+    `Automation Rule at index ${index}${id === undefined ? "" : ` (${id})`} is not one this Module can honor: it must match on a Fact type and emit ${DEVELOPMENT_IMPLEMENTATION_REQUESTED.type} to exactly one configured target.`,
+  );
 }
 
 function readRule(value: unknown): AutomationRule | undefined {
@@ -173,42 +189,47 @@ function matches(rule: AutomationRule, ctx: ModuleHandlerContext): boolean {
   });
 }
 
+/**
+ * The Emission Template's merge rule (packages/modules/automation-rules/CONTEXT.md
+ * "Emission Template"): a Rule's static `emit.payload` wins over every derived
+ * value, and whatever it leaves unset is derived — `workItemRef` from the input
+ * Fact, `repositoryId` and `baseBranch` from the activated project-scoped
+ * context. The reference composition configures no `emit.payload` at all and is
+ * fully derived by this rule.
+ *
+ * Nothing is invented: a required field with neither a static value nor a
+ * project-scoped source throws, which the Delivery Consumer records as a
+ * terminal failed Execution, rather than emitting a Request naming a repository
+ * or branch that does not exist. The Fact's own payload is never consulted for
+ * the repository or the branch — AGENTS.md invariant 11 makes external work-item
+ * content untrusted input, and `scm.work-item.tag-added.v1` carries neither field.
+ */
 function implementationPayload(
   ctx: ModuleHandlerContext,
   rule: AutomationRule,
 ): ImplementationRequestPayload {
   const configured = rule.emit.payload ?? {};
-  const workItemRef =
-    readNonEmptyString(configured["workItemRef"]) ??
-    readNonEmptyString(ctx.event.payload["workItemRef"]) ??
-    ctx.event.subject.ref;
-  const repositoryId =
-    readNonEmptyString(configured["repositoryId"]) ??
-    ctx.event.repositoryId ??
-    readNonEmptyString(ctx.event.payload["repositoryId"]) ??
-    "main";
-  const baseBranch =
-    readNonEmptyString(configured["baseBranch"]) ??
-    ctx.repositoryDefaultBranch ??
-    readNonEmptyString(ctx.event.payload["baseBranch"]) ??
-    "main";
-
-  const requestedGeneration = configured["requestedGeneration"];
-  const payload = {
+  return {
     ...configured,
-    workItemRef,
-    repositoryId,
-    baseBranch,
-    ...(typeof requestedGeneration === "number" &&
-    Number.isInteger(requestedGeneration) &&
-    requestedGeneration >= 1
-      ? { requestedGeneration }
-      : {}),
+    workItemRef:
+      readNonEmptyString(configured["workItemRef"]) ??
+      readNonEmptyString(ctx.event.payload["workItemRef"]) ??
+      ctx.event.subject.ref,
+    repositoryId:
+      readNonEmptyString(configured["repositoryId"]) ??
+      readNonEmptyString(ctx.repositoryId) ??
+      unresolved(rule, "repositoryId"),
+    baseBranch:
+      readNonEmptyString(configured["baseBranch"]) ??
+      readNonEmptyString(ctx.repositoryDefaultBranch) ??
+      unresolved(rule, "baseBranch"),
   };
+}
 
-  // ponytail: the MVP emits only the v1 implementation fields; typed projections
-  // belong in a future handler when another request contract needs them.
-  return payload;
+function unresolved(rule: AutomationRule, field: string): never {
+  throw new Error(
+    `Automation Rule ${rule.id} cannot emit ${rule.emit.type}: ${field} has no static value and the activated Project supplies none.`,
+  );
 }
 
 function idempotencyKey(

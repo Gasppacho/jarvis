@@ -119,12 +119,34 @@ describe("resolveRequestConsumer", () => {
     ).toThrowError(/has no target consumer/);
   });
 
-  it("fails clearly when the frozen snapshot contains multiple target routes", () => {
+  it("fails clearly when the frozen snapshot names genuinely different consumers", () => {
     expect(() =>
       resolveRequestConsumer(
         { ...request, target: { moduleInstanceId: "development" } },
-        requestSnapshot({ requestRoutes: [requestRoute, requestRoute] }),
+        requestSnapshot({
+          requestRoutes: [
+            requestRoute,
+            {
+              ...requestRoute,
+              consumer: { moduleId: "jarvis.module.other", instanceId: "development" },
+            },
+          ],
+        }),
       ),
     ).toThrowError(/has multiple target consumers/);
+  });
+
+  it("resolves when the frozen snapshot repeats one consumer, as a multi-Rule Rule Set does", () => {
+    // One route per configured emission: an Automation Rules instance whose
+    // Rule Set sends several different tags to the same Development instance
+    // freezes the identical route once per Rule. That is one candidate, not an
+    // ambiguity — including in snapshots written before the report itself
+    // deduplicated them.
+    expect(
+      resolveRequestConsumer(
+        { ...request, target: { moduleInstanceId: "development" } },
+        requestSnapshot({ requestRoutes: [requestRoute, requestRoute, requestRoute] }),
+      ),
+    ).toEqual({ moduleInstanceId: "development", moduleId: "jarvis.module.development" });
   });
 });
