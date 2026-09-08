@@ -5,12 +5,15 @@ import type {
   EventEnvelopeTarget,
 } from "../../eventing/src/envelope.js";
 import type { AgentRuntime } from "../../agent-runtime/src/index.js";
+import type { AgentProjectBindings } from "../../agent-runtime/src/request-builder.js";
 
 export type ModuleConfiguration = Readonly<Record<string, unknown>>;
 
 /** Capabilities resolved for one Project and Module Instance only. */
 export interface ModuleHandlerCapabilities {
   readonly agentRuntime?: AgentRuntime;
+  readonly projectBindings?: AgentProjectBindings;
+  readonly workspace?: ModuleWorkspace;
 }
 
 export type ModuleCapabilityLookup = (
@@ -18,6 +21,28 @@ export type ModuleCapabilityLookup = (
   moduleInstanceId: string,
   moduleId: string,
 ) => ModuleHandlerCapabilities;
+
+export interface ModuleWorkspaceAllocation {
+  readonly path: string;
+  readonly workingBranch: string;
+  readonly baseRevisionSha: string;
+}
+
+export interface ModuleWorkspace {
+  allocate(input: {
+    readonly executionId: string;
+    readonly repositoryId: string;
+    readonly baseRevision: string;
+    readonly branchContext: {
+      readonly workItemId: string;
+      readonly slug: string;
+    };
+  }): Promise<ModuleWorkspaceAllocation>;
+  release(input: {
+    readonly executionId: string;
+    readonly outcome: "success" | "failure" | "cancelled";
+  }): Promise<void>;
+}
 
 export interface ModuleHandlerPublishInput {
   readonly type: string;
@@ -33,6 +58,7 @@ export interface ModuleHandlerPublishInput {
 
 export interface ModuleHandlerContext {
   readonly projectId: string;
+  readonly executionId: string;
   readonly moduleInstanceId: string;
   readonly repositoryId: string | undefined;
   readonly repositoryDefaultBranch: string | undefined;

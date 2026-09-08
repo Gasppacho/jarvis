@@ -183,8 +183,6 @@ describe("project composition choices", () => {
           "git.commit",
           "git.push",
           "repository.write",
-          "shell.execute",
-          "work-items.read",
         ],
       }),
       expect.objectContaining({

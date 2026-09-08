@@ -36,6 +36,7 @@ function context(
     published,
     ctx: {
       projectId: event.projectId,
+      executionId: "execution-test",
       moduleInstanceId: "automation-rules",
       repositoryId: event.repositoryId,
       repositoryDefaultBranch,
@@ -306,6 +307,7 @@ describe("handleWorkItemTagAdded", () => {
       const published: ModuleHandlerPublishInput[] = [];
       const ctx: ModuleHandlerContext = {
         projectId: event.projectId,
+        executionId: "execution-test",
         moduleInstanceId: "automation-rules",
         repositoryId: event.repositoryId,
         repositoryDefaultBranch,

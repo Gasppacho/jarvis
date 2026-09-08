@@ -12,4 +12,12 @@ export const REQUEST_WORKER_CONTRACT = {
   version: 1,
   kind: "request" as const,
 };
+export const REQUEST_WORKER_CONTRACTS = [
+  REQUEST_WORKER_CONTRACT,
+  {
+    type: "scm.change-request.creation-requested",
+    version: 1,
+    kind: "request" as const,
+  },
+] as const;
 export const requestWorkerHandler: ModuleHandler = () => ({ handled: true });

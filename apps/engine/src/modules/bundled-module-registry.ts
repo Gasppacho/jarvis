@@ -89,6 +89,13 @@ function testFixtureManifests(): readonly DiscoveredModuleManifest[] {
               schemaRef: "contracts/events/development.implementation.requested.v1.schema.json",
               handler: "handleImplementationRequested",
             },
+            {
+              type: "scm.change-request.creation-requested",
+              version: 1,
+              kind: "request",
+              schemaRef: "contracts/events/scm.change-request.creation-requested.v1.schema.json",
+              handler: "handleImplementationRequested",
+            },
           ],
           produces: [],
         },

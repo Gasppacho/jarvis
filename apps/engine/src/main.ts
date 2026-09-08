@@ -16,6 +16,10 @@ import {
   AUTOMATION_RULES_MODULE_ID,
   handleWorkItemTagAdded,
 } from "../../../packages/modules/automation-rules/src/index.js";
+import {
+  DEVELOPMENT_MODULE_ID,
+  handleImplementationRequested,
+} from "../../../packages/modules/development/src/index.js";
 import { ConfigError, loadConfig } from "./config.js";
 import { openDatabase, type DatabaseState, type OpenedDatabase } from "./db/open.js";
 import { buildServer } from "./http/server.js";
@@ -28,7 +32,10 @@ import { EventJournalReader } from "./events/timeline.js";
 import { ExecutionLedgerReader } from "./executions/ledger.js";
 import { LocalAgentRuntimeRegistry } from "./projects/resource-grants.js";
 import { ProjectStore } from "./projects/store.js";
-import { ProjectModuleCapabilityResolver } from "./executions/capabilities.js";
+import {
+  ProjectModuleCapabilityResolver,
+  ProjectWorkspaceCapabilityResolver,
+} from "./executions/capabilities.js";
 import { loadBundledModuleHost } from "./modules/bundled-module-registry.js";
 import { EventPublisher } from "./events/publisher.js";
 import {
@@ -126,7 +133,7 @@ async function main(): Promise<void> {
   let shuttingDown = false;
   let announced = false;
   let stopEventLoop: (() => void) | undefined;
-  let testWorkspaceManager: WorkspaceManager | undefined;
+  let workspaceManager: WorkspaceManager | undefined;
 
   /** Returns false when the WAL could not be checkpointed. */
   function closeDatabase(): boolean {
@@ -246,6 +253,11 @@ async function main(): Promise<void> {
         new SystemClock(),
         new SystemIdGenerator(),
       );
+      workspaceManager = new WorkspaceManager({
+        dataRoot: database.dataRoot,
+        leases,
+        failpoint,
+      });
       const reconciliation = await new WorkspaceReconciler({
         dataRoot: database.dataRoot,
         leases,
@@ -334,7 +346,7 @@ async function main(): Promise<void> {
               return { consumes: [fixtures.SAMPLE_PROBE_PINGED] };
             }
             if (fixtures !== undefined && moduleId === fixtures.REQUEST_WORKER_MODULE_ID) {
-              return { consumes: [fixtures.REQUEST_WORKER_CONTRACT] };
+              return { consumes: fixtures.REQUEST_WORKER_CONTRACTS };
             }
             return undefined;
           },
@@ -382,6 +394,7 @@ async function main(): Promise<void> {
     );
     const handlers: ModuleHandlerLookup = (moduleId) => {
       if (moduleId === AUTOMATION_RULES_MODULE_ID) return handleWorkItemTagAdded;
+      if (moduleId === DEVELOPMENT_MODULE_ID) return handleImplementationRequested;
       if (
         fixtures !== undefined &&
         moduleId === fixtures.SAMPLE_PROBE_MODULE_ID &&
@@ -395,7 +408,16 @@ async function main(): Promise<void> {
       return undefined;
     };
     if (fixtures !== undefined) fixtures.createSampleProbeSchema(database.db);
-    const capabilities = new ProjectModuleCapabilityResolver(projectStore, modules, resourceGrants);
+    const workspaceCapabilities =
+      workspaceManager === undefined
+        ? undefined
+        : new ProjectWorkspaceCapabilityResolver(projectStore, workspaceManager);
+    const capabilities = new ProjectModuleCapabilityResolver(
+      projectStore,
+      modules,
+      resourceGrants,
+      workspaceCapabilities,
+    );
     const consumer = new DeliveryConsumer(
       database.db,
       clock,
@@ -409,18 +431,13 @@ async function main(): Promise<void> {
     );
     executionCancellation = consumer;
     stopEventLoop = startEventLoop({ db: database.db, dispatcher, consumer, liveUpdates });
-    if (testHooksEnabled && projects !== undefined) {
-      testWorkspaceManager = new WorkspaceManager({
-        dataRoot: database.dataRoot,
-        leases: new WorkspaceLeaseRepository(database.db, clock, ids),
-        failpoint,
-      });
+    if (testHooksEnabled && projects !== undefined && workspaceManager !== undefined) {
       durabilityTestHooks = {
         db: database.db,
         projects,
         publisher,
         consumer,
-        workspace: testWorkspaceManager,
+        workspace: workspaceManager,
         testRepositoryRoot: dirname(config.databasePath),
       };
     }

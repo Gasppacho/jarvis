@@ -239,6 +239,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
           this.buildContext(
             delivery,
             envelope,
+            executionId,
             () => transactionOpen,
             bufferedPublications,
             controller.signal,
@@ -485,6 +486,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
   private buildContext(
     delivery: ClaimedDelivery,
     envelope: EventEnvelope,
+    executionId: string,
     transactionOpen: () => boolean,
     bufferedPublications: EventEnvelope[],
     signal: AbortSignal,
@@ -492,6 +494,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
   ): ModuleHandlerContext {
     return {
       projectId: delivery.projectId,
+      executionId,
       moduleInstanceId: delivery.moduleInstanceId,
       repositoryId: envelope.repositoryId,
       repositoryDefaultBranch: this.repositoryDefaultBranches(
