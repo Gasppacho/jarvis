@@ -15,7 +15,7 @@ export type ModulePublishedContract = Pick<ModuleHandlerPublishInput, "type" | "
 export type ModulePublishedContractsLookup = (
   moduleId: string,
 ) => readonly ModulePublishedContract[] | undefined;
-import { EventPublisher } from "../events/publisher.js";
+import { EventPublisher, type PublishEventInput } from "../events/publisher.js";
 import { EngineError } from "../errors.js";
 import { failpoint } from "../test-support/failpoint.js";
 import type { LedgerExecutionSummary } from "./ledger.js";
@@ -76,6 +76,11 @@ interface InboxRow {
   readonly result: string;
 }
 
+interface SuccessfulConsumption {
+  readonly handlerResult: unknown;
+  readonly executionRow: LedgerExecutionSummary;
+}
+
 /**
  * Ticket #57: one claimed Delivery in, one terminal Execution and Inbox
  * record out. The handler's own state changes and published Outbox rows share
@@ -93,7 +98,13 @@ export class DeliveryConsumer {
     private readonly publishedContracts: ModulePublishedContractsLookup = () => undefined,
   ) {}
 
-  public consume(delivery: ClaimedDelivery): ConsumeResult {
+  /**
+   * Compatibility contract for existing synchronous Module callers. When the
+   * handler returns a Promise, the runtime result is awaitable; callers that
+   * need an explicit async boundary should use `consumeAsync`.
+   */
+  public consume(delivery: ClaimedDelivery): ConsumeResult;
+  public consume(delivery: ClaimedDelivery): ConsumeResult | Promise<ConsumeResult> {
     // This SELECT is a plain read outside any transaction: it is safe today
     // only because better-sqlite3 is synchronous and single-process. The
     // real safety net for two callers racing the same (project, module
@@ -128,121 +139,225 @@ export class DeliveryConsumer {
     const executionId = `exec_${this.ids.next()}`;
     const startedAt = this.clock.now().toISOString();
 
-    try {
-      if (handler === undefined) {
-        throw new Error(`No handler registered for Module ${delivery.moduleId}.`);
-      }
-
-      const { handlerResult: result, executionRow } = this.db.transaction(() => {
-        // Consume-and-publish (docs/architecture/PERSISTENCE.md): the
-        // handler mutates its own Module state and publishes outgoing
-        // Outbox rows through `ctx.publish`, all inside this one
-        // transaction. A throw anywhere in here — including inside the
-        // handler — rolls back everything below, so none of Inbox
-        // insertion, Module state mutation, Execution insertion or Outbox
-        // rows are applied (acceptance criterion 2).
-        const handlerResult = handler(this.buildContext(delivery, envelope));
-
-        // Ticket #58 acceptance criterion 3: a declared boundary inside the
-        // handler's own transaction, after the handler mutated state but
-        // before any of Execution, Inbox or Delivery-consumed is written and
-        // before this transaction's COMMIT. A process killed here leaves the
-        // whole transaction — including the handler's own state mutation —
-        // rolled back: no partial handler effect survives.
-        if (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) {
-          failpoint("before-handler-commit");
-        }
-
-        const executionRow = this.insertExecution(
-          executionId,
-          delivery,
-          envelope,
-          "completed",
-          startedAt,
-          null,
-        );
-        this.insertInbox(delivery, "completed", handlerResult);
-        this.markDeliveryConsumed(delivery);
-
-        return { handlerResult, executionRow };
-      })();
-
-      // Ticket #58 acceptance criterion 4: a declared boundary right after
-      // the handler's transaction commits (state, Execution, Inbox and
-      // Delivery-consumed are all durable at this point — PERSISTENCE.md's
-      // "Consume and publish" commits them together) and before this method
-      // acknowledges the Delivery to its caller. A process killed here still
-      // leaves everything above committed, so a subsequent redelivery of the
-      // same (project, module instance, event) finds the Inbox record and
-      // returns its recorded result without re-running the handler.
-      if (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) {
-        failpoint("after-handler-commit");
-      }
-
-      return {
+    if (handler === undefined) {
+      return this.recordFailure(
+        delivery,
+        envelope,
         executionId,
-        status: "completed",
-        result,
-        redelivered: false,
-        executionSummary: { ...executionRow, correlationId: envelope.correlationId },
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      // Deliberately a second, separate transaction: it must commit even
-      // though the attempt above rolled back, and it is the only place the
-      // failed Execution and its Inbox record are written (acceptance
-      // criterion 2's "leaves none of them applied and the Execution
-      // recorded as failed"; #17's retries/backoff/dead letters are out of
-      // scope — this is the terminal record, not a retry schedule).
-      let executionRow: LedgerExecutionSummary;
-      try {
-        executionRow = this.db.transaction(() => {
-          const row = this.insertExecution(
-            executionId,
+        startedAt,
+        new Error(`No handler registered for Module ${delivery.moduleId}.`),
+      );
+    }
+
+    const bufferedPublications: EventEnvelope[] = [];
+    let transactionOpen = true;
+    let promiseResult: PromiseLike<unknown> | undefined;
+
+    try {
+      const transactionResult = this.db.transaction(() => {
+        const handlerResult = handler(
+          this.buildContext(
             delivery,
             envelope,
-            "failed",
-            startedAt,
-            message,
-          );
-          this.insertInbox(delivery, "failed", { error: message });
-          this.markDeliveryConsumed(delivery);
-          return row;
-        })();
-      } catch (recordingError) {
-        // A failure while recording a failure (constraint violation, disk
-        // error) must not crash the caller with a raw, unlabeled exception
-        // and must not lose the original handler failure (`message`): the
-        // Delivery is left with `consumed_at` unset, unresolved — a loud,
-        // clearly labeled failure rather than a silent strand (no retry
-        // schedule exists yet — #17).
-        const recordingMessage =
-          recordingError instanceof Error ? recordingError.message : String(recordingError);
-        throw new EngineError(
-          "system.internal-error",
-          500,
-          `Recording the failed Execution for Delivery (project ${delivery.projectId}, module instance ${delivery.moduleInstanceId}, event ${delivery.eventId}) itself failed: ${recordingMessage}. Original handler failure: ${message}`,
-          {
-            projectId: delivery.projectId,
-            moduleInstanceId: delivery.moduleInstanceId,
-            eventId: delivery.eventId,
-            handlerError: message,
-            recordingError: recordingMessage,
-          },
+            () => transactionOpen,
+            bufferedPublications,
+          ),
+        );
+        if (isPromiseLike(handlerResult)) {
+          // better-sqlite3 rejects a transaction callback that returns a
+          // promise. Store it and return synchronously so this transaction
+          // commits; it is awaited only after the commit, then terminal
+          // records are written in a new short transaction.
+          promiseResult = handlerResult;
+          return undefined;
+        }
+
+        return this.commitSuccessfulConsumption(
+          delivery,
+          envelope,
+          executionId,
+          startedAt,
+          handlerResult,
+          bufferedPublications,
+        );
+      })();
+      transactionOpen = false;
+
+      if (promiseResult !== undefined) {
+        return Promise.resolve(promiseResult).then(
+          (result) =>
+            this.commitAsyncSuccess(
+              delivery,
+              envelope,
+              executionId,
+              startedAt,
+              result,
+              bufferedPublications,
+            ),
+          (error) =>
+            this.recordFailure(delivery, envelope, executionId, startedAt, error),
         );
       }
 
-      return {
-        executionId,
-        status: "failed",
-        result: { error: message },
-        redelivered: false,
-        executionSummary: { ...executionRow, correlationId: envelope.correlationId },
-      };
+      const { handlerResult: result, executionRow } = transactionResult as SuccessfulConsumption;
+      this.failAfterHandlerCommit();
+      return this.completedResult(executionId, envelope, result, executionRow);
+    } catch (error) {
+      transactionOpen = false;
+      return this.recordFailure(delivery, envelope, executionId, startedAt, error);
     }
   }
 
-  private buildContext(delivery: ClaimedDelivery, envelope: EventEnvelope): ModuleHandlerContext {
+  public async consumeAsync(delivery: ClaimedDelivery): Promise<ConsumeResult> {
+    return this.consume(delivery);
+  }
+
+  private commitAsyncSuccess(
+    delivery: ClaimedDelivery,
+    envelope: EventEnvelope,
+    executionId: string,
+    startedAt: string,
+    result: unknown,
+    bufferedPublications: readonly EventEnvelope[],
+  ): ConsumeResult {
+    const { executionRow } = this.db.transaction(() =>
+      this.commitSuccessfulConsumption(
+        delivery,
+        envelope,
+        executionId,
+        startedAt,
+        result,
+        bufferedPublications,
+      ),
+    )();
+    this.failAfterHandlerCommit();
+    return this.completedResult(executionId, envelope, result, executionRow);
+  }
+
+  private commitSuccessfulConsumption(
+    delivery: ClaimedDelivery,
+    envelope: EventEnvelope,
+    executionId: string,
+    startedAt: string,
+    handlerResult: unknown,
+    bufferedPublications: readonly EventEnvelope[],
+  ): SuccessfulConsumption {
+    for (const publication of bufferedPublications) {
+      this.insertBufferedPublication(publication);
+    }
+
+    // Ticket #58 acceptance criterion 3: this boundary is inside the short
+    // terminal transaction. For a synchronous handler it still includes the
+    // handler's own state mutation; for an async handler it includes every
+    // buffered publication and all terminal records.
+    if (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) {
+      failpoint("before-handler-commit");
+    }
+
+    const executionRow = this.insertExecution(
+      executionId,
+      delivery,
+      envelope,
+      "completed",
+      startedAt,
+      null,
+    );
+    this.insertInbox(delivery, "completed", handlerResult);
+    this.markDeliveryConsumed(delivery);
+    return { handlerResult, executionRow };
+  }
+
+  private completedResult(
+    executionId: string,
+    envelope: EventEnvelope,
+    result: unknown,
+    executionRow: LedgerExecutionSummary,
+  ): ConsumeResult {
+    return {
+      executionId,
+      status: "completed",
+      result,
+      redelivered: false,
+      executionSummary: { ...executionRow, correlationId: envelope.correlationId },
+    };
+  }
+
+  private recordFailure(
+    delivery: ClaimedDelivery,
+    envelope: EventEnvelope,
+    executionId: string,
+    startedAt: string,
+    error: unknown,
+  ): ConsumeResult {
+    const message = error instanceof Error ? error.message : String(error);
+    // Deliberately a second, separate transaction: it must commit even
+    // though the attempt above rolled back, and it is the only place the
+    // failed Execution and its Inbox record are written (acceptance
+    // criterion 2's "leaves none of them applied and the Execution
+    // recorded as failed"; #17's retries/backoff/dead letters are out of
+    // scope — this is the terminal record, not a retry schedule).
+    let executionRow: LedgerExecutionSummary;
+    try {
+      executionRow = this.db.transaction(() => {
+        const row = this.insertExecution(
+          executionId,
+          delivery,
+          envelope,
+          "failed",
+          startedAt,
+          message,
+        );
+        this.insertInbox(delivery, "failed", { error: message });
+        this.markDeliveryConsumed(delivery);
+        return row;
+      })();
+    } catch (recordingError) {
+      // A failure while recording a failure (constraint violation, disk
+      // error) must not crash the caller with a raw, unlabeled exception
+      // and must not lose the original handler failure (`message`): the
+      // Delivery is left with `consumed_at` unset, unresolved — a loud,
+      // clearly labeled failure rather than a silent strand (no retry
+      // schedule exists yet — #17).
+      const recordingMessage =
+        recordingError instanceof Error ? recordingError.message : String(recordingError);
+      throw new EngineError(
+        "system.internal-error",
+        500,
+        `Recording the failed Execution for Delivery (project ${delivery.projectId}, module instance ${delivery.moduleInstanceId}, event ${delivery.eventId}) itself failed: ${recordingMessage}. Original handler failure: ${message}`,
+        {
+          projectId: delivery.projectId,
+          moduleInstanceId: delivery.moduleInstanceId,
+          eventId: delivery.eventId,
+          handlerError: message,
+          recordingError: recordingMessage,
+        },
+      );
+    }
+
+    return {
+      executionId,
+      status: "failed",
+      result: { error: message },
+      redelivered: false,
+      executionSummary: { ...executionRow, correlationId: envelope.correlationId },
+    };
+  }
+
+  private failAfterHandlerCommit(): void {
+    // Ticket #58 acceptance criterion 4: a declared boundary right after
+    // the handler's transaction commits and before this method acknowledges
+    // the Delivery to its caller. A subsequent redelivery finds Inbox.
+    if (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) {
+      failpoint("after-handler-commit");
+    }
+  }
+
+  private buildContext(
+    delivery: ClaimedDelivery,
+    envelope: EventEnvelope,
+    transactionOpen: () => boolean,
+    bufferedPublications: EventEnvelope[],
+  ): ModuleHandlerContext {
     return {
       projectId: delivery.projectId,
       moduleInstanceId: delivery.moduleInstanceId,
@@ -255,32 +370,87 @@ export class DeliveryConsumer {
       configuration: this.configurations(delivery.projectId, delivery.moduleInstanceId) ?? {},
       publish: (input) => {
         this.assertPublishedContract(delivery.moduleId, input);
-        return this.publisher.publish({
-          type: input.type,
-          version: input.version,
-          kind: input.kind,
-          // A handler cannot impersonate another Module Instance.
-          producer: {
-            moduleId: delivery.moduleId,
-            moduleInstanceId: delivery.moduleInstanceId,
-          },
-          subject: input.subject,
-          payload: input.payload,
-          projectId: delivery.projectId,
-          // Always the consumed event's own chain (acceptance criterion 6):
-          // a handler has no field to override either with.
-          correlationId: envelope.correlationId,
-          causationId: envelope.id,
-          // Conditionally spread rather than passed through directly: with
-          // `exactOptionalPropertyTypes`, an always-present `target: undefined`
-          // key is not assignable to `PublishEventInput`'s optional `target?`.
-          ...(input.repositoryId === undefined ? {} : { repositoryId: input.repositoryId }),
-          ...(input.target === undefined ? {} : { target: input.target }),
-          ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
-          ...(input.metadata === undefined ? {} : { metadata: { ...input.metadata } }),
-        });
+        const publication = this.publisherInput(delivery, envelope, input);
+        const prepared = this.previewPublication(publication, transactionOpen);
+        bufferedPublications.push(prepared);
+        return prepared;
       },
     };
+  }
+
+  private publisherInput(
+    delivery: ClaimedDelivery,
+    envelope: EventEnvelope,
+    input: ModuleHandlerPublishInput,
+  ): PublishEventInput {
+    return {
+      type: input.type,
+      version: input.version,
+      kind: input.kind,
+      // A handler cannot impersonate another Module Instance.
+      producer: {
+        moduleId: delivery.moduleId,
+        moduleInstanceId: delivery.moduleInstanceId,
+      },
+      subject: input.subject,
+      payload: input.payload,
+      projectId: delivery.projectId,
+      // Always the consumed event's own chain (acceptance criterion 6):
+      // a handler has no field to override either with.
+      correlationId: envelope.correlationId,
+      causationId: envelope.id,
+      // Conditionally spread rather than passed through directly: with
+      // `exactOptionalPropertyTypes`, an always-present `target: undefined`
+      // key is not assignable to `PublishEventInput`'s optional `target?`.
+      ...(input.repositoryId === undefined ? {} : { repositoryId: input.repositoryId }),
+      ...(input.target === undefined ? {} : { target: input.target }),
+      ...(input.idempotencyKey === undefined ? {} : { idempotencyKey: input.idempotencyKey }),
+      ...(input.metadata === undefined ? {} : { metadata: { ...input.metadata } }),
+    };
+  }
+
+  private previewPublication(
+    input: PublishEventInput,
+    transactionOpen: () => boolean,
+  ): EventEnvelope {
+    if (transactionOpen()) {
+      this.db.exec("SAVEPOINT jarvis_buffered_publication");
+      try {
+        return this.publisher.publish(input);
+      } finally {
+        this.db.exec("ROLLBACK TO jarvis_buffered_publication");
+        this.db.exec("RELEASE jarvis_buffered_publication");
+      }
+    }
+
+    let envelope: EventEnvelope | undefined;
+    const rollback = Symbol("buffered publication rollback");
+    try {
+      this.db.transaction(() => {
+        envelope = this.publisher.publish(input);
+        throw rollback;
+      })();
+    } catch (error) {
+      if (error !== rollback) throw error;
+    }
+    if (envelope === undefined) {
+      throw new Error("Buffered publication did not produce an event envelope.");
+    }
+    return envelope;
+  }
+
+  private insertBufferedPublication(envelope: EventEnvelope): void {
+    this.db
+      .prepare(
+        `INSERT INTO outbox (event_id, project_id, envelope, status, created_at)
+         VALUES (@id, @projectId, @envelope, 'pending', @createdAt)`,
+      )
+      .run({
+        id: envelope.id,
+        projectId: envelope.projectId,
+        envelope: JSON.stringify(envelope),
+        createdAt: this.clock.now().toISOString(),
+      });
   }
 
   private assertPublishedContract(moduleId: string, input: ModuleHandlerPublishInput): void {
@@ -393,4 +563,11 @@ export class DeliveryConsumer {
     }
     return JSON.parse(row.envelope) as EventEnvelope;
   }
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+    return false;
+  }
+  return typeof (value as { then?: unknown }).then === "function";
 }

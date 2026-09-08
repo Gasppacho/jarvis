@@ -37,7 +37,7 @@ export interface EventLoopDependencies {
  * consumed either way), so this loop never retries one — it only guarantees
  * that a Delivery nothing has consumed yet eventually is.
  */
-export function tickEventLoop(deps: EventLoopDependencies): void {
+export async function tickEventLoop(deps: EventLoopDependencies): Promise<void> {
   // Review fix for ticket #58: guarded the same way the per-delivery
   // `consume()` call below already is. A single malformed Outbox row (a bad
   // envelope `requireEnvelope` cannot parse) must not take the whole engine
@@ -72,7 +72,7 @@ export function tickEventLoop(deps: EventLoopDependencies): void {
 
   for (const delivery of listUnconsumedDeliveries(deps.db)) {
     try {
-      const outcome = deps.consumer.consume(delivery);
+      const outcome = await deps.consumer.consumeAsync(delivery);
       process.stderr.write(
         `jarvis-engine: delivery consumed project=${delivery.projectId} ` +
           `moduleInstance=${delivery.moduleInstanceId} event=${delivery.eventId} ` +
@@ -105,7 +105,20 @@ export function tickEventLoop(deps: EventLoopDependencies): void {
 
 /** Returns a function that stops the loop; call it before closing the database. */
 export function startEventLoop(deps: EventLoopDependencies, intervalMs = 200): () => void {
-  const timer = setInterval(() => tickEventLoop(deps), intervalMs);
+  let inFlight: Promise<void> | undefined;
+  const timer = setInterval(() => {
+    // An async handler must not be started twice while the previous tick is
+    // still waiting for it; the Delivery remains unconsumed until its one
+    // terminal transaction commits.
+    if (inFlight !== undefined) return;
+    inFlight = tickEventLoop(deps)
+      .catch((error: unknown) => {
+        process.stderr.write(`jarvis-engine: event loop tick failed: ${String(error)}\n`);
+      })
+      .finally(() => {
+        inFlight = undefined;
+      });
+  }, intervalMs);
   // Never keeps the process alive on its own — only `app.listen()` and open
   // connections do that, same as every other engine background timer.
   timer.unref();

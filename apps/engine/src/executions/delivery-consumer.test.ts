@@ -609,4 +609,95 @@ describe("DeliveryConsumer", () => {
         .get(consumed.id),
     ).toEqual({ consumed_at: null });
   });
+
+  it("awaits an async handler before committing its terminal records and buffers publications", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started = false;
+    const handler = async (context: ModuleHandlerContext) => {
+      started = true;
+      await gate;
+      context.publish({
+        type: SAMPLE_PROBE_PONGED.type,
+        version: SAMPLE_PROBE_PONGED.version,
+        kind: SAMPLE_PROBE_PONGED.kind,
+        subject: context.event.subject,
+        payload: { async: true },
+      });
+      return { accepted: true };
+    };
+    const { db: database, store, publisher, dispatcher, consumer } = harness(() => handler);
+    activate(store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+
+    const consumed = publisher.publish(pingInput("project-a"));
+    dispatcher.dispatchPending();
+    const delivery = {
+      projectId: "project-a",
+      moduleInstanceId: "probe-1",
+      moduleId: SAMPLE_PROBE_MODULE_ID,
+      eventId: consumed.id,
+    };
+    const pending = consumer.consume(delivery);
+
+    expect(started).toBe(true);
+    expect(
+      database.prepare("SELECT COUNT(*) AS n FROM executions").get(),
+    ).toEqual({ n: 0 });
+    expect(database.prepare("SELECT COUNT(*) AS n FROM outbox").get()).toEqual({ n: 1 });
+
+    release();
+    const outcome = await pending;
+
+    expect(outcome.status).toBe("completed");
+    expect(outcome.result).toEqual({ accepted: true });
+    expect(database.prepare("SELECT COUNT(*) AS n FROM executions").get()).toEqual({ n: 1 });
+    expect(database.prepare("SELECT COUNT(*) AS n FROM outbox").get()).toEqual({ n: 2 });
+  });
+
+  it("records an async rejection as failed without committing buffered publications", async () => {
+    const handler = async (context: ModuleHandlerContext) => {
+      context.publish({
+        type: SAMPLE_PROBE_PONGED.type,
+        version: SAMPLE_PROBE_PONGED.version,
+        kind: SAMPLE_PROBE_PONGED.kind,
+        subject: context.event.subject,
+        payload: { shouldNotPublish: true },
+      });
+      throw new Error("async deterministic failure");
+    };
+    const { db: database, store, publisher, dispatcher, consumer } = harness(() => handler);
+    activate(store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+
+    const consumed = publisher.publish(pingInput("project-a"));
+    dispatcher.dispatchPending();
+    const delivery = {
+      projectId: "project-a",
+      moduleInstanceId: "probe-1",
+      moduleId: SAMPLE_PROBE_MODULE_ID,
+      eventId: consumed.id,
+    };
+    const outcome = await consumer.consume(delivery);
+
+    expect(outcome.status).toBe("failed");
+    expect(outcome.result).toEqual({ error: "async deterministic failure" });
+    expect(database.prepare("SELECT COUNT(*) AS n FROM executions").get()).toEqual({ n: 1 });
+    expect(database.prepare("SELECT COUNT(*) AS n FROM outbox").get()).toEqual({ n: 1 });
+    expect(database.prepare("SELECT status, result FROM inbox").get()).toEqual({
+      status: "failed",
+      result: JSON.stringify({ error: "async deterministic failure" }),
+    });
+
+    const redelivered = consumer.consume(delivery);
+    expect(redelivered).toMatchObject({
+      redelivered: true,
+      status: "failed",
+      result: { error: "async deterministic failure" },
+    });
+  });
 });
