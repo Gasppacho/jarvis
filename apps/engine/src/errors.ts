@@ -17,6 +17,7 @@ export type ErrorCode =
   | "project.active"
   | "project.activation-not-validated"
   | "project.activation-report-stale"
+  | "project.capability-unresolved"
   | "execution.not-found"
   | "execution.not-cancellable"
   | "event.envelope-invalid"

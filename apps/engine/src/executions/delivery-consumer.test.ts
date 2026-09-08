@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Clock } from "../../../../packages/kernel/src/clock.js";
+import { FakeRuntime } from "../../../../packages/agent-runtime/src/index.js";
 import { EventEnvelopeContractRegistry } from "../../../../packages/eventing/src/envelope.js";
 import { deriveProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
 import type {
@@ -17,6 +18,7 @@ import { EventPublisher } from "../events/publisher.js";
 import { ControllableClock, DeterministicIdGenerator } from "../events/test-doubles.js";
 import {
   DeliveryConsumer,
+  type ModuleCapabilityLookup,
   type ModuleConfigurationLookup,
   type ModuleHandlerContext,
   type ModuleHandlerLookup,
@@ -134,6 +136,7 @@ function harness(
   handlers?: ModuleHandlerLookup,
   configurations?: ModuleConfigurationLookup,
   publishedContracts?: ModulePublishedContractsLookup,
+  capabilities?: ModuleCapabilityLookup,
 ): Harness {
   const clock = new ControllableClock(new Date("2026-09-06T08:00:00.000Z"));
   const ids = new DeterministicIdGenerator();
@@ -158,6 +161,7 @@ function harness(
     configurations,
     undefined,
     publishedContracts,
+    capabilities,
   );
   return { db: database, clock, ids, store, publisher, dispatcher, consumer };
 }
@@ -169,12 +173,15 @@ describe("DeliveryConsumer", () => {
       seen.push(context);
       return { accepted: true };
     };
+    const runtime = new FakeRuntime();
     const { store, publisher, dispatcher, consumer } = harness(
       () => handler,
       (projectId, moduleInstanceId) =>
         projectId === "project-a" && moduleInstanceId === "probe-1"
           ? { enabled: true, rules: [{ id: "rule-1" }] }
           : undefined,
+      undefined,
+      () => ({ agentRuntime: runtime }),
     );
     activate(store, "project-a", [
       { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
@@ -205,6 +212,7 @@ describe("DeliveryConsumer", () => {
       moduleInstanceId: "probe-1",
       event: { id: published.id },
       configuration: { enabled: true, rules: [{ id: "rule-1" }] },
+      capabilities: { agentRuntime: runtime },
     });
     expect(seen.find((context) => context.projectId === "project-b")).toMatchObject({
       projectId: "project-b",

@@ -1966,13 +1966,18 @@ capabilities:
           kind: "module-instance",
           capabilities: expect.arrayContaining(["scm.change-request.manage", "work-items.read"]),
         }),
+        expect.objectContaining({
+          ref: "runtime/fake-test",
+          kind: "runtime",
+          capabilities: ["agent.execute"],
+        }),
       ],
       slots: [
         expect.objectContaining({
           slotId: "agentRuntime",
           requiredCapabilities: ["agent.execute"],
-          candidates: [],
-          status: "incompatible",
+          candidates: [expect.objectContaining({ ref: "runtime/fake-test", kind: "runtime" })],
+          status: "available",
         }),
         expect.objectContaining({
           slotId: "sourceControl",
@@ -1996,16 +2001,24 @@ capabilities:
     // client decodes the response against) accept the shape without a cast.
     const resourceChoices = candidates as components["schemas"]["ProjectResourceChoices"];
     const sourceControl = resourceChoices.slots.find((slot) => slot.slotId === "sourceControl");
-    expect(sourceControl?.ineligibleGrantedResources).toEqual([
-      expect.objectContaining({
-        candidate: expect.objectContaining({ ref: "github", kind: "module-instance" }),
-        reason: expect.stringContaining("scm.change-request.manage"),
-      }),
-    ]);
-    // A Slot the "github" instance fully satisfies carries no such entry.
+    expect(sourceControl?.ineligibleGrantedResources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          candidate: expect.objectContaining({ ref: "github", kind: "module-instance" }),
+          reason: expect.stringContaining("scm.change-request.manage"),
+        }),
+      ]),
+    );
+    // A Slot the "github" instance fully satisfies still names the
+    // separately granted Fake Runtime as ineligible for that Slot.
     expect(
       resourceChoices.slots.find((slot) => slot.slotId === "tickets")?.ineligibleGrantedResources,
-    ).toBeUndefined();
+    ).toEqual([
+      expect.objectContaining({
+        candidate: expect.objectContaining({ ref: "runtime/fake-test", kind: "runtime" }),
+        reason: expect.stringContaining("work-items.read"),
+      }),
+    ]);
 
     const initial = (await (
       await engine.call(`/v1/projects/${created.id}/bindings`)

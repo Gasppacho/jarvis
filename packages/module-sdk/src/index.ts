@@ -4,8 +4,20 @@ import type {
   EventEnvelopeSubject,
   EventEnvelopeTarget,
 } from "../../eventing/src/envelope.js";
+import type { AgentRuntime } from "../../agent-runtime/src/index.js";
 
 export type ModuleConfiguration = Readonly<Record<string, unknown>>;
+
+/** Capabilities resolved for one Project and Module Instance only. */
+export interface ModuleHandlerCapabilities {
+  readonly agentRuntime?: AgentRuntime;
+}
+
+export type ModuleCapabilityLookup = (
+  projectId: string,
+  moduleInstanceId: string,
+  moduleId: string,
+) => ModuleHandlerCapabilities;
 
 export interface ModuleHandlerPublishInput {
   readonly type: string;
@@ -27,6 +39,7 @@ export interface ModuleHandlerContext {
   readonly event: EventEnvelope;
   readonly configuration: ModuleConfiguration;
   readonly signal: AbortSignal;
+  readonly capabilities: ModuleHandlerCapabilities;
   readonly publish: (input: ModuleHandlerPublishInput) => EventEnvelope;
 }
 

@@ -42,6 +42,7 @@ function context(
       event,
       configuration,
       signal: new AbortController().signal,
+      capabilities: {},
       publish: (input) => {
         published.push(input);
         return event;
@@ -311,6 +312,7 @@ describe("handleWorkItemTagAdded", () => {
         event,
         configuration: { rules },
         signal: new AbortController().signal,
+        capabilities: {},
         publish: (input) => {
           published.push(input);
           return event;

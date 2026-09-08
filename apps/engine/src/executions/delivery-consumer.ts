@@ -4,7 +4,9 @@ import type { IdGenerator } from "../../../../packages/kernel/src/id-generator.j
 import type { EventEnvelope } from "../../../../packages/eventing/src/envelope.js";
 import type {
   ModuleConfigurationLookup,
+  ModuleCapabilityLookup,
   ModuleHandlerContext,
+  ModuleHandlerCapabilities,
   ModuleHandlerLookup,
   ModuleHandlerPublishInput,
   ModuleRepositoryDefaultBranchLookup,
@@ -40,6 +42,8 @@ declare const __JARVIS_TEST_HOOKS__: boolean | undefined;
 /** The Module SDK handler contract is shared with real Module Packages. */
 export type {
   ModuleConfiguration,
+  ModuleCapabilityLookup,
+  ModuleHandlerCapabilities,
   ModuleConfigurationLookup,
   ModuleHandler,
   ModuleHandlerContext,
@@ -118,6 +122,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     private readonly configurations: ModuleConfigurationLookup = () => ({}),
     private readonly repositoryDefaultBranches: ModuleRepositoryDefaultBranchLookup = () => "main",
     private readonly publishedContracts: ModulePublishedContractsLookup = () => undefined,
+    private readonly capabilities: ModuleCapabilityLookup = () => ({}),
   ) {}
 
   public cancelExecution(executionId: unknown): LedgerExecutionSummary {
@@ -237,6 +242,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
             () => transactionOpen,
             bufferedPublications,
             controller.signal,
+            this.capabilities(delivery.projectId, delivery.moduleInstanceId, delivery.moduleId),
           ),
         );
         if (isPromiseLike(handlerResult)) {
@@ -431,10 +437,12 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
       );
     }
 
+    const result =
+      error instanceof EngineError ? { error: { code: error.code, message } } : { error: message };
     return {
       executionId,
       status: "failed",
-      result: { error: message },
+      result,
       redelivered: false,
       executionSummary: { ...executionRow, correlationId: envelope.correlationId },
     };
@@ -480,6 +488,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     transactionOpen: () => boolean,
     bufferedPublications: EventEnvelope[],
     signal: AbortSignal,
+    capabilities: ModuleHandlerCapabilities,
   ): ModuleHandlerContext {
     return {
       projectId: delivery.projectId,
@@ -492,6 +501,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
       event: envelope,
       configuration: this.configurations(delivery.projectId, delivery.moduleInstanceId) ?? {},
       signal,
+      capabilities,
       publish: (input) => {
         this.assertPublishedContract(delivery.moduleId, input);
         const publication = this.publisherInput(delivery, envelope, input);

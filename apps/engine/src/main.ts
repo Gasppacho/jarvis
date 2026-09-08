@@ -26,8 +26,9 @@ import { LocalRepositoryAccessibility } from "./projects/repository-accessibilit
 import { ProjectService, RepositoryDiscoveryService } from "./projects/service.js";
 import { EventJournalReader } from "./events/timeline.js";
 import { ExecutionLedgerReader } from "./executions/ledger.js";
-import { EmptyProjectResourceGrants } from "./projects/resource-grants.js";
+import { LocalAgentRuntimeRegistry } from "./projects/resource-grants.js";
 import { ProjectStore } from "./projects/store.js";
+import { ProjectModuleCapabilityResolver } from "./executions/capabilities.js";
 import { loadBundledModuleHost } from "./modules/bundled-module-registry.js";
 import { EventPublisher } from "./events/publisher.js";
 import {
@@ -219,7 +220,7 @@ async function main(): Promise<void> {
   }
   const database = opened;
   const repositoryDiscovery = new RepositoryDiscoveryService();
-  const resourceGrants = new EmptyProjectResourceGrants();
+  const resourceGrants = new LocalAgentRuntimeRegistry();
   const projectStore =
     database === undefined ? undefined : new ProjectStore(database.db, new SystemClock());
   const projects =
@@ -394,6 +395,7 @@ async function main(): Promise<void> {
       return undefined;
     };
     if (fixtures !== undefined) fixtures.createSampleProbeSchema(database.db);
+    const capabilities = new ProjectModuleCapabilityResolver(projectStore, modules, resourceGrants);
     const consumer = new DeliveryConsumer(
       database.db,
       clock,
@@ -403,6 +405,7 @@ async function main(): Promise<void> {
       configurations,
       repositoryDefaultBranches,
       publishedContracts,
+      capabilities.resolve.bind(capabilities),
     );
     executionCancellation = consumer;
     stopEventLoop = startEventLoop({ db: database.db, dispatcher, consumer, liveUpdates });
