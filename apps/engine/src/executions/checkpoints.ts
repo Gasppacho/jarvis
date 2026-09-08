@@ -85,9 +85,7 @@ export class ExecutionCheckpointStore {
         )
         .get(input) as { sequence: number };
       const payload =
-        input.type === "agent.started"
-          ? {}
-          : { message: sanitizeCheckpointMessage(input.message) };
+        input.type === "agent.started" ? {} : { message: sanitizeCheckpointMessage(input.message) };
       this.db
         .prepare(
           `INSERT INTO execution_checkpoints
