@@ -240,6 +240,10 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
 
     try {
       const transactionResult = this.db.transaction(() => {
+        // Create the running Ledger row before invoking the handler so a
+        // synchronous Module can record durable checkpoints too. Async
+        // handlers use the same row after this transaction commits.
+        this.insertExecution(executionId, delivery, envelope, "running", startedAt, null);
         const handlerResult = handler(
           this.buildContext(
             delivery,
@@ -257,7 +261,6 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
           // commits; it is awaited only after the commit, then terminal
           // records are written in a new short transaction.
           promiseResult = handlerResult;
-          this.insertExecution(executionId, delivery, envelope, "running", startedAt, null);
           return undefined;
         }
 
@@ -367,14 +370,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
       failpoint("before-handler-commit");
     }
 
-    const executionRow = this.insertExecution(
-      executionId,
-      delivery,
-      envelope,
-      "completed",
-      startedAt,
-      null,
-    );
+    const executionRow = this.updateExecution(executionId, "completed", null);
     this.insertInbox(delivery, "completed", handlerResult);
     this.markDeliveryConsumed(delivery);
     return { handlerResult, executionRow };

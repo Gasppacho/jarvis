@@ -18,9 +18,6 @@ CREATE TABLE execution_checkpoints (
     REFERENCES executions (id, project_id) ON DELETE CASCADE
 ) STRICT;
 
-CREATE INDEX execution_checkpoints_project_execution_sequence
-  ON execution_checkpoints (project_id, execution_id, sequence);
-
 CREATE UNIQUE INDEX execution_checkpoints_agent_started_once
   ON execution_checkpoints (project_id, execution_id)
   WHERE type = 'agent.started';

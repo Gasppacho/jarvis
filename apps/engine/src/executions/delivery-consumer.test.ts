@@ -523,7 +523,7 @@ describe("DeliveryConsumer", () => {
   });
 
   it("a failure while recording a handler failure surfaces as a labeled EngineError instead of the raw constraint error, and does not lose the original handler failure", () => {
-    const { db: database, ids, store, publisher, dispatcher, consumer } = harness();
+    const { db: database, store, publisher, dispatcher, consumer } = harness();
     activate(store, "project-a", [
       { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
     ]);
@@ -533,21 +533,13 @@ describe("DeliveryConsumer", () => {
     )();
     dispatcher.dispatchPending();
 
-    // Predict the executionId the next `consume()` call will mint (the
-    // shared DeterministicIdGenerator is a plain counter — see
-    // events/test-doubles.ts) and plant a row under that same id so the
-    // failure-recording transaction's own INSERT INTO executions hits a
-    // primary-key collision instead of the handler's real failure.
-    const peeked = ids.next();
-    const nextCounter = Number(peeked.slice(4)) + 1;
-    const collidingExecutionId = `exec_test${String(nextCounter).padStart(6, "0")}`;
-    database
-      .prepare(
-        `INSERT INTO executions
-           (id, project_id, module_instance_id, module_id, input_event_id, attempt, status, started_at, created_at)
-         VALUES (?, 'project-a', 'probe-1', ?, ?, 1, 'completed', '2026-09-06T08:00:00.000Z', '2026-09-06T08:00:00.000Z')`,
-      )
-      .run(collidingExecutionId, SAMPLE_PROBE_MODULE_ID, consumed.id);
+    // Make only the failure-recording transaction fail. The handler still
+    // runs and fails first, so the original handler error must survive the
+    // wrapper without relying on an Execution collision before invocation.
+    database.exec(
+      "CREATE TRIGGER fail_inbox_recording BEFORE INSERT ON inbox " +
+        "WHEN NEW.status = 'failed' BEGIN SELECT RAISE(ABORT, 'deterministic inbox recording failure'); END",
+    );
 
     const delivery = {
       projectId: "project-a",
@@ -662,6 +654,38 @@ describe("DeliveryConsumer", () => {
     expect(outcome.result).toEqual({ accepted: true });
     expect(database.prepare("SELECT COUNT(*) AS n FROM executions").get()).toEqual({ n: 1 });
     expect(database.prepare("SELECT COUNT(*) AS n FROM outbox").get()).toEqual({ n: 2 });
+  });
+
+  it("lets a synchronous handler record a checkpoint before its Ledger row is terminal", () => {
+    const handler = (context: ModuleHandlerContext) => {
+      context.recordCheckpoint({
+        type: "agent.started",
+        sequence: 1,
+        timestamp: "2026-09-06T08:00:00.000Z",
+      });
+      return { accepted: true };
+    };
+    const { db: database, store, publisher, dispatcher, consumer } = harness(() => handler);
+    activate(store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+
+    const consumed = publisher.publish(pingInput("project-a"));
+    dispatcher.dispatchPending();
+    const outcome = consumer.consume({
+      projectId: "project-a",
+      moduleInstanceId: "probe-1",
+      moduleId: SAMPLE_PROBE_MODULE_ID,
+      eventId: consumed.id,
+    });
+
+    expect(outcome.status).toBe("completed");
+    expect(database.prepare("SELECT status FROM executions").get()).toEqual({
+      status: "completed",
+    });
+    expect(database.prepare("SELECT type, sequence FROM execution_checkpoints").all()).toEqual([
+      { type: "agent.started", sequence: 1 },
+    ]);
   });
 
   it("records an async rejection as failed without committing buffered publications", async () => {

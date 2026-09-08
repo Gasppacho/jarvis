@@ -84,7 +84,10 @@ export class ExecutionCheckpointStore {
            WHERE project_id = @projectId AND execution_id = @executionId`,
         )
         .get(input) as { sequence: number };
-      const payload = input.type === "agent.started" ? {} : { message: input.message };
+      const payload =
+        input.type === "agent.started"
+          ? {}
+          : { message: sanitizeCheckpointMessage(input.message) };
       this.db
         .prepare(
           `INSERT INTO execution_checkpoints
@@ -139,6 +142,16 @@ function validateInput(input: ExecutionCheckpointInput): void {
   if (input.type === "agent.message" && typeof input.message !== "string") {
     throw new Error("Agent message checkpoint content is invalid.");
   }
+}
+
+function sanitizeCheckpointMessage(message: string): string {
+  return message
+    .replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, "$1<redacted>@")
+    .replace(
+      /((?:token|secret|password|passwd|authorization|credential|api[_-]?key)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      "$1<redacted>",
+    )
+    .replace(/(?:\/Users|\/home|\/private\/var)\/[^\s"'`<>]+/g, "<path>");
 }
 
 function toCheckpoint(row: ExecutionCheckpointRow): ExecutionCheckpoint {

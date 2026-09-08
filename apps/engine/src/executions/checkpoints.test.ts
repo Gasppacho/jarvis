@@ -88,6 +88,24 @@ describe("ExecutionCheckpointStore", () => {
     expect(repeated).toEqual(first);
     expect(store.list("project-a", "execution-a")).toHaveLength(1);
   });
+
+  it("redacts secrets and personal absolute paths before persistence", () => {
+    db = seedDatabase();
+    const store = new ExecutionCheckpointStore(db);
+
+    store.record({
+      projectId: "project-a",
+      executionId: "execution-a",
+      type: "agent.message",
+      sourceSequence: 1,
+      occurredAt: "2026-09-08T21:00:00.000Z",
+      message: "token=super-secret cwd=/Users/quentin/private/repo",
+    });
+
+    expect(store.list("project-a", "execution-a")[0]?.payload).toEqual({
+      message: "token=<redacted> cwd=<path>",
+    });
+  });
 });
 
 function seedDatabase(): Database.Database {

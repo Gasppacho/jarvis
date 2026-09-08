@@ -52,9 +52,6 @@ function expectSchema(database: Database.Database): void {
     )
     .all() as { name: string }[];
   expect(indexes.map((index) => index.name)).toEqual(
-    expect.arrayContaining([
-      "execution_checkpoints_project_execution_sequence",
-      "execution_checkpoints_agent_started_once",
-    ]),
+    expect.arrayContaining(["execution_checkpoints_agent_started_once"]),
   );
 }
