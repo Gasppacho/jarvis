@@ -48,7 +48,7 @@ describe("WorkspaceManager allocation", () => {
     const executionId = "exec-69";
     const project: WorkspaceProjectConfiguration = {
       git: { branchPattern: "agent/{workItemId}-{slug}" },
-      workspace: { retainOnFailureDays: 7 },
+      workspace: { maxConcurrentExecutions: 1, retainOnFailureDays: 7 },
     };
     database
       .prepare(
@@ -167,6 +167,148 @@ describe("WorkspaceManager allocation", () => {
     expect(allocation.lease).toEqual(lease);
   });
 
+  it("returns the existing workspace when the same execution allocates twice", async () => {
+    const harness = makeHarness();
+
+    const first = await harness.manager.allocate(harness.input);
+    const second = await harness.manager.allocate(harness.input);
+
+    expect(second).toEqual(first);
+    expect(harness.leases.listActive(harness.input.projectId)).toEqual([first.lease]);
+    expect(repositoryWorktreeCount(harness.fixture.root)).toBe(2);
+  });
+
+  it("uses the durable branch lease to elect one winner for concurrent allocations", async () => {
+    const harness = makeHarness({
+      project: {
+        git: { branchPattern: "agent/{workItemId}" },
+        workspace: { maxConcurrentExecutions: 2, retainOnFailureDays: 7 },
+      },
+    });
+    const inputs = [
+      {
+        ...harness.input,
+        executionId: "exec-71-a",
+        branchContext: { workItemId: "71", slug: "same-branch" },
+      },
+      {
+        ...harness.input,
+        executionId: "exec-71-b",
+        branchContext: { workItemId: "71", slug: "same-branch" },
+      },
+    ];
+
+    const outcomes = await Promise.all(
+      inputs.map(async (input) => {
+        try {
+          return { input, allocation: await harness.manager.allocate(input) } as const;
+        } catch (error: unknown) {
+          return { input, error } as const;
+        }
+      }),
+    );
+    const winner = outcomes.find((outcome) => "allocation" in outcome);
+    const loser = outcomes.find((outcome) => "error" in outcome);
+
+    expect(winner).toBeDefined();
+    expect(loser).toBeDefined();
+    if (winner === undefined || loser === undefined || !("allocation" in winner)) {
+      throw new Error("expected one successful concurrent allocation");
+    }
+    if (!("error" in loser)) throw new Error("expected one rejected concurrent allocation");
+
+    expect(loser.error).toMatchObject({
+      code: "workspace.branch-conflict",
+      failureClass: "workspace",
+      retryable: false,
+    });
+    const loserExecutionId = loser.input.executionId;
+    expect(
+      harness.leases.findByExecution(harness.input.projectId, loserExecutionId),
+    ).toBeUndefined();
+    expect(
+      existsSync(
+        join(
+          realpathSync(harness.dataRoot),
+          "projects",
+          harness.input.projectId,
+          "workspaces",
+          loserExecutionId,
+        ),
+      ),
+    ).toBe(false);
+    expect(harness.leases.listActive(harness.input.projectId)).toEqual([winner.allocation.lease]);
+    expect(repositoryWorktreeCount(harness.fixture.root)).toBe(2);
+  });
+
+  it("refuses allocations over the project limit and reuses a slot after release", async () => {
+    const harness = makeHarness({
+      project: {
+        git: { branchPattern: "agent/{workItemId}-{slug}" },
+        workspace: { maxConcurrentExecutions: 1, retainOnFailureDays: 7 },
+      },
+    });
+    const first = await harness.manager.allocate(harness.input);
+    const secondInput = {
+      ...harness.input,
+      executionId: "exec-71-second",
+      branchContext: { workItemId: "71", slug: "second" },
+    };
+
+    const error = await expectWorkspaceFailure(
+      harness,
+      { code: "workspace.concurrency-limit", retryable: false },
+      secondInput,
+    );
+
+    expect(error.message).toContain("1");
+    expect(error.details).toMatchObject({ maxConcurrentExecutions: 1 });
+    expect(harness.leases.findByExecution(harness.input.projectId, secondInput.executionId)).toBe(
+      undefined,
+    );
+    expect(
+      existsSync(
+        join(
+          realpathSync(harness.dataRoot),
+          "projects",
+          harness.input.projectId,
+          "workspaces",
+          secondInput.executionId,
+        ),
+      ),
+    ).toBe(false);
+
+    expect(harness.leases.release(harness.input.projectId, first.lease.id)).toMatchObject({
+      status: "released",
+    });
+    await expect(harness.manager.allocate(secondInput)).resolves.toMatchObject({
+      workingBranch: "agent/71-second",
+    });
+  });
+
+  it("counts active workspace leases independently for each project", async () => {
+    const harness = makeHarness({
+      project: {
+        git: { branchPattern: "agent/{workItemId}-{slug}" },
+        workspace: { maxConcurrentExecutions: 1, retainOnFailureDays: 7 },
+      },
+    });
+    await harness.manager.allocate(harness.input);
+    const otherProjectId = "project-71-other";
+    seedProject(harness.database, otherProjectId, harness.project);
+
+    const otherAllocation = await harness.manager.allocate({
+      ...harness.input,
+      projectId: otherProjectId,
+      executionId: "exec-71-other",
+      branchContext: { workItemId: "71-other", slug: "separate-project" },
+    });
+
+    expect(otherAllocation.lease.projectId).toBe(otherProjectId);
+    expect(harness.leases.listActive(harness.input.projectId)).toHaveLength(1);
+    expect(harness.leases.listActive(otherProjectId)).toHaveLength(1);
+  });
+
   it("refuses an unknown base revision before creating workspace state", async () => {
     const harness = makeHarness();
     const before = repositoryState(harness.fixture.root);
@@ -262,7 +404,7 @@ describe("WorkspaceManager allocation", () => {
     const harness = makeHarness({
       project: {
         git: { branchPattern: "../outside/{workItemId}" },
-        workspace: { retainOnFailureDays: 7 },
+        workspace: { maxConcurrentExecutions: 1, retainOnFailureDays: 7 },
       },
     });
 
@@ -313,7 +455,7 @@ describe("WorkspaceManager allocation", () => {
     expect(existsSync(harness.expectedPath)).toBe(false);
   });
 
-  it("rolls back Git state when the lease cannot be committed", async () => {
+  it("refuses a branch already claimed by a durable lease before touching Git", async () => {
     const harness = makeHarness();
     const existingLease = harness.leases.create({
       projectId: harness.input.projectId,
@@ -328,7 +470,7 @@ describe("WorkspaceManager allocation", () => {
     const before = repositoryState(harness.fixture.root);
 
     await expectWorkspaceFailure(harness, {
-      code: "workspace.allocation-failed",
+      code: "workspace.branch-conflict",
       retryable: false,
     });
 
@@ -346,6 +488,7 @@ describe("WorkspaceManager allocation", () => {
 interface AllocationHarness {
   readonly fixture: ReturnType<typeof makeRealGitRepositoryFixture>;
   readonly dataRoot: string;
+  readonly database: Database.Database;
   readonly leases: WorkspaceLeaseRepository;
   readonly manager: WorkspaceManager;
   readonly input: AllocateWorkspaceInput;
@@ -358,6 +501,8 @@ function makeHarness(
   options: {
     readonly project?: WorkspaceProjectConfiguration;
     readonly gitExecutable?: string;
+    readonly projectId?: string;
+    readonly executionId?: string;
   } = {},
 ): AllocationHarness {
   const fixture = makeRealGitRepositoryFixture();
@@ -369,13 +514,13 @@ function makeHarness(
   database.pragma("foreign_keys = ON");
   applyMigrations(database);
 
-  const projectId = "project-70";
-  const executionId = "exec-70";
+  const projectId = options.projectId ?? "project-70";
+  const executionId = options.executionId ?? "exec-70";
   const project =
     options.project ??
     ({
       git: { branchPattern: "agent/{workItemId}-{slug}" },
-      workspace: { retainOnFailureDays: 7 },
+      workspace: { maxConcurrentExecutions: 1, retainOnFailureDays: 7 },
     } satisfies WorkspaceProjectConfiguration);
   database
     .prepare(
@@ -409,6 +554,7 @@ function makeHarness(
   return {
     fixture,
     dataRoot,
+    database,
     leases,
     manager,
     input,
@@ -456,4 +602,31 @@ function repositoryState(root: string): Record<string, string> {
       encoding: "utf8",
     }),
   };
+}
+
+function repositoryWorktreeCount(root: string): number {
+  return (
+    execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: root,
+      encoding: "utf8",
+    }).match(/^worktree /gm) ?? []
+  ).length;
+}
+
+function seedProject(
+  database: Database.Database,
+  projectId: string,
+  project: WorkspaceProjectConfiguration,
+): void {
+  database
+    .prepare(
+      `INSERT INTO projects (id, name, status, portable_config, created_at, updated_at)
+       VALUES (@id, @name, 'active', @config, @now, @now)`,
+    )
+    .run({
+      id: projectId,
+      name: projectId,
+      config: JSON.stringify(project),
+      now: "2026-09-08T10:00:00.000Z",
+    });
 }

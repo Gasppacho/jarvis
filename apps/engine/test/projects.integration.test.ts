@@ -2565,8 +2565,9 @@ capabilities:
         // Activation only ever writes projects, project_bindings and the Resolved
         // Project table; the Eventing tables ticket #56 adds (deliveries,
         // events, outbox) and the Inbox/Execution Ledger tables ticket #57
-        // adds (inbox, executions) exist but stay empty — activation alone
-        // never inserts a row into any of them.
+        // adds (inbox, executions), and the Workspace table ticket #68 adds
+        // (workspace_leases) exist but stay empty — activation alone never
+        // inserts a row into any of them.
         expect(tableNames(dataRoot)).toEqual([
           "deliveries",
           "engine_metadata",
@@ -2578,6 +2579,7 @@ capabilities:
           "project_resolved_compositions",
           "projects",
           "schema_migrations",
+          "workspace_leases",
         ]);
       } finally {
         await rm(dataRoot, { recursive: true, force: true });
@@ -2800,6 +2802,7 @@ capabilities:
             "project_resolved_compositions",
             "projects",
             "schema_migrations",
+            "workspace_leases",
           ]);
         } finally {
           await rm(dataRoot, { recursive: true, force: true });

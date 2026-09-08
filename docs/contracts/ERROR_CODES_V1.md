@@ -56,6 +56,8 @@ Errors crossing the Local API or stored as terminal Execution errors use stable 
 | Code | Retryable | Meaning |
 |---|---:|---|
 | `workspace.allocation-failed` | Maybe | Worktree/lease could not be created |
+| `workspace.branch-conflict` | No | The requested repository branch already has an active workspace lease |
+| `workspace.concurrency-limit` | No | The Project already uses its configured maximum of concurrent workspaces |
 | `workspace.path-violation` | No | Operation attempted to escape allowed workspace |
 | `git.base-not-found` | No | Configured base branch/revision is absent |
 | `git.no-changes` | No | Agent produced no committable change |
