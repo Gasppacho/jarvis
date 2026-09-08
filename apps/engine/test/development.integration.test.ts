@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { startEngine, type Harness } from "./harness.js";
+import { ExecutionCheckpointStore } from "../src/executions/checkpoints.js";
 import {
   makeRealGitRepositoryFixture,
   type RealGitRepositoryFixture,
@@ -112,6 +113,71 @@ describe("Development Module tracer bullet", () => {
     expect(developmentRuns).toHaveLength(2);
     expect(repositoryState(fixture.root)).toEqual(before);
     expect(secondFact).not.toBe(firstFact);
+  });
+
+  it("durably records ordered agent checkpoints across a dropped stream and restart", async () => {
+    const fixture = makeRealGitRepositoryFixture();
+    roots.push(fixture.root);
+    const dataRoot = mkdtempSync(join("/tmp", "jarvis-agent-checkpoints-"));
+    roots.push(dataRoot);
+    const projectId = "development-checkpoints";
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
+    });
+    engines.push(engine);
+
+    await activateProject(engine, projectId, fixture);
+    const liveStream = engine.openStream();
+    liveStream.close();
+    await publishTag(engine, projectId, "checkpointed");
+    const executions = await waitForExecutions(engine, projectId, 2);
+    const developmentExecution = executions.find(
+      (execution) => execution.moduleInstanceId === "development",
+    );
+    expect(developmentExecution).toBeDefined();
+
+    const trackedEngine = engines.indexOf(engine);
+    if (trackedEngine >= 0) engines.splice(trackedEngine, 1);
+    await engine.dispose();
+
+    const restarted = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
+    });
+    engines.push(restarted);
+
+    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
+    try {
+      const checkpoints = new ExecutionCheckpointStore(database).list(
+        projectId,
+        developmentExecution!.id,
+      );
+      expect(checkpoints.map((checkpoint) => checkpoint.type)).toEqual([
+        "agent.started",
+        "agent.message",
+      ]);
+      expect(checkpoints.map((checkpoint) => checkpoint.sequence)).toEqual([1, 2]);
+      expect(checkpoints.map((checkpoint) => checkpoint.sourceSequence)).toEqual([1, 2]);
+      expect(checkpoints[1]?.payload).toEqual({
+        message: "Fake Runtime applied deterministic change.",
+      });
+      expect(JSON.stringify(checkpoints)).not.toContain(fixture.root);
+      expect(JSON.stringify(checkpoints)).not.toMatch(/\/(?:Users|home|private\/var)\//);
+
+      expect(
+        database
+          .prepare(
+            `SELECT COUNT(*) AS count FROM outbox
+             WHERE json_extract(envelope, '$.type') IN ('agent.started', 'agent.message')`,
+          )
+          .get(),
+      ).toEqual({ count: 0 });
+    } finally {
+      database.close();
+    }
   });
 });
 

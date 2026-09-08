@@ -44,6 +44,19 @@ export interface ModuleWorkspace {
   }): Promise<void>;
 }
 
+export type ModuleExecutionCheckpoint =
+  | {
+      readonly type: "agent.started";
+      readonly sequence: number;
+      readonly timestamp: string;
+    }
+  | {
+      readonly type: "agent.message";
+      readonly sequence: number;
+      readonly timestamp: string;
+      readonly message: string;
+    };
+
 export interface ModuleHandlerPublishInput {
   readonly type: string;
   readonly version: number;
@@ -66,6 +79,7 @@ export interface ModuleHandlerContext {
   readonly configuration: ModuleConfiguration;
   readonly signal: AbortSignal;
   readonly capabilities: ModuleHandlerCapabilities;
+  readonly recordCheckpoint: (checkpoint: ModuleExecutionCheckpoint) => void;
   readonly publish: (input: ModuleHandlerPublishInput) => EventEnvelope;
 }
 

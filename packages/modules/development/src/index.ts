@@ -84,9 +84,21 @@ export const handleImplementationRequested: ModuleHandler = async (
       secretValues: processSecretValues(),
     });
     run = await runtime.start(agentRequest, ctx.signal);
-    for await (const _event of run.events()) {
-      // Progress persistence is ticket #83; consuming the stream here ensures
-      // the terminal result is not observed before the child streams drain.
+    for await (const event of run.events()) {
+      if (event.type === "started") {
+        ctx.recordCheckpoint({
+          type: "agent.started",
+          sequence: event.sequence,
+          timestamp: event.timestamp,
+        });
+      } else if (event.type === "message" && event.message !== undefined) {
+        ctx.recordCheckpoint({
+          type: "agent.message",
+          sequence: event.sequence,
+          timestamp: event.timestamp,
+          message: event.message,
+        });
+      }
     }
     const result = await run.result();
     const changedFiles = await verifyChangedFiles(allocation.path, result.changedFiles);

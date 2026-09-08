@@ -2577,14 +2577,15 @@ capabilities:
         expect(resolvedCompositionRows(dataRoot, other.id)).toHaveLength(0);
         // Activation only ever writes projects, project_bindings and the Resolved
         // Project table; the Eventing tables ticket #56 adds (deliveries,
-        // events, outbox) and the Inbox/Execution Ledger tables ticket #57
-        // adds (inbox, executions), and the Workspace table ticket #68 adds
-        // (workspace_leases) exist but stay empty — activation alone never
-        // inserts a row into any of them.
+        // events, outbox), the Inbox/Execution Ledger tables ticket #57 adds
+        // (inbox, executions, execution_checkpoints), and the Workspace table
+        // ticket #68 adds (workspace_leases) exist but stay empty — activation
+        // alone never inserts a row into any of them.
         expect(tableNames(dataRoot)).toEqual([
           "deliveries",
           "engine_metadata",
           "events",
+          "execution_checkpoints",
           "executions",
           "inbox",
           "outbox",
@@ -2808,6 +2809,7 @@ capabilities:
             "deliveries",
             "engine_metadata",
             "events",
+            "execution_checkpoints",
             "executions",
             "inbox",
             "outbox",

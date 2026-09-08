@@ -20,6 +20,7 @@ export type ModulePublishedContractsLookup = (
 import { EventPublisher, type PublishEventInput } from "../events/publisher.js";
 import { EngineError } from "../errors.js";
 import { failpoint } from "../test-support/failpoint.js";
+import { ExecutionCheckpointStore } from "./checkpoints.js";
 import { STATUS_TO_API, type LedgerExecutionSummary } from "./ledger.js";
 
 /** See apps/engine/src/events/dispatcher.ts's identical declaration for why
@@ -112,6 +113,7 @@ interface ExecutionRow {
  */
 export class DeliveryConsumer implements ExecutionCancellationPort {
   private readonly activeExecutions = new Map<string, ActiveExecution>();
+  private readonly checkpointStore: ExecutionCheckpointStore;
 
   public constructor(
     private readonly db: Database.Database,
@@ -123,7 +125,10 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     private readonly repositoryDefaultBranches: ModuleRepositoryDefaultBranchLookup = () => "main",
     private readonly publishedContracts: ModulePublishedContractsLookup = () => undefined,
     private readonly capabilities: ModuleCapabilityLookup = () => ({}),
-  ) {}
+    checkpointStore?: ExecutionCheckpointStore,
+  ) {
+    this.checkpointStore = checkpointStore ?? new ExecutionCheckpointStore(db);
+  }
 
   public cancelExecution(executionId: unknown): LedgerExecutionSummary {
     if (typeof executionId !== "string" || executionId.length === 0) {
@@ -235,6 +240,10 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
 
     try {
       const transactionResult = this.db.transaction(() => {
+        // Create the running Ledger row before invoking the handler so a
+        // synchronous Module can record durable checkpoints too. Async
+        // handlers use the same row after this transaction commits.
+        this.insertExecution(executionId, delivery, envelope, "running", startedAt, null);
         const handlerResult = handler(
           this.buildContext(
             delivery,
@@ -252,7 +261,6 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
           // commits; it is awaited only after the commit, then terminal
           // records are written in a new short transaction.
           promiseResult = handlerResult;
-          this.insertExecution(executionId, delivery, envelope, "running", startedAt, null);
           return undefined;
         }
 
@@ -362,14 +370,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
       failpoint("before-handler-commit");
     }
 
-    const executionRow = this.insertExecution(
-      executionId,
-      delivery,
-      envelope,
-      "completed",
-      startedAt,
-      null,
-    );
+    const executionRow = this.updateExecution(executionId, "completed", null);
     this.insertInbox(delivery, "completed", handlerResult);
     this.markDeliveryConsumed(delivery);
     return { handlerResult, executionRow };
@@ -505,6 +506,26 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
       configuration: this.configurations(delivery.projectId, delivery.moduleInstanceId) ?? {},
       signal,
       capabilities,
+      recordCheckpoint: (checkpoint) => {
+        if (checkpoint.type === "agent.message") {
+          this.checkpointStore.record({
+            projectId: delivery.projectId,
+            executionId,
+            type: checkpoint.type,
+            sourceSequence: checkpoint.sequence,
+            occurredAt: checkpoint.timestamp,
+            message: checkpoint.message,
+          });
+          return;
+        }
+        this.checkpointStore.record({
+          projectId: delivery.projectId,
+          executionId,
+          type: checkpoint.type,
+          sourceSequence: checkpoint.sequence,
+          occurredAt: checkpoint.timestamp,
+        });
+      },
       publish: (input) => {
         this.assertPublishedContract(delivery.moduleId, input);
         const publication = this.publisherInput(delivery, envelope, input);
