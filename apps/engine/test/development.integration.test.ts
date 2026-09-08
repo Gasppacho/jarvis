@@ -239,6 +239,86 @@ describe("Development Module tracer bullet", () => {
       database.close();
     }
   });
+
+  it("records a timed-out runtime distinctly and retains its workspace", async () => {
+    const fixture = makeRealGitRepositoryFixture();
+    roots.push(fixture.root);
+    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-timeout-"));
+    roots.push(dataRoot);
+    const projectId = "development-timeout";
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: { JARVIS_ENABLE_TEST_HOOKS: "1", JARVIS_FAKE_SCENARIO: "ignore-terminate" },
+    });
+    engines.push(engine);
+
+    await activateProject(engine, projectId, fixture, true, 100);
+    await publishTag(engine, projectId, "timed-out");
+    const timedOut = await waitForExecution(engine, projectId, "development", "timed-out");
+    const workspacePath = join(dataRoot, "projects", projectId, "workspaces", timedOut.id);
+
+    expect(existsSync(workspacePath)).toBe(true);
+    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
+    try {
+      expect(
+        database.prepare("SELECT status FROM executions WHERE id = ?").get(timedOut.id),
+      ).toEqual({
+        status: "timed_out",
+      });
+      expect(
+        database.prepare("SELECT status FROM inbox WHERE module_instance_id = 'development'").get(),
+      ).toEqual({
+        status: "timed_out",
+      });
+      expect(
+        database
+          .prepare(
+            `SELECT COUNT(*) AS count FROM workspace_leases
+             WHERE project_id = ? AND status = 'active'`,
+          )
+          .get(projectId),
+      ).toEqual({ count: 0 });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("keeps the run successful when raw output exceeds its capture limit", async () => {
+    const fixture = makeRealGitRepositoryFixture();
+    roots.push(fixture.root);
+    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-output-limit-"));
+    roots.push(dataRoot);
+    const projectId = "development-output-limit";
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: { JARVIS_ENABLE_TEST_HOOKS: "1", JARVIS_FAKE_SCENARIO: "oversized" },
+    });
+    engines.push(engine);
+
+    await activateProject(engine, projectId, fixture, true, 300_000, 1_024);
+    await publishTag(engine, projectId, "output-limit");
+    const executions = await waitForExecutions(engine, projectId, 2);
+    const development = executions.find(
+      (execution) => execution.moduleInstanceId === "development",
+    );
+    expect(development).toMatchObject({ status: "completed" });
+
+    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
+    try {
+      expect(
+        database
+          .prepare("SELECT status FROM workspace_leases WHERE execution_id = ?")
+          .get(development!.id),
+      ).toEqual({ status: "released" });
+      expect(
+        database.prepare("SELECT result FROM inbox WHERE module_instance_id = 'development'").get(),
+      ).toMatchObject({ result: expect.stringContaining('"status":"completed"') });
+    } finally {
+      database.close();
+    }
+  });
 });
 
 async function activateProject(
@@ -246,6 +326,8 @@ async function activateProject(
   projectId: string,
   fixture: RealGitRepositoryFixture,
   cancellationTest = false,
+  timeoutMs = 300_000,
+  outputLimitBytes = 1_048_576,
 ): Promise<void> {
   const portableConfig = {
     apiVersion: "jarvis.dev/project/v1",
@@ -292,8 +374,8 @@ async function activateProject(
           validationOrder: ["test"],
           maxRepairCycles: 0,
           retainWorkspaceOnSuccess: false,
-          timeoutMs: 300_000,
-          outputLimitBytes: 1_048_576,
+          timeoutMs,
+          outputLimitBytes,
           environmentAllowlist: cancellationTest ? ["JARVIS_FAKE_SCENARIO"] : [],
         },
       },
@@ -398,7 +480,7 @@ async function waitForExecutions(
     if (
       body.items.length >= count &&
       body.items.every((execution) =>
-        ["completed", "failed", "cancelled"].includes(execution.status),
+        ["completed", "failed", "cancelled", "timed-out"].includes(execution.status),
       )
     )
       return body.items;

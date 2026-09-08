@@ -19,6 +19,11 @@ describe("execution checkpoint migration", () => {
     applyMigrations(db, "0010");
     applyMigration(db, "0011");
     expectSchema(db);
+    applyMigration(db, "0012");
+    const inbox = db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'inbox'")
+      .get() as { sql: string } | undefined;
+    expect(inbox?.sql).toContain("'timed_out'");
   });
 });
 
