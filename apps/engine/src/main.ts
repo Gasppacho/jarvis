@@ -47,6 +47,11 @@ import {
 } from "./executions/delivery-consumer.js";
 import type { DurabilityTestHooks } from "./test-support/durability-test-routes.js";
 import { LiveUpdateHub } from "./stream/hub.js";
+import { WorkspaceLeaseRepository } from "../../../packages/workspace/src/lease-repository.js";
+import {
+  WorkspaceReconciler,
+  type WorkspaceProjectReconciliationReport,
+} from "../../../packages/workspace/src/workspace-reconciler.js";
 
 /** See apps/engine/src/events/dispatcher.ts's identical declaration for why
  * this exists and how tsup.config.ts's `define` makes it eliminate the
@@ -79,6 +84,17 @@ function report(message: string): void {
   } catch {
     /* the shell is gone; there is nobody left to tell */
   }
+}
+
+function reportReconciliation(reconciliation: WorkspaceProjectReconciliationReport): void {
+  const projectId = /^[A-Za-z0-9._-]+$/.test(reconciliation.projectId)
+    ? reconciliation.projectId
+    : "<invalid-project>";
+  const entries = Object.entries(reconciliation.counts)
+    .filter((entry): entry is [string, number] => entry[1] !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([code, count]) => `${code}=${count}`);
+  report(`jarvis-engine: workspace.reconciliation project=${projectId} ${entries.join(" ")}\n`);
 }
 
 async function main(): Promise<void> {
@@ -215,6 +231,44 @@ async function main(): Promise<void> {
           new EventJournalReader(database.db),
           new ExecutionLedgerReader(database.db),
         );
+
+  // SYSTEM.md startup protocol: migrations are complete, then stale Workspace
+  // state is reconciled, and only then can the ready handshake be emitted.
+  if (database !== undefined && projectStore !== undefined) {
+    try {
+      const leases = new WorkspaceLeaseRepository(
+        database.db,
+        new SystemClock(),
+        new SystemIdGenerator(),
+      );
+      const reconciliation = await new WorkspaceReconciler({
+        dataRoot: database.dataRoot,
+        leases,
+      }).reconcile(
+        projectStore.list().map((project) => ({
+          id: project.id,
+          repositoryPath: project.repositoryPath,
+        })),
+      );
+      for (const project of reconciliation.projects) reportReconciliation(project);
+      const actions = reconciliation.projects.reduce(
+        (total, project) =>
+          total + Object.values(project.counts).reduce((sum, count) => sum + (count ?? 0), 0),
+        0,
+      );
+      report(
+        `jarvis-engine: workspace.reconciliation code=workspace.reconciliation.completed projects=${reconciliation.projects.length} actions=${actions}\n`,
+      );
+    } catch {
+      report(
+        "jarvis-engine: workspace.reconciliation code=workspace.reconciliation.failed count=1\n",
+      );
+    }
+  } else {
+    report(
+      "jarvis-engine: workspace.reconciliation code=workspace.reconciliation.skipped-database-unavailable count=1\n",
+    );
+  }
 
   // Ticket #58 ("the whole durable path must be demonstrable end to end"):
   // Outbox dispatcher, Delivery consumer and their loop are wired for real,

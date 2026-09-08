@@ -40,6 +40,7 @@ describe("engine with an unavailable database", () => {
     const engine = await startDegraded();
 
     expect(engine.handshake).toMatchObject({ type: "ready" });
+    await engine.waitForStderr("workspace.reconciliation.skipped-database-unavailable");
     const health = (await (await engine.call("/v1/health")).json()) as Record<string, unknown>;
     expect(health).toMatchObject({ status: "degraded", database: "failed" });
   });

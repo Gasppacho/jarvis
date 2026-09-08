@@ -87,7 +87,7 @@ Alloue un worktree et un lease par exécution de développement, protège le rep
 
 1. `Jarvis.app` génère un token bearer de 256 bits et un identifiant de session.
 2. Le shell lance l'exécutable moteur embarqué avec le token transmis par descripteur ou environnement éphémère.
-3. Le moteur bind `127.0.0.1` sur un port dynamique, exécute les migrations et valide son build.
+3. Le moteur bind `127.0.0.1` sur un port dynamique, exécute les migrations, réconcilie les Workspaces restants puis valide son build.
 4. Le moteur écrit une unique ligne JSON sur stdout :
 
 ```json

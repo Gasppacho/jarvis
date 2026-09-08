@@ -140,6 +140,11 @@ export class WorkspaceManager {
     }
   }
 
+  public workspaceRoot(projectId: string): string {
+    assertReleaseIdentifier(projectId, "project");
+    return resolve(this.dataRoot, "projects", projectId, "workspaces");
+  }
+
   public async allocate(input: AllocateWorkspaceInput): Promise<WorkspaceAllocation> {
     assertIdentifier(input.projectId, "project");
     assertIdentifier(input.executionId, "execution");
@@ -329,7 +334,20 @@ export class WorkspaceManager {
       return retained;
     }
 
-    const workspaceRoot = resolve(this.dataRoot, "projects", input.projectId, "workspaces");
+    return this.reconcileLease({ lease, repositoryPath: input.repositoryPath });
+  }
+
+  /** Reconciles a lease known to be stale at startup. */
+  public async reconcileLease(input: {
+    readonly lease: WorkspaceLease;
+    readonly repositoryPath: string;
+  }): Promise<WorkspaceLease> {
+    const lease = input.lease;
+    assertReleaseIdentifier(lease.projectId, "project");
+    assertReleaseIdentifier(lease.executionId, "execution");
+    if (lease.status === "released") return lease;
+
+    const workspaceRoot = this.workspaceRoot(lease.projectId);
     const workspacePath = resolve(lease.workspacePath);
     const exists = assertReleasePathIsSafe(workspaceRoot, workspacePath);
     if (exists) {
@@ -351,6 +369,15 @@ export class WorkspaceManager {
         : { executablePath: this.options.gitExecutable }),
     });
     const prune = await git.run(["worktree", "prune", "--expire", "now"]);
+
+    const released = this.options.leases.release(lease.projectId, lease.id);
+    if (released === undefined) {
+      throw new WorkspaceReleaseError(
+        "workspace.release-failed",
+        "The workspace lease could not be released.",
+        { details: { operation: "release-lease" }, retryable: true },
+      );
+    }
     if (!prune.ok) {
       throw new WorkspaceReleaseError(
         "workspace.release-failed",
@@ -365,16 +392,22 @@ export class WorkspaceManager {
         },
       );
     }
+    return released;
+  }
 
-    const released = this.options.leases.release(input.projectId, lease.id);
-    if (released === undefined) {
+  public removeOrphanedWorkspace(projectId: string, workspacePath: string): void {
+    const workspaceRoot = this.workspaceRoot(projectId);
+    const exists = assertReleasePathIsSafe(workspaceRoot, resolve(workspacePath));
+    if (!exists) return;
+    try {
+      rmSync(resolve(workspacePath), { recursive: true, force: true });
+    } catch {
       throw new WorkspaceReleaseError(
         "workspace.release-failed",
-        "The workspace lease could not be released.",
-        { details: { operation: "release-lease" }, retryable: true },
+        "The workspace directory could not be removed.",
+        { details: { operation: "remove-workspace" }, retryable: true },
       );
     }
-    return released;
   }
 }
 

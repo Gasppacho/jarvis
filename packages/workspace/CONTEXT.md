@@ -26,3 +26,11 @@ For the MVP, success removes the Worktree and prunes its Git record while keepin
 
 ### Workspace Leak
 A path or Git worktree record left without a valid active or retained lease.
+
+### Startup Reconciliation
+The startup pass that restores agreement between Workspace Leases, workspace
+directories and Git worktree records before the engine announces `ready`.
+
+### Reconciliation Diagnostic
+A stable code and per-project count emitted for each startup cleanup action;
+diagnostics never contain personal absolute paths.
