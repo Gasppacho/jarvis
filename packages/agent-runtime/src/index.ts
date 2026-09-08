@@ -106,6 +106,7 @@ export class FakeAgentRun implements AgentRun {
   private readonly eventWaiters = new Set<() => void>();
   private readonly resultPromise: Promise<AgentRunResult>;
   private readonly observedChangedFiles: string[] = [];
+  private interruptPromise: Promise<void> | undefined;
   private stdoutBuffer = "";
   private stderrBuffer = "";
   private stderrSummary = "";
@@ -114,6 +115,7 @@ export class FakeAgentRun implements AgentRun {
   private outputLimitWarned = false;
   private nextSequence = 1;
   private terminal = false;
+  private interruptionRequested = false;
   private pendingResult: AgentRunResult | undefined;
 
   public constructor(
@@ -123,6 +125,7 @@ export class FakeAgentRun implements AgentRun {
     this.child = spawn(process.execPath, ["-e", FAKE_CHILD_SOURCE], {
       cwd: request.workingDirectory,
       env: { ...request.environment },
+      detached: process.platform !== "win32",
       stdio: ["pipe", "pipe", "pipe"],
     });
     if (this.child.pid === undefined) {
@@ -154,10 +157,18 @@ export class FakeAgentRun implements AgentRun {
   }
 
   public async interrupt(): Promise<void> {
-    if (this.child.exitCode === null && this.child.signalCode === null) {
-      this.child.kill("SIGTERM");
+    if (this.interruptPromise === undefined && !this.terminal) {
+      this.interruptionRequested = true;
+      this.interruptPromise = this.interruptChild();
     }
+    await this.interruptPromise;
     await this.resultPromise;
+  }
+
+  private async interruptChild(): Promise<void> {
+    this.signalChild("SIGTERM");
+    await Promise.race([this.resultPromise, delay(FORCE_KILL_DELAY_MS)]);
+    if (!this.terminal) this.signalChild("SIGKILL");
   }
 
   private readResult(): Promise<AgentRunResult> {
@@ -169,8 +180,9 @@ export class FakeAgentRun implements AgentRun {
       const finish = (result: AgentRunResult): void => {
         if (settled) return;
         settled = true;
-        this.finish(result);
-        resolveResult(result);
+        const finalResult = this.interruptionRequested ? cancelledResult() : result;
+        this.finish(finalResult);
+        resolveResult(finalResult);
       };
 
       this.child.stdout.on("data", (chunk: string) => this.consumeOutput("stdout", chunk));
@@ -373,9 +385,25 @@ export class FakeAgentRun implements AgentRun {
       result,
     });
   }
+
+  private signalChild(signal: NodeJS.Signals): void {
+    const pid = this.child.pid;
+    if (pid === undefined || this.child.exitCode !== null || this.child.signalCode !== null) return;
+    try {
+      if (process.platform === "win32") this.child.kill(signal);
+      else process.kill(-pid, signal);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+  }
 }
 
 const MAX_PROTOCOL_LINE_BYTES = 64 * 1024;
+const FORCE_KILL_DELAY_MS = 250;
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
+}
 
 function readChildResult(value: unknown, workingDirectory: string): AgentRunResult {
   if (isRecord(value) && value["status"] === "completed") {
@@ -422,6 +450,14 @@ function failedResult(code: string, message: string, retryable: boolean): AgentR
   };
 }
 
+function cancelledResult(): AgentRunResult {
+  return {
+    status: "cancelled",
+    summary: "Fake Runtime cancelled.",
+    changedFiles: [],
+  };
+}
+
 function isSafeRelativePath(value: unknown, workingDirectory: string): value is string {
   if (typeof value !== "string" || value === "" || isAbsolute(value)) return false;
   const resolved = resolve(workingDirectory, value);
@@ -452,6 +488,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const FAKE_CHILD_SOURCE = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
+const { spawn: spawnChild } = require("node:child_process");
 delete process.env.__CF_USER_TEXT_ENCODING;
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -475,6 +512,17 @@ process.stdin.on("end", () => {
   if (request.scenario === "failure") {
     process.stderr.write("deterministic fake failure\n");
     process.exit(7);
+  }
+  if (request.scenario === "ignore-terminate") {
+    const child = spawnChild(
+      process.execPath,
+      ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+      { stdio: "ignore" }
+    );
+    fs.writeFileSync("fake-runtime-child.pid", String(child.pid));
+    process.on("SIGTERM", () => fs.writeFileSync("fake-runtime-interrupt.txt", "graceful\n"));
+    setInterval(() => {}, 1000);
+    return;
   }
   if (request.scenario === "stderr" || request.scenario === "noisy") process.stderr.write("deterministic stderr output\n");
   if (request.scenario === "malformed" || request.scenario === "noisy") process.stdout.write("{malformed json\n");

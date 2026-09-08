@@ -41,7 +41,30 @@ function request(
 }
 
 async function expectProcessGone(pid: number): Promise<void> {
-  expect(() => process.kill(pid, 0)).toThrow();
+  const deadline = Date.now() + 2_000;
+  for (;;) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    if (Date.now() >= deadline) throw new Error(`Process ${pid} is still alive.`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function waitForPid(path: string): Promise<number> {
+  const deadline = Date.now() + 2_000;
+  for (;;) {
+    try {
+      const value = Number.parseInt(await readFile(path, "utf8"), 10);
+      if (Number.isInteger(value) && value > 0) return value;
+    } catch {
+      // The child writes the marker after startup; keep polling briefly.
+    }
+    if (Date.now() >= deadline) throw new Error(`PID marker ${path} was not written.`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 }
 
 async function collectEvents(run: {
@@ -217,6 +240,30 @@ describe("FakeRuntime", () => {
         events.some(({ type, message }) => type === "warning" && message?.includes("truncated")),
       ).toBe(true);
       expect(events.at(-1)).toMatchObject({ type: "completed", result });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("gracefully interrupts then kills the complete child process group", async () => {
+    const root = await mkdtemp(join(tmpdir(), "jarvis-fake-runtime-cancel-"));
+    try {
+      const run = (await new FakeRuntime().start(
+        request(root, "ignore-terminate"),
+        new AbortController().signal,
+      )) as FakeAgentRun;
+      const childPid = await waitForPid(join(root, "fake-runtime-child.pid"));
+      const eventsPromise = collectEvents(run);
+
+      await run.interrupt();
+      const result = await run.result();
+      const events = await eventsPromise;
+
+      expect(result).toMatchObject({ status: "cancelled", changedFiles: [] });
+      expect(await readFile(join(root, "fake-runtime-interrupt.txt"), "utf8")).toBe("graceful\n");
+      expect(events.at(-1)).toMatchObject({ type: "failed", result: { status: "cancelled" } });
+      await expectProcessGone(run.processId);
+      await expectProcessGone(childPid);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

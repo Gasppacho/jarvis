@@ -381,6 +381,9 @@ export class WorkspaceManager {
 
     if (input.outcome !== "success") {
       if (lease.status === "retained") return lease;
+      if (lease.cleanupPolicy === "delete-on-failure") {
+        return this.reconcileLease({ lease, repositoryPath: input.repositoryPath });
+      }
       const retained = this.options.leases.markRetained(
         input.projectId,
         lease.id,
