@@ -147,7 +147,7 @@ export class WorkspaceReconciler {
           }
           if (!entry.isDirectory()) continue;
           try {
-            this.manager.removeOrphanedWorkspace(project.id, target);
+            await this.manager.removeOrphanedWorkspace(project.id, target, project.repositoryPath);
             increment(counts, "workspace.reconciliation.orphan-directory-removed");
           } catch {
             increment(counts, "workspace.reconciliation.orphan-removal-failed");
