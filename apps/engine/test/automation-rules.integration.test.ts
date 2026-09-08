@@ -191,6 +191,16 @@ describe("Automation Rules Application Harness", () => {
       expect(requestRow).toBeDefined();
       if (requestRow === undefined) throw new Error("project-a request was not journaled");
       expect(JSON.parse(requestRow.envelope)).toMatchObject({
+        // The Rules Module's own identity, stamped by the runtime rather than
+        // by anything the Rule could configure, plus an idempotency key
+        // derived from the logical request (Project, Work Item, target,
+        // generation).
+        producer: {
+          moduleId: "jarvis.module.automation-rules",
+          moduleInstanceId: "automation-rules",
+        },
+        subject: { type: "work-item", ref: "github://acme/project-a/issues/8" },
+        idempotencyKey: "project-a:issue-8:implementation:1",
         projectId: "project-a",
         correlationId: "corr_automation_project_a",
         causationId: matchingEvent.id,
@@ -261,6 +271,25 @@ describe("Automation Rules Application Harness", () => {
           .prepare("SELECT COUNT(*) AS count FROM events WHERE project_id = ? AND kind = 'request'")
           .get("project-c"),
       ).toEqual({ count: 0 });
+
+      // The durable result tells "no Rule matched" apart from a Rule Match:
+      // both Deliveries completed, and only the recorded result says which
+      // decision was actually reached.
+      const recordedResult = (projectId: string) =>
+        JSON.parse(
+          (
+            database
+              .prepare(
+                "SELECT result FROM inbox WHERE project_id = ? AND module_instance_id = 'automation-rules'",
+              )
+              .get(projectId) as { readonly result: string }
+          ).result,
+        ) as unknown;
+      expect(recordedResult("project-a")).toEqual({
+        matchedRuleIds: ["ready-label-starts-development"],
+        emittedEventIds: [requestRow.id],
+      });
+      expect(recordedResult("project-c")).toEqual({ matchedRuleIds: [], emittedEventIds: [] });
 
       const missingTargetResponse = await engine.call("/test/events", {
         method: "POST",
@@ -474,6 +503,19 @@ describe("Automation Rules Rule Set semantics", () => {
       };
       expect(unresolved.status).toBe("failed");
       expect(unresolved.error).toContain("baseBranch");
+      // The third recorded shape: a failure, distinct from both a Rule Match
+      // and a clean no-match.
+      expect(
+        JSON.parse(
+          (
+            database
+              .prepare(
+                "SELECT result FROM inbox WHERE project_id = ? AND module_instance_id = 'automation-rules'",
+              )
+              .get("unknown-repo") as { readonly result: string }
+          ).result,
+        ),
+      ).toEqual({ error: expect.stringContaining("baseBranch") });
       expect(
         database.prepare("SELECT id FROM events WHERE id = ?").get(unknownRepoFact.id),
       ).toBeDefined();
