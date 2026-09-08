@@ -154,6 +154,19 @@ export class WorkspaceLeaseRepository {
     return rows.map(toLease);
   }
 
+  public listOpen(projectId: string): WorkspaceLease[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, project_id, execution_id, repository_id, working_branch, base_revision_sha,
+                workspace_path, status, expires_at, cleanup_policy, created_at, updated_at, owner_pid
+         FROM workspace_leases
+         WHERE project_id = @projectId AND status IN ('active', 'retained')
+         ORDER BY created_at ASC, id ASC`,
+      )
+      .all({ projectId }) as WorkspaceLeaseRow[];
+    return rows.map(toLease);
+  }
+
   public markRetained(
     projectId: string,
     leaseId: string,
