@@ -1,8 +1,11 @@
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type Database from "better-sqlite3";
 import type { FastifyInstance } from "fastify";
-import type { PortableProjectConfiguration } from "../../../../packages/project-runtime/src/project-types.js";
+import type {
+  PortableProjectConfiguration,
+  StoredPortableProjectConfiguration,
+} from "../../../../packages/project-runtime/src/project-types.js";
 import type { ClaimedDelivery } from "../executions/delivery-consumer.js";
 import { SAMPLE_PROBE_MODULE_ID } from "../executions/sample-probe-module.js";
 import { EventPublisher, type PublishEventInput } from "../events/publisher.js";
@@ -10,6 +13,10 @@ import type { ProjectService } from "../projects/service.js";
 import { DeliveryConsumer } from "../executions/delivery-consumer.js";
 import { EngineError } from "../errors.js";
 import { failpoint } from "./failpoint.js";
+import type {
+  WorkspaceManager,
+  WorkspaceProjectConfiguration,
+} from "../../../../packages/workspace/src/workspace-manager.js";
 
 const AUTOMATION_RULES_MODULE_ID = "jarvis.module.automation-rules";
 const AUTOMATION_RULE_BINDING = "implementation";
@@ -27,6 +34,7 @@ export interface DurabilityTestHooks {
   readonly projects: ProjectService;
   readonly publisher: EventPublisher;
   readonly consumer: DeliveryConsumer;
+  readonly workspace: WorkspaceManager;
   readonly testRepositoryRoot: string;
 }
 
@@ -66,7 +74,8 @@ export function registerDurabilityTestRoutes(
           body.rules,
         )
       : sampleProjectConfig(body.id, moduleInstanceId);
-    const repositoryPath = join(hooks.testRepositoryRoot, "repositories", body.id);
+    const repositoryPath =
+      body.repositoryPath ?? join(hooks.testRepositoryRoot, "repositories", body.id);
     mkdirSync(repositoryPath, { recursive: true });
     const created = hooks.projects.importProject({
       repositoryPath,
@@ -106,6 +115,24 @@ export function registerDurabilityTestRoutes(
       moduleInstanceId,
       ...(automation ? { workerModuleInstanceId: REQUEST_WORKER_INSTANCE_ID } : {}),
     });
+  });
+
+  app.post("/test/workspaces/allocate", async (request, reply) => {
+    const body = readTestWorkspaceRequest(request.body);
+    const project = workspaceProject(hooks.projects.getProject(body.projectId).portableConfig);
+    const allocation = await hooks.workspace.allocate({
+      ...body,
+      project,
+      repositoryId: body.repositoryId ?? "main",
+    });
+    void reply.code(201).send(allocation);
+  });
+
+  app.post("/test/workspaces/release", async (request, reply) => {
+    const body = readTestWorkspaceReleaseRequest(request.body);
+    const project = workspaceProject(hooks.projects.getProject(body.projectId).portableConfig);
+    const released = await hooks.workspace.release({ ...body, project });
+    void reply.code(200).send(released);
   });
 
   // The inbound trigger: publishes one Event through the real
@@ -216,6 +243,7 @@ function readTestProjectRequest(value: unknown): {
   readonly moduleInstanceId?: string;
   readonly targetMode: "binding" | "direct";
   readonly ruleTag: string;
+  readonly repositoryPath?: string;
   readonly rules?: readonly Record<string, unknown>[];
 } {
   if (!isRecord(value)) {
@@ -226,6 +254,7 @@ function readTestProjectRequest(value: unknown): {
   const moduleInstanceId = value["moduleInstanceId"];
   const targetMode = value["targetMode"] ?? "binding";
   const ruleTag = value["ruleTag"] ?? "agent:ready";
+  const repositoryPath = value["repositoryPath"];
   const rules = value["rules"];
   if (rules !== undefined && (!Array.isArray(rules) || !rules.every(isRecord))) {
     throw new EngineError("api.invalid-request", 400, "Test Project rules are invalid.");
@@ -240,7 +269,9 @@ function readTestProjectRequest(value: unknown): {
     (targetMode !== "binding" && targetMode !== "direct") ||
     typeof ruleTag !== "string" ||
     ruleTag.length === 0 ||
-    ruleTag.length > 100
+    ruleTag.length > 100 ||
+    (repositoryPath !== undefined &&
+      (typeof repositoryPath !== "string" || !isAbsolute(repositoryPath)))
   ) {
     throw new EngineError("api.invalid-request", 400, "Test Project request is invalid.");
   }
@@ -250,7 +281,86 @@ function readTestProjectRequest(value: unknown): {
     ...(moduleInstanceId === undefined ? {} : { moduleInstanceId }),
     targetMode,
     ruleTag,
+    ...(repositoryPath === undefined ? {} : { repositoryPath }),
     ...(rules === undefined ? {} : { rules: rules as readonly Record<string, unknown>[] }),
+  };
+}
+
+function readTestWorkspaceRequest(value: unknown): {
+  readonly projectId: string;
+  readonly executionId: string;
+  readonly repositoryId?: string;
+  readonly repositoryPath: string;
+  readonly baseRevision: string;
+  readonly branchContext: { readonly workItemId: string; readonly slug: string };
+  readonly expiresAt?: string;
+} {
+  if (!isRecord(value)) invalidTestRequest("Workspace allocation request must be an object.");
+  const branchContext = readRecord(value["branchContext"], "branchContext");
+  const request = {
+    projectId: readRequiredString(value["projectId"], "projectId"),
+    executionId: readRequiredString(value["executionId"], "executionId"),
+    repositoryPath: readRequiredString(value["repositoryPath"], "repositoryPath"),
+    baseRevision: readRequiredString(value["baseRevision"], "baseRevision"),
+    branchContext: {
+      workItemId: readRequiredString(branchContext["workItemId"], "branchContext.workItemId"),
+      slug: readRequiredString(branchContext["slug"], "branchContext.slug"),
+    },
+    ...(value["repositoryId"] === undefined
+      ? {}
+      : { repositoryId: readRequiredString(value["repositoryId"], "repositoryId") }),
+    ...(value["expiresAt"] === undefined
+      ? {}
+      : { expiresAt: readRequiredString(value["expiresAt"], "expiresAt") }),
+  };
+  if (!isAbsolute(request.repositoryPath)) {
+    invalidTestRequest("Workspace allocation repositoryPath must be absolute.");
+  }
+  return request;
+}
+
+function readTestWorkspaceReleaseRequest(value: unknown): {
+  readonly projectId: string;
+  readonly executionId: string;
+  readonly repositoryPath: string;
+  readonly outcome: "success" | "failure" | "cancelled";
+} {
+  if (!isRecord(value)) invalidTestRequest("Workspace release request must be an object.");
+  const outcome = value["outcome"];
+  const repositoryPath = readRequiredString(value["repositoryPath"], "repositoryPath");
+  if (
+    !isAbsolute(repositoryPath) ||
+    !["success", "failure", "cancelled"].includes(String(outcome))
+  ) {
+    invalidTestRequest("Workspace release request is invalid.");
+  }
+  return {
+    projectId: readRequiredString(value["projectId"], "projectId"),
+    executionId: readRequiredString(value["executionId"], "executionId"),
+    repositoryPath,
+    outcome: outcome as "success" | "failure" | "cancelled",
+  };
+}
+
+function workspaceProject(
+  value: StoredPortableProjectConfiguration,
+): WorkspaceProjectConfiguration {
+  if (
+    !isRecord(value) ||
+    !isRecord(value["git"]) ||
+    typeof value["git"]["branchPattern"] !== "string" ||
+    !isRecord(value["workspace"]) ||
+    typeof value["workspace"]["maxConcurrentExecutions"] !== "number" ||
+    typeof value["workspace"]["retainOnFailureDays"] !== "number"
+  ) {
+    invalidTestRequest("The test Project has no complete workspace configuration.");
+  }
+  return {
+    git: { branchPattern: value["git"]["branchPattern"] },
+    workspace: {
+      maxConcurrentExecutions: value["workspace"]["maxConcurrentExecutions"],
+      retainOnFailureDays: value["workspace"]["retainOnFailureDays"],
+    },
   };
 }
 

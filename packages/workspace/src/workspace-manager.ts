@@ -26,6 +26,7 @@ export interface WorkspaceManagerOptions {
   readonly leases: WorkspaceLeaseRepository;
   readonly clock?: Clock;
   readonly gitExecutable?: string;
+  readonly failpoint?: (id: string) => void;
 }
 
 export interface AllocateWorkspaceInput {
@@ -118,6 +119,8 @@ const SAFE_BRANCH_VALUE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const SHA = /^[0-9a-f]{40,64}$/;
 const ACTIVE_LEASE_EXPIRY = "9999-12-31T23:59:59.999Z";
 
+declare const __JARVIS_TEST_HOOKS__: boolean | undefined;
+
 export class WorkspaceManager {
   private readonly dataRoot: string;
   private readonly clock: Clock;
@@ -189,6 +192,35 @@ export class WorkspaceManager {
     const existing = this.options.leases.findActiveByExecution(input.projectId, input.executionId);
     if (existing !== undefined) return allocationFromLease(existing);
 
+    const branchLease = this.options.leases.findActiveByBranch(
+      input.projectId,
+      input.repositoryId,
+      workingBranch,
+    );
+    if (branchLease !== undefined) {
+      throw new WorkspaceAllocationError(
+        "workspace.branch-conflict",
+        "The working branch is already leased by another execution.",
+        {
+          details: { repositoryId: input.repositoryId, workingBranch },
+          retryable: false,
+        },
+      );
+    }
+    if (
+      this.options.leases.listActive(input.projectId).length >=
+      input.project.workspace.maxConcurrentExecutions
+    ) {
+      throw new WorkspaceAllocationError(
+        "workspace.concurrency-limit",
+        `The project workspace concurrency limit is ${input.project.workspace.maxConcurrentExecutions}; release an active workspace before allocating another.`,
+        {
+          details: { maxConcurrentExecutions: input.project.workspace.maxConcurrentExecutions },
+          retryable: false,
+        },
+      );
+    }
+
     assertTargetPathIsSafe(workspacePath);
 
     const git = new GitRunner({
@@ -197,6 +229,7 @@ export class WorkspaceManager {
         ? {}
         : { executablePath: this.options.gitExecutable }),
     });
+    allocationFailpoint(this.options.failpoint, "before-first-git-call");
     await requireGit(git.run(["rev-parse", "--git-dir"]), "validate repository");
     await requireGit(git.run(["check-ref-format", "--branch", workingBranch]), "validate branch");
     const baseRevision = await requireGit(
@@ -216,6 +249,55 @@ export class WorkspaceManager {
         "Git did not return a valid Base Revision SHA.",
       );
     }
+
+    const previous = this.options.leases.findByExecution(input.projectId, input.executionId);
+    const reuseReleasedBranch =
+      previous?.status === "released" &&
+      previous.repositoryId === input.repositoryId &&
+      previous.workingBranch === workingBranch &&
+      previous.workspacePath === workspacePath;
+
+    try {
+      mkdirSync(workspaceRoot, { recursive: true });
+    } catch {
+      throw new WorkspaceAllocationError(
+        "workspace.allocation-failed",
+        "The project workspace directory could not be prepared.",
+        { details: { operation: "prepare-workspace-root" }, retryable: true },
+      );
+    }
+
+    try {
+      await requireGit(
+        git.run(
+          reuseReleasedBranch
+            ? ["worktree", "add", "--quiet", workspacePath, workingBranch]
+            : ["worktree", "add", "--quiet", "-b", workingBranch, workspacePath, baseRevisionSha],
+        ),
+        "create worktree",
+      );
+    } catch (error: unknown) {
+      if (
+        await waitForActiveBranchLease(
+          this.options.leases,
+          input.projectId,
+          input.repositoryId,
+          workingBranch,
+        )
+      ) {
+        throw new WorkspaceAllocationError(
+          "workspace.branch-conflict",
+          "The working branch is already leased by another execution.",
+          {
+            details: { repositoryId: input.repositoryId, workingBranch },
+            retryable: false,
+          },
+        );
+      }
+      throw error;
+    }
+
+    allocationFailpoint(this.options.failpoint, "after-worktree-create-before-lease-commit");
 
     let claim: WorkspaceLeaseClaim;
     try {
@@ -237,6 +319,7 @@ export class WorkspaceManager {
         input.project.workspace.maxConcurrentExecutions,
       );
     } catch {
+      await removeCreatedWorktree(git, workspacePath, workingBranch);
       throw new WorkspaceAllocationError(
         "workspace.allocation-failed",
         "The workspace lease could not be claimed.",
@@ -244,6 +327,11 @@ export class WorkspaceManager {
       );
     }
 
+    if (claim.kind === "created") {
+      allocationFailpoint(this.options.failpoint, "after-lease-commit-before-response");
+      return allocationFromLease(claim.lease);
+    }
+    await removeCreatedWorktree(git, workspacePath, workingBranch);
     if (claim.kind === "existing") return allocationFromLease(claim.lease);
     if (claim.kind === "branch-conflict") {
       throw new WorkspaceAllocationError(
@@ -266,36 +354,10 @@ export class WorkspaceManager {
       );
     }
 
-    try {
-      mkdirSync(workspaceRoot, { recursive: true });
-    } catch {
-      releaseLease(this.options.leases, input.projectId, claim.lease.id);
-      throw new WorkspaceAllocationError(
-        "workspace.allocation-failed",
-        "The project workspace directory could not be prepared.",
-        { details: { operation: "prepare-workspace-root" }, retryable: true },
-      );
-    }
-
-    try {
-      await requireGit(
-        git.run([
-          "worktree",
-          "add",
-          "--quiet",
-          "-b",
-          workingBranch,
-          workspacePath,
-          baseRevisionSha,
-        ]),
-        "create worktree",
-      );
-    } catch (error: unknown) {
-      releaseLease(this.options.leases, input.projectId, claim.lease.id);
-      throw error;
-    }
-
-    return allocationFromLease(claim.lease);
+    throw new WorkspaceAllocationError(
+      "workspace.allocation-failed",
+      "The workspace lease claim was unresolved.",
+    );
   }
 
   public async release(input: ReleaseWorkspaceInput): Promise<WorkspaceLease> {
@@ -395,10 +457,16 @@ export class WorkspaceManager {
     return released;
   }
 
-  public removeOrphanedWorkspace(projectId: string, workspacePath: string): void {
+  public async removeOrphanedWorkspace(
+    projectId: string,
+    workspacePath: string,
+    repositoryPath?: string,
+  ): Promise<void> {
     const workspaceRoot = this.workspaceRoot(projectId);
     const exists = assertReleasePathIsSafe(workspaceRoot, resolve(workspacePath));
     if (!exists) return;
+    const branch =
+      repositoryPath === undefined ? undefined : await branchAtWorktree(resolve(workspacePath));
     try {
       rmSync(resolve(workspacePath), { recursive: true, force: true });
     } catch {
@@ -407,6 +475,27 @@ export class WorkspaceManager {
         "The workspace directory could not be removed.",
         { details: { operation: "remove-workspace" }, retryable: true },
       );
+    }
+    if (repositoryPath !== undefined) {
+      const git = new GitRunner({ cwd: repositoryPath });
+      const prune = await git.run(["worktree", "prune", "--expire", "now"]);
+      if (!prune.ok) {
+        throw new WorkspaceReleaseError(
+          "workspace.release-failed",
+          "The orphaned worktree record could not be pruned.",
+          { details: { operation: "prune-orphaned-worktree" }, retryable: true },
+        );
+      }
+      if (branch !== undefined) {
+        const result = await git.run(["branch", "-D", branch]);
+        if (!result.ok) {
+          throw new WorkspaceReleaseError(
+            "workspace.release-failed",
+            "The orphaned working branch could not be removed.",
+            { details: { operation: "remove-orphaned-branch" }, retryable: true },
+          );
+        }
+      }
     }
   }
 }
@@ -418,20 +507,6 @@ function allocationFromLease(lease: WorkspaceLease): WorkspaceAllocation {
     baseRevisionSha: lease.baseRevisionSha,
     lease,
   };
-}
-
-function releaseLease(leases: WorkspaceLeaseRepository, projectId: string, leaseId: string): void {
-  try {
-    const released = leases.release(projectId, leaseId);
-    if (released?.status === "released") return;
-  } catch {
-    // Fall through to the typed failure below; a live leaked claim must not be hidden.
-  }
-  throw new WorkspaceAllocationError(
-    "workspace.allocation-failed",
-    "The workspace lease could not be released after allocation failed.",
-    { details: { operation: "release-lease", leaseId }, retryable: true },
-  );
 }
 
 function assertReleaseIdentifier(value: string, subject: string): void {
@@ -603,6 +678,55 @@ async function requireGit(
     },
     retryable: outcome.code === "git.executable-not-found",
   });
+}
+
+function allocationFailpoint(callback: ((id: string) => void) | undefined, id: string): void {
+  if (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) callback?.(id);
+}
+
+async function removeCreatedWorktree(
+  git: GitRunner,
+  workspacePath: string,
+  workingBranch: string,
+): Promise<void> {
+  const removed = await git.run(["worktree", "remove", "--force", workspacePath]);
+  if (!removed.ok) {
+    throw new WorkspaceAllocationError(
+      "workspace.allocation-failed",
+      "The created worktree could not be rolled back.",
+      { details: { operation: "remove-worktree" }, retryable: true },
+    );
+  }
+  const branch = await git.run(["branch", "-D", workingBranch]);
+  if (!branch.ok) {
+    throw new WorkspaceAllocationError(
+      "workspace.allocation-failed",
+      "The created working branch could not be rolled back.",
+      { details: { operation: "remove-branch" }, retryable: true },
+    );
+  }
+}
+
+async function branchAtWorktree(workspacePath: string): Promise<string | undefined> {
+  const result = await new GitRunner({ cwd: workspacePath }).run(["branch", "--show-current"]);
+  if (!result.ok) return undefined;
+  const branch = result.stdout.trim();
+  return branch === "" ? undefined : branch;
+}
+
+async function waitForActiveBranchLease(
+  leases: WorkspaceLeaseRepository,
+  projectId: string,
+  repositoryId: string,
+  workingBranch: string,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (leases.findActiveByBranch(projectId, repositoryId, workingBranch) !== undefined) {
+      return true;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 1));
+  }
+  return false;
 }
 
 function assertTargetPathIsSafe(workspacePath: string): void {

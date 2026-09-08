@@ -46,12 +46,14 @@ import {
   type ModuleRepositoryDefaultBranchLookup,
 } from "./executions/delivery-consumer.js";
 import type { DurabilityTestHooks } from "./test-support/durability-test-routes.js";
+import { failpoint } from "./test-support/failpoint.js";
 import { LiveUpdateHub } from "./stream/hub.js";
 import { WorkspaceLeaseRepository } from "../../../packages/workspace/src/lease-repository.js";
 import {
   WorkspaceReconciler,
   type WorkspaceProjectReconciliationReport,
 } from "../../../packages/workspace/src/workspace-reconciler.js";
+import { WorkspaceManager } from "../../../packages/workspace/src/workspace-manager.js";
 
 /** See apps/engine/src/events/dispatcher.ts's identical declaration for why
  * this exists and how tsup.config.ts's `define` makes it eliminate the
@@ -122,6 +124,7 @@ async function main(): Promise<void> {
   let shuttingDown = false;
   let announced = false;
   let stopEventLoop: (() => void) | undefined;
+  let testWorkspaceManager: WorkspaceManager | undefined;
 
   /** Returns false when the WAL could not be checkpointed. */
   function closeDatabase(): boolean {
@@ -401,11 +404,17 @@ async function main(): Promise<void> {
     );
     stopEventLoop = startEventLoop({ db: database.db, dispatcher, consumer, liveUpdates });
     if (testHooksEnabled && projects !== undefined) {
+      testWorkspaceManager = new WorkspaceManager({
+        dataRoot: database.dataRoot,
+        leases: new WorkspaceLeaseRepository(database.db, clock, ids),
+        failpoint,
+      });
       durabilityTestHooks = {
         db: database.db,
         projects,
         publisher,
         consumer,
+        workspace: testWorkspaceManager,
         testRepositoryRoot: dirname(config.databasePath),
       };
     }

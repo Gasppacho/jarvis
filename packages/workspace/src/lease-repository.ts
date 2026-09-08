@@ -141,6 +141,24 @@ export class WorkspaceLeaseRepository {
     return row === undefined ? undefined : toLease(row);
   }
 
+  public findActiveByBranch(
+    projectId: string,
+    repositoryId: string,
+    workingBranch: string,
+  ): WorkspaceLease | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, project_id, execution_id, repository_id, working_branch, base_revision_sha,
+                workspace_path, status, expires_at, cleanup_policy, created_at, updated_at, owner_pid
+         FROM workspace_leases
+         WHERE project_id = @projectId AND repository_id = @repositoryId
+           AND working_branch = @workingBranch AND status = 'active'
+         LIMIT 1`,
+      )
+      .get({ projectId, repositoryId, workingBranch }) as WorkspaceLeaseRow | undefined;
+    return row === undefined ? undefined : toLease(row);
+  }
+
   public listActive(projectId: string): WorkspaceLease[] {
     const rows = this.db
       .prepare(
@@ -214,24 +232,6 @@ export class WorkspaceLeaseRepository {
          WHERE project_id = @projectId AND id = @leaseId`,
       )
       .get({ projectId, leaseId }) as WorkspaceLeaseRow | undefined;
-    return row === undefined ? undefined : toLease(row);
-  }
-
-  private findActiveByBranch(
-    projectId: string,
-    repositoryId: string,
-    workingBranch: string,
-  ): WorkspaceLease | undefined {
-    const row = this.db
-      .prepare(
-        `SELECT id, project_id, execution_id, repository_id, working_branch, base_revision_sha,
-                workspace_path, status, expires_at, cleanup_policy, created_at, updated_at, owner_pid
-         FROM workspace_leases
-         WHERE project_id = @projectId AND repository_id = @repositoryId
-           AND working_branch = @workingBranch AND status = 'active'
-         LIMIT 1`,
-      )
-      .get({ projectId, repositoryId, workingBranch }) as WorkspaceLeaseRow | undefined;
     return row === undefined ? undefined : toLease(row);
   }
 
