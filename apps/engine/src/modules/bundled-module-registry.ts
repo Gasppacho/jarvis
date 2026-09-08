@@ -10,6 +10,9 @@ import {
   type ModulePackageRegistry,
 } from "../../../../packages/kernel/src/module-host.js";
 
+/** Test-only manifests are folded out of the production engine bundle. */
+declare const __JARVIS_TEST_HOOKS__: boolean | undefined;
+
 class BundledModulePackageRegistry implements ModulePackageRegistry {
   public constructor(
     private readonly runtimeRoot: string,
@@ -17,7 +20,7 @@ class BundledModulePackageRegistry implements ModulePackageRegistry {
   ) {}
 
   public discover(): readonly DiscoveredModuleManifest[] {
-    return this.packageNames.map((name) => {
+    const bundled = this.packageNames.map((name) => {
       const source = join(this.runtimeRoot, "modules", name, "module.manifest.yaml");
       return {
         packageName: name,
@@ -37,6 +40,7 @@ class BundledModulePackageRegistry implements ModulePackageRegistry {
         },
       };
     });
+    return [...bundled, ...testFixtureManifests()];
   }
 
   public readConfigurationSchema(schemaRef: string): unknown {
@@ -56,6 +60,81 @@ class BundledModulePackageRegistry implements ModulePackageRegistry {
   private readJson(schemaRef: string): unknown {
     return JSON.parse(readFileSync(join(this.runtimeRoot, schemaRef), "utf8")) as unknown;
   }
+}
+
+function testFixtureManifests(): readonly DiscoveredModuleManifest[] {
+  if (!(typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__)) return [];
+
+  return [
+    {
+      packageName: "test-request-worker",
+      source: "<test fixture: request worker>",
+      document: {
+        apiVersion: "jarvis.dev/module/v1",
+        kind: "Module",
+        metadata: {
+          id: "jarvis.module.test-request-worker",
+          version: "1.0.0",
+          displayName: "Test Request Worker",
+          description: "Deterministic consumer used by the Application Harness.",
+          categories: ["automation"],
+        },
+        runtime: { entrypoint: "dist/index.mjs" },
+        contracts: {
+          consumes: [
+            {
+              type: "development.implementation.requested",
+              version: 1,
+              kind: "request",
+              schemaRef: "contracts/events/development.implementation.requested.v1.schema.json",
+              handler: "handleImplementationRequested",
+            },
+          ],
+          produces: [],
+        },
+        capabilities: {
+          requires: [],
+          provides: [{ id: "work-items.read" }],
+        },
+      },
+    },
+    {
+      packageName: "test-sample-probe",
+      source: "<test fixture: sample probe>",
+      document: {
+        apiVersion: "jarvis.dev/module/v1",
+        kind: "Module",
+        metadata: {
+          id: "jarvis.module.sample-probe",
+          version: "1.0.0",
+          displayName: "Sample Probe",
+          description: "Deterministic consumer used by durability tests.",
+          categories: ["observer"],
+        },
+        runtime: { entrypoint: "dist/index.mjs" },
+        contracts: {
+          consumes: [
+            {
+              type: "sample.probe.pinged",
+              version: 1,
+              kind: "fact",
+              schemaRef: "contracts/events/sample.probe.pinged.v1.schema.json",
+              handler: "handleSampleProbePinged",
+            },
+          ],
+          produces: [
+            {
+              type: "sample.probe.ponged",
+              version: 1,
+              kind: "fact",
+              schemaRef: "contracts/events/sample.probe.ponged.v1.schema.json",
+            },
+          ],
+        },
+        capabilities: { requires: [], provides: [] },
+      },
+    },
+  ];
 }
 
 /** Composition adapter for the explicit build-time registry beside the engine. */

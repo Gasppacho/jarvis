@@ -34,6 +34,9 @@ const FORBIDDEN_STRINGS = [
   "/test/events",
   "/test/projects",
   "/test/redeliver",
+  "jarvis.module.sample-probe",
+  "jarvis.module.test-request-worker",
+  "sample_probe_state",
 ] as const;
 
 describe("the production engine bundle carries none of the failpoint/test-hooks mechanism", () => {

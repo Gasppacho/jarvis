@@ -45,12 +45,6 @@ import {
   type ModulePublishedContractsLookup,
   type ModuleRepositoryDefaultBranchLookup,
 } from "./executions/delivery-consumer.js";
-import {
-  SAMPLE_PROBE_MODULE_ID,
-  SAMPLE_PROBE_PINGED,
-  createSampleProbeSchema,
-  createSampleProbeHandler,
-} from "./executions/sample-probe-module.js";
 import type { DurabilityTestHooks } from "./test-support/durability-test-routes.js";
 import { LiveUpdateHub } from "./stream/hub.js";
 
@@ -61,13 +55,6 @@ declare const __JARVIS_TEST_HOOKS__: boolean | undefined;
 
 const SHUTDOWN_GRACE_MS = 5_000;
 const STDERR_FD = 2;
-const REQUEST_WORKER_MODULE_ID = "jarvis.test.request-worker";
-const REQUEST_WORKER_CONTRACT = {
-  type: "development.implementation.requested",
-  version: 1,
-  kind: "request" as const,
-};
-const requestWorkerHandler: ModuleHandler = () => ({ handled: true });
 /**
  * Measured on macOS rather than argued from the docs, because two readings of
  * them disagreed:
@@ -250,8 +237,12 @@ async function main(): Promise<void> {
   // as a string — an ambient `launchctl setenv JARVIS_ENABLE_TEST_HOOKS 1`
   // has nothing to turn on there.
   let testHooksEnabled = false;
+  let testFixtures: typeof import("./test-support/test-fixtures.js") | undefined;
   if (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) {
     testHooksEnabled = process.env["JARVIS_ENABLE_TEST_HOOKS"] === "1";
+    if (testHooksEnabled) {
+      testFixtures = await import("./test-support/test-fixtures.js");
+    }
   }
   let durabilityTestHooks: DurabilityTestHooks | undefined;
   if (database !== undefined && projectStore !== undefined) {
@@ -268,7 +259,8 @@ async function main(): Promise<void> {
       eventPayloads: loadEventPayloadContracts(runtimeRoot),
     });
     const publisher = new EventPublisher(database.db, clock, ids, envelopes);
-    const sampleProbeHandler = createSampleProbeHandler(database.db);
+    const fixtures = testFixtures;
+    const sampleProbeHandler = fixtures?.createSampleProbeHandler(database.db);
     const openSubscriptions: OpenSubscriptionsPort = (projectId) =>
       deriveProjectSubscriptions(
         projectId,
@@ -278,9 +270,11 @@ async function main(): Promise<void> {
             const bundled = modules.composition(moduleId);
             if (bundled !== undefined) return bundled;
             if (!testHooksEnabled) return undefined;
-            if (moduleId === SAMPLE_PROBE_MODULE_ID) return { consumes: [SAMPLE_PROBE_PINGED] };
-            if (moduleId === REQUEST_WORKER_MODULE_ID) {
-              return { consumes: [REQUEST_WORKER_CONTRACT] };
+            if (fixtures !== undefined && moduleId === fixtures.SAMPLE_PROBE_MODULE_ID) {
+              return { consumes: [fixtures.SAMPLE_PROBE_PINGED] };
+            }
+            if (fixtures !== undefined && moduleId === fixtures.REQUEST_WORKER_MODULE_ID) {
+              return { consumes: [fixtures.REQUEST_WORKER_CONTRACT] };
             }
             return undefined;
           },
@@ -323,11 +317,19 @@ async function main(): Promise<void> {
     );
     const handlers: ModuleHandlerLookup = (moduleId) => {
       if (moduleId === AUTOMATION_RULES_MODULE_ID) return handleWorkItemTagAdded;
-      if (testHooksEnabled && moduleId === SAMPLE_PROBE_MODULE_ID) return sampleProbeHandler;
-      if (testHooksEnabled && moduleId === REQUEST_WORKER_MODULE_ID) return requestWorkerHandler;
+      if (
+        fixtures !== undefined &&
+        moduleId === fixtures.SAMPLE_PROBE_MODULE_ID &&
+        sampleProbeHandler !== undefined
+      ) {
+        return sampleProbeHandler;
+      }
+      if (fixtures !== undefined && moduleId === fixtures.REQUEST_WORKER_MODULE_ID) {
+        return fixtures.requestWorkerHandler;
+      }
       return undefined;
     };
-    if (testHooksEnabled) createSampleProbeSchema(database.db);
+    if (fixtures !== undefined) fixtures.createSampleProbeSchema(database.db);
     const consumer = new DeliveryConsumer(
       database.db,
       clock,
@@ -339,8 +341,14 @@ async function main(): Promise<void> {
       publishedContracts,
     );
     stopEventLoop = startEventLoop({ db: database.db, dispatcher, consumer, liveUpdates });
-    if (testHooksEnabled) {
-      durabilityTestHooks = { db: database.db, store: projectStore, publisher, consumer };
+    if (testHooksEnabled && projects !== undefined) {
+      durabilityTestHooks = {
+        db: database.db,
+        projects,
+        publisher,
+        consumer,
+        testRepositoryRoot: dirname(config.databasePath),
+      };
     }
   }
 

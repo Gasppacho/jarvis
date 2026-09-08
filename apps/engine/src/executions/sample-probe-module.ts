@@ -1,14 +1,17 @@
 import type Database from "better-sqlite3";
-import type { ModuleHandler, ModuleHandlerContext } from "./delivery-consumer.js";
+import type {
+  ModuleHandler,
+  ModuleHandlerContext,
+} from "../../../../packages/module-sdk/src/index.js";
 
 /**
  * Ticket #57's deterministic sample Module fixture (issue #57 "A deterministic
  * sample Module carries the handler so the behavior is observable without any
  * real business module"; "the sample Module is a deterministic test fixture
- * and ships no business behavior"). It is not a real Module Package: it has
- * no `module.manifest.yaml`, is not in `module-registry.json`, and is only
- * reachable through test hooks. It exists only for this ticket's — and #58's
- * — tests.
+ * and ships no business behavior"). It has no on-disk `module.manifest.yaml`
+ * or production `module-registry.json` entry. The test bundle's in-memory
+ * Module Host supplies its manifest, and test hooks are the only way to reach
+ * it. It exists only for this ticket's — and #58's — tests.
  */
 export const SAMPLE_PROBE_MODULE_ID = "jarvis.module.sample-probe";
 export const SAMPLE_PROBE_PINGED = {
