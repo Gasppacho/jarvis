@@ -154,14 +154,29 @@ export class WorkspaceLeaseRepository {
     return rows.map(toLease);
   }
 
-  public markRetained(projectId: string, leaseId: string): WorkspaceLease | undefined {
-    this.db
-      .prepare(
-        `UPDATE workspace_leases
-         SET status = 'retained', updated_at = @updatedAt
-         WHERE project_id = @projectId AND id = @leaseId AND status = 'active'`,
-      )
-      .run({ projectId, leaseId, updatedAt: this.clock.now().toISOString() });
+  public markRetained(
+    projectId: string,
+    leaseId: string,
+    expiresAt?: string,
+  ): WorkspaceLease | undefined {
+    const updatedAt = this.clock.now().toISOString();
+    if (expiresAt === undefined) {
+      this.db
+        .prepare(
+          `UPDATE workspace_leases
+           SET status = 'retained', updated_at = @updatedAt
+           WHERE project_id = @projectId AND id = @leaseId AND status = 'active'`,
+        )
+        .run({ projectId, leaseId, updatedAt });
+    } else {
+      this.db
+        .prepare(
+          `UPDATE workspace_leases
+           SET status = 'retained', expires_at = @expiresAt, updated_at = @updatedAt
+           WHERE project_id = @projectId AND id = @leaseId AND status = 'active'`,
+        )
+        .run({ projectId, leaseId, expiresAt, updatedAt });
+    }
     return this.findById(projectId, leaseId);
   }
 

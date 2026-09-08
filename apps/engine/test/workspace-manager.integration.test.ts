@@ -16,7 +16,9 @@ import { SystemIdGenerator } from "../../../packages/kernel/src/id-generator.js"
 import { SystemClock } from "../../../packages/kernel/src/clock.js";
 import {
   WorkspaceAllocationError,
+  WorkspaceReleaseError,
   type AllocateWorkspaceInput,
+  type ReleaseWorkspaceInput,
   WorkspaceManager,
   type WorkspaceProjectConfiguration,
 } from "../../../packages/workspace/src/workspace-manager.js";
@@ -485,6 +487,147 @@ describe("WorkspaceManager allocation", () => {
   });
 });
 
+describe("WorkspaceManager release", () => {
+  it.each(["success", "failure", "cancelled"] as const)(
+    "applies the %s cleanup policy to the real worktree and lease",
+    async (outcome) => {
+      const clock = fixedTestClock();
+      const harness = makeHarness({ clock });
+      const allocation = await harness.manager.allocate(harness.input);
+      const before = repositoryState(harness.fixture.root);
+
+      const released = await harness.manager.release({
+        projectId: harness.input.projectId,
+        executionId: harness.input.executionId,
+        repositoryPath: harness.fixture.root,
+        project: harness.project,
+        outcome,
+      });
+
+      const lease = harness.leases.findByExecution(
+        harness.input.projectId,
+        harness.input.executionId,
+      );
+      expect(released).toEqual(lease);
+      expect(lease).toBeDefined();
+      if (lease === undefined) throw new Error("expected a released lease");
+
+      if (outcome === "success") {
+        expect(existsSync(allocation.path)).toBe(false);
+        expect(lease.status).toBe("released");
+        expect(repositoryWorktreeCount(harness.fixture.root)).toBe(1);
+        expect(
+          execFileSync("git", ["show-ref", "--verify", `refs/heads/${allocation.workingBranch}`], {
+            cwd: harness.fixture.root,
+            encoding: "utf8",
+          }),
+        ).toContain(allocation.workingBranch);
+        const after = repositoryState(harness.fixture.root);
+        expect(after["head"]).toBe(before["head"]);
+        expect(after["branch"]).toBe(before["branch"]);
+        expect(after["status"]).toBe(before["status"]);
+        expect(after["refs"]).toBe(before["refs"]);
+      } else {
+        expect(existsSync(allocation.path)).toBe(true);
+        expect(lease.status).toBe("retained");
+        expect(lease.expiresAt).toBe("2026-09-15T10:00:00.000Z");
+        expect(repositoryWorktreeCount(harness.fixture.root)).toBe(2);
+        expect(harness.leases.listActive(harness.input.projectId)).toEqual([]);
+      }
+    },
+  );
+
+  it("releases an already released lease without a second side effect", async () => {
+    const harness = makeHarness({ clock: fixedTestClock() });
+    await harness.manager.allocate(harness.input);
+    const input: ReleaseWorkspaceInput = {
+      projectId: harness.input.projectId,
+      executionId: harness.input.executionId,
+      repositoryPath: harness.fixture.root,
+      project: harness.project,
+      outcome: "success",
+    };
+
+    const first = await harness.manager.release(input);
+    const stateAfterFirst = repositoryState(harness.fixture.root);
+    const second = await harness.manager.release(input);
+
+    expect(second).toEqual(first);
+    expect(repositoryState(harness.fixture.root)).toEqual(stateAfterFirst);
+  });
+
+  it("reports an unknown lease without changing Git, filesystem or SQLite", async () => {
+    const harness = makeHarness({ clock: fixedTestClock() });
+    const before = repositoryState(harness.fixture.root);
+
+    await expectReleaseFailure(harness, "workspace.lease-not-found", {
+      projectId: harness.input.projectId,
+      executionId: "missing-execution",
+      repositoryPath: harness.fixture.root,
+      project: harness.project,
+      outcome: "success",
+    });
+
+    expect(repositoryState(harness.fixture.root)).toEqual(before);
+    expect(harness.leases.findByExecution(harness.input.projectId, "missing-execution")).toBe(
+      undefined,
+    );
+  });
+
+  it("prunes Git and closes the lease when the workspace directory already disappeared", async () => {
+    const harness = makeHarness({ clock: fixedTestClock() });
+    const allocation = await harness.manager.allocate(harness.input);
+    rmSync(allocation.path, { recursive: true, force: true });
+
+    const released = await harness.manager.release({
+      projectId: harness.input.projectId,
+      executionId: harness.input.executionId,
+      repositoryPath: harness.fixture.root,
+      project: harness.project,
+      outcome: "success",
+    });
+
+    expect(existsSync(allocation.path)).toBe(false);
+    expect(repositoryWorktreeCount(harness.fixture.root)).toBe(1);
+    expect(released.status).toBe("released");
+  });
+
+  it("rejects a stored path outside the project workspaces root before deleting", async () => {
+    const harness = makeHarness({ clock: fixedTestClock() });
+    const outsidePath = join(harness.dataRoot, "outside-workspace");
+    mkdirSync(outsidePath, { recursive: true });
+    const sentinel = join(outsidePath, "keep.txt");
+    writeFileSync(sentinel, "must remain\n", "utf8");
+    harness.leases.create({
+      projectId: harness.input.projectId,
+      executionId: harness.input.executionId,
+      repositoryId: harness.input.repositoryId,
+      workingBranch: harness.workingBranch,
+      baseRevisionSha: harness.fixture.commitSha,
+      workspacePath: outsidePath,
+      expiresAt: "9999-12-31T23:59:59.999Z",
+      cleanupPolicy: "retain-on-failure",
+    });
+    const before = repositoryState(harness.fixture.root);
+
+    await expectReleaseFailure(harness, "workspace.path-violation", {
+      projectId: harness.input.projectId,
+      executionId: harness.input.executionId,
+      repositoryPath: harness.fixture.root,
+      project: harness.project,
+      outcome: "success",
+    });
+
+    expect(existsSync(sentinel)).toBe(true);
+    expect(
+      harness.leases.findByExecution(harness.input.projectId, harness.input.executionId),
+    ).toMatchObject({
+      status: "active",
+    });
+    expect(repositoryState(harness.fixture.root)).toEqual(before);
+  });
+});
+
 interface AllocationHarness {
   readonly fixture: ReturnType<typeof makeRealGitRepositoryFixture>;
   readonly dataRoot: string;
@@ -495,6 +638,7 @@ interface AllocationHarness {
   readonly project: WorkspaceProjectConfiguration;
   readonly expectedPath: string;
   readonly workingBranch: string;
+  readonly clock: MutableTestClock;
 }
 
 function makeHarness(
@@ -503,6 +647,7 @@ function makeHarness(
     readonly gitExecutable?: string;
     readonly projectId?: string;
     readonly executionId?: string;
+    readonly clock?: MutableTestClock;
   } = {},
 ): AllocationHarness {
   const fixture = makeRealGitRepositoryFixture();
@@ -534,10 +679,12 @@ function makeHarness(
       now: "2026-09-08T10:00:00.000Z",
     });
 
-  const leases = new WorkspaceLeaseRepository(database, new SystemClock(), new SystemIdGenerator());
+  const clock = options.clock ?? fixedTestClock();
+  const leases = new WorkspaceLeaseRepository(database, clock, new SystemIdGenerator());
   const manager = new WorkspaceManager({
     dataRoot,
     leases,
+    clock,
     ...(options.gitExecutable === undefined ? {} : { gitExecutable: options.gitExecutable }),
   });
   const input: AllocateWorkspaceInput = {
@@ -561,6 +708,21 @@ function makeHarness(
     project,
     expectedPath: join(realpathSync(dataRoot), "projects", projectId, "workspaces", executionId),
     workingBranch,
+    clock,
+  };
+}
+
+type MutableTestClock = {
+  current: Date;
+  now(): Date;
+};
+
+function fixedTestClock(): MutableTestClock {
+  return {
+    current: new Date("2026-09-08T10:00:00.000Z"),
+    now() {
+      return this.current;
+    },
   };
 }
 
@@ -586,6 +748,22 @@ async function expectWorkspaceFailure(
   expect(error.message).not.toContain(harness.fixture.root);
   expect(JSON.stringify(error.details)).not.toContain(harness.fixture.root);
   return error;
+}
+
+async function expectReleaseFailure(
+  harness: AllocationHarness,
+  code: string,
+  input: ReleaseWorkspaceInput,
+): Promise<WorkspaceReleaseError> {
+  let caught: unknown;
+  try {
+    await harness.manager.release(input);
+  } catch (error: unknown) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(WorkspaceReleaseError);
+  expect(caught).toMatchObject({ code, failureClass: "workspace" });
+  return caught as WorkspaceReleaseError;
 }
 
 function repositoryState(root: string): Record<string, string> {
