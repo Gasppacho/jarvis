@@ -365,6 +365,9 @@ describe("project composition choices", () => {
       validationOrder: ["typecheck", "test", "build"],
       maxRepairCycles: 3,
       retainWorkspaceOnSuccess: true,
+      timeoutMs: 300000,
+      outputLimitBytes: 1048576,
+      environmentAllowlist: [],
     };
 
     const saved = await engine.call(`/v1/projects/${project.id}/configuration`, {

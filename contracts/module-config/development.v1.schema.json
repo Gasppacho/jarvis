@@ -59,6 +59,42 @@
       "examples": [
         false
       ]
+    },
+    "timeoutMs": {
+      "title": "Agent timeout",
+      "description": "Maximum duration of one Agent Runtime session.",
+      "type": "integer",
+      "default": 300000,
+      "examples": [
+        300000
+      ],
+      "minimum": 100,
+      "maximum": 3600000
+    },
+    "outputLimitBytes": {
+      "title": "Agent output limit",
+      "description": "Maximum captured output for one Agent Runtime session.",
+      "type": "integer",
+      "default": 1048576,
+      "examples": [
+        1048576
+      ],
+      "minimum": 1024,
+      "maximum": 10485760
+    },
+    "environmentAllowlist": {
+      "title": "Agent environment allowlist",
+      "description": "Environment variable names explicitly allowed in the Agent Runtime process.",
+      "type": "array",
+      "default": [],
+      "examples": [
+        []
+      ],
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      }
     }
   }
 }

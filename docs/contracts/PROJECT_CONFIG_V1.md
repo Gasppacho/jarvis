@@ -19,6 +19,11 @@ La configuration portable définit la composition logique. Exemple complet : `ex
 - `workspace` : worktree et concurrence.
 - `modules` : instances, package, activation, config et bindings.
 
+L'instance Development peut également déclarer `timeoutMs`, `outputLimitBytes` et
+`environmentAllowlist` dans sa configuration validée. Ces valeurs sont
+transmises au Agent Runtime ; l'allowlist ne contient que des noms de variables
+et n'autorise jamais une valeur secrète brute.
+
 ## Local bindings
 
 Les bindings lient le projet à cette machine :

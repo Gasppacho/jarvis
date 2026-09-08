@@ -436,11 +436,14 @@ function sameFiles(left: readonly string[], right: readonly string[]): boolean {
 function sanitizeOutput(value: string, request: AgentRunRequest): string {
   let sanitized = value.replaceAll(request.workingDirectory, "<workspace>");
   for (const [key, secret] of Object.entries(request.environment)) {
-    if (key === "JARVIS_FAKE_SCENARIO") continue;
+    if (key === "JARVIS_FAKE_SCENARIO" || !SECRET_ENVIRONMENT_NAME.test(key)) continue;
     if (secret !== "") sanitized = sanitized.replaceAll(secret, "<redacted>");
   }
   return sanitized.replace(/(?:\/Users|\/home|\/private\/var)\/[^\s"']+/g, "<path>");
 }
+
+const SECRET_ENVIRONMENT_NAME =
+  /(?:secret|token|password|passwd|credential|private[_-]?key|api[_-]?key)/i;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -449,11 +452,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const FAKE_CHILD_SOURCE = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
+delete process.env.__CF_USER_TEXT_ENCODING;
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", chunk => input += chunk);
 process.stdin.on("end", () => {
   const request = JSON.parse(input || "{}");
+  const emit = record => process.stdout.write(JSON.stringify(record) + "\n");
+  if (request.scenario === "inspect") {
+    const file = "fake-runtime-working-directory.txt";
+    fs.writeFileSync(path.join(process.cwd(), file), process.cwd());
+    emit({ type: "message", message: JSON.stringify({ cwd: process.cwd(), environment: process.env }) });
+    emit({ type: "file-changed", path: file });
+    emit({
+      type: "result",
+      status: "completed",
+      summary: "Fake Runtime inspected its process context.",
+      changedFiles: [file]
+    });
+    return;
+  }
   if (request.scenario === "failure") {
     process.stderr.write("deterministic fake failure\n");
     process.exit(7);
@@ -464,7 +482,6 @@ process.stdin.on("end", () => {
   if (request.scenario === "oversized") process.stdout.write("x".repeat(131072) + "\n");
   const file = "fake-runtime-change.txt";
   fs.writeFileSync(path.join(process.cwd(), file), "Fake Runtime deterministic change.\n");
-  const emit = record => process.stdout.write(JSON.stringify(record) + "\n");
   emit({ type: "message", message: "Fake Runtime applied deterministic change." });
   emit({ type: "file-changed", path: file });
   emit({

@@ -73,3 +73,6 @@ modules:
         - build
       maxRepairCycles: 2
       retainWorkspaceOnSuccess: false
+      timeoutMs: 300000
+      outputLimitBytes: 1048576
+      environmentAllowlist: []
