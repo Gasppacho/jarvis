@@ -1,12 +1,22 @@
 import Database from "better-sqlite3";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { SystemIdGenerator } from "../../../packages/kernel/src/id-generator.js";
 import { SystemClock } from "../../../packages/kernel/src/clock.js";
 import {
+  WorkspaceAllocationError,
+  type AllocateWorkspaceInput,
   WorkspaceManager,
   type WorkspaceProjectConfiguration,
 } from "../../../packages/workspace/src/workspace-manager.js";
@@ -156,4 +166,294 @@ describe("WorkspaceManager allocation", () => {
     expect(leases.listActive(projectId)).toHaveLength(1);
     expect(allocation.lease).toEqual(lease);
   });
+
+  it("refuses an unknown base revision before creating workspace state", async () => {
+    const harness = makeHarness();
+    const before = repositoryState(harness.fixture.root);
+
+    await expectWorkspaceFailure(
+      harness,
+      { code: "git.base-not-found", retryable: false },
+      { ...harness.input, baseRevision: "refs/heads/missing" },
+    );
+
+    expect(existsSync(harness.expectedPath)).toBe(false);
+    expect(harness.leases.findByExecution(harness.input.projectId, harness.input.executionId)).toBe(
+      undefined,
+    );
+    expect(repositoryState(harness.fixture.root)).toEqual(before);
+  });
+
+  it("refuses a non-empty target path before reusing it", async () => {
+    const harness = makeHarness();
+    mkdirSync(harness.expectedPath, { recursive: true });
+    writeFileSync(join(harness.expectedPath, "do-not-touch.txt"), "existing\n", "utf8");
+    const before = repositoryState(harness.fixture.root);
+
+    await expectWorkspaceFailure(harness, {
+      code: "workspace.allocation-failed",
+      retryable: false,
+    });
+
+    expect(existsSync(join(harness.expectedPath, "do-not-touch.txt"))).toBe(true);
+    expect(repositoryState(harness.fixture.root)).toEqual(before);
+  });
+
+  it("refuses a working branch that already exists", async () => {
+    const harness = makeHarness();
+    execFileSync("git", ["branch", harness.workingBranch, harness.fixture.commitSha], {
+      cwd: harness.fixture.root,
+      stdio: "ignore",
+    });
+    const before = repositoryState(harness.fixture.root);
+
+    await expectWorkspaceFailure(harness, {
+      code: "workspace.allocation-failed",
+      retryable: false,
+    });
+
+    expect(existsSync(harness.expectedPath)).toBe(false);
+    expect(repositoryState(harness.fixture.root)).toEqual(before);
+  });
+
+  it("refuses a working branch checked out in another worktree", async () => {
+    const harness = makeHarness();
+    const otherWorkspace = join(harness.dataRoot, "already-checked-out");
+    execFileSync(
+      "git",
+      [
+        "worktree",
+        "add",
+        "--quiet",
+        "-b",
+        harness.workingBranch,
+        otherWorkspace,
+        harness.fixture.commitSha,
+      ],
+      { cwd: harness.fixture.root, stdio: "ignore" },
+    );
+    const before = repositoryState(harness.fixture.root);
+
+    await expectWorkspaceFailure(harness, {
+      code: "workspace.allocation-failed",
+      retryable: false,
+    });
+
+    expect(existsSync(harness.expectedPath)).toBe(false);
+    expect(existsSync(otherWorkspace)).toBe(true);
+    expect(repositoryState(harness.fixture.root)).toEqual(before);
+  });
+
+  it("rejects identifier traversal before touching the workspaces root", async () => {
+    const harness = makeHarness();
+    const input = { ...harness.input, projectId: "../outside" };
+
+    await expectWorkspaceFailure(
+      harness,
+      { code: "workspace.path-violation", retryable: false },
+      input,
+    );
+
+    expect(existsSync(join(harness.dataRoot, "projects"))).toBe(false);
+    expect(existsSync(join(harness.dataRoot, "outside"))).toBe(false);
+  });
+
+  it("rejects branch-name traversal before touching the workspaces root", async () => {
+    const harness = makeHarness({
+      project: {
+        git: { branchPattern: "../outside/{workItemId}" },
+        workspace: { retainOnFailureDays: 7 },
+      },
+    });
+
+    await expectWorkspaceFailure(harness, { code: "workspace.path-violation", retryable: false });
+
+    expect(existsSync(join(harness.dataRoot, "projects"))).toBe(false);
+  });
+
+  it.each([
+    ["missing", "missing-repository"],
+    ["non-Git", "plain-repository"],
+  ])("refuses a %s repository", async (_label, repositoryName) => {
+    const harness = makeHarness();
+    const repositoryPath = join(harness.dataRoot, repositoryName);
+    if (repositoryName === "plain-repository") mkdirSync(repositoryPath);
+
+    await expectWorkspaceFailure(
+      harness,
+      { code: "workspace.allocation-failed", retryable: false },
+      { ...harness.input, repositoryPath },
+    );
+
+    expect(existsSync(harness.expectedPath)).toBe(false);
+  });
+
+  it("refuses an unreadable repository", async () => {
+    const harness = makeHarness();
+    chmodSync(harness.fixture.root, 0o000);
+    try {
+      await expectWorkspaceFailure(harness, {
+        code: "workspace.allocation-failed",
+        retryable: false,
+      });
+    } finally {
+      chmodSync(harness.fixture.root, 0o755);
+    }
+
+    expect(existsSync(harness.expectedPath)).toBe(false);
+  });
+
+  it("turns a missing Git executable into a typed failure", async () => {
+    const missingGitRoot = mkdtempSync(join(tmpdir(), "jarvis-workspace-manager-git-"));
+    roots.push(missingGitRoot);
+    const harness = makeHarness({ gitExecutable: join(missingGitRoot, "missing-git") });
+
+    await expectWorkspaceFailure(harness, { code: "workspace.allocation-failed", retryable: true });
+
+    expect(existsSync(harness.expectedPath)).toBe(false);
+  });
+
+  it("rolls back Git state when the lease cannot be committed", async () => {
+    const harness = makeHarness();
+    const existingLease = harness.leases.create({
+      projectId: harness.input.projectId,
+      executionId: "other-execution",
+      repositoryId: harness.input.repositoryId,
+      workingBranch: harness.workingBranch,
+      baseRevisionSha: harness.fixture.commitSha,
+      workspacePath: join(harness.dataRoot, "other-lease"),
+      expiresAt: "9999-12-31T23:59:59.999Z",
+      cleanupPolicy: "retain-on-failure",
+    });
+    const before = repositoryState(harness.fixture.root);
+
+    await expectWorkspaceFailure(harness, {
+      code: "workspace.allocation-failed",
+      retryable: false,
+    });
+
+    expect(harness.leases.findByExecution(harness.input.projectId, harness.input.executionId)).toBe(
+      undefined,
+    );
+    expect(
+      harness.leases.findByExecution(harness.input.projectId, existingLease.executionId),
+    ).toEqual(existingLease);
+    expect(existsSync(harness.expectedPath)).toBe(false);
+    expect(repositoryState(harness.fixture.root)).toEqual(before);
+  });
 });
+
+interface AllocationHarness {
+  readonly fixture: ReturnType<typeof makeRealGitRepositoryFixture>;
+  readonly dataRoot: string;
+  readonly leases: WorkspaceLeaseRepository;
+  readonly manager: WorkspaceManager;
+  readonly input: AllocateWorkspaceInput;
+  readonly project: WorkspaceProjectConfiguration;
+  readonly expectedPath: string;
+  readonly workingBranch: string;
+}
+
+function makeHarness(
+  options: {
+    readonly project?: WorkspaceProjectConfiguration;
+    readonly gitExecutable?: string;
+  } = {},
+): AllocationHarness {
+  const fixture = makeRealGitRepositoryFixture();
+  roots.push(fixture.root);
+  const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-workspace-manager-failure-"));
+  roots.push(dataRoot);
+  const database = new Database(join(dataRoot, "jarvis.sqlite"));
+  databases.push(database);
+  database.pragma("foreign_keys = ON");
+  applyMigrations(database);
+
+  const projectId = "project-70";
+  const executionId = "exec-70";
+  const project =
+    options.project ??
+    ({
+      git: { branchPattern: "agent/{workItemId}-{slug}" },
+      workspace: { retainOnFailureDays: 7 },
+    } satisfies WorkspaceProjectConfiguration);
+  database
+    .prepare(
+      `INSERT INTO projects (id, name, status, portable_config, created_at, updated_at)
+       VALUES (@id, @name, 'active', @config, @now, @now)`,
+    )
+    .run({
+      id: projectId,
+      name: projectId,
+      config: JSON.stringify(project),
+      now: "2026-09-08T10:00:00.000Z",
+    });
+
+  const leases = new WorkspaceLeaseRepository(database, new SystemClock(), new SystemIdGenerator());
+  const manager = new WorkspaceManager({
+    dataRoot,
+    leases,
+    ...(options.gitExecutable === undefined ? {} : { gitExecutable: options.gitExecutable }),
+  });
+  const input: AllocateWorkspaceInput = {
+    projectId,
+    executionId,
+    repositoryId: "main",
+    repositoryPath: fixture.root,
+    baseRevision: fixture.commitSha,
+    branchContext: { workItemId: "70", slug: "unsafe-path" },
+    project,
+  };
+  const workingBranch = "agent/70-unsafe-path";
+
+  return {
+    fixture,
+    dataRoot,
+    leases,
+    manager,
+    input,
+    project,
+    expectedPath: join(realpathSync(dataRoot), "projects", projectId, "workspaces", executionId),
+    workingBranch,
+  };
+}
+
+async function expectWorkspaceFailure(
+  harness: AllocationHarness,
+  expected: { readonly code: string; readonly retryable: boolean },
+  input: AllocateWorkspaceInput = harness.input,
+): Promise<WorkspaceAllocationError> {
+  let caught: unknown;
+  try {
+    await harness.manager.allocate(input);
+  } catch (error: unknown) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(WorkspaceAllocationError);
+  expect(caught).toMatchObject({
+    code: expected.code,
+    failureClass: "workspace",
+    retryable: expected.retryable,
+  });
+  const error = caught as WorkspaceAllocationError;
+  expect(error.details).toEqual(expect.any(Object));
+  expect(error.message).not.toContain(harness.fixture.root);
+  expect(JSON.stringify(error.details)).not.toContain(harness.fixture.root);
+  return error;
+}
+
+function repositoryState(root: string): Record<string, string> {
+  return {
+    head: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }),
+    branch: execFileSync("git", ["branch", "--show-current"], { cwd: root, encoding: "utf8" }),
+    status: execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }),
+    refs: execFileSync("git", ["for-each-ref", "--format=%(refname)", "refs/heads"], {
+      cwd: root,
+      encoding: "utf8",
+    }),
+    worktrees: execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: root,
+      encoding: "utf8",
+    }),
+  };
+}
