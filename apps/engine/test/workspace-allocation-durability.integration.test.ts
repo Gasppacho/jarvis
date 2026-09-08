@@ -40,7 +40,15 @@ describe("Workspace allocation durability", () => {
     const restarted = await startWith(dataRoot);
     await restarted.waitForStderr("code=workspace.reconciliation.completed");
     expect(existsSync(workspacePath)).toBe(false);
+    expect(readLease(dataRoot, projectId, executionId)).toBeUndefined();
     expect(worktreePaths(fixture.root)).not.toContain(workspacePath);
+
+    const idempotentRestart = await startWith(dataRoot);
+    await idempotentRestart.waitForStderr("code=workspace.reconciliation.completed");
+    expect(existsSync(workspacePath)).toBe(false);
+    expect(readLease(dataRoot, projectId, executionId)).toBeUndefined();
+    expect(worktreePaths(fixture.root)).not.toContain(workspacePath);
+    await stopEngine(idempotentRestart);
 
     const allocation = await allocate(restarted, projectId, executionId, fixture);
     await expectAllocation(allocation, restarted, fixture);
@@ -72,6 +80,13 @@ describe("Workspace allocation durability", () => {
     expect(existsSync(workspacePath)).toBe(false);
     expect(readLease(dataRoot, projectId, executionId)?.status).toBe("released");
     expect(worktreePaths(fixture.root)).not.toContain(workspacePath);
+
+    const idempotentRestart = await startWith(dataRoot);
+    await idempotentRestart.waitForStderr("code=workspace.reconciliation.completed");
+    expect(existsSync(workspacePath)).toBe(false);
+    expect(readLease(dataRoot, projectId, executionId)?.status).toBe("released");
+    expect(worktreePaths(fixture.root)).not.toContain(workspacePath);
+    await stopEngine(idempotentRestart);
 
     await expectAllocation(
       await allocate(restarted, projectId, executionId, fixture),
@@ -193,6 +208,12 @@ async function release(
     body: JSON.stringify({ projectId, executionId, repositoryPath, outcome: "success" }),
   });
   expect(response.status).toBe(200);
+}
+
+async function stopEngine(engine: Harness): Promise<void> {
+  const response = await engine.call("/v1/system/shutdown", { method: "POST" });
+  expect(response.status).toBe(202);
+  await expect(engine.waitForExit()).resolves.toBe(0);
 }
 
 async function expectCrash(request: Promise<Response>, engine: Harness): Promise<void> {

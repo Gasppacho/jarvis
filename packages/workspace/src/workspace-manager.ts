@@ -476,7 +476,7 @@ export class WorkspaceManager {
         { details: { operation: "remove-workspace" }, retryable: true },
       );
     }
-    if (branch !== undefined && repositoryPath !== undefined) {
+    if (repositoryPath !== undefined) {
       const git = new GitRunner({ cwd: repositoryPath });
       const prune = await git.run(["worktree", "prune", "--expire", "now"]);
       if (!prune.ok) {
@@ -486,13 +486,15 @@ export class WorkspaceManager {
           { details: { operation: "prune-orphaned-worktree" }, retryable: true },
         );
       }
-      const result = await git.run(["branch", "-D", branch]);
-      if (!result.ok) {
-        throw new WorkspaceReleaseError(
-          "workspace.release-failed",
-          "The orphaned working branch could not be removed.",
-          { details: { operation: "remove-orphaned-branch" }, retryable: true },
-        );
+      if (branch !== undefined) {
+        const result = await git.run(["branch", "-D", branch]);
+        if (!result.ok) {
+          throw new WorkspaceReleaseError(
+            "workspace.release-failed",
+            "The orphaned working branch could not be removed.",
+            { details: { operation: "remove-orphaned-branch" }, retryable: true },
+          );
+        }
       }
     }
   }
