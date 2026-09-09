@@ -586,6 +586,18 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
           });
           return;
         }
+        if (checkpoint.type === "branch.pushed") {
+          this.checkpointStore.record({
+            projectId: delivery.projectId,
+            executionId,
+            type: checkpoint.type,
+            sourceSequence: checkpoint.sequence,
+            occurredAt: checkpoint.timestamp,
+            branch: checkpoint.branch,
+            sha: checkpoint.sha,
+          });
+          return;
+        }
         this.checkpointStore.record({
           projectId: delivery.projectId,
           executionId,

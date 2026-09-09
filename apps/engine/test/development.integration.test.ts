@@ -101,6 +101,13 @@ describe("Development Module tracer bullet", () => {
       expect(commitDetails).toContain(`${recordedResult.headCommit}\nJarvis\njarvis@localhost`);
       expect(commitDetails).toContain(`Work Item: fixture://${projectId}/first`);
       expect(
+        execFileSync(
+          "git",
+          ["--git-dir", fixture.remoteRoot, "rev-parse", `refs/heads/${recordedResult.headBranch}`],
+          { encoding: "utf8" },
+        ).trim(),
+      ).toBe(recordedResult.headCommit);
+      expect(
         database
           .prepare(
             `SELECT status FROM workspace_leases
@@ -189,9 +196,10 @@ describe("Development Module tracer bullet", () => {
         "agent.message",
         "validation.started",
         "commit.created",
+        "branch.pushed",
       ]);
-      expect(checkpoints.map((checkpoint) => checkpoint.sequence)).toEqual([1, 2, 3, 4]);
-      expect(checkpoints.map((checkpoint) => checkpoint.sourceSequence)).toEqual([1, 2, 3, 4]);
+      expect(checkpoints.map((checkpoint) => checkpoint.sequence)).toEqual([1, 2, 3, 4, 5]);
+      expect(checkpoints.map((checkpoint) => checkpoint.sourceSequence)).toEqual([1, 2, 3, 4, 5]);
       expect(checkpoints[1]?.payload).toEqual({
         message: "Fake Runtime applied deterministic change.",
       });
@@ -248,6 +256,71 @@ describe("Development Module tracer bullet", () => {
           )
           .all(development!.id),
       ).toEqual([{ type: "agent.started" }, { type: "validation.started" }]);
+      expect(
+        database
+          .prepare("SELECT status FROM workspace_leases WHERE project_id = ? AND execution_id = ?")
+          .get(projectId, development!.id),
+      ).toEqual({ status: "retained" });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("fails when the configured push remote is unavailable", async () => {
+    const fixture = makeRealGitRepositoryFixture();
+    roots.push(fixture.root, fixture.remoteRoot);
+    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-push-failure-"));
+    roots.push(dataRoot);
+    const projectId = "development-push-failure";
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
+    });
+    engines.push(engine);
+    const before = repositoryState(fixture.root);
+
+    await activateProject(
+      engine,
+      projectId,
+      fixture,
+      false,
+      300_000,
+      1_048_576,
+      { test: "node --test" },
+      ["test"],
+      false,
+      "unreachable",
+    );
+    await publishTag(engine, projectId, "push-failure");
+    const executions = await waitForExecutions(engine, projectId, 2);
+    const development = executions.find(
+      (execution) => execution.moduleInstanceId === "development",
+    );
+    expect(development).toMatchObject({ status: "failed" });
+    expect(development).toBeDefined();
+    expect(repositoryState(fixture.root)).toEqual(before);
+
+    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
+    try {
+      const inbox = database
+        .prepare("SELECT result FROM inbox WHERE module_instance_id = 'development'")
+        .get() as { result: string };
+      expect(JSON.parse(inbox.result)).toEqual({
+        error: { code: "git.push-failed", message: expect.any(String), retryable: true },
+      });
+      expect(
+        database
+          .prepare(
+            "SELECT type FROM execution_checkpoints WHERE execution_id = ? ORDER BY sequence",
+          )
+          .all(development!.id),
+      ).toEqual([
+        { type: "agent.started" },
+        { type: "agent.message" },
+        { type: "validation.started" },
+        { type: "commit.created" },
+      ]);
       expect(
         database
           .prepare("SELECT status FROM workspace_leases WHERE project_id = ? AND execution_id = ?")
@@ -547,6 +620,7 @@ async function activateProject(
   commands: PortableProjectConfiguration["commands"] = { test: "node --test" },
   validationOrder: readonly string[] = ["test"],
   retainWorkspaceOnSuccess = false,
+  pushRemote = "origin",
 ): Promise<void> {
   const portableConfig = {
     apiVersion: "jarvis.dev/project/v1",
@@ -558,7 +632,7 @@ async function activateProject(
     git: {
       branchPattern: "agent/{workItemId}-{slug}",
       commitStrategy: "conventional",
-      pushRemote: "origin",
+      pushRemote,
       allowForcePush: false,
     },
     workspace: {

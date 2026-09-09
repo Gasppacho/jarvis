@@ -41,6 +41,15 @@ export type ExecutionCheckpointInput =
       readonly occurredAt: string;
       readonly branch: string;
       readonly sha: string;
+    }
+  | {
+      readonly projectId: string;
+      readonly executionId: string;
+      readonly type: "branch.pushed";
+      readonly sourceSequence: number;
+      readonly occurredAt: string;
+      readonly branch: string;
+      readonly sha: string;
     };
 
 export interface ExecutionCheckpoint {
@@ -167,7 +176,7 @@ function validateInput(input: ExecutionCheckpointInput): void {
     ((input.type === "validation.started" || input.type === "validation.failed") &&
       (typeof input.check !== "string" || input.check === "")) ||
     (input.type === "validation.failed" && typeof input.output !== "string") ||
-    (input.type === "commit.created" &&
+    ((input.type === "commit.created" || input.type === "branch.pushed") &&
       (typeof input.branch !== "string" ||
         input.branch === "" ||
         typeof input.sha !== "string" ||

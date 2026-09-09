@@ -119,6 +119,13 @@ export type ModuleExecutionCheckpoint =
       readonly timestamp: string;
       readonly branch: string;
       readonly sha: string;
+    }
+  | {
+      readonly type: "branch.pushed";
+      readonly sequence: number;
+      readonly timestamp: string;
+      readonly branch: string;
+      readonly sha: string;
     };
 
 export interface ModuleHandlerPublishInput {

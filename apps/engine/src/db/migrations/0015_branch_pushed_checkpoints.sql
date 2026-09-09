@@ -1,6 +1,5 @@
--- Ticket #89: validation progress is durable alongside Agent progress.
--- 0011 already shipped with a closed type CHECK, so rebuild it for upgrades.
-CREATE TABLE execution_checkpoints_with_validation (
+-- Ticket #91: a pushed branch is durable Execution progress.
+CREATE TABLE execution_checkpoints_with_branch_push (
   project_id TEXT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
   execution_id TEXT NOT NULL,
   sequence INTEGER NOT NULL CHECK (sequence > 0),
@@ -14,13 +13,13 @@ CREATE TABLE execution_checkpoints_with_validation (
     REFERENCES executions (id, project_id) ON DELETE CASCADE
 ) STRICT;
 
-INSERT INTO execution_checkpoints_with_validation
+INSERT INTO execution_checkpoints_with_branch_push
   (project_id, execution_id, sequence, source_sequence, type, payload, occurred_at)
 SELECT project_id, execution_id, sequence, source_sequence, type, payload, occurred_at
 FROM execution_checkpoints;
 
 DROP TABLE execution_checkpoints;
-ALTER TABLE execution_checkpoints_with_validation RENAME TO execution_checkpoints;
+ALTER TABLE execution_checkpoints_with_branch_push RENAME TO execution_checkpoints;
 
 CREATE UNIQUE INDEX execution_checkpoints_agent_started_once
   ON execution_checkpoints (project_id, execution_id)

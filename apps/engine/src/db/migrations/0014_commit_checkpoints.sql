@@ -4,7 +4,7 @@ CREATE TABLE execution_checkpoints_with_commit (
   execution_id TEXT NOT NULL,
   sequence INTEGER NOT NULL CHECK (sequence > 0),
   source_sequence INTEGER NOT NULL CHECK (source_sequence > 0),
-  type TEXT NOT NULL CHECK (type IN ('agent.started', 'agent.message', 'validation.started', 'validation.failed', 'commit.created')),
+  type TEXT NOT NULL CHECK (type IN ('agent.started', 'agent.message', 'validation.started', 'validation.failed', 'commit.created', 'branch.pushed')),
   payload TEXT NOT NULL,
   occurred_at TEXT NOT NULL,
   PRIMARY KEY (project_id, execution_id, sequence),

@@ -35,7 +35,11 @@ type ValidationCheck = (typeof VALIDATION_CHECKS)[number];
 class DevelopmentExecutionError extends Error {
   public constructor(
     public readonly code:
-      "project.config-invalid" | "git.validation-failed" | "git.no-changes" | "git.commit-failed",
+      | "project.config-invalid"
+      | "git.validation-failed"
+      | "git.no-changes"
+      | "git.commit-failed"
+      | "git.push-failed",
     message: string,
     retryable = false,
   ) {
@@ -213,6 +217,30 @@ export const handleImplementationRequested: ModuleHandler = async (
     });
     ctx.recordCheckpoint({
       type: "commit.created",
+      sequence: ++checkpointSequence,
+      timestamp: new Date().toISOString(),
+      branch: commit.branch,
+      sha: commit.sha,
+    });
+    await pushBranch({
+      workspacePath: allocation.path,
+      branch: commit.branch,
+      sha: commit.sha,
+      pushRemote: projectCommands.git.pushRemote,
+      signal: ctx.signal,
+      timeoutMs: boundedPositiveConfigNumber(
+        ctx.configuration["timeoutMs"],
+        DEFAULT_TIMEOUT_MS,
+        MAX_TIMEOUT_MS,
+      ),
+      outputLimitBytes: boundedPositiveConfigNumber(
+        ctx.configuration["outputLimitBytes"],
+        DEFAULT_OUTPUT_LIMIT_BYTES,
+        MAX_OUTPUT_LIMIT_BYTES,
+      ),
+    });
+    ctx.recordCheckpoint({
+      type: "branch.pushed",
       sequence: ++checkpointSequence,
       timestamp: new Date().toISOString(),
       branch: commit.branch,
@@ -414,6 +442,46 @@ async function createCommit(input: {
   return { branch: branchName, sha };
 }
 
+async function pushBranch(input: {
+  readonly workspacePath: string;
+  readonly branch: string;
+  readonly sha: string;
+  readonly pushRemote: string;
+  readonly signal: AbortSignal;
+  readonly timeoutMs: number;
+  readonly outputLimitBytes: number;
+}): Promise<void> {
+  const remote = input.pushRemote.trim();
+  if (remote === "" || remote.startsWith("-") || /\s/.test(remote)) {
+    throw new DevelopmentExecutionError(
+      "project.config-invalid",
+      "The Project push remote is invalid.",
+    );
+  }
+  const git = new GitRunner({
+    cwd: input.workspacePath,
+    timeoutMs: input.timeoutMs,
+    outputLimitBytes: input.outputLimitBytes,
+  });
+  const options = { signal: input.signal };
+  const pushed = await git.run(["push", "--set-upstream", remote, input.branch], options);
+  if (!pushed.ok) throwPushFailure(pushed, "push the working branch");
+
+  const remoteHead = await git.run(
+    ["ls-remote", "--heads", remote, `refs/heads/${input.branch}`],
+    options,
+  );
+  if (!remoteHead.ok) throwPushFailure(remoteHead, "verify the pushed branch");
+  const [remoteSha, remoteRef] = remoteHead.stdout.trim().split(/\s+/);
+  if (remoteSha !== input.sha || remoteRef !== `refs/heads/${input.branch}`) {
+    throw new DevelopmentExecutionError(
+      "git.push-failed",
+      "The configured remote does not point to the committed working branch.",
+      true,
+    );
+  }
+}
+
 function commitMessage(
   strategy: "conventional" | "ticket-prefix" | "freeform",
   workItemRef: string,
@@ -437,6 +505,17 @@ function throwCommitFailure(
     "git.commit-failed",
     `Git could not ${operation}.`,
     ["git.executable-not-found", "git.spawn-failed", "git.timed-out"].includes(result.code),
+  );
+}
+
+function throwPushFailure(
+  result: Exclude<GitCommandResult, { readonly ok: true }>,
+  operation: string,
+): never {
+  throw new DevelopmentExecutionError(
+    "git.push-failed",
+    `Git could not ${operation}.`,
+    result.code !== "git.cancelled",
   );
 }
 
