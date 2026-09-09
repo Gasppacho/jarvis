@@ -67,23 +67,33 @@ type DevelopmentFailureCode =
   | "agent.run-cancelled"
   | "system.internal-error";
 
+interface ValidationFailureContext {
+  readonly validationCheck?: ValidationCheck;
+  readonly validationOutput?: string;
+}
+
 class DevelopmentExecutionError extends Error {
   public constructor(
     public readonly code: DevelopmentFailureCode,
     message: string,
     retryable = false,
+    context: ValidationFailureContext = {},
   ) {
     super(message);
     this.name = "DevelopmentExecutionError";
     this.failureClass = failureClass(code);
     this.errorClass = this.failureClass;
     this.retryable = retryable;
+    this.validationCheck = context.validationCheck;
+    this.validationOutput = context.validationOutput;
   }
 
   public readonly failureClass:
     "configuration" | "input" | "validation" | "workspace" | "agent" | "cancelled" | "internal";
   public readonly errorClass: DevelopmentExecutionError["failureClass"];
   public readonly retryable: boolean;
+  public readonly validationCheck: ValidationCheck | undefined;
+  public readonly validationOutput: string | undefined;
 }
 
 function failureClass(
@@ -196,6 +206,18 @@ async function runImplementationRequested(
       "Development requires a project-bound Agent Runtime, workspace, and Project Commands.",
     );
   }
+  const validationOrder = readValidationOrder(ctx.configuration["validationOrder"]);
+  const maxRepairCycles = readMaxRepairCycles(ctx.configuration["maxRepairCycles"]);
+  const timeoutMs = boundedPositiveConfigNumber(
+    ctx.configuration["timeoutMs"],
+    DEFAULT_TIMEOUT_MS,
+    MAX_TIMEOUT_MS,
+  );
+  const outputLimitBytes = boundedPositiveConfigNumber(
+    ctx.configuration["outputLimitBytes"],
+    DEFAULT_OUTPUT_LIMIT_BYTES,
+    MAX_OUTPUT_LIMIT_BYTES,
+  );
 
   const allocation = await workspace.allocate({
     executionId: ctx.executionId,
@@ -211,76 +233,79 @@ async function runImplementationRequested(
   let run: AgentRun | undefined;
   let checkpointSequence = 0;
   try {
-    const agentRequest = buildAgentRunRequest({
-      projectId: ctx.projectId,
-      executionId: ctx.executionId,
-      workingDirectory: allocation.path,
-      objective: "Implement the requested work item in the allocated workspace.",
-      prompt: {
-        moduleContract:
-          "Development implements one requested work item in this workspace. Do not commit, push, or claim that validation passed.",
-        projectConfiguration: JSON.stringify(ctx.configuration),
-        repositoryInstructions: await repositoryInstructions(allocation.path),
-        ticketContent: request.workItemRef,
-      },
-      environment: process.env,
-      environmentAllowlist: stringArray(ctx.configuration["environmentAllowlist"]),
-      projectBindings,
-      mcpSlotNames: [],
-      timeoutMs: boundedPositiveConfigNumber(
-        ctx.configuration["timeoutMs"],
-        DEFAULT_TIMEOUT_MS,
-        MAX_TIMEOUT_MS,
-      ),
-      outputLimitBytes: boundedPositiveConfigNumber(
-        ctx.configuration["outputLimitBytes"],
-        DEFAULT_OUTPUT_LIMIT_BYTES,
-        MAX_OUTPUT_LIMIT_BYTES,
-      ),
-      secretValues: processSecretValues(),
-    });
-    let result: AgentRunResult;
-    try {
-      run = await runtime.start(agentRequest, ctx.signal);
-      for await (const event of run.events()) {
-        if (event.type === "started") {
-          checkpointSequence = Math.max(checkpointSequence, event.sequence);
-          ctx.recordCheckpoint({
-            type: "agent.started",
-            sequence: event.sequence,
-            timestamp: event.timestamp,
-          });
-        } else if (event.type === "message" && event.message !== undefined) {
-          checkpointSequence = Math.max(checkpointSequence, event.sequence);
-          ctx.recordCheckpoint({
-            type: "agent.message",
-            sequence: event.sequence,
-            timestamp: event.timestamp,
-            message: event.message,
-          });
+    const repositoryInstructionText = await repositoryInstructions(allocation.path);
+    const executeAgent = async (input: {
+      readonly objective: string;
+      readonly moduleContract: string;
+      readonly ticketContent: string;
+    }): Promise<{ readonly result: AgentRunResult; readonly changedFiles: readonly string[] }> => {
+      const agentRequest = buildAgentRunRequest({
+        projectId: ctx.projectId,
+        executionId: ctx.executionId,
+        workingDirectory: allocation.path,
+        objective: input.objective,
+        prompt: {
+          moduleContract: input.moduleContract,
+          projectConfiguration: JSON.stringify(ctx.configuration),
+          repositoryInstructions: repositoryInstructionText,
+          ticketContent: input.ticketContent,
+        },
+        environment: process.env,
+        environmentAllowlist: stringArray(ctx.configuration["environmentAllowlist"]),
+        projectBindings,
+        mcpSlotNames: [],
+        timeoutMs,
+        outputLimitBytes,
+        secretValues: processSecretValues(),
+      });
+      let result: AgentRunResult;
+      try {
+        run = await runtime.start(agentRequest, ctx.signal);
+        for await (const event of run.events()) {
+          if (event.type === "started") {
+            ctx.recordCheckpoint({
+              type: "agent.started",
+              sequence: ++checkpointSequence,
+              timestamp: event.timestamp,
+            });
+          } else if (event.type === "message" && event.message !== undefined) {
+            ctx.recordCheckpoint({
+              type: "agent.message",
+              sequence: ++checkpointSequence,
+              timestamp: event.timestamp,
+              message: event.message,
+            });
+          }
         }
+        result = await run.result();
+      } catch (error) {
+        if (error instanceof DevelopmentExecutionError) throw error;
+        throw new DevelopmentExecutionError(
+          ctx.signal.aborted ? "agent.run-cancelled" : "agent.run-failed",
+          ctx.signal.aborted
+            ? "The implementation was cancelled before completion."
+            : "The Agent Runtime failed before completing the implementation.",
+          !ctx.signal.aborted,
+        );
       }
-      result = await run.result();
-    } catch (error) {
-      if (error instanceof DevelopmentExecutionError) throw error;
-      throw new DevelopmentExecutionError(
-        ctx.signal.aborted ? "agent.run-cancelled" : "agent.run-failed",
-        ctx.signal.aborted
-          ? "The implementation was cancelled before completion."
-          : "The Agent Runtime failed before completing the implementation.",
-        !ctx.signal.aborted,
-      );
-    }
-    let changedFiles: readonly string[];
-    try {
-      changedFiles = await verifyChangedFiles(allocation.path, result.changedFiles);
-    } catch {
-      throw new DevelopmentExecutionError(
-        "agent.run-failed",
-        "The Agent Runtime returned an invalid implementation result.",
-      );
-    }
-    if (result.status !== "completed") {
+      try {
+        return {
+          result,
+          changedFiles: await verifyChangedFiles(allocation.path, result.changedFiles),
+        };
+      } catch {
+        throw new DevelopmentExecutionError(
+          "agent.run-failed",
+          "The Agent Runtime returned an invalid implementation result.",
+        );
+      }
+    };
+    const stoppedAgentResult = (attempt: {
+      readonly result: AgentRunResult;
+      readonly changedFiles: readonly string[];
+    }): DevelopmentRunResult | undefined => {
+      const { result, changedFiles } = attempt;
+      if (result.status === "completed") return undefined;
       releaseOutcome = result.status === "cancelled" ? "cancelled" : "failure";
       if (result.status === "failed") {
         throw new DevelopmentExecutionError(
@@ -299,42 +324,73 @@ async function runImplementationRequested(
         commands: projectCommands.commands,
         git: projectCommands.git,
       };
-    }
-    const validation = await runValidationPlan({
-      order: readValidationOrder(ctx.configuration["validationOrder"]),
-      commands: projectCommands.commands,
-      shell,
-      cwd: allocation.path,
-      signal: ctx.signal,
-      timeoutMs: boundedPositiveConfigNumber(
-        ctx.configuration["timeoutMs"],
-        DEFAULT_TIMEOUT_MS,
-        MAX_TIMEOUT_MS,
-      ),
-      outputLimitBytes: boundedPositiveConfigNumber(
-        ctx.configuration["outputLimitBytes"],
-        DEFAULT_OUTPUT_LIMIT_BYTES,
-        MAX_OUTPUT_LIMIT_BYTES,
-      ),
-      nextCheckpointSequence: () => ++checkpointSequence,
-      recordCheckpoint: ctx.recordCheckpoint,
+    };
+    let attempt = await executeAgent({
+      objective: "Implement the requested work item in the allocated workspace.",
+      moduleContract:
+        "Development implements one requested work item in this workspace. Do not commit, push, or claim that validation passed.",
+      ticketContent: request.workItemRef,
     });
+    let validation: DevelopmentRunResult["validation"];
+    let repairCycles = 0;
+    for (;;) {
+      const stopped = stoppedAgentResult(attempt);
+      if (stopped !== undefined) return stopped;
+      try {
+        validation = await runValidationPlan({
+          order: validationOrder,
+          commands: projectCommands.commands,
+          shell,
+          cwd: allocation.path,
+          signal: ctx.signal,
+          timeoutMs,
+          outputLimitBytes,
+          nextCheckpointSequence: () => ++checkpointSequence,
+          recordCheckpoint: ctx.recordCheckpoint,
+        });
+        break;
+      } catch (error) {
+        if (
+          !(error instanceof DevelopmentExecutionError) ||
+          error.code !== "git.validation-failed" ||
+          ctx.signal.aborted ||
+          repairCycles >= maxRepairCycles ||
+          error.validationCheck === undefined ||
+          error.validationOutput === undefined
+        ) {
+          throw error;
+        }
+        repairCycles += 1;
+        attempt = await executeAgent({
+          objective: "Repair the implementation after the Validation Plan failed.",
+          moduleContract:
+            "Development performs one bounded Repair Cycle in this workspace. Use the supplied validation failure, make the smallest fix, and do not commit, push, or claim that validation passed.",
+          ticketContent: [
+            request.workItemRef,
+            "",
+            `Validation failure check: ${error.validationCheck}`,
+            "Captured validation output:",
+            sanitizeRepairOutput(error.validationOutput, allocation.path, outputLimitBytes),
+          ].join("\n"),
+        });
+      }
+    }
+    const result = attempt.result;
+    const changedFiles = attempt.changedFiles;
+    if (result.status !== "completed") {
+      throw new DevelopmentExecutionError(
+        "system.internal-error",
+        "Development reached commit with a non-completed Agent Runtime result.",
+      );
+    }
     const commit = await createCommit({
       workspacePath: allocation.path,
       baseRevisionSha: allocation.baseRevisionSha,
       workItemRef: request.workItemRef,
       commitStrategy: projectCommands.git.commitStrategy,
       signal: ctx.signal,
-      timeoutMs: boundedPositiveConfigNumber(
-        ctx.configuration["timeoutMs"],
-        DEFAULT_TIMEOUT_MS,
-        MAX_TIMEOUT_MS,
-      ),
-      outputLimitBytes: boundedPositiveConfigNumber(
-        ctx.configuration["outputLimitBytes"],
-        DEFAULT_OUTPUT_LIMIT_BYTES,
-        MAX_OUTPUT_LIMIT_BYTES,
-      ),
+      timeoutMs,
+      outputLimitBytes,
     });
     ctx.recordCheckpoint({
       type: "commit.created",
@@ -614,16 +670,22 @@ async function runValidationPlan(input: {
       outputLimitBytes: input.outputLimitBytes,
     });
     if (!result.ok) {
+      const output = validationOutput(result, input.outputLimitBytes);
       input.recordCheckpoint({
         type: "validation.failed",
         sequence: input.nextCheckpointSequence(),
         timestamp: new Date().toISOString(),
         check,
-        output: validationOutput(result, input.outputLimitBytes),
+        output,
       });
       throw new DevelopmentExecutionError(
         "git.validation-failed",
         `Project command "${check}" failed (${result.code}).`,
+        false,
+        {
+          validationCheck: check,
+          validationOutput: output,
+        },
       );
     }
     passed.push({ name: check, status: "passed", durationMs: Math.max(0, Date.now() - startedAt) });
@@ -645,6 +707,16 @@ function readValidationOrder(value: unknown): readonly ValidationCheck[] {
   return value as readonly ValidationCheck[];
 }
 
+function readMaxRepairCycles(value: unknown): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 5) {
+    throw new DevelopmentExecutionError(
+      "project.config-invalid",
+      "Development maxRepairCycles must be an integer between 0 and 5.",
+    );
+  }
+  return value;
+}
+
 function isValidationCheck(value: string): value is ValidationCheck {
   return (VALIDATION_CHECKS as readonly string[]).includes(value);
 }
@@ -659,6 +731,17 @@ function validationOutput(
   const marker = "\n[output truncated]\n";
   const contentLimit = Math.max(0, limitBytes - Buffer.byteLength(marker));
   return `${bytes.subarray(0, contentLimit).toString("utf8")}${marker}`;
+}
+
+function sanitizeRepairOutput(value: string, workspacePath: string, limitBytes: number): string {
+  let safe = value.replaceAll(workspacePath, "<workspace>");
+  for (const secret of processSecretValues()) safe = safe.replaceAll(secret, "<redacted>");
+  safe = safe.replace(
+    /(?:\/Users|\/home|\/private\/var|\/var\/folders|\/tmp)\/[^\s"'`<>]+/g,
+    "<path>",
+  );
+  const bytes = Buffer.from(safe, "utf8");
+  return bytes.byteLength <= limitBytes ? safe : bytes.subarray(0, limitBytes).toString("utf8");
 }
 
 async function createCommit(input: {

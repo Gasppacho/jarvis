@@ -738,6 +738,252 @@ describe("Development Module tracer bullet", () => {
     }
   });
 
+  it("repairs a red validation plan within its configured budget", async () => {
+    const fixture = makeRealGitRepositoryFixture();
+    roots.push(fixture.root, fixture.remoteRoot);
+    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-repair-success-"));
+    roots.push(dataRoot);
+    const projectId = "development-repair-success";
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: { JARVIS_ENABLE_TEST_HOOKS: "1", JARVIS_FAKE_SCENARIO: "repair" },
+    });
+    engines.push(engine);
+
+    const outputLimitBytes = 1_024;
+    await activateProject(
+      engine,
+      projectId,
+      fixture,
+      true,
+      300_000,
+      outputLimitBytes,
+      {
+        test: `node -e "const fs=require('node:fs'); if (!fs.existsSync('validation-fix.txt')) { process.stdout.write(process.cwd() + ' token=repair-secret ' + 'x'.repeat(5000)); process.exit(7); }"`,
+      },
+      ["test"],
+      false,
+      "origin",
+      1,
+    );
+    await publishTag(engine, projectId, "repair-success");
+    const executions = await waitForExecutions(engine, projectId, 2);
+    const development = executions.find(
+      (execution) => execution.moduleInstanceId === "development",
+    );
+    expect(executions).toHaveLength(2);
+    expect(development).toMatchObject({ status: "completed" });
+    expect(development).toBeDefined();
+
+    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
+    try {
+      const checkpoints = database
+        .prepare(
+          "SELECT type, payload FROM execution_checkpoints WHERE execution_id = ? ORDER BY sequence",
+        )
+        .all(development!.id) as { type: string; payload: string }[];
+      expect(checkpoints.map(({ type }) => type)).toEqual([
+        "agent.started",
+        "agent.message",
+        "validation.started",
+        "validation.failed",
+        "agent.message",
+        "validation.started",
+        "commit.created",
+        "branch.pushed",
+      ]);
+      const repairMessages = checkpoints
+        .filter(({ type }) => type === "agent.message")
+        .map(({ payload }) => (JSON.parse(payload) as { message: string }).message)
+        .filter((message) => message.includes("Validation failure check: test"));
+      expect(repairMessages).toHaveLength(1);
+      expect(repairMessages[0]).toContain("Captured validation output:");
+      expect(repairMessages[0]).toContain("<workspace>");
+      expect(repairMessages[0]).not.toContain(fixture.root);
+      expect(repairMessages[0]).not.toContain("repair-secret");
+      expect(Buffer.byteLength(repairMessages[0]!, "utf8")).toBeLessThanOrEqual(outputLimitBytes);
+      expect(
+        database
+          .prepare(
+            `SELECT COUNT(*) AS count FROM outbox
+             WHERE project_id = ?
+               AND json_extract(envelope, '$.type') IN ('development.implementation.completed', 'scm.change-request.creation-requested')`,
+          )
+          .get(projectId),
+      ).toEqual({ count: 2 });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("stops after the configured number of repair cycles", async () => {
+    const fixture = makeRealGitRepositoryFixture();
+    roots.push(fixture.root, fixture.remoteRoot);
+    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-repair-exhausted-"));
+    roots.push(dataRoot);
+    const projectId = "development-repair-exhausted";
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: { JARVIS_ENABLE_TEST_HOOKS: "1", JARVIS_FAKE_SCENARIO: "repair" },
+    });
+    engines.push(engine);
+
+    await activateProject(
+      engine,
+      projectId,
+      fixture,
+      true,
+      300_000,
+      1_024,
+      {
+        test: `node -e "process.stdout.write(process.cwd() + ' token=repair-secret ' + 'x'.repeat(5000)); process.exit(7)"`,
+      },
+      ["test"],
+      false,
+      "origin",
+      2,
+    );
+    await publishTag(engine, projectId, "repair-exhausted");
+    const executions = await waitForExecutions(engine, projectId, 2);
+    const development = executions.find(
+      (execution) => execution.moduleInstanceId === "development",
+    );
+    expect(executions).toHaveLength(2);
+    expect(development).toMatchObject({ status: "failed" });
+    expect(development).toBeDefined();
+
+    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
+    try {
+      expect(
+        JSON.parse(
+          (
+            database
+              .prepare("SELECT result FROM inbox WHERE module_instance_id = 'development'")
+              .get() as { result: string }
+          ).result,
+        ),
+      ).toEqual({
+        error: { code: "git.validation-failed", message: expect.any(String), retryable: false },
+      });
+      const checkpoints = database
+        .prepare(
+          "SELECT type, payload FROM execution_checkpoints WHERE execution_id = ? ORDER BY sequence",
+        )
+        .all(development!.id) as { type: string; payload: string }[];
+      expect(checkpoints.map(({ type }) => type)).toEqual([
+        "agent.started",
+        "agent.message",
+        "validation.started",
+        "validation.failed",
+        "agent.message",
+        "validation.started",
+        "validation.failed",
+        "agent.message",
+        "validation.started",
+        "validation.failed",
+      ]);
+      expect(
+        checkpoints.filter(
+          ({ type, payload }) =>
+            type === "agent.message" &&
+            (JSON.parse(payload) as { message: string }).message.includes(
+              "Validation failure check: test",
+            ),
+        ),
+      ).toHaveLength(2);
+      expect(
+        database
+          .prepare(
+            `SELECT COUNT(*) AS count FROM outbox
+             WHERE project_id = ?
+               AND json_extract(envelope, '$.type') IN ('development.implementation.completed', 'scm.change-request.creation-requested')`,
+          )
+          .get(projectId),
+      ).toEqual({ count: 0 });
+      expect(readFailureEvent(database, projectId)).toMatchObject({
+        type: "development.implementation.failed",
+        payload: {
+          workItemRef: `fixture://${projectId}/repair-exhausted`,
+          repositoryId: "main",
+          code: "git.validation-failed",
+          retryable: false,
+          workspaceRef: `workspace://${projectId}/${development!.id}`,
+        },
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("cancels a repair run and leaves no child process behind", async () => {
+    const fixture = makeRealGitRepositoryFixture();
+    roots.push(fixture.root, fixture.remoteRoot);
+    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-repair-cancel-"));
+    roots.push(dataRoot);
+    const projectId = "development-repair-cancel";
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_FAKE_SCENARIO: "repair-ignore-terminate",
+      },
+    });
+    engines.push(engine);
+
+    await activateProject(
+      engine,
+      projectId,
+      fixture,
+      true,
+      300_000,
+      1_048_576,
+      { test: `node -e "process.exit(7)"` },
+      ["test"],
+      false,
+      "origin",
+      1,
+    );
+    await publishTag(engine, projectId, "repair-cancel");
+    const running = await waitForExecution(engine, projectId, "development", "running");
+    const workspacePath = join(dataRoot, "projects", projectId, "workspaces", running.id);
+    const childPid = await waitForPid(join(workspacePath, "fake-runtime-repair-child.pid"));
+
+    const response = await engine.call(`/v1/executions/${running.id}/cancel`, { method: "POST" });
+    expect(response.status).toBe(202);
+    const cancelled = await waitForExecution(engine, projectId, "development", "cancelled");
+    expect(cancelled.id).toBe(running.id);
+    expect(existsSync(join(workspacePath, "fake-runtime-repair-child-interrupt.txt"))).toBe(true);
+    await expectProcessGone(childPid);
+
+    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
+    try {
+      expect(readFailureEvent(database, projectId)).toMatchObject({
+        type: "development.implementation.failed",
+        payload: {
+          workItemRef: `fixture://${projectId}/repair-cancel`,
+          repositoryId: "main",
+          code: "agent.run-cancelled",
+          retryable: false,
+          workspaceRef: `workspace://${projectId}/${running.id}`,
+        },
+      });
+      expect(
+        database
+          .prepare(
+            `SELECT COUNT(*) AS count FROM outbox
+             WHERE project_id = ?
+               AND json_extract(envelope, '$.type') IN ('development.implementation.completed', 'scm.change-request.creation-requested')`,
+          )
+          .get(projectId),
+      ).toEqual({ count: 0 });
+    } finally {
+      database.close();
+    }
+  });
+
   it("fails with a configuration error when a selected command is undeclared", async () => {
     const fixture = makeRealGitRepositoryFixture();
     roots.push(fixture.root, fixture.remoteRoot);
@@ -817,6 +1063,7 @@ async function activateProject(
   validationOrder: readonly string[] = ["test"],
   retainWorkspaceOnSuccess = false,
   pushRemote = "origin",
+  maxRepairCycles = 0,
 ): Promise<void> {
   const portableConfig = {
     apiVersion: "jarvis.dev/project/v1",
@@ -865,7 +1112,7 @@ async function activateProject(
         bindings: { repository: "main" },
         configuration: {
           validationOrder,
-          maxRepairCycles: 0,
+          maxRepairCycles,
           retainWorkspaceOnSuccess,
           timeoutMs,
           outputLimitBytes,

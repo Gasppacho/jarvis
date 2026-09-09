@@ -134,7 +134,17 @@ export class FakeAgentRun implements AgentRun {
     this.processId = this.child.pid;
     this.emit({ type: "started" });
     this.resultPromise = this.readResult();
-    this.child.stdin.end(JSON.stringify({ scenario: request.environment["JARVIS_FAKE_SCENARIO"] }));
+    const repairContext =
+      request.systemInstructions.find((instruction) =>
+        instruction.includes("Validation failure"),
+      ) ?? "";
+    this.child.stdin.end(
+      JSON.stringify({
+        scenario: request.environment["JARVIS_FAKE_SCENARIO"],
+        repair: repairContext !== "",
+        repairContext,
+      }),
+    );
     this.timeoutTimer = setTimeout(() => {
       void this.requestTermination("timed-out").catch(() => {});
     }, request.timeoutMs);
@@ -533,14 +543,20 @@ process.stdin.on("end", () => {
     process.stderr.write("deterministic fake failure\n");
     process.exit(7);
   }
-  if (request.scenario === "ignore-terminate") {
+  if (request.scenario === "ignore-terminate" ||
+      (request.scenario === "repair-ignore-terminate" && request.repair)) {
     const child = spawnChild(
       process.execPath,
       ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
       { stdio: "ignore" }
     );
-    fs.writeFileSync("fake-runtime-child.pid", String(child.pid));
-    process.on("SIGTERM", () => fs.writeFileSync("fake-runtime-interrupt.txt", "graceful\n"));
+    const marker = request.scenario === "ignore-terminate" ? "fake-runtime-child" : "fake-runtime-repair-child";
+    fs.writeFileSync(marker + ".pid", String(child.pid));
+    const interrupt =
+      request.scenario === "ignore-terminate"
+        ? "fake-runtime-interrupt.txt"
+        : "fake-runtime-repair-child-interrupt.txt";
+    process.on("SIGTERM", () => fs.writeFileSync(interrupt, "graceful\n"));
     setInterval(() => {}, 1000);
     return;
   }
@@ -557,15 +573,26 @@ process.stdin.on("end", () => {
   if (request.scenario === "malformed" || request.scenario === "noisy") process.stdout.write("{malformed json\n");
   if (request.scenario === "unknown" || request.scenario === "noisy") process.stdout.write(JSON.stringify({ type: "unrecognized", value: "deterministic raw stdout" }) + "\n");
   if (request.scenario === "oversized") process.stdout.write("x".repeat(131072) + "\n");
+  const changedFiles = [];
+  if (request.scenario === "repair" && request.repair) {
+    emit({ type: "message", message: "Repair context: " + request.repairContext });
+    const fix = "validation-fix.txt";
+    fs.writeFileSync(path.join(process.cwd(), fix), "fixed\n");
+    changedFiles.push(fix);
+    emit({ type: "file-changed", path: fix });
+  }
   const file = "fake-runtime-change.txt";
   fs.writeFileSync(path.join(process.cwd(), file), "Fake Runtime deterministic change.\n");
-  emit({ type: "message", message: "Fake Runtime applied deterministic change." });
+  if (!(request.scenario === "repair" && request.repair)) {
+    emit({ type: "message", message: "Fake Runtime applied deterministic change." });
+  }
   emit({ type: "file-changed", path: file });
+  changedFiles.push(file);
   emit({
     type: "result",
     status: "completed",
     summary: "Fake Runtime applied deterministic change.",
-    changedFiles: [file]
+    changedFiles
   });
 });
 `;
