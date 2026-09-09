@@ -33,6 +33,11 @@ export const CHANGE_REQUEST_CREATION_REQUESTED = {
   version: 1,
   kind: "request",
 } as const;
+export const DEVELOPMENT_IMPLEMENTATION_FAILED = {
+  type: "development.implementation.failed",
+  version: 1,
+  kind: "fact",
+} as const;
 
 const DEFAULT_TIMEOUT_MS = 300_000;
 const MAX_TIMEOUT_MS = 3_600_000;
@@ -42,39 +47,67 @@ const SECRET_ENVIRONMENT_NAME =
   /(?:secret|token|password|passwd|credential|private[_-]?key|api[_-]?key)/i;
 const VALIDATION_CHECKS = ["lint", "typecheck", "test", "build"] as const;
 type ValidationCheck = (typeof VALIDATION_CHECKS)[number];
+type DevelopmentFailureCode =
+  | "event.payload-invalid"
+  | "project.config-invalid"
+  | "project.capability-unresolved"
+  | "workspace.allocation-failed"
+  | "workspace.branch-conflict"
+  | "workspace.concurrency-limit"
+  | "workspace.path-violation"
+  | "workspace.lease-not-found"
+  | "workspace.release-failed"
+  | "git.base-not-found"
+  | "git.validation-failed"
+  | "git.no-changes"
+  | "git.commit-failed"
+  | "git.push-failed"
+  | "agent.run-failed"
+  | "agent.run-timed-out"
+  | "agent.run-cancelled"
+  | "system.internal-error";
 
 class DevelopmentExecutionError extends Error {
   public constructor(
-    public readonly code:
-      | "project.config-invalid"
-      | "git.validation-failed"
-      | "git.no-changes"
-      | "git.commit-failed"
-      | "git.push-failed",
+    public readonly code: DevelopmentFailureCode,
     message: string,
     retryable = false,
   ) {
     super(message);
     this.name = "DevelopmentExecutionError";
-    this.failureClass =
-      code === "project.config-invalid"
-        ? "configuration"
-        : code === "git.validation-failed"
-          ? "validation"
-          : "workspace";
+    this.failureClass = failureClass(code);
     this.errorClass = this.failureClass;
     this.retryable = retryable;
   }
 
-  public readonly failureClass: "configuration" | "validation" | "workspace";
-  public readonly errorClass: "configuration" | "validation" | "workspace";
+  public readonly failureClass:
+    "configuration" | "input" | "validation" | "workspace" | "agent" | "cancelled" | "internal";
+  public readonly errorClass: DevelopmentExecutionError["failureClass"];
   public readonly retryable: boolean;
+}
+
+function failureClass(
+  code: DevelopmentFailureCode,
+): "configuration" | "input" | "validation" | "workspace" | "agent" | "cancelled" | "internal" {
+  if (code === "event.payload-invalid") return "input";
+  if (code === "project.config-invalid" || code === "project.capability-unresolved") {
+    return "configuration";
+  }
+  if (code === "git.validation-failed") return "validation";
+  if (code === "agent.run-cancelled") return "cancelled";
+  if (code === "agent.run-failed" || code === "agent.run-timed-out") return "agent";
+  if (code === "system.internal-error") return "internal";
+  return "workspace";
 }
 
 interface ImplementationRequest {
   readonly workItemRef: string;
   readonly repositoryId: string;
   readonly baseBranch: string;
+}
+
+interface DevelopmentExecutionState {
+  workspaceAllocated: boolean;
 }
 
 export interface DevelopmentRunResult {
@@ -96,9 +129,55 @@ export interface DevelopmentRunResult {
 export const handleImplementationRequested: ModuleHandler = async (
   ctx: ModuleHandlerContext,
 ): Promise<DevelopmentRunResult> => {
+  const state: DevelopmentExecutionState = { workspaceAllocated: false };
+  try {
+    const result = await runImplementationRequested(ctx, state);
+    if (result.status === "timed-out") {
+      publishDevelopmentFailure(
+        ctx,
+        new DevelopmentExecutionError(
+          "agent.run-timed-out",
+          "The Agent Runtime timed out before completing the implementation.",
+          true,
+        ),
+        state,
+      );
+    } else if (result.status === "cancelled") {
+      publishDevelopmentFailure(
+        ctx,
+        new DevelopmentExecutionError(
+          "agent.run-cancelled",
+          "The implementation was cancelled before completion.",
+        ),
+        state,
+      );
+    }
+    return result;
+  } catch (error) {
+    publishDevelopmentFailure(
+      ctx,
+      ctx.signal.aborted
+        ? new DevelopmentExecutionError(
+            "agent.run-cancelled",
+            "The implementation was cancelled before completion.",
+          )
+        : error,
+      state,
+    );
+    throw error;
+  }
+};
+
+async function runImplementationRequested(
+  ctx: ModuleHandlerContext,
+  state: DevelopmentExecutionState,
+): Promise<DevelopmentRunResult> {
   const request = readImplementationRequest(ctx.event.payload);
   if (ctx.repositoryId !== request.repositoryId) {
-    throw new Error("The implementation request repository does not match its Event repository.");
+    throw new DevelopmentExecutionError(
+      "event.payload-invalid",
+      "The implementation request repository does not match its Event repository.",
+    );
   }
   const runtime = ctx.capabilities.agentRuntime;
   const workspace = ctx.capabilities.workspace;
@@ -112,7 +191,8 @@ export const handleImplementationRequested: ModuleHandler = async (
     projectCommands === undefined ||
     shell === undefined
   ) {
-    throw new Error(
+    throw new DevelopmentExecutionError(
+      "project.capability-unresolved",
       "Development requires a project-bound Agent Runtime, workspace, and Project Commands.",
     );
   }
@@ -126,6 +206,7 @@ export const handleImplementationRequested: ModuleHandler = async (
       slug: branchValue(`implementation-${ctx.executionId}`),
     },
   });
+  state.workspaceAllocated = true;
   let releaseOutcome: "success" | "failure" | "cancelled" = "failure";
   let run: AgentRun | undefined;
   let checkpointSequence = 0;
@@ -158,29 +239,58 @@ export const handleImplementationRequested: ModuleHandler = async (
       ),
       secretValues: processSecretValues(),
     });
-    run = await runtime.start(agentRequest, ctx.signal);
-    for await (const event of run.events()) {
-      if (event.type === "started") {
-        checkpointSequence = Math.max(checkpointSequence, event.sequence);
-        ctx.recordCheckpoint({
-          type: "agent.started",
-          sequence: event.sequence,
-          timestamp: event.timestamp,
-        });
-      } else if (event.type === "message" && event.message !== undefined) {
-        checkpointSequence = Math.max(checkpointSequence, event.sequence);
-        ctx.recordCheckpoint({
-          type: "agent.message",
-          sequence: event.sequence,
-          timestamp: event.timestamp,
-          message: event.message,
-        });
+    let result: AgentRunResult;
+    try {
+      run = await runtime.start(agentRequest, ctx.signal);
+      for await (const event of run.events()) {
+        if (event.type === "started") {
+          checkpointSequence = Math.max(checkpointSequence, event.sequence);
+          ctx.recordCheckpoint({
+            type: "agent.started",
+            sequence: event.sequence,
+            timestamp: event.timestamp,
+          });
+        } else if (event.type === "message" && event.message !== undefined) {
+          checkpointSequence = Math.max(checkpointSequence, event.sequence);
+          ctx.recordCheckpoint({
+            type: "agent.message",
+            sequence: event.sequence,
+            timestamp: event.timestamp,
+            message: event.message,
+          });
+        }
       }
+      result = await run.result();
+    } catch (error) {
+      if (error instanceof DevelopmentExecutionError) throw error;
+      throw new DevelopmentExecutionError(
+        ctx.signal.aborted ? "agent.run-cancelled" : "agent.run-failed",
+        ctx.signal.aborted
+          ? "The implementation was cancelled before completion."
+          : "The Agent Runtime failed before completing the implementation.",
+        !ctx.signal.aborted,
+      );
     }
-    const result = await run.result();
-    const changedFiles = await verifyChangedFiles(allocation.path, result.changedFiles);
+    let changedFiles: readonly string[];
+    try {
+      changedFiles = await verifyChangedFiles(allocation.path, result.changedFiles);
+    } catch {
+      throw new DevelopmentExecutionError(
+        "agent.run-failed",
+        "The Agent Runtime returned an invalid implementation result.",
+      );
+    }
     if (result.status !== "completed") {
       releaseOutcome = result.status === "cancelled" ? "cancelled" : "failure";
+      if (result.status === "failed") {
+        throw new DevelopmentExecutionError(
+          ctx.signal.aborted ? "agent.run-cancelled" : "agent.run-failed",
+          ctx.signal.aborted
+            ? "The implementation was cancelled before completion."
+            : "The Agent Runtime reported that the implementation failed.",
+          !ctx.signal.aborted && (result.error?.retryable ?? false),
+        );
+      }
       return {
         status: result.status,
         summary: result.summary,
@@ -282,7 +392,132 @@ export const handleImplementationRequested: ModuleHandler = async (
   } finally {
     await workspace.release({ executionId: ctx.executionId, outcome: releaseOutcome });
   }
-};
+}
+
+function publishDevelopmentFailure(
+  ctx: ModuleHandlerContext,
+  error: unknown,
+  state: DevelopmentExecutionState,
+): void {
+  const failure = readFailure(error, ctx.signal.aborted);
+  const workItemRef = safeFailureReference(
+    ctx.event.payload["workItemRef"],
+    ctx.event.subject.ref,
+    "work-item",
+  );
+  const repositoryId = safeFailureReference(
+    ctx.event.payload["repositoryId"],
+    ctx.repositoryId,
+    "repository",
+    200,
+  );
+  ctx.publishFailure({
+    ...DEVELOPMENT_IMPLEMENTATION_FAILED,
+    subject: { type: "work-item", ref: workItemRef },
+    repositoryId,
+    payload: {
+      workItemRef,
+      repositoryId,
+      code: failure.code,
+      message: failureMessage(ctx, failure.code),
+      retryable: failure.retryable,
+      ...(state.workspaceAllocated
+        ? { workspaceRef: `workspace://${ctx.projectId}/${ctx.executionId}` }
+        : {}),
+    },
+  });
+}
+
+function readFailure(
+  error: unknown,
+  cancelled: boolean,
+): { readonly code: DevelopmentFailureCode; readonly retryable: boolean } {
+  if (cancelled) return { code: "agent.run-cancelled", retryable: false };
+  if (error instanceof DevelopmentExecutionError) {
+    return { code: error.code, retryable: error.retryable };
+  }
+  if (isRecord(error) && typeof error["code"] === "string") {
+    const code = error["code"];
+    const retryable = typeof error["retryable"] === "boolean" ? error["retryable"] : false;
+    return { code: stableFailureCode(code), retryable };
+  }
+  return { code: "system.internal-error", retryable: true };
+}
+
+function stableFailureCode(code: string): DevelopmentFailureCode {
+  if (code === "event.payload-invalid") return code;
+  if (code === "project.config-invalid" || code === "project.capability-unresolved") return code;
+  if (
+    code === "workspace.allocation-failed" ||
+    code === "workspace.branch-conflict" ||
+    code === "workspace.concurrency-limit" ||
+    code === "workspace.path-violation" ||
+    code === "workspace.lease-not-found" ||
+    code === "workspace.release-failed"
+  ) {
+    return code;
+  }
+  if (
+    code === "git.base-not-found" ||
+    code === "git.validation-failed" ||
+    code === "git.no-changes" ||
+    code === "git.commit-failed" ||
+    code === "git.push-failed"
+  ) {
+    return code;
+  }
+  if (code === "agent.run-failed" || code === "agent.run-timed-out") return code;
+  if (code === "agent.run-cancelled") return code;
+  return "system.internal-error";
+}
+
+function failureMessage(ctx: ModuleHandlerContext, code: DevelopmentFailureCode): string {
+  const prefix = `Project ${ctx.projectId} / Module ${ctx.moduleInstanceId}`;
+  switch (code) {
+    case "event.payload-invalid":
+      return `${prefix} received an invalid implementation request; correct the Work Item, repository, and base branch, then retry.`;
+    case "project.config-invalid":
+      return `${prefix} has invalid configuration; correct the Validation Plan or Git policy, then retry.`;
+    case "project.capability-unresolved":
+      return `${prefix} cannot resolve a required capability; repair the Project binding and activate it again.`;
+    case "git.validation-failed":
+      return `${prefix} validation failed; fix the first failing Project command and retry.`;
+    case "git.no-changes":
+      return `${prefix} produced no changes; update the Work Item or agent instructions and retry.`;
+    case "git.commit-failed":
+      return `${prefix} could not create a commit; inspect the retained workspace and retry.`;
+    case "git.push-failed":
+      return `${prefix} could not push the branch; verify the configured remote and retry.`;
+    case "agent.run-failed":
+      return `${prefix} agent run failed; inspect the retained workspace and retry.`;
+    case "agent.run-timed-out":
+      return `${prefix} agent run timed out; increase the timeout or reduce the Work Item scope, then retry.`;
+    case "agent.run-cancelled":
+      return `${prefix} implementation was cancelled; start a new run when ready.`;
+    case "system.internal-error":
+      return `${prefix} encountered an internal failure; inspect engine diagnostics and retry.`;
+    default:
+      return `${prefix} workspace operation failed; inspect the retained workspace and retry.`;
+  }
+}
+
+function safeFailureReference(
+  value: unknown,
+  fallback: string | undefined,
+  defaultValue: string,
+  maximumLength = 2_048,
+): string {
+  const candidate = typeof value === "string" && value.trim() !== "" ? value : fallback;
+  if (candidate === undefined || candidate.trim() === "") return defaultValue;
+  let safe = candidate.trim().replace(/\s+/g, " ");
+  for (const secret of processSecretValues()) safe = safe.replaceAll(secret, "<redacted>");
+  if (isMachineAbsolutePath(safe)) return defaultValue;
+  return safe.slice(0, maximumLength) || defaultValue;
+}
+
+function isMachineAbsolutePath(value: string): boolean {
+  return isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
+}
 
 function publishDevelopmentOutputs(
   ctx: ModuleHandlerContext,
@@ -605,7 +840,10 @@ function readImplementationRequest(
     typeof baseBranch !== "string" ||
     baseBranch.trim() === ""
   ) {
-    throw new Error("The implementation request payload is invalid.");
+    throw new DevelopmentExecutionError(
+      "event.payload-invalid",
+      "The implementation request payload is invalid.",
+    );
   }
   return { workItemRef, repositoryId, baseBranch };
 }
@@ -667,4 +905,8 @@ function processSecretValues(): readonly string[] {
   return Object.entries(process.env).flatMap(([key, value]) =>
     SECRET_ENVIRONMENT_NAME.test(key) && value !== undefined && value !== "" ? [value] : [],
   );
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

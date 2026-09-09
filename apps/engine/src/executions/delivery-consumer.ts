@@ -221,6 +221,8 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     const handler = this.handlers(delivery.moduleId);
     const executionId = `exec_${this.ids.next()}`;
     const startedAt = this.clock.now().toISOString();
+    const bufferedPublications: EventEnvelope[] = [];
+    const failurePublications: EventEnvelope[] = [];
 
     if (handler === undefined) {
       return this.recordFailure(
@@ -229,10 +231,10 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
         executionId,
         startedAt,
         new Error(`No handler registered for Module ${delivery.moduleId}.`),
+        failurePublications,
       );
     }
 
-    const bufferedPublications: EventEnvelope[] = [];
     const controller = new AbortController();
     let transactionOpen = true;
     let promiseResult: PromiseLike<unknown> | undefined;
@@ -251,6 +253,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
             executionId,
             () => transactionOpen,
             bufferedPublications,
+            failurePublications,
             controller.signal,
             this.capabilities(delivery.projectId, delivery.moduleInstanceId, delivery.moduleId),
           ),
@@ -291,12 +294,28 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
                 startedAt,
                 result,
                 bufferedPublications,
+                failurePublications,
                 controller.signal,
               ),
             (error) =>
               controller.signal.aborted
-                ? this.recordCancelled(delivery, envelope, executionId, startedAt, true)
-                : this.recordFailure(delivery, envelope, executionId, startedAt, error, true),
+                ? this.recordCancelled(
+                    delivery,
+                    envelope,
+                    executionId,
+                    startedAt,
+                    failurePublications,
+                    true,
+                  )
+                : this.recordFailure(
+                    delivery,
+                    envelope,
+                    executionId,
+                    startedAt,
+                    error,
+                    failurePublications,
+                    true,
+                  ),
           )
           .finally(() => this.activeExecutions.delete(executionId));
       }
@@ -312,6 +331,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
         executionId,
         startedAt,
         error,
+        failurePublications,
         runningExecutionCommitted,
       );
     }
@@ -328,13 +348,38 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     startedAt: string,
     result: unknown,
     bufferedPublications: readonly EventEnvelope[],
+    failurePublications: readonly EventEnvelope[],
     signal: AbortSignal,
   ): ConsumeResult {
     if (signal.aborted) {
-      return this.recordCancelled(delivery, envelope, executionId, startedAt, true);
+      return this.recordCancelled(
+        delivery,
+        envelope,
+        executionId,
+        startedAt,
+        failurePublications,
+        true,
+      );
+    }
+    if (isCancelledResult(result)) {
+      return this.recordCancelled(
+        delivery,
+        envelope,
+        executionId,
+        startedAt,
+        failurePublications,
+        true,
+      );
     }
     if (isTimedOutResult(result)) {
-      return this.recordTimedOut(delivery, envelope, executionId, startedAt, true);
+      return this.recordTimedOut(
+        delivery,
+        envelope,
+        executionId,
+        startedAt,
+        failurePublications,
+        true,
+      );
     }
 
     const { executionRow } = this.db.transaction(() => {
@@ -400,6 +445,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     executionId: string,
     startedAt: string,
     error: unknown,
+    failurePublications: readonly EventEnvelope[],
     running = false,
   ): ConsumeResult {
     const message = error instanceof Error ? error.message : String(error);
@@ -419,6 +465,9 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     let executionRow: LedgerExecutionSummary;
     try {
       executionRow = this.db.transaction(() => {
+        for (const publication of failurePublications) {
+          this.insertBufferedPublication(publication);
+        }
         const row = running
           ? this.updateExecution(executionId, "failed", message)
           : this.insertExecution(executionId, delivery, envelope, "failed", startedAt, message);
@@ -463,9 +512,13 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     envelope: EventEnvelope,
     executionId: string,
     startedAt: string,
+    failurePublications: readonly EventEnvelope[],
     running: boolean,
   ): ConsumeResult {
     const executionRow = this.db.transaction(() => {
+      for (const publication of failurePublications) {
+        this.insertBufferedPublication(publication);
+      }
       const row = running
         ? this.updateExecution(executionId, "cancelled", null)
         : this.insertExecution(executionId, delivery, envelope, "cancelled", startedAt, null);
@@ -488,9 +541,13 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     envelope: EventEnvelope,
     executionId: string,
     startedAt: string,
+    failurePublications: readonly EventEnvelope[],
     running: boolean,
   ): ConsumeResult {
     const executionRow = this.db.transaction(() => {
+      for (const publication of failurePublications) {
+        this.insertBufferedPublication(publication);
+      }
       const row = running
         ? this.updateExecution(executionId, "timed_out", null)
         : this.insertExecution(executionId, delivery, envelope, "timed_out", startedAt, null);
@@ -523,6 +580,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     executionId: string,
     transactionOpen: () => boolean,
     bufferedPublications: EventEnvelope[],
+    failurePublications: EventEnvelope[],
     signal: AbortSignal,
     capabilities: ModuleHandlerCapabilities,
   ): ModuleHandlerContext {
@@ -611,6 +669,13 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
         const publication = this.publisherInput(delivery, envelope, input);
         const prepared = this.previewPublication(publication, transactionOpen);
         bufferedPublications.push(prepared);
+        return prepared;
+      },
+      publishFailure: (input) => {
+        this.assertPublishedContract(delivery.moduleId, input);
+        const publication = this.publisherInput(delivery, envelope, input);
+        const prepared = this.previewPublication(publication, transactionOpen);
+        failurePublications.push(prepared);
         return prepared;
       },
     };
@@ -846,6 +911,14 @@ function isTimedOutResult(value: unknown): value is { readonly status: "timed-ou
     typeof value === "object" &&
     value !== null &&
     (value as { status?: unknown }).status === "timed-out"
+  );
+}
+
+function isCancelledResult(value: unknown): value is { readonly status: "cancelled" } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { status?: unknown }).status === "cancelled"
   );
 }
 

@@ -152,6 +152,8 @@ export interface ModuleHandlerContext {
   readonly capabilities: ModuleHandlerCapabilities;
   readonly recordCheckpoint: (checkpoint: ModuleExecutionCheckpoint) => void;
   readonly publish: (input: ModuleHandlerPublishInput) => EventEnvelope;
+  /** Buffers a fact for the terminal failure transaction instead of success. */
+  readonly publishFailure: (input: ModuleHandlerPublishInput) => EventEnvelope;
 }
 
 export type ModuleHandler = (context: ModuleHandlerContext) => unknown;

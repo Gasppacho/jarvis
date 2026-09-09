@@ -49,6 +49,10 @@ function context(
         published.push(input);
         return event;
       },
+      publishFailure: (input) => {
+        published.push(input);
+        return event;
+      },
     },
   };
 }
@@ -318,6 +322,10 @@ describe("handleWorkItemTagAdded", () => {
         capabilities: {},
         recordCheckpoint: () => {},
         publish: (input) => {
+          published.push(input);
+          return event;
+        },
+        publishFailure: (input) => {
           published.push(input);
           return event;
         },

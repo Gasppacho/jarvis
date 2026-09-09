@@ -331,6 +331,19 @@ describe("Development Module tracer bullet", () => {
           )
           .get(projectId),
       ).toEqual({ count: 0 });
+      expect(readFailureEvent(database, projectId)).toMatchObject({
+        type: "development.implementation.failed",
+        version: 1,
+        kind: "fact",
+        payload: {
+          workItemRef: `fixture://${projectId}/no-changes`,
+          repositoryId: "main",
+          code: "git.no-changes",
+          message: expect.stringContaining(`Project ${projectId}`),
+          retryable: false,
+          workspaceRef: `workspace://${projectId}/${development!.id}`,
+        },
+      });
     } finally {
       database.close();
     }
@@ -378,6 +391,17 @@ describe("Development Module tracer bullet", () => {
         .get() as { result: string };
       expect(JSON.parse(inbox.result)).toEqual({
         error: { code: "git.push-failed", message: expect.any(String), retryable: true },
+      });
+      expect(readFailureEvent(database, projectId)).toMatchObject({
+        type: "development.implementation.failed",
+        payload: {
+          workItemRef: `fixture://${projectId}/push-failure`,
+          repositoryId: "main",
+          code: "git.push-failed",
+          message: expect.stringContaining(`Project ${projectId}`),
+          retryable: true,
+          workspaceRef: `workspace://${projectId}/${development!.id}`,
+        },
       });
       expect(
         database
@@ -465,6 +489,17 @@ describe("Development Module tracer bullet", () => {
           )
           .get(),
       ).toEqual({ count: 0 });
+      expect(readFailureEvent(database, projectId)).toMatchObject({
+        type: "development.implementation.failed",
+        payload: {
+          workItemRef: `fixture://${projectId}/cancelled`,
+          repositoryId: "main",
+          code: "agent.run-cancelled",
+          message: expect.stringContaining(`Project ${projectId}`),
+          retryable: false,
+          workspaceRef: `workspace://${projectId}/${running.id}`,
+        },
+      });
     } finally {
       database.close();
     }
@@ -506,6 +541,66 @@ describe("Development Module tracer bullet", () => {
           .prepare(
             `SELECT COUNT(*) AS count FROM workspace_leases
              WHERE project_id = ? AND status = 'active'`,
+          )
+          .get(projectId),
+      ).toEqual({ count: 0 });
+      expect(readFailureEvent(database, projectId)).toMatchObject({
+        type: "development.implementation.failed",
+        payload: {
+          workItemRef: `fixture://${projectId}/timed-out`,
+          repositoryId: "main",
+          code: "agent.run-timed-out",
+          message: expect.stringContaining(`Project ${projectId}`),
+          retryable: true,
+          workspaceRef: `workspace://${projectId}/${timedOut.id}`,
+        },
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("publishes a classified agent runtime failure", async () => {
+    const fixture = makeRealGitRepositoryFixture();
+    roots.push(fixture.root, fixture.remoteRoot);
+    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-agent-failure-"));
+    roots.push(dataRoot);
+    const projectId = "development-agent-failure";
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: { JARVIS_ENABLE_TEST_HOOKS: "1", JARVIS_FAKE_SCENARIO: "failure" },
+    });
+    engines.push(engine);
+
+    await activateProject(engine, projectId, fixture, true);
+    await publishTag(engine, projectId, "agent-failure");
+    const executions = await waitForExecutions(engine, projectId, 2);
+    const development = executions.find(
+      (execution) => execution.moduleInstanceId === "development",
+    );
+    expect(development).toMatchObject({ status: "failed" });
+    expect(development).toBeDefined();
+
+    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
+    try {
+      expect(readFailureEvent(database, projectId)).toMatchObject({
+        type: "development.implementation.failed",
+        payload: {
+          workItemRef: `fixture://${projectId}/agent-failure`,
+          repositoryId: "main",
+          code: "agent.run-failed",
+          message: expect.stringContaining(`Project ${projectId}`),
+          retryable: false,
+          workspaceRef: `workspace://${projectId}/${development!.id}`,
+        },
+      });
+      expect(
+        database
+          .prepare(
+            `SELECT COUNT(*) AS count FROM outbox
+             WHERE project_id = ?
+               AND json_extract(envelope, '$.type') IN ('development.implementation.completed', 'scm.change-request.creation-requested')`,
           )
           .get(projectId),
       ).toEqual({ count: 0 });
@@ -609,6 +704,17 @@ describe("Development Module tracer bullet", () => {
       expect(JSON.parse(inbox.result)).toEqual({
         error: { code: "git.validation-failed", message: expect.any(String), retryable: false },
       });
+      expect(readFailureEvent(database, projectId)).toMatchObject({
+        type: "development.implementation.failed",
+        payload: {
+          workItemRef: `fixture://${projectId}/validation`,
+          repositoryId: "main",
+          code: "git.validation-failed",
+          message: expect.stringContaining(`Project ${projectId}`),
+          retryable: false,
+          workspaceRef: `workspace://${projectId}/${development!.id}`,
+        },
+      });
       expect(
         database
           .prepare(
@@ -670,6 +776,17 @@ describe("Development Module tracer bullet", () => {
         .get() as { result: string };
       expect(JSON.parse(inbox.result)).toEqual({
         error: { code: "project.config-invalid", message: expect.any(String), retryable: false },
+      });
+      expect(readFailureEvent(database, projectId)).toMatchObject({
+        type: "development.implementation.failed",
+        payload: {
+          workItemRef: `fixture://${projectId}/missing-command`,
+          repositoryId: "main",
+          code: "project.config-invalid",
+          message: expect.stringContaining(`Project ${projectId}`),
+          retryable: false,
+          workspaceRef: `workspace://${projectId}/${development!.id}`,
+        },
       });
       expect(
         database
@@ -926,6 +1043,19 @@ function repositoryState(repositoryPath: string): {
     branch: git(repositoryPath, ["branch", "--show-current"]),
     status: git(repositoryPath, ["status", "--porcelain"]),
   };
+}
+
+function readFailureEvent(database: Database.Database, projectId: string): Record<string, unknown> {
+  const rows = database
+    .prepare(
+      `SELECT envelope FROM outbox
+       WHERE project_id = ? AND json_extract(envelope, '$.type') = 'development.implementation.failed'`,
+    )
+    .all(projectId) as { envelope: string }[];
+  expect(rows).toHaveLength(1);
+  const event = JSON.parse(rows[0]!.envelope) as Record<string, unknown>;
+  expect(JSON.stringify(event)).not.toMatch(/\/(?:Users|home|private\/var|tmp)\//);
+  return event;
 }
 
 function git(repositoryPath: string, args: readonly string[]): string {
