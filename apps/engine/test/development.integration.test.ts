@@ -38,10 +38,14 @@ describe("Development Module tracer bullet", () => {
     engines.push(engine);
 
     const before = repositoryState(fixture.root);
-    await activateProject(engine, projectId, fixture, false, 300_000, 1_048_576, {
-      test: "pnpm test",
-      build: "pnpm build",
-    });
+    const commands = {
+      test: `node -e "const fs=require('node:fs'); const {execFileSync}=require('node:child_process'); if (!process.cwd().includes('/workspaces/') || !fs.existsSync('fake-runtime-change.txt') || !fs.existsSync('src/server.ts') || execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim() !== '${before.head}') process.exit(7)"`,
+      build: `node -e "require('node:fs').accessSync('src/server.ts')"`,
+    };
+    await activateProject(engine, projectId, fixture, false, 300_000, 1_048_576, commands, [
+      "test",
+      "build",
+    ]);
     const firstFact = await publishTag(engine, projectId);
     const firstExecutions = await waitForExecutions(engine, projectId, 2);
     expect(
@@ -81,8 +85,11 @@ describe("Development Module tracer bullet", () => {
           /^agent\/fixture-development-tracer-first-implementation-/,
         ),
         headCommit: expect.stringMatching(/^[0-9a-f]{40}$/),
-        validation: [{ name: "test", status: "passed", durationMs: expect.any(Number) }],
-        commands: { test: "pnpm test", build: "pnpm build" },
+        validation: [
+          { name: "test", status: "passed", durationMs: expect.any(Number) },
+          { name: "build", status: "passed", durationMs: expect.any(Number) },
+        ],
+        commands,
         git: {
           branchPattern: "agent/{workItemId}-{slug}",
           commitStrategy: "conventional",
@@ -116,7 +123,10 @@ describe("Development Module tracer bullet", () => {
           headCommit: recordedResult.headCommit,
           validation: {
             passed: true,
-            commands: [{ name: "test", status: "passed", durationMs: expect.any(Number) }],
+            commands: [
+              { name: "test", status: "passed", durationMs: expect.any(Number) },
+              { name: "build", status: "passed", durationMs: expect.any(Number) },
+            ],
           },
           summary: "Fake Runtime applied deterministic change.",
         },
@@ -145,6 +155,31 @@ describe("Development Module tracer bullet", () => {
       expect(
         git(fixture.root, ["rev-list", "--count", `${before.head}..${recordedResult.headCommit}`]),
       ).toBe("1");
+      expect(
+        execFileSync(
+          "git",
+          ["--git-dir", fixture.remoteRoot, "rev-parse", `${recordedResult.headCommit}^`],
+          { encoding: "utf8" },
+        ).trim(),
+      ).toBe(before.head);
+      const committedFiles = execFileSync(
+        "git",
+        [
+          "--git-dir",
+          fixture.remoteRoot,
+          "diff-tree",
+          "--no-commit-id",
+          "--name-only",
+          "-r",
+          recordedResult.headCommit,
+        ],
+        { encoding: "utf8" },
+      )
+        .trim()
+        .split("\n")
+        .filter((file) => file !== "");
+      expect(committedFiles.length).toBeGreaterThan(0);
+      expect(committedFiles).toContain("fake-runtime-change.txt");
       const commitDetails = execFileSync(
         "git",
         ["show", "-s", "--format=%H%n%an%n%ae%n%cn%n%ce%n%B", recordedResult.headCommit],
@@ -170,6 +205,13 @@ describe("Development Module tracer bullet", () => {
             firstExecutions.find((execution) => execution.moduleInstanceId === "development")!.id,
           ),
       ).toEqual({ status: "released" });
+      expect(
+        database
+          .prepare(
+            "SELECT COUNT(*) AS count FROM workspace_leases WHERE project_id = ? AND status = 'active'",
+          )
+          .get(projectId),
+      ).toEqual({ count: 0 });
 
       const redelivery = await engine.call("/test/redeliver", {
         method: "POST",
@@ -195,6 +237,16 @@ describe("Development Module tracer bullet", () => {
           )
           .get(projectId),
       ).toEqual({ count: 2 });
+      const replayedCreationRequest = database
+        .prepare(
+          `SELECT envelope FROM outbox
+           WHERE project_id = ?
+             AND json_extract(envelope, '$.type') = 'scm.change-request.creation-requested'`,
+        )
+        .get(projectId) as { envelope: string };
+      expect(
+        (JSON.parse(replayedCreationRequest.envelope) as { idempotencyKey: string }).idempotencyKey,
+      ).toBe(creationRequested?.["idempotencyKey"]);
       expect(database.prepare("SELECT COUNT(*) AS count FROM executions").get()).toEqual({
         count: 2,
       });
@@ -829,6 +881,7 @@ describe("Development Module tracer bullet", () => {
       env: { JARVIS_ENABLE_TEST_HOOKS: "1", JARVIS_FAKE_SCENARIO: "repair" },
     });
     engines.push(engine);
+    const before = repositoryState(fixture.root);
 
     await activateProject(
       engine,
@@ -853,6 +906,7 @@ describe("Development Module tracer bullet", () => {
     expect(executions).toHaveLength(2);
     expect(development).toMatchObject({ status: "failed" });
     expect(development).toBeDefined();
+    expect(repositoryState(fixture.root)).toEqual(before);
 
     const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
     try {
@@ -899,6 +953,13 @@ describe("Development Module tracer bullet", () => {
             `SELECT COUNT(*) AS count FROM outbox
              WHERE project_id = ?
                AND json_extract(envelope, '$.type') IN ('development.implementation.completed', 'scm.change-request.creation-requested')`,
+          )
+          .get(projectId),
+      ).toEqual({ count: 0 });
+      expect(
+        database
+          .prepare(
+            "SELECT COUNT(*) AS count FROM workspace_leases WHERE project_id = ? AND status = 'active'",
           )
           .get(projectId),
       ).toEqual({ count: 0 });
