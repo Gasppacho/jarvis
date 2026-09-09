@@ -2,7 +2,11 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import type { AgentRun, AgentRunResult } from "../../../agent-runtime/src/index.js";
 import { buildAgentRunRequest } from "../../../agent-runtime/src/request-builder.js";
-import type { ModuleHandler, ModuleHandlerContext } from "../../../module-sdk/src/index.js";
+import type {
+  ModuleHandler,
+  ModuleHandlerContext,
+  ProjectCommandsCapability,
+} from "../../../module-sdk/src/index.js";
 
 export const developmentModulePackage = {
   id: "jarvis.module.development",
@@ -33,6 +37,8 @@ export interface DevelopmentRunResult {
   readonly status: AgentRunResult["status"];
   readonly summary: string;
   readonly changedFiles: readonly string[];
+  readonly commands: ProjectCommandsCapability["commands"];
+  readonly git: ProjectCommandsCapability["git"];
 }
 
 /** Runs one deterministic implementation attempt in the Project's worktree. */
@@ -46,8 +52,16 @@ export const handleImplementationRequested: ModuleHandler = async (
   const runtime = ctx.capabilities.agentRuntime;
   const workspace = ctx.capabilities.workspace;
   const projectBindings = ctx.capabilities.projectBindings;
-  if (runtime === undefined || workspace === undefined || projectBindings === undefined) {
-    throw new Error("Development requires a project-bound Agent Runtime and workspace.");
+  const projectCommands = ctx.capabilities.projectCommands;
+  if (
+    runtime === undefined ||
+    workspace === undefined ||
+    projectBindings === undefined ||
+    projectCommands === undefined
+  ) {
+    throw new Error(
+      "Development requires a project-bound Agent Runtime, workspace, and Project Commands.",
+    );
   }
 
   const allocation = await workspace.allocate({
@@ -111,7 +125,13 @@ export const handleImplementationRequested: ModuleHandler = async (
     const changedFiles = await verifyChangedFiles(allocation.path, result.changedFiles);
     releaseOutcome = result.status === "completed" ? "success" : "failure";
     if (result.status === "cancelled") releaseOutcome = "cancelled";
-    return { status: result.status, summary: result.summary, changedFiles };
+    return {
+      status: result.status,
+      summary: result.summary,
+      changedFiles,
+      commands: projectCommands.commands,
+      git: projectCommands.git,
+    };
   } catch (error) {
     if (run !== undefined) {
       try {

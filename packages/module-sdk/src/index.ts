@@ -9,10 +9,23 @@ import type { AgentProjectBindings } from "../../agent-runtime/src/request-build
 
 export type ModuleConfiguration = Readonly<Record<string, unknown>>;
 
+export type ProjectCommandName = "install" | "lint" | "typecheck" | "test" | "build";
+
+export interface ProjectCommandsCapability {
+  readonly commands: Readonly<Partial<Record<ProjectCommandName, string>>>;
+  readonly git: {
+    readonly branchPattern: string;
+    readonly commitStrategy: "conventional" | "ticket-prefix" | "freeform";
+    readonly pushRemote: string;
+    readonly allowForcePush?: false;
+  };
+}
+
 /** Capabilities resolved for one Project and Module Instance only. */
 export interface ModuleHandlerCapabilities {
   readonly agentRuntime?: AgentRuntime;
   readonly projectBindings?: AgentProjectBindings;
+  readonly projectCommands?: ProjectCommandsCapability;
   readonly workspace?: ModuleWorkspace;
 }
 

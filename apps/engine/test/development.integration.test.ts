@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { startEngine, type Harness } from "./harness.js";
 import { ExecutionCheckpointStore } from "../src/executions/checkpoints.js";
+import type { PortableProjectConfiguration } from "../../../packages/project-runtime/src/project-types.js";
 import {
   makeRealGitRepositoryFixture,
   type RealGitRepositoryFixture,
@@ -37,7 +38,10 @@ describe("Development Module tracer bullet", () => {
     engines.push(engine);
 
     const before = repositoryState(fixture.root);
-    await activateProject(engine, projectId, fixture);
+    await activateProject(engine, projectId, fixture, false, 300_000, 1_048_576, {
+      test: "pnpm test",
+      build: "pnpm build",
+    });
     const firstFact = await publishTag(engine, projectId);
     const firstExecutions = await waitForExecutions(engine, projectId, 2);
 
@@ -70,6 +74,13 @@ describe("Development Module tracer bullet", () => {
         status: "completed",
         summary: "Fake Runtime applied deterministic change.",
         changedFiles: ["fake-runtime-change.txt"],
+        commands: { test: "pnpm test", build: "pnpm build" },
+        git: {
+          branchPattern: "agent/{workItemId}-{slug}",
+          commitStrategy: "conventional",
+          pushRemote: "origin",
+          allowForcePush: false,
+        },
       });
       expect(
         database
@@ -314,7 +325,19 @@ describe("Development Module tracer bullet", () => {
       ).toEqual({ status: "released" });
       expect(
         database.prepare("SELECT result FROM inbox WHERE module_instance_id = 'development'").get(),
-      ).toMatchObject({ result: expect.stringContaining('"status":"completed"') });
+      ).toMatchObject({
+        result: expect.stringContaining('"status":"completed"'),
+      });
+      const result = database
+        .prepare("SELECT result FROM inbox WHERE module_instance_id = 'development'")
+        .get() as {
+        result: string;
+      };
+      expect(JSON.parse(result.result)).toMatchObject({
+        status: "completed",
+        commands: {},
+        git: { pushRemote: "origin" },
+      });
     } finally {
       database.close();
     }
@@ -328,6 +351,7 @@ async function activateProject(
   cancellationTest = false,
   timeoutMs = 300_000,
   outputLimitBytes = 1_048_576,
+  commands: PortableProjectConfiguration["commands"] = {},
 ): Promise<void> {
   const portableConfig = {
     apiVersion: "jarvis.dev/project/v1",
@@ -335,7 +359,7 @@ async function activateProject(
     metadata: { id: projectId, name: "Development tracer" },
     repositories: [{ id: "main", root: ".", defaultBranch: "main", remote: "origin" }],
     slots: { agentRuntime: { requires: "agent.execute" } },
-    commands: {},
+    commands,
     git: {
       branchPattern: "agent/{workItemId}-{slug}",
       commitStrategy: "conventional",

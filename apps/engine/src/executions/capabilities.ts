@@ -3,6 +3,8 @@ import type { ModuleCapabilityRequirement } from "../../../../packages/kernel/sr
 import type {
   ModuleHandlerCapabilities,
   ModuleWorkspace,
+  ProjectCommandName,
+  ProjectCommandsCapability,
 } from "../../../../packages/module-sdk/src/index.js";
 import type { AgentRuntime } from "../../../../packages/agent-runtime/src/index.js";
 import type { ResolvedProjectSnapshot } from "../projects/store.js";
@@ -85,9 +87,15 @@ export class ProjectModuleCapabilityResolver {
     const requirements = this.modules.composition(moduleId)?.requires ?? [];
     const agentRequirement = requirements.find((candidate) => candidate.id === "agent.execute");
     const workspaceRequired = requirements.some((candidate) => candidate.id === "repository.write");
-    if (agentRequirement === undefined && !workspaceRequired) return {};
+    const projectCommandsRequired = requirements.some(
+      (candidate) => candidate.id === "shell.execute",
+    );
+    if (agentRequirement === undefined && !workspaceRequired && !projectCommandsRequired) return {};
 
     const snapshot = this.snapshots.getResolvedProject(projectId);
+    if (snapshot === undefined && agentRequirement === undefined && !workspaceRequired) {
+      return {};
+    }
     const instance = snapshot?.moduleInstances.find(
       (candidate) => candidate.instanceId === moduleInstanceId,
     );
@@ -161,8 +169,32 @@ export class ProjectModuleCapabilityResolver {
       }
       resolved = { ...resolved, workspace };
     }
+    if (projectCommandsRequired) {
+      resolved = { ...resolved, projectCommands: projectCommands(snapshot.composition) };
+    }
     return resolved;
   }
+}
+
+function projectCommands(
+  composition: ResolvedProjectSnapshot["composition"],
+): ProjectCommandsCapability {
+  const commands: Partial<Record<ProjectCommandName, string>> = {};
+  for (const name of ["install", "lint", "typecheck", "test", "build"] as const) {
+    const command = composition.commands[name];
+    if (typeof command === "string") commands[name] = command;
+  }
+  return {
+    commands,
+    git: {
+      branchPattern: composition.git.branchPattern,
+      commitStrategy: composition.git.commitStrategy,
+      pushRemote: composition.git.pushRemote,
+      ...(composition.git.allowForcePush === undefined
+        ? {}
+        : { allowForcePush: composition.git.allowForcePush }),
+    },
+  };
 }
 
 function capabilitySlot(
