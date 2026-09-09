@@ -1,6 +1,14 @@
 import Database from "better-sqlite3";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -24,6 +32,115 @@ afterEach(async () => {
 });
 
 describe("Development Module tracer bullet", () => {
+  it("runs a project-bound Codex Runtime through a fake executable", async () => {
+    const fixture = makeRealGitRepositoryFixture();
+    roots.push(fixture.root, fixture.remoteRoot);
+    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-codex-"));
+    roots.push(dataRoot);
+    const executable = join(dataRoot, "fake-codex");
+    writeFileSync(
+      executable,
+      `#!${process.execPath}
+const fs = require("node:fs");
+fs.writeFileSync("codex-runtime-change.txt", "Codex runtime change\\n");
+const emit = (event) => process.stdout.write(JSON.stringify(event) + "\\n");
+emit({ type: "item.completed", item: { type: "file_change", id: "change-1", changes: [{ path: "codex-runtime-change.txt" }] } });
+emit({ type: "item.completed", item: { type: "agent_message", text: "Codex Runtime applied deterministic change." } });
+emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
+`,
+      "utf8",
+    );
+    chmodSync(executable, 0o755);
+
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
+    });
+    engines.push(engine);
+
+    const database = new Database(join(dataRoot, "jarvis.sqlite"));
+    database
+      .prepare(
+        `INSERT INTO runtime_descriptors
+           (id, provider, display_name, executable_path, version, capabilities, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET
+           provider = excluded.provider,
+           display_name = excluded.display_name,
+           executable_path = excluded.executable_path,
+           version = excluded.version,
+           capabilities = excluded.capabilities,
+           status = excluded.status`,
+      )
+      .run(
+        "runtime/codex-default",
+        "codex",
+        "Codex — default",
+        executable,
+        "0.153.4",
+        JSON.stringify(["agent.execute"]),
+        "available",
+      );
+    database.close();
+
+    const before = repositoryState(fixture.root);
+    const projectId = "development-codex";
+    await activateProject(
+      engine,
+      projectId,
+      fixture,
+      false,
+      300_000,
+      1_048_576,
+      { test: "node --test" },
+      ["test"],
+      false,
+      "origin",
+      0,
+      "runtime/codex-default",
+    );
+    await publishTag(engine, projectId, "codex");
+    const executions = await waitForExecutions(engine, projectId, 2);
+    expect(
+      executions.find(({ moduleInstanceId }) => moduleInstanceId === "development"),
+    ).toMatchObject({
+      status: "completed",
+    });
+    expect(repositoryState(fixture.root)).toEqual(before);
+
+    const readonly = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
+    try {
+      const row = readonly
+        .prepare(
+          "SELECT result FROM inbox WHERE project_id = ? AND module_instance_id = 'development'",
+        )
+        .get(projectId) as { result: string } | undefined;
+      expect(row).toBeDefined();
+      const result = JSON.parse(row!.result) as {
+        status: string;
+        summary: string;
+        changedFiles: string[];
+        headBranch: string;
+        headCommit: string;
+      };
+      expect(result).toMatchObject({
+        status: "completed",
+        summary: "Codex Runtime applied deterministic change.",
+        changedFiles: ["codex-runtime-change.txt"],
+      });
+      expect(
+        execFileSync(
+          "git",
+          ["--git-dir", fixture.remoteRoot, "rev-parse", `refs/heads/${result.headBranch}`],
+          { encoding: "utf8" },
+        ).trim(),
+      ).toBe(result.headCommit);
+    } finally {
+      readonly.close();
+    }
+  });
+
   it("runs the bound Fake Runtime in a real allocated worktree", async () => {
     const fixture = makeRealGitRepositoryFixture();
     roots.push(fixture.root, fixture.remoteRoot);
@@ -1125,6 +1242,7 @@ async function activateProject(
   retainWorkspaceOnSuccess = false,
   pushRemote = "origin",
   maxRepairCycles = 0,
+  runtimeRef = "runtime/fake-test",
 ): Promise<void> {
   const portableConfig = {
     apiVersion: "jarvis.dev/project/v1",
@@ -1215,7 +1333,7 @@ async function activateProject(
       repositories: {
         main: { path: realpathSync(fixture.root), bookmarkRef: "bookmark/development-tracer" },
       },
-      slots: { agentRuntime: { kind: "runtime", ref: "runtime/fake-test" } },
+      slots: { agentRuntime: { kind: "runtime", ref: runtimeRef } },
     }),
   });
   expect(bindings.status, await bindings.clone().text()).toBe(200);
