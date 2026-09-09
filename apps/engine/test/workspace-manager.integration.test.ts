@@ -38,7 +38,7 @@ afterEach(() => {
 describe("WorkspaceManager allocation", () => {
   it("allocates a clean worktree from the explicit base and commits one active lease", async () => {
     const fixture = makeRealGitRepositoryFixture();
-    roots.push(fixture.root);
+    roots.push(fixture.root, fixture.remoteRoot);
     const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-workspace-manager-"));
     roots.push(dataRoot);
     const database = new Database(join(dataRoot, "jarvis.sqlite"));
@@ -674,7 +674,7 @@ function makeHarness(
   } = {},
 ): AllocationHarness {
   const fixture = makeRealGitRepositoryFixture();
-  roots.push(fixture.root);
+  roots.push(fixture.root, fixture.remoteRoot);
   const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-workspace-manager-failure-"));
   roots.push(dataRoot);
   const database = new Database(join(dataRoot, "jarvis.sqlite"));

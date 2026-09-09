@@ -14,7 +14,7 @@ describe("real Git workspace seam", () => {
 
   it("lists the fixture worktree and returns a typed failure", async () => {
     const fixture = makeRealGitRepositoryFixture();
-    roots.push(fixture.root);
+    roots.push(fixture.root, fixture.remoteRoot);
     const runner = new GitRunner({ cwd: fixture.root });
 
     const worktrees = await runner.run(["worktree", "list", "--porcelain"]);
@@ -36,7 +36,7 @@ describe("real Git workspace seam", () => {
 
   it("bounds output and reports timeout and cancellation", async () => {
     const outputFixture = makeRealGitRepositoryFixture();
-    roots.push(outputFixture.root);
+    roots.push(outputFixture.root, outputFixture.remoteRoot);
     const largeFile = join(outputFixture.root, "large.txt");
     writeFileSync(largeFile, "x".repeat(2_048), "utf8");
     const objectSha = execFileSync("git", ["hash-object", "-w", largeFile], {
@@ -55,7 +55,7 @@ describe("real Git workspace seam", () => {
     expect(output.stdout).not.toContain(outputFixture.root);
 
     const timeoutFixture = makeRealGitRepositoryFixture();
-    roots.push(timeoutFixture.root);
+    roots.push(timeoutFixture.root, timeoutFixture.remoteRoot);
     installSleepingCommitHook(timeoutFixture.root);
     const timedOut = await new GitRunner({ cwd: timeoutFixture.root }).run(
       ["commit", "--allow-empty", "--no-gpg-sign", "-m", "timeout"],
@@ -64,7 +64,7 @@ describe("real Git workspace seam", () => {
     expect(timedOut).toMatchObject({ ok: false, code: "git.timed-out" });
 
     const cancellationFixture = makeRealGitRepositoryFixture();
-    roots.push(cancellationFixture.root);
+    roots.push(cancellationFixture.root, cancellationFixture.remoteRoot);
     installSleepingCommitHook(cancellationFixture.root);
     const controller = new AbortController();
     const pending = new GitRunner({ cwd: cancellationFixture.root }).run(

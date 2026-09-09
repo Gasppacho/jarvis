@@ -25,7 +25,7 @@ afterEach(async () => {
 describe("Development Module tracer bullet", () => {
   it("runs the bound Fake Runtime in a real allocated worktree", async () => {
     const fixture = makeRealGitRepositoryFixture();
-    roots.push(fixture.root);
+    roots.push(fixture.root, fixture.remoteRoot);
     const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-"));
     roots.push(dataRoot);
     const projectId = "development-tracer";
@@ -117,7 +117,7 @@ describe("Development Module tracer bullet", () => {
 
   it("durably records ordered agent checkpoints across a dropped stream and restart", async () => {
     const fixture = makeRealGitRepositoryFixture();
-    roots.push(fixture.root);
+    roots.push(fixture.root, fixture.remoteRoot);
     const dataRoot = mkdtempSync(join("/tmp", "jarvis-agent-checkpoints-"));
     roots.push(dataRoot);
     const projectId = "development-checkpoints";
@@ -182,7 +182,7 @@ describe("Development Module tracer bullet", () => {
 
   it("cancels the real runtime child, drains it, and retains the cancelled workspace", async () => {
     const fixture = makeRealGitRepositoryFixture();
-    roots.push(fixture.root);
+    roots.push(fixture.root, fixture.remoteRoot);
     const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-cancel-"));
     roots.push(dataRoot);
     const projectId = "development-cancel";
@@ -242,7 +242,7 @@ describe("Development Module tracer bullet", () => {
 
   it("records a timed-out runtime distinctly and retains its workspace", async () => {
     const fixture = makeRealGitRepositoryFixture();
-    roots.push(fixture.root);
+    roots.push(fixture.root, fixture.remoteRoot);
     const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-timeout-"));
     roots.push(dataRoot);
     const projectId = "development-timeout";
@@ -286,7 +286,7 @@ describe("Development Module tracer bullet", () => {
 
   it("keeps the run successful when raw output exceeds its capture limit", async () => {
     const fixture = makeRealGitRepositoryFixture();
-    roots.push(fixture.root);
+    roots.push(fixture.root, fixture.remoteRoot);
     const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-output-limit-"));
     roots.push(dataRoot);
     const projectId = "development-output-limit";

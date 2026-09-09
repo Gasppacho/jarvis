@@ -25,6 +25,7 @@ afterEach(async () => {
 describe("Workspace allocation durability", () => {
   it("reconciles a crash after Git and reallocates the same execution", async () => {
     const fixture = makeRealGitRepositoryFixture();
+    roots.push(fixture.root, fixture.remoteRoot);
     const dataRoot = makeDataRoot();
     const projectId = "project-74-first";
     const executionId = "execution-74";
@@ -63,6 +64,7 @@ describe("Workspace allocation durability", () => {
 
   it("reconciles a crash after the Lease commit and reallocates the same execution", async () => {
     const fixture = makeRealGitRepositoryFixture();
+    roots.push(fixture.root, fixture.remoteRoot);
     const dataRoot = makeDataRoot();
     const projectId = "project-74-second";
     const executionId = "execution-74";
@@ -103,6 +105,7 @@ describe("Workspace allocation durability", () => {
 
   it("leaves no residue when it crashes before the first Git call", async () => {
     const fixture = makeRealGitRepositoryFixture();
+    roots.push(fixture.root, fixture.remoteRoot);
     const dataRoot = makeDataRoot();
     const projectId = "project-74-before-git";
     const executionId = "execution-74";
@@ -126,6 +129,7 @@ describe("Workspace allocation durability", () => {
 
   it("allocates and releases normally with no failpoint", async () => {
     const fixture = makeRealGitRepositoryFixture();
+    roots.push(fixture.root, fixture.remoteRoot);
     const dataRoot = makeDataRoot();
     const projectId = "project-74-normal";
     const executionId = "execution-74";

@@ -29,7 +29,7 @@ afterEach(async () => {
 describe("workspace reconciliation at engine startup", () => {
   it("cleans leftover leases and directories, preserves valid retention, and is restart-safe", async () => {
     const fixture = makeRealGitRepositoryFixture();
-    roots.push(fixture.root);
+    roots.push(fixture.root, fixture.remoteRoot);
     const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-reconciliation-"));
     roots.push(dataRoot);
     const projectId = "project-73";
@@ -142,7 +142,7 @@ describe("workspace reconciliation at engine startup", () => {
 
   it("reports one unreadable repository and continues with other projects", async () => {
     const goodFixture = makeRealGitRepositoryFixture();
-    roots.push(goodFixture.root);
+    roots.push(goodFixture.root, goodFixture.remoteRoot);
     const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-reconciliation-failure-"));
     roots.push(dataRoot);
     const good = seedProject(dataRoot, "project-73-good", goodFixture.root);

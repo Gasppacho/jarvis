@@ -77,6 +77,8 @@ export interface RealGitRepositoryFixture {
   readonly root: string;
   readonly branch: string;
   readonly commitSha: string;
+  readonly remoteRoot: string;
+  readonly remoteName: string;
 }
 
 export interface RealGitRepositoryFixtureOptions {
@@ -93,6 +95,8 @@ export function makeRealGitRepositoryFixture(
     rmSync(root, { recursive: true, force: true });
     throw new Error("fixture branch is invalid");
   }
+  const remoteRoot = mkdtempSync(join(tmpdir(), "jarvis-bare-git-"));
+  const remoteName = "origin";
 
   const env: NodeJS.ProcessEnv = {
     PATH: process.env["PATH"] ?? "",
@@ -111,6 +115,10 @@ export function makeRealGitRepositoryFixture(
   try {
     execFileSync("git", ["init", "--quiet", `--initial-branch=${branch}`], {
       cwd: root,
+      env,
+      stdio: "ignore",
+    });
+    execFileSync("git", ["init", "--quiet", "--bare", `--initial-branch=${branch}`, remoteRoot], {
       env,
       stdio: "ignore",
     });
@@ -156,9 +164,15 @@ export function makeRealGitRepositoryFixture(
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
-    return { root, branch, commitSha };
+    execFileSync("git", ["remote", "add", remoteName, remoteRoot], {
+      cwd: root,
+      env,
+      stdio: "ignore",
+    });
+    return { root, branch, commitSha, remoteRoot, remoteName };
   } catch (error: unknown) {
     rmSync(root, { recursive: true, force: true });
+    rmSync(remoteRoot, { recursive: true, force: true });
     throw error;
   }
 }
