@@ -15,7 +15,7 @@ import type {
   AgentRunResult,
   AgentRuntime,
   RuntimeDescriptor,
-} from "./index.js";
+} from "./types.js";
 
 const CODEX_ID = "runtime/codex-default";
 const CODEX_DISPLAY_NAME = "Codex — default";

@@ -1,5 +1,5 @@
 import { isAbsolute, relative, resolve } from "node:path";
-import type { AgentRunRequest, AgentRunResult } from "./index.js";
+import type { AgentRunRequest, AgentRunResult } from "./types.js";
 import type { AgentRunObservation, AgentRunTranslator } from "./child-process-agent-run.js";
 
 /** Fake-specific protocol decoding; process lifecycle stays in ChildProcessAgentRun. */

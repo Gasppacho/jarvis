@@ -5,7 +5,7 @@ import type {
   AgentRunEventType,
   AgentRunRequest,
   AgentRunResult,
-} from "./index.js";
+} from "./types.js";
 
 export type AgentRunObservation =
   | {

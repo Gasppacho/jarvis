@@ -1,4 +1,4 @@
-import type { AgentRunRequest } from "./index.js";
+import type { AgentRunRequest } from "./types.js";
 
 export interface AgentProjectBinding {
   readonly kind: string;
