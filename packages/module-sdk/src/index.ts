@@ -21,11 +21,42 @@ export interface ProjectCommandsCapability {
   };
 }
 
+export interface ModuleShellCommandInput {
+  readonly command: string;
+  readonly cwd: string;
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+  readonly outputLimitBytes?: number;
+}
+
+export type ModuleShellCommandResult =
+  | {
+      readonly ok: true;
+      readonly exitCode: 0;
+      readonly stdout: string;
+      readonly stderr: string;
+      readonly outputTruncated: boolean;
+    }
+  | {
+      readonly ok: false;
+      readonly code: string;
+      readonly message: string;
+      readonly exitCode: number | null;
+      readonly stdout: string;
+      readonly stderr: string;
+      readonly outputTruncated: boolean;
+    };
+
+export interface ModuleShell {
+  run(input: ModuleShellCommandInput): Promise<ModuleShellCommandResult>;
+}
+
 /** Capabilities resolved for one Project and Module Instance only. */
 export interface ModuleHandlerCapabilities {
   readonly agentRuntime?: AgentRuntime;
   readonly projectBindings?: AgentProjectBindings;
   readonly projectCommands?: ProjectCommandsCapability;
+  readonly shell?: ModuleShell;
   readonly workspace?: ModuleWorkspace;
 }
 
@@ -68,6 +99,19 @@ export type ModuleExecutionCheckpoint =
       readonly sequence: number;
       readonly timestamp: string;
       readonly message: string;
+    }
+  | {
+      readonly type: "validation.started";
+      readonly sequence: number;
+      readonly timestamp: string;
+      readonly check: string;
+    }
+  | {
+      readonly type: "validation.failed";
+      readonly sequence: number;
+      readonly timestamp: string;
+      readonly check: string;
+      readonly output: string;
     };
 
 export interface ModuleHandlerPublishInput {

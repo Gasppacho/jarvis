@@ -403,6 +403,13 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     running = false,
   ): ConsumeResult {
     const message = error instanceof Error ? error.message : String(error);
+    const structuredFailure = readStructuredFailure(error);
+    const result =
+      structuredFailure !== undefined
+        ? { error: { ...structuredFailure, message } }
+        : error instanceof EngineError
+          ? { error: { code: error.code, message } }
+          : { error: message };
     // Deliberately a second, separate transaction: it must commit even
     // though the attempt above rolled back, and it is the only place the
     // failed Execution and its Inbox record are written (acceptance
@@ -415,7 +422,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
         const row = running
           ? this.updateExecution(executionId, "failed", message)
           : this.insertExecution(executionId, delivery, envelope, "failed", startedAt, message);
-        this.insertInbox(delivery, "failed", { error: message });
+        this.insertInbox(delivery, "failed", result);
         this.markDeliveryConsumed(delivery);
         return row;
       })();
@@ -442,8 +449,6 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
       );
     }
 
-    const result =
-      error instanceof EngineError ? { error: { code: error.code, message } } : { error: message };
     return {
       executionId,
       status: "failed",
@@ -543,6 +548,29 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
             sourceSequence: checkpoint.sequence,
             occurredAt: checkpoint.timestamp,
             message: checkpoint.message,
+          });
+          return;
+        }
+        if (checkpoint.type === "validation.started") {
+          this.checkpointStore.record({
+            projectId: delivery.projectId,
+            executionId,
+            type: checkpoint.type,
+            sourceSequence: checkpoint.sequence,
+            occurredAt: checkpoint.timestamp,
+            check: checkpoint.check,
+          });
+          return;
+        }
+        if (checkpoint.type === "validation.failed") {
+          this.checkpointStore.record({
+            projectId: delivery.projectId,
+            executionId,
+            type: checkpoint.type,
+            sourceSequence: checkpoint.sequence,
+            occurredAt: checkpoint.timestamp,
+            check: checkpoint.check,
+            output: checkpoint.output,
           });
           return;
         }
@@ -770,6 +798,16 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     }
     return JSON.parse(row.envelope) as EventEnvelope;
   }
+}
+
+function readStructuredFailure(
+  error: unknown,
+): { readonly code: string; readonly retryable: boolean } | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const candidate = error as { readonly code?: unknown; readonly retryable?: unknown };
+  return typeof candidate.code === "string" && typeof candidate.retryable === "boolean"
+    ? { code: candidate.code, retryable: candidate.retryable }
+    : undefined;
 }
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {

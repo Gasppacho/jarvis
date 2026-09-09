@@ -44,7 +44,6 @@ describe("Development Module tracer bullet", () => {
     });
     const firstFact = await publishTag(engine, projectId);
     const firstExecutions = await waitForExecutions(engine, projectId, 2);
-
     expect(
       firstExecutions.filter((execution) => execution.moduleInstanceId === "development"),
     ).toHaveLength(1);
@@ -74,6 +73,7 @@ describe("Development Module tracer bullet", () => {
         status: "completed",
         summary: "Fake Runtime applied deterministic change.",
         changedFiles: ["fake-runtime-change.txt"],
+        validation: [{ name: "test", status: "passed", durationMs: expect.any(Number) }],
         commands: { test: "pnpm test", build: "pnpm build" },
         git: {
           branchPattern: "agent/{workItemId}-{slug}",
@@ -169,9 +169,10 @@ describe("Development Module tracer bullet", () => {
       expect(checkpoints.map((checkpoint) => checkpoint.type)).toEqual([
         "agent.started",
         "agent.message",
+        "validation.started",
       ]);
-      expect(checkpoints.map((checkpoint) => checkpoint.sequence)).toEqual([1, 2]);
-      expect(checkpoints.map((checkpoint) => checkpoint.sourceSequence)).toEqual([1, 2]);
+      expect(checkpoints.map((checkpoint) => checkpoint.sequence)).toEqual([1, 2, 3]);
+      expect(checkpoints.map((checkpoint) => checkpoint.sourceSequence)).toEqual([1, 2, 3]);
       expect(checkpoints[1]?.payload).toEqual({
         message: "Fake Runtime applied deterministic change.",
       });
@@ -335,9 +336,135 @@ describe("Development Module tracer bullet", () => {
       };
       expect(JSON.parse(result.result)).toMatchObject({
         status: "completed",
-        commands: {},
+        validation: [{ name: "test", status: "passed", durationMs: expect.any(Number) }],
+        commands: { test: "node --test" },
         git: { pushRemote: "origin" },
       });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("runs the validation plan in order and stops after the first failure", async () => {
+    const fixture = makeRealGitRepositoryFixture();
+    roots.push(fixture.root, fixture.remoteRoot);
+    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-validation-"));
+    roots.push(dataRoot);
+    const projectId = "development-validation";
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
+    });
+    engines.push(engine);
+
+    await activateProject(
+      engine,
+      projectId,
+      fixture,
+      false,
+      300_000,
+      1_048_576,
+      {
+        test: `node -e "require('node:fs').appendFileSync('validation-order.txt', 'test\\n')"`,
+        build: `node -e "require('node:fs').appendFileSync('validation-order.txt', 'build\\n'); process.exit(7)"`,
+        lint: `node -e "require('node:fs').appendFileSync('validation-order.txt', 'lint\\n')"`,
+      },
+      ["test", "build", "lint"],
+    );
+    await publishTag(engine, projectId, "validation");
+    const executions = await waitForExecutions(engine, projectId, 2);
+    const development = executions.find(
+      (execution) => execution.moduleInstanceId === "development",
+    );
+    expect(development).toMatchObject({ status: "failed" });
+    expect(development).toBeDefined();
+
+    const workspacePath = join(dataRoot, "projects", projectId, "workspaces", development!.id);
+    expect(readFileSync(join(workspacePath, "validation-order.txt"), "utf8")).toBe("test\nbuild\n");
+
+    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
+    try {
+      const inbox = database
+        .prepare("SELECT result FROM inbox WHERE module_instance_id = 'development'")
+        .get() as { result: string };
+      expect(JSON.parse(inbox.result)).toEqual({
+        error: { code: "git.validation-failed", message: expect.any(String), retryable: false },
+      });
+      expect(
+        database
+          .prepare(
+            "SELECT type FROM execution_checkpoints WHERE execution_id = ? ORDER BY sequence",
+          )
+          .all(development!.id),
+      ).toEqual([
+        { type: "agent.started" },
+        { type: "agent.message" },
+        { type: "validation.started" },
+        { type: "validation.started" },
+        { type: "validation.failed" },
+      ]);
+      expect(
+        database
+          .prepare("SELECT status FROM workspace_leases WHERE project_id = ? AND execution_id = ?")
+          .get(projectId, development!.id),
+      ).toEqual({ status: "retained" });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("fails with a configuration error when a selected command is undeclared", async () => {
+    const fixture = makeRealGitRepositoryFixture();
+    roots.push(fixture.root, fixture.remoteRoot);
+    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-missing-command-"));
+    roots.push(dataRoot);
+    const projectId = "development-missing-command";
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
+    });
+    engines.push(engine);
+
+    await activateProject(
+      engine,
+      projectId,
+      fixture,
+      false,
+      300_000,
+      1_048_576,
+      { test: "node --test" },
+      ["build"],
+    );
+    await publishTag(engine, projectId, "missing-command");
+    const executions = await waitForExecutions(engine, projectId, 2);
+    const development = executions.find(
+      (execution) => execution.moduleInstanceId === "development",
+    );
+    expect(development).toMatchObject({ status: "failed" });
+    expect(development).toBeDefined();
+
+    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
+    try {
+      const inbox = database
+        .prepare("SELECT result FROM inbox WHERE module_instance_id = 'development'")
+        .get() as { result: string };
+      expect(JSON.parse(inbox.result)).toEqual({
+        error: { code: "project.config-invalid", message: expect.any(String), retryable: false },
+      });
+      expect(
+        database
+          .prepare(
+            "SELECT type FROM execution_checkpoints WHERE execution_id = ? ORDER BY sequence",
+          )
+          .all(development!.id),
+      ).toEqual([{ type: "agent.started" }, { type: "agent.message" }]);
+      expect(
+        database
+          .prepare("SELECT status FROM workspace_leases WHERE project_id = ? AND execution_id = ?")
+          .get(projectId, development!.id),
+      ).toEqual({ status: "retained" });
     } finally {
       database.close();
     }
@@ -351,7 +478,8 @@ async function activateProject(
   cancellationTest = false,
   timeoutMs = 300_000,
   outputLimitBytes = 1_048_576,
-  commands: PortableProjectConfiguration["commands"] = {},
+  commands: PortableProjectConfiguration["commands"] = { test: "node --test" },
+  validationOrder: readonly string[] = ["test"],
 ): Promise<void> {
   const portableConfig = {
     apiVersion: "jarvis.dev/project/v1",
@@ -395,7 +523,7 @@ async function activateProject(
         runtimeSlot: "agentRuntime",
         bindings: { repository: "main" },
         configuration: {
-          validationOrder: ["test"],
+          validationOrder,
           maxRepairCycles: 0,
           retainWorkspaceOnSuccess: false,
           timeoutMs,

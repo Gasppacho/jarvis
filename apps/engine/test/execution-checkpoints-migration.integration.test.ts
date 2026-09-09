@@ -20,6 +20,8 @@ describe("execution checkpoint migration", () => {
     applyMigration(db, "0011");
     expectSchema(db);
     applyMigration(db, "0012");
+    applyMigration(db, "0013");
+    expectSchema(db);
     const inbox = db
       .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'inbox'")
       .get() as { sql: string } | undefined;
@@ -33,7 +35,7 @@ function expectSchema(database: Database.Database): void {
       "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'execution_checkpoints'",
     )
     .get() as { sql: string } | undefined;
-  expect(table?.sql).toContain("CREATE TABLE execution_checkpoints");
+  expect(table?.sql).toContain("execution_checkpoints");
   expect(table?.sql).toContain("STRICT");
 
   const columns = database.prepare("PRAGMA table_info(execution_checkpoints)").all() as {

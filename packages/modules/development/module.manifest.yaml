@@ -50,7 +50,7 @@ capabilities:
       binding: repository
       resolution:
         kind: project-repository
-    # The #82 tracer bullet only runs the Agent Runtime; #11 owns validation commands.
+    # Project commands execute after the Agent Runtime in the allocated worktree.
     - id: shell.execute
       optional: true
       resolution:

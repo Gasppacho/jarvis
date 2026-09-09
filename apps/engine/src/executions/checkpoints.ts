@@ -15,6 +15,23 @@ export type ExecutionCheckpointInput =
       readonly sourceSequence: number;
       readonly occurredAt: string;
       readonly message: string;
+    }
+  | {
+      readonly projectId: string;
+      readonly executionId: string;
+      readonly type: "validation.started";
+      readonly sourceSequence: number;
+      readonly occurredAt: string;
+      readonly check: string;
+    }
+  | {
+      readonly projectId: string;
+      readonly executionId: string;
+      readonly type: "validation.failed";
+      readonly sourceSequence: number;
+      readonly occurredAt: string;
+      readonly check: string;
+      readonly output: string;
     };
 
 export interface ExecutionCheckpoint {
@@ -84,8 +101,7 @@ export class ExecutionCheckpointStore {
            WHERE project_id = @projectId AND execution_id = @executionId`,
         )
         .get(input) as { sequence: number };
-      const payload =
-        input.type === "agent.started" ? {} : { message: sanitizeCheckpointMessage(input.message) };
+      const payload = checkpointPayload(input);
       this.db
         .prepare(
           `INSERT INTO execution_checkpoints
@@ -137,9 +153,28 @@ function validateInput(input: ExecutionCheckpointInput): void {
   ) {
     throw new Error("Execution checkpoint identity and sequence are invalid.");
   }
-  if (input.type === "agent.message" && typeof input.message !== "string") {
-    throw new Error("Agent message checkpoint content is invalid.");
+  if (
+    (input.type === "agent.message" && typeof input.message !== "string") ||
+    ((input.type === "validation.started" || input.type === "validation.failed") &&
+      (typeof input.check !== "string" || input.check === "")) ||
+    (input.type === "validation.failed" && typeof input.output !== "string")
+  ) {
+    throw new Error("Execution checkpoint content is invalid.");
   }
+}
+
+function checkpointPayload(input: ExecutionCheckpointInput): Readonly<Record<string, unknown>> {
+  if (input.type === "agent.started") return {};
+  if (input.type === "agent.message") {
+    return { message: sanitizeCheckpointMessage(input.message) };
+  }
+  if (input.type === "validation.started") {
+    return { check: sanitizeCheckpointMessage(input.check) };
+  }
+  return {
+    check: sanitizeCheckpointMessage(input.check),
+    output: sanitizeCheckpointMessage(input.output),
+  };
 }
 
 function sanitizeCheckpointMessage(message: string): string {

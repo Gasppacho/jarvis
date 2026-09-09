@@ -2,11 +2,14 @@ import { EngineError } from "../errors.js";
 import type { ModuleCapabilityRequirement } from "../../../../packages/kernel/src/module-host.js";
 import type {
   ModuleHandlerCapabilities,
+  ModuleShellCommandInput,
+  ModuleShellCommandResult,
   ModuleWorkspace,
   ProjectCommandName,
   ProjectCommandsCapability,
 } from "../../../../packages/module-sdk/src/index.js";
 import type { AgentRuntime } from "../../../../packages/agent-runtime/src/index.js";
+import { runBoundedProcess } from "../../../../packages/workspace/src/bounded-process-runner.js";
 import type { ResolvedProjectSnapshot } from "../projects/store.js";
 import type {
   WorkspaceManager,
@@ -170,10 +173,31 @@ export class ProjectModuleCapabilityResolver {
       resolved = { ...resolved, workspace };
     }
     if (projectCommandsRequired) {
-      resolved = { ...resolved, projectCommands: projectCommands(snapshot.composition) };
+      resolved = {
+        ...resolved,
+        projectCommands: projectCommands(snapshot.composition),
+        shell: { run: runProjectCommand },
+      };
     }
     return resolved;
   }
+}
+
+function runProjectCommand(input: ModuleShellCommandInput): Promise<ModuleShellCommandResult> {
+  const windows = process.platform === "win32";
+  return runBoundedProcess({
+    executable: windows ? "cmd.exe" : "/bin/sh",
+    args: windows ? ["/d", "/s", "/c", input.command] : ["-c", input.command],
+    cwd: input.cwd,
+    env: {
+      PATH: process.env["PATH"] ?? "",
+      LANG: "C",
+      LC_ALL: "C",
+    },
+    ...(input.signal === undefined ? {} : { signal: input.signal }),
+    ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+    ...(input.outputLimitBytes === undefined ? {} : { outputLimitBytes: input.outputLimitBytes }),
+  });
 }
 
 function projectCommands(
