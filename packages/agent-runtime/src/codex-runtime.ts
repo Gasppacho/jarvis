@@ -3,13 +3,12 @@ import { access, stat } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { ChildProcessAgentRun, type AgentRunTranslator } from "./child-process-agent-run.js";
-import type {
-  AgentRun,
-  AgentRunRequest,
-  AgentRuntime,
-  RuntimeDescriptor,
-} from "./index.js";
+import {
+  ChildProcessAgentRun,
+  type AgentRunObservation,
+  type AgentRunTranslator,
+} from "./child-process-agent-run.js";
+import type { AgentRun, AgentRunRequest, AgentRuntime, RuntimeDescriptor } from "./index.js";
 
 const CODEX_ID = "runtime/codex-default";
 const CODEX_DISPLAY_NAME = "Codex — default";
@@ -65,7 +64,12 @@ export class CodexRuntime implements AgentRuntime {
       return descriptor(executablePath, null, "unavailable");
     }
 
-    const versionProbe = await probe(executablePath, VERSION_ARGS, this.timeoutMs, this.outputLimitBytes);
+    const versionProbe = await probe(
+      executablePath,
+      VERSION_ARGS,
+      this.timeoutMs,
+      this.outputLimitBytes,
+    );
     if (versionProbe.timedOut || versionProbe.error) {
       return descriptor(executablePath, null, "unavailable");
     }
@@ -112,7 +116,7 @@ export class CodexRuntime implements AgentRuntime {
       executable: executablePath,
       args: [...CODEX_EXEC_ARGS, "--cd", request.workingDirectory, "-"],
       stdin: buildPrompt(request),
-      translator: CODEX_RUN_TRANSLATOR,
+      translator: new CodexRunTranslator(),
       displayName: CODEX_DISPLAY_NAME,
     });
   }
@@ -124,11 +128,61 @@ export class CodexRuntime implements AgentRuntime {
   }
 }
 
-const CODEX_RUN_TRANSLATOR: AgentRunTranslator = {
-  translate(line) {
-    return line === "" ? [] : [{ type: "stdout", chunk: line }];
-  },
-};
+class CodexRunTranslator implements AgentRunTranslator {
+  private threadStarted = false;
+  private terminal = false;
+  private lastAgentMessage: string | undefined;
+
+  public translate(line: string): readonly AgentRunObservation[] {
+    if (this.terminal) return [];
+
+    const record = parseRecord(line);
+    if (record === null || typeof record["type"] !== "string") return [];
+
+    switch (record["type"]) {
+      case "thread.started":
+        this.threadStarted = true;
+        return [];
+      case "item.completed": {
+        if (!this.threadStarted) return [];
+        const item = record["item"];
+        if (!isRecord(item) || item["type"] !== "agent_message") return [];
+        const text = item["text"];
+        if (typeof text !== "string") return [];
+        this.lastAgentMessage = text;
+        return [{ type: "message", message: text }];
+      }
+      case "turn.completed":
+        if (!this.threadStarted || this.lastAgentMessage === undefined) return [];
+        this.terminal = true;
+        return [
+          {
+            type: "result",
+            result: {
+              status: "completed",
+              summary: this.lastAgentMessage,
+              changedFiles: [],
+            },
+          },
+        ];
+      default:
+        return [];
+    }
+  }
+}
+
+function parseRecord(line: string): Record<string, unknown> | null {
+  try {
+    const value: unknown = JSON.parse(line);
+    return isRecord(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 interface ProbeResult {
   readonly output: string;

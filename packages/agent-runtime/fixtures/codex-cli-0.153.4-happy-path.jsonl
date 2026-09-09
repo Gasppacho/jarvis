@@ -1,0 +1,7 @@
+{"type":"thread.started","thread_id":"thread_fixture"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"pwd"}}
+{"type":"item.completed","item":{"id":"item_0","type":"command_execution","status":"completed"}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"I inspected the requested workspace."}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"The fixture run completed successfully."}}
+{"type":"turn.completed","usage":{"input_tokens":43922,"output_tokens":285}}
