@@ -5,6 +5,8 @@ export { ChildProcessAgentRun };
 export type {
   AgentRunObservation,
   AgentRunTranslator,
+  ChildProcessFailure,
+  ChildProcessFailureClassifier,
   ChildProcessAgentRunOptions,
 } from "./child-process-agent-run.js";
 
