@@ -56,10 +56,7 @@ import type {
   ExecutionSummary,
 } from "./types.js";
 import type { ProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
-import type {
-  ProjectResourceGrant,
-  ProjectResourceGrantDetailsPort,
-} from "./resource-grants.js";
+import type { ProjectResourceGrant, ProjectResourceGrantDetailsPort } from "./resource-grants.js";
 
 const PROJECT_YAML = join(".jarvis", "project.yaml");
 const MAX_PROJECT_YAML_BYTES = 512 * 1024;
@@ -796,10 +793,7 @@ function resourceGrantDetails(
   grants: ProjectResourceGrantPort,
   projectId: string,
 ): readonly ProjectResourceGrant[] {
-  if (
-    "grantedResourceDetails" in grants &&
-    typeof grants.grantedResourceDetails === "function"
-  ) {
+  if ("grantedResourceDetails" in grants && typeof grants.grantedResourceDetails === "function") {
     return (grants as ProjectResourceGrantDetailsPort).grantedResourceDetails(projectId);
   }
   return grants.grantedToProject(projectId).map((candidate) => ({ candidate }));

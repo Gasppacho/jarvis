@@ -158,9 +158,7 @@ class CodexRunTranslator implements AgentRunTranslator {
       value = JSON.parse(line) as unknown;
     } catch {
       return this.failure(
-        isAuthenticationRefusal(line)
-          ? "agent.codex.unauthenticated"
-          : "agent.codex.invalid-json",
+        isAuthenticationRefusal(line) ? "agent.codex.unauthenticated" : "agent.codex.invalid-json",
         isAuthenticationRefusal(line)
           ? "Codex is not authenticated. Sign in and retry."
           : "Codex emitted stdout that is not valid JSON.",

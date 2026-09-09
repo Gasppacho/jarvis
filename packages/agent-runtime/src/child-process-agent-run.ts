@@ -159,7 +159,7 @@ export class ChildProcessAgentRun implements AgentRun {
         resolveResult(safeResult);
       };
 
-        this.child.stdout.on("data", (chunk: string) => this.consumeOutput("stdout", chunk));
+      this.child.stdout.on("data", (chunk: string) => this.consumeOutput("stdout", chunk));
       this.child.stderr.on("data", (chunk: string) => this.consumeOutput("stderr", chunk));
       this.child.once("error", (error) => {
         this.processError = error;
@@ -181,8 +181,7 @@ export class ChildProcessAgentRun implements AgentRun {
         }
 
         finish(
-          this.pendingResult ??
-            this.failureResult({ kind: "missing-result", exitCode, signal }),
+          this.pendingResult ?? this.failureResult({ kind: "missing-result", exitCode, signal }),
         );
       });
     });
