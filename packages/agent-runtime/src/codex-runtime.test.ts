@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ChildProcessAgentRun } from "./child-process-agent-run.js";
 import { CodexRuntime } from "./codex-runtime.js";
-import type { AgentRunRequest, RuntimeDescriptor } from "./index.js";
+import type { AgentRunEvent, AgentRunRequest, RuntimeDescriptor } from "./index.js";
 
 const VERSION = "codex-cli 0.153.4";
 const FIXTURE = new URL("../fixtures/codex-cli-0.153.4-happy-path.jsonl", import.meta.url);
@@ -148,7 +148,7 @@ describe("CodexRuntime", () => {
     process.env[ENGINE_ONLY_ENVIRONMENT] = "must-not-reach-child";
     try {
       const request = agentRequest(root);
-      const fixture = await readFile(FIXTURE, "utf8");
+      const fixture = (await readFile(FIXTURE, "utf8")).replaceAll("$WORKSPACE", root);
       const executable = await makeSessionExecutable(root, request, fixture);
       const run = await new CodexRuntime(executable).start(request, new AbortController().signal);
 
@@ -162,11 +162,17 @@ describe("CodexRuntime", () => {
       expect(result).toEqual({
         status: "completed",
         summary: FINAL_SUMMARY,
-        changedFiles: [],
+        changedFiles: ["added.txt", "updated.txt", "deleted.txt"],
       });
       expect(events.filter(({ type }) => type === "message").map(({ message }) => message)).toEqual(
         ["I inspected the requested workspace.", FINAL_SUMMARY],
       );
+      const changedFiles = events
+        .filter((event) => event.type === "file-changed")
+        .map((event) => event.path);
+      expect(changedFiles).toEqual(["added.txt", "updated.txt", "deleted.txt"]);
+      expect(events.filter(({ type }) => type === "file-changed")).toHaveLength(3);
+      expect(result.changedFiles).toEqual(changedFiles);
 
       expect(child.cwd).toBe(await realpath(root));
       expect(child.stdin).toContain("Do the work");
@@ -214,6 +220,7 @@ describe("CodexRuntime", () => {
     try {
       const request = agentRequest(root);
       const fixture = (await readFile(FIXTURE, "utf8"))
+        .replaceAll("$WORKSPACE", root)
         .split("\n")
         .filter((line) => !line.includes('"turn.completed"'))
         .join("\n");
@@ -223,6 +230,47 @@ describe("CodexRuntime", () => {
       const result = await run.result();
 
       expect(result).toMatchObject({ status: "failed", error: { code: "agent.invalid-result" } });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["a parent traversal", (root: string) => join(root, "..", "outside.txt")],
+    ["the workspace directory", (root: string) => root],
+  ])("rejects %s as a changed path", async (_label, pathForRoot) => {
+    const root = await makeRoot();
+    try {
+      const request = agentRequest(root);
+      const changedPath = pathForRoot(root);
+      const fixture = [
+        JSON.stringify({ type: "thread.started", thread_id: "thread_invalid" }),
+        JSON.stringify({
+          type: "item.started",
+          item: { id: "item_invalid", type: "file_change", changes: [{ path: changedPath }] },
+        }),
+        JSON.stringify({
+          type: "item.completed",
+          item: { id: "item_invalid", type: "file_change", changes: [{ path: changedPath }] },
+        }),
+        JSON.stringify({
+          type: "item.completed",
+          item: { id: "item_summary", type: "agent_message", text: "Should not complete." },
+        }),
+        JSON.stringify({ type: "turn.completed" }),
+      ].join("\n");
+      const executable = await makeSessionExecutable(root, request, `${fixture}\n`);
+      const run = await new CodexRuntime(executable).start(request, new AbortController().signal);
+
+      const events = await collectEvents(run);
+      const result = await run.result();
+
+      expect(events.filter(({ type }) => type === "file-changed")).toHaveLength(0);
+      expect(result).toMatchObject({
+        status: "failed",
+        changedFiles: [],
+        error: { code: "agent.protocol-invalid" },
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -335,9 +383,9 @@ async function readSessionMarkers(root: string): Promise<{
 }
 
 async function collectEvents(run: {
-  events(): AsyncIterable<{ type: string; message?: string }>;
-}): Promise<Array<{ readonly type: string; readonly message?: string }>> {
-  const events: Array<{ readonly type: string; readonly message?: string }> = [];
+  events(): AsyncIterable<AgentRunEvent>;
+}): Promise<AgentRunEvent[]> {
+  const events: AgentRunEvent[] = [];
   for await (const event of run.events()) events.push(event);
   return events;
 }

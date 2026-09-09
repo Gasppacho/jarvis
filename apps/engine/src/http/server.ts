@@ -21,6 +21,7 @@ import { registerStreamRoutes } from "../stream/routes.js";
 import type { LiveUpdateHub } from "../stream/hub.js";
 import type { ExecutionCancellationPort } from "../executions/delivery-consumer.js";
 import { CORRELATION_HEADER } from "./correlation.js";
+import { registerRuntimeRoutes, type LocalRuntimeRegistry } from "../runtimes/routes.js";
 
 /** See apps/engine/src/events/dispatcher.ts's identical declaration for why
  * this exists and how tsup.config.ts's `define` makes it eliminate
@@ -34,6 +35,8 @@ export interface ServerDependencies {
   readonly config: EngineConfig;
   readonly databaseState: () => DatabaseState;
   readonly repositoryDiscovery: LocalRepositoryDiscovery;
+  /** Global runtime inventory; absent while the engine runs degraded. */
+  readonly runtimes: LocalRuntimeRegistry | undefined;
   /** The Project Registry; absent while the engine runs degraded. */
   readonly projects: LocalProjectRegistry | undefined;
   /** Validated official Module Packages available to every project. */
@@ -168,6 +171,11 @@ export function buildServer(deps: ServerDependencies): FastifyInstance {
     databaseState: deps.databaseState,
     repositoryDiscovery: deps.repositoryDiscovery,
     projects: deps.projects,
+  });
+
+  registerRuntimeRoutes(app, {
+    databaseState: deps.databaseState,
+    runtimes: deps.runtimes,
   });
 
   if (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) {

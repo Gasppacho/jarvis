@@ -3,5 +3,9 @@
 {"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"pwd"}}
 {"type":"item.completed","item":{"id":"item_0","type":"command_execution","status":"completed"}}
 {"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"I inspected the requested workspace."}}
-{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"The fixture run completed successfully."}}
+{"type":"item.started","item":{"id":"item_2","type":"file_change","changes":[{"path":"$WORKSPACE/added.txt","kind":"add"}]}}
+{"type":"item.completed","item":{"id":"item_2","type":"file_change","changes":[{"path":"$WORKSPACE/added.txt","kind":"add"}],"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"The fixture run completed successfully."}}
+{"type":"item.started","item":{"id":"item_4","type":"file_change","changes":[{"path":"$WORKSPACE/updated.txt","kind":"update"},{"path":"$WORKSPACE/deleted.txt","kind":"delete"}]}}
+{"type":"item.completed","item":{"id":"item_4","type":"file_change","changes":[{"path":"$WORKSPACE/updated.txt","kind":"update"},{"path":"$WORKSPACE/deleted.txt","kind":"delete"}],"status":"completed"}}
 {"type":"turn.completed","usage":{"input_tokens":43922,"output_tokens":285}}

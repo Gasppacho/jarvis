@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   ChildProcessAgentRun,
   type AgentRunObservation,
@@ -116,7 +116,7 @@ export class CodexRuntime implements AgentRuntime {
       executable: executablePath,
       args: [...CODEX_EXEC_ARGS, "--cd", request.workingDirectory, "-"],
       stdin: buildPrompt(request),
-      translator: new CodexRunTranslator(),
+      translator: new CodexRunTranslator(request.workingDirectory),
       displayName: CODEX_DISPLAY_NAME,
     });
   }
@@ -129,9 +129,12 @@ export class CodexRuntime implements AgentRuntime {
 }
 
 class CodexRunTranslator implements AgentRunTranslator {
-  private threadStarted = false;
   private terminal = false;
   private lastAgentMessage: string | undefined;
+  private readonly observedChangedFiles: string[] = [];
+  private readonly completedFileChangeIds = new Set<string>();
+
+  public constructor(private readonly workingDirectory: string) {}
 
   public translate(line: string): readonly AgentRunObservation[] {
     if (this.terminal) return [];
@@ -140,20 +143,18 @@ class CodexRunTranslator implements AgentRunTranslator {
     if (record === null || typeof record["type"] !== "string") return [];
 
     switch (record["type"]) {
-      case "thread.started":
-        this.threadStarted = true;
-        return [];
       case "item.completed": {
-        if (!this.threadStarted) return [];
         const item = record["item"];
-        if (!isRecord(item) || item["type"] !== "agent_message") return [];
+        if (!isRecord(item)) return [];
+        if (item["type"] === "file_change") return this.translateFileChange(item);
+        if (item["type"] !== "agent_message") return [];
         const text = item["text"];
         if (typeof text !== "string") return [];
         this.lastAgentMessage = text;
         return [{ type: "message", message: text }];
       }
       case "turn.completed":
-        if (!this.threadStarted || this.lastAgentMessage === undefined) return [];
+        if (this.lastAgentMessage === undefined) return [];
         this.terminal = true;
         return [
           {
@@ -161,7 +162,7 @@ class CodexRunTranslator implements AgentRunTranslator {
             result: {
               status: "completed",
               summary: this.lastAgentMessage,
-              changedFiles: [],
+              changedFiles: [...this.observedChangedFiles],
             },
           },
         ];
@@ -169,6 +170,60 @@ class CodexRunTranslator implements AgentRunTranslator {
         return [];
     }
   }
+
+  private translateFileChange(item: Record<string, unknown>): readonly AgentRunObservation[] {
+    const id = typeof item["id"] === "string" ? item["id"] : undefined;
+    if (id !== undefined && this.completedFileChangeIds.has(id)) return [];
+
+    const changes = item["changes"];
+    if (!Array.isArray(changes)) return this.invalidProtocol();
+
+    const paths: string[] = [];
+    for (const change of changes) {
+      if (!isRecord(change)) return this.invalidProtocol();
+      const path = workspaceRelativePath(change["path"], this.workingDirectory);
+      if (path === null) return this.invalidProtocol();
+      paths.push(path);
+    }
+
+    if (id !== undefined) this.completedFileChangeIds.add(id);
+    this.observedChangedFiles.push(...paths);
+    return paths.map((path) => ({ type: "file-changed", path }));
+  }
+
+  private invalidProtocol(): readonly AgentRunObservation[] {
+    this.terminal = true;
+    return [
+      {
+        type: "result",
+        result: {
+          status: "failed",
+          summary: "Codex Runtime failed.",
+          changedFiles: [...this.observedChangedFiles],
+          error: {
+            code: "agent.protocol-invalid",
+            message: "Codex Runtime reported a changed file outside its working directory.",
+            retryable: false,
+          },
+        },
+      },
+    ];
+  }
+}
+
+function workspaceRelativePath(value: unknown, workingDirectory: string): string | null {
+  if (typeof value !== "string" || value === "") return null;
+  const workspace = resolve(workingDirectory);
+  const relativePath = relative(workspace, resolve(workspace, value));
+  if (
+    relativePath === "" ||
+    relativePath === ".." ||
+    relativePath.startsWith(`..${sep}`) ||
+    isAbsolute(relativePath)
+  ) {
+    return null;
+  }
+  return relativePath;
 }
 
 function parseRecord(line: string): Record<string, unknown> | null {

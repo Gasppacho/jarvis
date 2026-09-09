@@ -32,6 +32,7 @@ import { EventJournalReader } from "./events/timeline.js";
 import { ExecutionLedgerReader } from "./executions/ledger.js";
 import { LocalAgentRuntimeRegistry } from "./projects/resource-grants.js";
 import { ProjectStore } from "./projects/store.js";
+import { RuntimeRegistry } from "./runtimes/registry.js";
 import {
   ProjectModuleCapabilityResolver,
   ProjectWorkspaceCapabilityResolver,
@@ -230,6 +231,7 @@ async function main(): Promise<void> {
   const resourceGrants = new LocalAgentRuntimeRegistry();
   const projectStore =
     database === undefined ? undefined : new ProjectStore(database.db, new SystemClock());
+  const runtimes = database === undefined ? undefined : new RuntimeRegistry(database.db);
   const projects =
     database === undefined || projectStore === undefined
       ? undefined
@@ -447,6 +449,7 @@ async function main(): Promise<void> {
     config,
     databaseState: (): DatabaseState => database?.state() ?? "failed",
     repositoryDiscovery,
+    runtimes,
     projects,
     modules,
     isShuttingDown: () => shuttingDown,
