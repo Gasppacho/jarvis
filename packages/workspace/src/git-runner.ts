@@ -1,7 +1,10 @@
-import { spawn } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { delimiter, isAbsolute, join } from "node:path";
+import {
+  runBoundedProcess,
+  type BoundedProcessResult,
+  type ProcessFailureCode,
+} from "./bounded-process-runner.js";
 
 export type GitFailureCode =
   | "git.executable-not-found"
@@ -50,42 +53,6 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;
 const DEFAULT_OUTPUT_LIMIT_BYTES = 64 * 1024;
 const MAX_OUTPUT_LIMIT_BYTES = 1024 * 1024;
-const TERMINATION_GRACE_MS = 250;
-const TRUNCATION_MARKER = "\n[output truncated]\n";
-
-class BoundedOutput {
-  private readonly chunks: Buffer[] = [];
-  private size = 0;
-  private truncated = false;
-
-  constructor(private readonly limitBytes: number) {}
-
-  append(chunk: Buffer | string): void {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    const remaining = this.limitBytes - this.size;
-    if (remaining <= 0) {
-      this.truncated = true;
-      return;
-    }
-    if (bytes.byteLength <= remaining) {
-      this.chunks.push(bytes);
-      this.size += bytes.byteLength;
-      return;
-    }
-    this.chunks.push(bytes.subarray(0, remaining));
-    this.size = this.limitBytes;
-    this.truncated = true;
-  }
-
-  text(): string {
-    const output = Buffer.concat(this.chunks).toString("utf8");
-    return this.truncated ? `${output}${TRUNCATION_MARKER}` : output;
-  }
-
-  get wasTruncated(): boolean {
-    return this.truncated;
-  }
-}
 
 function bounded(value: number | undefined, fallback: number, maximum: number): number {
   if (value === undefined || !Number.isFinite(value)) return fallback;
@@ -136,29 +103,6 @@ function resolveGitExecutable(requestedPath?: string): string | undefined {
   return undefined;
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function redactOutput(value: string, cwd: string): string {
-  let redacted = value;
-  for (const [path, replacement] of [
-    [cwd, "<workspace>"],
-    [homedir(), "<home>"],
-  ] as const) {
-    if (path.length > 1)
-      redacted = redacted.replace(new RegExp(escapeRegExp(path), "g"), replacement);
-  }
-  return redacted
-    .replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, "$1<redacted>@")
-    .replace(
-      /((?:token|secret|password|passwd|authorization|api[_-]?key)=)[^&\s]+/gi,
-      "$1<redacted>",
-    )
-    .replace(/(?:\/Users|\/home)\/[^\s'"`()<>]+/g, "<user-path>")
-    .replace(/(?:\/private)?\/var\/(?:folders|tmp)\/[^\s'"`()<>]+/g, "<temp-path>");
-}
-
 function failure(
   code: GitFailureCode,
   message: string,
@@ -168,23 +112,6 @@ function failure(
   outputTruncated = false,
 ): GitCommandFailure {
   return { ok: false, code, message, exitCode, stdout, stderr, outputTruncated };
-}
-
-function stopProcess(child: ReturnType<typeof spawn>): void {
-  if (child.pid === undefined) return;
-  try {
-    if (process.platform === "win32") {
-      child.kill();
-    } else {
-      process.kill(-child.pid, "SIGTERM");
-    }
-  } catch {
-    try {
-      child.kill("SIGTERM");
-    } catch {
-      // The process may have exited between the checks.
-    }
-  }
 }
 
 export class GitRunner {
@@ -242,144 +169,44 @@ export class GitRunner {
       MAX_OUTPUT_LIMIT_BYTES,
     );
 
-    return new Promise<GitCommandResult>((resolve) => {
-      const stdout = new BoundedOutput(outputLimitBytes);
-      const stderr = new BoundedOutput(outputLimitBytes);
-      let settled = false;
-      let spawnFailed = false;
-      let termination: "timed-out" | "cancelled" | undefined;
-      let terminationTimer: ReturnType<typeof setTimeout> | undefined;
-      let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
-      let child: ReturnType<typeof spawn>;
-
-      const finish = (result: GitCommandResult): void => {
-        if (settled) return;
-        settled = true;
-        if (timeoutTimer !== undefined) clearTimeout(timeoutTimer);
-        if (terminationTimer !== undefined) clearTimeout(terminationTimer);
-        options.signal?.removeEventListener("abort", onAbort);
-        resolve(result);
-      };
-
-      const terminate = (): void => {
-        stopProcess(child);
-        terminationTimer = setTimeout(() => {
-          if (settled) return;
-          try {
-            if (child.pid !== undefined && process.platform !== "win32") {
-              process.kill(-child.pid, "SIGKILL");
-            } else {
-              child.kill("SIGKILL");
-            }
-          } catch {
-            // The process already exited.
-          }
-        }, TERMINATION_GRACE_MS);
-        terminationTimer.unref();
-      };
-
-      const onAbort = (): void => {
-        if (settled) return;
-        termination = "cancelled";
-        terminate();
-      };
-
-      try {
-        child = spawn(executable, [...args], {
-          cwd: this.cwd,
-          detached: process.platform !== "win32",
-          env: gitEnvironment(),
-          shell: false,
-          stdio: ["ignore", "pipe", "pipe"],
-          windowsHide: true,
-        });
-      } catch {
-        finish(failure("git.spawn-failed", "Git process could not be started.", null));
-        return;
-      }
-
-      child.stdout?.on("data", (chunk: Buffer | string) => stdout.append(chunk));
-      child.stderr?.on("data", (chunk: Buffer | string) => stderr.append(chunk));
-      child.once("error", () => {
-        spawnFailed = true;
-      });
-      child.once("close", (exitCode) => {
-        const rawStdout = stdout.text();
-        const rawStderr = stderr.text();
-        const sanitizedStdout = redactOutput(rawStdout, this.cwd);
-        const sanitizedStderr = redactOutput(rawStderr, this.cwd);
-        const outputTruncated = stdout.wasTruncated || stderr.wasTruncated;
-
-        if (termination === "timed-out") {
-          finish(
-            failure(
-              "git.timed-out",
-              "Git command timed out.",
-              exitCode,
-              sanitizedStdout,
-              sanitizedStderr,
-              outputTruncated,
-            ),
-          );
-          return;
-        }
-        if (termination === "cancelled") {
-          finish(
-            failure(
-              "git.cancelled",
-              "Git command was cancelled.",
-              exitCode,
-              sanitizedStdout,
-              sanitizedStderr,
-              outputTruncated,
-            ),
-          );
-          return;
-        }
-        if (spawnFailed || exitCode === null) {
-          finish(
-            failure(
-              "git.spawn-failed",
-              "Git process could not be started.",
-              exitCode,
-              sanitizedStdout,
-              sanitizedStderr,
-              outputTruncated,
-            ),
-          );
-          return;
-        }
-        if (exitCode !== 0) {
-          finish(
-            failure(
-              "git.non-zero-exit",
-              "Git command failed.",
-              exitCode,
-              sanitizedStdout,
-              sanitizedStderr,
-              outputTruncated,
-            ),
-          );
-          return;
-        }
-        finish({
-          ok: true,
-          exitCode: 0,
-          stdout: sanitizedStdout,
-          stderr: sanitizedStderr,
-          outputTruncated,
-        });
-      });
-
-      options.signal?.addEventListener("abort", onAbort, { once: true });
-      timeoutTimer = setTimeout(() => {
-        if (settled) return;
-        termination = "timed-out";
-        terminate();
-      }, timeoutMs);
-      timeoutTimer.unref();
-
-      if (options.signal?.aborted) onAbort();
-    });
+    return runBoundedProcess({
+      executable,
+      args,
+      cwd: this.cwd,
+      env: gitEnvironment(),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      timeoutMs,
+      outputLimitBytes,
+    }).then(toGitResult);
   }
+}
+
+const GIT_FAILURE_CODES: Record<ProcessFailureCode, GitFailureCode> = {
+  "process.invalid-working-directory": "git.invalid-working-directory",
+  "process.invalid-arguments": "git.invalid-arguments",
+  "process.spawn-failed": "git.spawn-failed",
+  "process.non-zero-exit": "git.non-zero-exit",
+  "process.timed-out": "git.timed-out",
+  "process.cancelled": "git.cancelled",
+};
+
+const GIT_FAILURE_MESSAGES: Record<ProcessFailureCode, string> = {
+  "process.invalid-working-directory": "Git working directory is invalid.",
+  "process.invalid-arguments": "Git arguments are invalid.",
+  "process.spawn-failed": "Git process could not be started.",
+  "process.non-zero-exit": "Git command failed.",
+  "process.timed-out": "Git command timed out.",
+  "process.cancelled": "Git command was cancelled.",
+};
+
+function toGitResult(result: BoundedProcessResult): GitCommandResult {
+  if (result.ok) return result;
+  return failure(
+    GIT_FAILURE_CODES[result.code],
+    GIT_FAILURE_MESSAGES[result.code],
+    result.exitCode,
+    result.stdout,
+    result.stderr,
+    result.outputTruncated,
+  );
 }
