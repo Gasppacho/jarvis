@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -7,6 +7,9 @@ import { CodexRuntime } from "./codex-runtime.js";
 import type { AgentRunRequest, RuntimeDescriptor } from "./index.js";
 
 const VERSION = "codex-cli 0.153.4";
+const FIXTURE = new URL("../fixtures/codex-cli-0.153.4-happy-path.jsonl", import.meta.url);
+const FINAL_SUMMARY = "The fixture run completed successfully.";
+const ENGINE_ONLY_ENVIRONMENT = "JARVIS_ENGINE_ONLY";
 
 describe("CodexRuntime", () => {
   it("describes an available logged-in Codex executable", async () => {
@@ -139,21 +142,36 @@ describe("CodexRuntime", () => {
     }
   });
 
-  it("starts through the shared child-process run with Codex decisions local to the adapter", async () => {
+  it("replays the recorded stream through the shared child-process run", async () => {
     const root = await makeRoot();
+    const previousEngineOnly = process.env[ENGINE_ONLY_ENVIRONMENT];
+    process.env[ENGINE_ONLY_ENVIRONMENT] = "must-not-reach-child";
     try {
-      const argsMarker = join(root, "session-args");
-      const executable = await makeExecutable(root, {
-        version: print(VERSION),
-        auth: print("Logged in using ChatGPT", "stderr"),
-        session: `printf '%s\\n' "$@" > ${quote(argsMarker)}\ncat >/dev/null\nprintf session-output`,
-      });
       const request = agentRequest(root);
+      const fixture = await readFile(FIXTURE, "utf8");
+      const executable = await makeSessionExecutable(root, request, fixture);
       const run = await new CodexRuntime(executable).start(request, new AbortController().signal);
 
       expect(run).toBeInstanceOf(ChildProcessAgentRun);
-      await run.result();
-      expect((await readFile(argsMarker, "utf8")).split("\n")).toEqual([
+      const events = await collectEvents(run);
+      const result = await run.result();
+      const child = await readSessionMarkers(root);
+
+      expect(events[0]?.type).toBe("started");
+      expect(events.at(-1)).toMatchObject({ type: "completed", result });
+      expect(result).toEqual({
+        status: "completed",
+        summary: FINAL_SUMMARY,
+        changedFiles: [],
+      });
+      expect(events.filter(({ type }) => type === "message").map(({ message }) => message)).toEqual(
+        ["I inspected the requested workspace.", FINAL_SUMMARY],
+      );
+
+      expect(child.cwd).toBe(await realpath(root));
+      expect(child.stdin).toContain("Do the work");
+      expect(child.args.join(" ")).not.toContain("Do the work");
+      expect(child.args).toEqual([
         "exec",
         "--json",
         "--ephemeral",
@@ -163,8 +181,48 @@ describe("CodexRuntime", () => {
         "--cd",
         root,
         "-",
-        "",
       ]);
+      expect(child.environment).toEqual(request.environment);
+      expect(child.environment).not.toHaveProperty(ENGINE_ONLY_ENVIRONMENT);
+      expect(child.args).toContain("--ignore-user-config");
+    } finally {
+      if (previousEngineOnly === undefined) delete process.env[ENGINE_ONLY_ENVIRONMENT];
+      else process.env[ENGINE_ONLY_ENVIRONMENT] = previousEngineOnly;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails when the Codex process exits non-zero even after turn.completed", async () => {
+    const root = await makeRoot();
+    try {
+      const request = agentRequest(root);
+      const fixture = await readFile(FIXTURE, "utf8");
+      const executable = await makeSessionExecutable(root, request, fixture, 7);
+      const run = await new CodexRuntime(executable).start(request, new AbortController().signal);
+
+      const result = await run.result();
+
+      expect(result.status).toBe("failed");
+      expect(result.error?.code).toBe("agent.process-failed");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails when the stream has no turn.completed result", async () => {
+    const root = await makeRoot();
+    try {
+      const request = agentRequest(root);
+      const fixture = (await readFile(FIXTURE, "utf8"))
+        .split("\n")
+        .filter((line) => !line.includes('"turn.completed"'))
+        .join("\n");
+      const executable = await makeSessionExecutable(root, request, fixture);
+      const run = await new CodexRuntime(executable).start(request, new AbortController().signal);
+
+      const result = await run.result();
+
+      expect(result).toMatchObject({ status: "failed", error: { code: "agent.invalid-result" } });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -214,6 +272,74 @@ esac
   );
   await chmod(executable, 0o755);
   return executable;
+}
+
+async function makeSessionExecutable(
+  root: string,
+  request: AgentRunRequest,
+  fixture: string,
+  exitCode = 0,
+): Promise<string> {
+  const executable = join(root, "codex");
+  await writeFile(
+    executable,
+    `#!${process.execPath}
+const fs = require("node:fs");
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => input += chunk);
+process.stdin.on("end", () => {
+  delete process.env.__CF_USER_TEXT_ENCODING;
+  const expectedEnvironment = ${JSON.stringify(request.environment)};
+  const actualEnvironment = Object.fromEntries(Object.entries(process.env));
+  const expectedNames = Object.keys(expectedEnvironment).sort();
+  const actualNames = Object.keys(actualEnvironment).sort();
+  const environmentMatches = expectedNames.length === actualNames.length &&
+    expectedNames.every((name, index) => name === actualNames[index] && actualEnvironment[name] === expectedEnvironment[name]);
+  const promptInArguments = process.argv.slice(2).some(argument => argument.includes("Do the work"));
+  const valid = fs.realpathSync(process.cwd()) === fs.realpathSync(${JSON.stringify(root)}) &&
+    input.includes("Do the work") &&
+    !promptInArguments &&
+    environmentMatches &&
+    process.env[${JSON.stringify(ENGINE_ONLY_ENVIRONMENT)}] === undefined;
+  fs.writeFileSync(${JSON.stringify(join(root, "session-args"))}, JSON.stringify(process.argv.slice(2)));
+  fs.writeFileSync(${JSON.stringify(join(root, "session-stdin"))}, input);
+  fs.writeFileSync(${JSON.stringify(join(root, "session-cwd"))}, process.cwd());
+  fs.writeFileSync(${JSON.stringify(join(root, "session-environment"))}, JSON.stringify(actualEnvironment));
+  if (!valid) { process.exitCode = 31; return; }
+  process.stderr.write("fixture diagnostic\\n");
+  process.stdout.write(${JSON.stringify(fixture)});
+  process.exitCode = ${String(exitCode)};
+});
+`,
+  );
+  await chmod(executable, 0o755);
+  return executable;
+}
+
+async function readSessionMarkers(root: string): Promise<{
+  readonly args: string[];
+  readonly stdin: string;
+  readonly cwd: string;
+  readonly environment: Record<string, string>;
+}> {
+  return {
+    args: JSON.parse(await readFile(join(root, "session-args"), "utf8")) as string[],
+    stdin: await readFile(join(root, "session-stdin"), "utf8"),
+    cwd: await readFile(join(root, "session-cwd"), "utf8"),
+    environment: JSON.parse(await readFile(join(root, "session-environment"), "utf8")) as Record<
+      string,
+      string
+    >,
+  };
+}
+
+async function collectEvents(run: {
+  events(): AsyncIterable<{ type: string; message?: string }>;
+}): Promise<Array<{ readonly type: string; readonly message?: string }>> {
+  const events: Array<{ readonly type: string; readonly message?: string }> = [];
+  for await (const event of run.events()) events.push(event);
+  return events;
 }
 
 function print(value: string, stream?: "stderr"): string {
