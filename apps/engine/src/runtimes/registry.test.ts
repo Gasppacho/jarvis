@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { RuntimeDescriptor } from "../../../../packages/agent-runtime/src/index.js";
 import { openDatabase, type OpenedDatabase } from "../db/open.js";
 import { applyMigrations } from "../db/test-migrations.js";
-import { FAKE_RUNTIME_DESCRIPTOR, RuntimeDescriptorStore } from "./registry.js";
+import { FAKE_RUNTIME_DESCRIPTOR, RuntimeDescriptorStore, RuntimeRegistry } from "./registry.js";
 
 const descriptor = (id: string, status: RuntimeDescriptor["status"]): RuntimeDescriptor => ({
   id,
@@ -80,5 +80,54 @@ describe("RuntimeDescriptorStore", () => {
 
     expect(store.list()).toContainEqual({ ...available, status: "unavailable" });
     db.close();
+  });
+
+  it("discovers Codex, upserts repeated refreshes, and records disappearance", async () => {
+    const root = mkdtempSync(join(tmpdir(), "jarvis-runtime-api-"));
+    const executable = join(root, "codex");
+    writeFileSync(
+      executable,
+      `#!/bin/sh
+case "$1" in
+  --version) printf 'codex-cli 0.153.4\\n' ;;
+  login-status) printf 'Logged in using ChatGPT\\n' ;;
+esac
+`,
+      "utf8",
+    );
+    chmodSync(executable, 0o755);
+
+    const db = new Database(":memory:");
+    applyMigrations(db);
+    let detected: string | null = executable;
+    const registry = new RuntimeRegistry(db, {
+      detector: { detect: async () => detected },
+    });
+
+    expect(await registry.discover()).toContainEqual({
+      id: "runtime/codex-default",
+      provider: "codex",
+      displayName: "Codex — default",
+      executablePath: executable,
+      version: "0.153.4",
+      capabilities: ["agent.execute"],
+      status: "available",
+    });
+    const refreshed = await registry.discover();
+    expect(refreshed.map(({ id }) => id)).toEqual(["runtime/codex-default", "runtime/fake-test"]);
+
+    detected = null;
+    expect(await registry.discover()).toContainEqual({
+      id: "runtime/codex-default",
+      provider: "codex",
+      displayName: "Codex — default",
+      executablePath: null,
+      version: null,
+      capabilities: ["agent.execute"],
+      status: "unavailable",
+    });
+
+    db.close();
+    rmSync(root, { recursive: true, force: true });
   });
 });

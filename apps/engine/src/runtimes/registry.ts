@@ -1,4 +1,6 @@
 import type Database from "better-sqlite3";
+import { CodexRuntime } from "../../../../packages/agent-runtime/src/codex-runtime.js";
+import { RuntimeDetector } from "../../../../packages/agent-runtime/src/detector.js";
 import type { RuntimeDescriptor } from "../../../../packages/agent-runtime/src/index.js";
 
 /** The deterministic test runtime is a registry candidate without discovery. */
@@ -64,8 +66,48 @@ export class RuntimeDescriptorStore {
   }
 }
 
-/** Name used by the architecture docs and by later registry consumers. */
-export { RuntimeDescriptorStore as RuntimeRegistry };
+export interface RuntimeRegistryOptions {
+  /** Injectable detector seam for Application Harness and unit tests. */
+  readonly detector?: Pick<RuntimeDetector, "detect">;
+  readonly knownCodexExecutablePaths?: readonly string[];
+  readonly allowShellProbe?: boolean;
+}
+
+/** Global runtime inventory: list persisted descriptors or refresh providers. */
+export class RuntimeRegistry {
+  private readonly store: RuntimeDescriptorStore;
+  private readonly detector: Pick<RuntimeDetector, "detect">;
+
+  public constructor(db: Database.Database, options: RuntimeRegistryOptions = {}) {
+    this.store = new RuntimeDescriptorStore(db);
+    this.detector =
+      options.detector ??
+      new RuntimeDetector({
+        knownExecutablePaths: options.knownCodexExecutablePaths ?? defaultCodexExecutablePaths(),
+        ...(options.allowShellProbe === undefined
+          ? {}
+          : { allowShellProbe: options.allowShellProbe }),
+      });
+  }
+
+  public list(): RuntimeDescriptor[] {
+    return this.store.list();
+  }
+
+  public async discover(): Promise<RuntimeDescriptor[]> {
+    const executablePath = await this.detector.detect("codex");
+    const descriptor = await new CodexRuntime(executablePath).describe();
+    this.store.upsert(descriptor);
+    return this.store.list();
+  }
+}
+
+function defaultCodexExecutablePaths(): readonly string[] {
+  if (process.platform === "win32") {
+    return ["C:\\Program Files\\Codex\\codex.exe"];
+  }
+  return ["/opt/homebrew/bin/codex", "/usr/local/bin/codex", "/usr/bin/codex", "/bin/codex"];
+}
 
 function toParameters(descriptor: RuntimeDescriptor): {
   id: string;
