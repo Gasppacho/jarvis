@@ -2592,6 +2592,7 @@ capabilities:
           "project_bindings",
           "project_resolved_compositions",
           "projects",
+          "runtime_descriptors",
           "schema_migrations",
           "workspace_leases",
         ]);
@@ -2816,6 +2817,7 @@ capabilities:
             "project_bindings",
             "project_resolved_compositions",
             "projects",
+            "runtime_descriptors",
             "schema_migrations",
             "workspace_leases",
           ]);

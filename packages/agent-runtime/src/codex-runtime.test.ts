@@ -414,6 +414,96 @@ describe("CodexRuntime", () => {
     }
   });
 
+  it("cancels a Codex process group after graceful interrupt and stream drain", async () => {
+    const root = await makeRoot();
+    try {
+      const request = { ...agentRequest(root), timeoutMs: 2_000 };
+      const executable = await makeCancellationExecutable(root);
+      const controller = new AbortController();
+      const run = (await new CodexRuntime(executable).start(
+        request,
+        controller.signal,
+      )) as ChildProcessAgentRun;
+      const eventsPromise = collectEvents(run);
+      const grandchildPid = await waitForPid(join(root, "codex-grandchild.pid"));
+      await waitForMarker(join(root, "codex-ready"));
+
+      controller.abort();
+      await Promise.all([run.interrupt(), run.interrupt()]);
+      const result = await run.result();
+      const events = await eventsPromise;
+      const terminalEvents = events.filter(({ type }) => type === "completed" || type === "failed");
+
+      expect(result).toMatchObject({ status: "cancelled", changedFiles: [] });
+      expect(events.filter(({ type }) => type === "message").map(({ message }) => message)).toEqual(
+        ["Before cancellation"],
+      );
+      expect(events.filter(({ type }) => type === "file-changed").map(({ path }) => path)).toEqual([
+        "observed-before-cancel",
+      ]);
+      expect(result.changedFiles).not.toContain("unobserved-after-cancel");
+      expect(terminalEvents).toHaveLength(1);
+      expect(terminalEvents[0]).toMatchObject({ type: "failed", result });
+      expect(events.at(-1)).toMatchObject({ type: "failed", result });
+      expect(
+        events.findIndex(
+          ({ type, chunk }) => type === "stderr" && chunk?.includes("codex streams drained"),
+        ),
+      ).toBeLessThan(events.length - 1);
+      expect(await readFile(join(root, "codex-signals"), "utf8")).toBe("SIGTERM\n");
+      expect(await readFile(join(root, "codex-drain"), "utf8")).toBe("streams-drained\n");
+      await expectProcessGone(run.processId);
+      await expectProcessGone(grandchildPid);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("times out a Codex process group and terminates its grandchild", async () => {
+    const root = await makeRoot();
+    try {
+      const request = { ...agentRequest(root), timeoutMs: 500 };
+      const executable = await makeCancellationExecutable(root);
+      const run = (await new CodexRuntime(executable).start(
+        request,
+        new AbortController().signal,
+      )) as ChildProcessAgentRun;
+      const eventsPromise = collectEvents(run);
+      const grandchildPid = await waitForPid(join(root, "codex-grandchild.pid"));
+      const result = await run.result();
+      const events = await eventsPromise;
+
+      expect(result).toMatchObject({ status: "timed-out", changedFiles: [] });
+      expect(events.filter(({ type }) => type === "completed" || type === "failed")).toHaveLength(
+        1,
+      );
+      expect(events.at(-1)).toMatchObject({ type: "failed", result });
+      expect(await readFile(join(root, "codex-signals"), "utf8")).toBe("SIGTERM\n");
+      expect(await readFile(join(root, "codex-drain"), "utf8")).toBe("streams-drained\n");
+      await expectProcessGone(run.processId);
+      await expectProcessGone(grandchildPid);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves a finished Codex result when interrupted afterwards", async () => {
+    const root = await makeRoot();
+    try {
+      const request = agentRequest(root);
+      const fixture = await readFile(FIXTURE, "utf8");
+      const executable = await makeSessionExecutable(root, request, fixture);
+      const run = await new CodexRuntime(executable).start(request, new AbortController().signal);
+      const result = await run.result();
+
+      await Promise.all([run.interrupt(), run.interrupt()]);
+
+      await expect(run.result()).resolves.toEqual(result);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("classifies a Codex turn.failed event without persisting its details", async () => {
     const root = await makeRoot();
     const secret = "codex-turn-secret";
@@ -711,6 +801,45 @@ process.stdin.on("end", () => {
   return executable;
 }
 
+async function makeCancellationExecutable(root: string): Promise<string> {
+  const executable = join(root, "codex");
+  const grandchildSource = [
+    'process.on("SIGTERM", () => {});',
+    'process.on("SIGINT", () => {});',
+    "setInterval(() => {}, 1_000);",
+  ].join("\n");
+  await writeFile(
+    executable,
+    `#!${process.execPath}
+const fs = require("node:fs");
+const path = require("node:path");
+const { spawn } = require("node:child_process");
+const emit = record => process.stdout.write(JSON.stringify(record) + "\\n");
+const signalPath = ${JSON.stringify(join(root, "codex-signals"))};
+const drainPath = ${JSON.stringify(join(root, "codex-drain"))};
+process.on("SIGTERM", () => {
+  fs.writeFileSync(signalPath, "SIGTERM\\n");
+  process.stderr.write("codex graceful interrupt\\n");
+  setTimeout(() => {
+    fs.writeFileSync(drainPath, "streams-drained\\n");
+    process.stderr.write("codex streams drained\\n");
+  }, 25);
+});
+const grandchild = spawn(process.execPath, ["-e", ${JSON.stringify(grandchildSource)}], { stdio: "ignore" });
+fs.writeFileSync(${JSON.stringify(join(root, "codex-grandchild.pid"))}, String(grandchild.pid));
+emit({ type: "thread.started", thread_id: "thread_cancel" });
+emit({ type: "item.completed", item: { id: "message", type: "agent_message", text: "Before cancellation" } });
+emit({ type: "item.completed", item: { id: "observed", type: "file_change", changes: [{ path: "observed-before-cancel" }] } });
+emit({ type: "item.started", item: { id: "unobserved", type: "file_change", changes: [{ path: "unobserved-after-cancel" }] } });
+fs.writeFileSync(${JSON.stringify(join(root, "codex-ready"))}, "ready\\n");
+setTimeout(() => emit({ type: "item.completed", item: { id: "unobserved", type: "file_change", changes: [{ path: "unobserved-after-cancel" }] } }), 1_000);
+setInterval(() => {}, 1_000);
+`,
+  );
+  await chmod(executable, 0o755);
+  return executable;
+}
+
 async function runScenario(
   executable: string,
   request: AgentRunRequest,
@@ -751,6 +880,47 @@ async function collectEvents(run: {
   const events: AgentRunEvent[] = [];
   for await (const event of run.events()) events.push(event);
   return events;
+}
+
+async function waitForPid(path: string): Promise<number> {
+  const deadline = Date.now() + 2_000;
+  for (;;) {
+    try {
+      const pid = Number.parseInt(await readFile(path, "utf8"), 10);
+      if (Number.isInteger(pid) && pid > 0) return pid;
+    } catch {
+      // The fake Codex writes its marker after startup.
+    }
+    if (Date.now() >= deadline) throw new Error(`PID marker ${path} was not written.`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function waitForMarker(path: string): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  for (;;) {
+    try {
+      await readFile(path, "utf8");
+      return;
+    } catch {
+      // The fake Codex writes its ready marker after emitting pre-cancel events.
+    }
+    if (Date.now() >= deadline) throw new Error(`Marker ${path} was not written.`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function expectProcessGone(pid: number): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  for (;;) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    if (Date.now() >= deadline) throw new Error(`Process ${pid} is still alive.`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 }
 
 function print(value: string, stream?: "stderr"): string {
