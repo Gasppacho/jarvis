@@ -228,10 +228,10 @@ async function main(): Promise<void> {
   }
   const database = opened;
   const repositoryDiscovery = new RepositoryDiscoveryService();
-  const resourceGrants = new LocalAgentRuntimeRegistry();
   const projectStore =
     database === undefined ? undefined : new ProjectStore(database.db, new SystemClock());
   const runtimes = database === undefined ? undefined : new RuntimeRegistry(database.db);
+  const resourceGrants = new LocalAgentRuntimeRegistry(runtimes);
   const projects =
     database === undefined || projectStore === undefined
       ? undefined
