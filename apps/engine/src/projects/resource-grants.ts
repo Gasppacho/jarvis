@@ -1,7 +1,9 @@
+import { isAbsolute } from "node:path";
 import type {
   ProjectResourceCandidate,
   ProjectResourceGrantPort,
 } from "../../../../packages/project-runtime/src/project-types.js";
+import { CodexRuntime } from "../../../../packages/agent-runtime/src/codex-runtime.js";
 import {
   FakeRuntime,
   type AgentRuntime,
@@ -73,6 +75,16 @@ export class LocalAgentRuntimeRegistry implements ProjectResourceGrantPort {
   }
 
   public resolve(_projectId: string, ref: string): AgentRuntime | undefined {
-    return ref === FAKE_RUNTIME_REF ? this.fakeRuntime : undefined;
+    if (ref === FAKE_RUNTIME_REF) return this.fakeRuntime;
+    const descriptor = this.runtimes?.list().find((candidate) => candidate.id === ref);
+    if (
+      descriptor?.provider !== "codex" ||
+      descriptor.status !== "available" ||
+      descriptor.executablePath === null ||
+      !isAbsolute(descriptor.executablePath)
+    ) {
+      return undefined;
+    }
+    return new CodexRuntime(descriptor.executablePath);
   }
 }
