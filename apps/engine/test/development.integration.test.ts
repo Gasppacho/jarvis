@@ -69,10 +69,18 @@ describe("Development Module tracer bullet", () => {
         )
         .get(projectId) as { result: string } | undefined;
       expect(recorded).toBeDefined();
-      expect(JSON.parse(recorded!.result)).toEqual({
+      const recordedResult = JSON.parse(recorded!.result) as {
+        headBranch: string;
+        headCommit: string;
+      };
+      expect(recordedResult).toEqual({
         status: "completed",
         summary: "Fake Runtime applied deterministic change.",
         changedFiles: ["fake-runtime-change.txt"],
+        headBranch: expect.stringMatching(
+          /^agent\/fixture-development-tracer-first-implementation-/,
+        ),
+        headCommit: expect.stringMatching(/^[0-9a-f]{40}$/),
         validation: [{ name: "test", status: "passed", durationMs: expect.any(Number) }],
         commands: { test: "pnpm test", build: "pnpm build" },
         git: {
@@ -82,6 +90,16 @@ describe("Development Module tracer bullet", () => {
           allowForcePush: false,
         },
       });
+      expect(
+        git(fixture.root, ["rev-list", "--count", `${before.head}..${recordedResult.headCommit}`]),
+      ).toBe("1");
+      const commitDetails = execFileSync(
+        "git",
+        ["show", "-s", "--format=%H%n%an%n%ae%n%cn%n%ce%n%B", recordedResult.headCommit],
+        { cwd: fixture.root, encoding: "utf8" },
+      );
+      expect(commitDetails).toContain(`${recordedResult.headCommit}\nJarvis\njarvis@localhost`);
+      expect(commitDetails).toContain(`Work Item: fixture://${projectId}/first`);
       expect(
         database
           .prepare(
@@ -170,9 +188,10 @@ describe("Development Module tracer bullet", () => {
         "agent.started",
         "agent.message",
         "validation.started",
+        "commit.created",
       ]);
-      expect(checkpoints.map((checkpoint) => checkpoint.sequence)).toEqual([1, 2, 3]);
-      expect(checkpoints.map((checkpoint) => checkpoint.sourceSequence)).toEqual([1, 2, 3]);
+      expect(checkpoints.map((checkpoint) => checkpoint.sequence)).toEqual([1, 2, 3, 4]);
+      expect(checkpoints.map((checkpoint) => checkpoint.sourceSequence)).toEqual([1, 2, 3, 4]);
       expect(checkpoints[1]?.payload).toEqual({
         message: "Fake Runtime applied deterministic change.",
       });
@@ -187,6 +206,53 @@ describe("Development Module tracer bullet", () => {
           )
           .get(),
       ).toEqual({ count: 0 });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("rejects a clean worktree without creating an empty commit", async () => {
+    const fixture = makeRealGitRepositoryFixture();
+    roots.push(fixture.root, fixture.remoteRoot);
+    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-no-changes-"));
+    roots.push(dataRoot);
+    const projectId = "development-no-changes";
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: { JARVIS_ENABLE_TEST_HOOKS: "1", JARVIS_FAKE_SCENARIO: "clean" },
+    });
+    engines.push(engine);
+
+    await activateProject(engine, projectId, fixture, true);
+    await publishTag(engine, projectId, "no-changes");
+    const executions = await waitForExecutions(engine, projectId, 2);
+    const development = executions.find(
+      (execution) => execution.moduleInstanceId === "development",
+    );
+    expect(development).toMatchObject({ status: "failed" });
+    expect(development).toBeDefined();
+
+    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
+    try {
+      const inbox = database
+        .prepare("SELECT result FROM inbox WHERE module_instance_id = 'development'")
+        .get() as { result: string };
+      expect(JSON.parse(inbox.result)).toEqual({
+        error: { code: "git.no-changes", message: expect.any(String), retryable: false },
+      });
+      expect(
+        database
+          .prepare(
+            "SELECT type FROM execution_checkpoints WHERE execution_id = ? ORDER BY sequence",
+          )
+          .all(development!.id),
+      ).toEqual([{ type: "agent.started" }, { type: "validation.started" }]);
+      expect(
+        database
+          .prepare("SELECT status FROM workspace_leases WHERE project_id = ? AND execution_id = ?")
+          .get(projectId, development!.id),
+      ).toEqual({ status: "retained" });
     } finally {
       database.close();
     }
@@ -480,6 +546,7 @@ async function activateProject(
   outputLimitBytes = 1_048_576,
   commands: PortableProjectConfiguration["commands"] = { test: "node --test" },
   validationOrder: readonly string[] = ["test"],
+  retainWorkspaceOnSuccess = false,
 ): Promise<void> {
   const portableConfig = {
     apiVersion: "jarvis.dev/project/v1",
@@ -494,7 +561,11 @@ async function activateProject(
       pushRemote: "origin",
       allowForcePush: false,
     },
-    workspace: { strategy: "git-worktree", maxConcurrentExecutions: 2, retainOnFailureDays: 7 },
+    workspace: {
+      strategy: "git-worktree",
+      maxConcurrentExecutions: 2,
+      retainOnFailureDays: 7,
+    },
     modules: [
       {
         instanceId: "automation-rules",
@@ -525,7 +596,7 @@ async function activateProject(
         configuration: {
           validationOrder,
           maxRepairCycles: 0,
-          retainWorkspaceOnSuccess: false,
+          retainWorkspaceOnSuccess,
           timeoutMs,
           outputLimitBytes,
           environmentAllowlist: cancellationTest ? ["JARVIS_FAKE_SCENARIO"] : [],

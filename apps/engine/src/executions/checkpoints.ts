@@ -32,6 +32,15 @@ export type ExecutionCheckpointInput =
       readonly occurredAt: string;
       readonly check: string;
       readonly output: string;
+    }
+  | {
+      readonly projectId: string;
+      readonly executionId: string;
+      readonly type: "commit.created";
+      readonly sourceSequence: number;
+      readonly occurredAt: string;
+      readonly branch: string;
+      readonly sha: string;
     };
 
 export interface ExecutionCheckpoint {
@@ -157,7 +166,12 @@ function validateInput(input: ExecutionCheckpointInput): void {
     (input.type === "agent.message" && typeof input.message !== "string") ||
     ((input.type === "validation.started" || input.type === "validation.failed") &&
       (typeof input.check !== "string" || input.check === "")) ||
-    (input.type === "validation.failed" && typeof input.output !== "string")
+    (input.type === "validation.failed" && typeof input.output !== "string") ||
+    (input.type === "commit.created" &&
+      (typeof input.branch !== "string" ||
+        input.branch === "" ||
+        typeof input.sha !== "string" ||
+        input.sha === ""))
   ) {
     throw new Error("Execution checkpoint content is invalid.");
   }
@@ -171,9 +185,15 @@ function checkpointPayload(input: ExecutionCheckpointInput): Readonly<Record<str
   if (input.type === "validation.started") {
     return { check: sanitizeCheckpointMessage(input.check) };
   }
+  if (input.type === "validation.failed") {
+    return {
+      check: sanitizeCheckpointMessage(input.check),
+      output: sanitizeCheckpointMessage(input.output),
+    };
+  }
   return {
-    check: sanitizeCheckpointMessage(input.check),
-    output: sanitizeCheckpointMessage(input.output),
+    branch: sanitizeCheckpointMessage(input.branch),
+    sha: input.sha,
   };
 }
 

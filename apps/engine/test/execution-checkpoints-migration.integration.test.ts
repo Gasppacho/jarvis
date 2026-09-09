@@ -22,6 +22,8 @@ describe("execution checkpoint migration", () => {
     applyMigration(db, "0012");
     applyMigration(db, "0013");
     expectSchema(db);
+    applyMigration(db, "0014");
+    expectSchema(db);
     const inbox = db
       .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'inbox'")
       .get() as { sql: string } | undefined;

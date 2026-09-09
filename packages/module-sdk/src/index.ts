@@ -112,6 +112,13 @@ export type ModuleExecutionCheckpoint =
       readonly timestamp: string;
       readonly check: string;
       readonly output: string;
+    }
+  | {
+      readonly type: "commit.created";
+      readonly sequence: number;
+      readonly timestamp: string;
+      readonly branch: string;
+      readonly sha: string;
     };
 
 export interface ModuleHandlerPublishInput {

@@ -544,6 +544,15 @@ process.stdin.on("end", () => {
     setInterval(() => {}, 1000);
     return;
   }
+  if (request.scenario === "clean") {
+    emit({
+      type: "result",
+      status: "completed",
+      summary: "Fake Runtime left the worktree unchanged.",
+      changedFiles: [],
+    });
+    return;
+  }
   if (request.scenario === "stderr" || request.scenario === "noisy") process.stderr.write("deterministic stderr output\n");
   if (request.scenario === "malformed" || request.scenario === "noisy") process.stdout.write("{malformed json\n");
   if (request.scenario === "unknown" || request.scenario === "noisy") process.stdout.write(JSON.stringify({ type: "unrecognized", value: "deterministic raw stdout" }) + "\n");

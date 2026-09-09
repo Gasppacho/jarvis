@@ -2,6 +2,7 @@ import { readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import type { AgentRun, AgentRunResult } from "../../../agent-runtime/src/index.js";
 import { buildAgentRunRequest } from "../../../agent-runtime/src/request-builder.js";
+import { GitRunner, type GitCommandResult } from "../../../workspace/src/git-runner.js";
 import type {
   ModuleHandler,
   ModuleHandlerContext,
@@ -33,18 +34,26 @@ type ValidationCheck = (typeof VALIDATION_CHECKS)[number];
 
 class DevelopmentExecutionError extends Error {
   public constructor(
-    public readonly code: "project.config-invalid" | "git.validation-failed",
+    public readonly code:
+      "project.config-invalid" | "git.validation-failed" | "git.no-changes" | "git.commit-failed",
     message: string,
+    retryable = false,
   ) {
     super(message);
     this.name = "DevelopmentExecutionError";
-    this.failureClass = code === "project.config-invalid" ? "configuration" : "validation";
+    this.failureClass =
+      code === "project.config-invalid"
+        ? "configuration"
+        : code === "git.validation-failed"
+          ? "validation"
+          : "workspace";
     this.errorClass = this.failureClass;
+    this.retryable = retryable;
   }
 
-  public readonly failureClass: "configuration" | "validation";
-  public readonly errorClass: "configuration" | "validation";
-  public readonly retryable = false;
+  public readonly failureClass: "configuration" | "validation" | "workspace";
+  public readonly errorClass: "configuration" | "validation" | "workspace";
+  public readonly retryable: boolean;
 }
 
 interface ImplementationRequest {
@@ -57,6 +66,8 @@ export interface DevelopmentRunResult {
   readonly status: AgentRunResult["status"];
   readonly summary: string;
   readonly changedFiles: readonly string[];
+  readonly headBranch?: string;
+  readonly headCommit?: string;
   readonly validation: readonly {
     readonly name: ValidationCheck;
     readonly status: "passed";
@@ -183,11 +194,37 @@ export const handleImplementationRequested: ModuleHandler = async (
       nextCheckpointSequence: () => ++checkpointSequence,
       recordCheckpoint: ctx.recordCheckpoint,
     });
+    const commit = await createCommit({
+      workspacePath: allocation.path,
+      baseRevisionSha: allocation.baseRevisionSha,
+      workItemRef: request.workItemRef,
+      commitStrategy: projectCommands.git.commitStrategy,
+      signal: ctx.signal,
+      timeoutMs: boundedPositiveConfigNumber(
+        ctx.configuration["timeoutMs"],
+        DEFAULT_TIMEOUT_MS,
+        MAX_TIMEOUT_MS,
+      ),
+      outputLimitBytes: boundedPositiveConfigNumber(
+        ctx.configuration["outputLimitBytes"],
+        DEFAULT_OUTPUT_LIMIT_BYTES,
+        MAX_OUTPUT_LIMIT_BYTES,
+      ),
+    });
+    ctx.recordCheckpoint({
+      type: "commit.created",
+      sequence: ++checkpointSequence,
+      timestamp: new Date().toISOString(),
+      branch: commit.branch,
+      sha: commit.sha,
+    });
     releaseOutcome = "success";
     return {
       status: result.status,
       summary: result.summary,
       changedFiles,
+      headBranch: commit.branch,
+      headCommit: commit.sha,
       validation,
       commands: projectCommands.commands,
       git: projectCommands.git,
@@ -287,6 +324,120 @@ function validationOutput(
   const marker = "\n[output truncated]\n";
   const contentLimit = Math.max(0, limitBytes - Buffer.byteLength(marker));
   return `${bytes.subarray(0, contentLimit).toString("utf8")}${marker}`;
+}
+
+async function createCommit(input: {
+  readonly workspacePath: string;
+  readonly baseRevisionSha: string;
+  readonly workItemRef: string;
+  readonly commitStrategy: "conventional" | "ticket-prefix" | "freeform";
+  readonly signal: AbortSignal;
+  readonly timeoutMs: number;
+  readonly outputLimitBytes: number;
+}): Promise<{ readonly branch: string; readonly sha: string }> {
+  const git = new GitRunner({
+    cwd: input.workspacePath,
+    timeoutMs: input.timeoutMs,
+    outputLimitBytes: input.outputLimitBytes,
+  });
+  const options = { signal: input.signal };
+  const commitsBefore = await git.run(
+    ["rev-list", "--count", `${input.baseRevisionSha}..HEAD`],
+    options,
+  );
+  if (!commitsBefore.ok) throwCommitFailure(commitsBefore, "inspect existing commits");
+  if (commitsBefore.stdout.trim() !== "0") {
+    throw new DevelopmentExecutionError(
+      "git.commit-failed",
+      "The Agent Runtime created a commit before the Development commit.",
+    );
+  }
+
+  const staged = await git.run(["add", "--all"], options);
+  if (!staged.ok) throwCommitFailure(staged, "stage the worktree");
+
+  const changes = await git.run(["diff", "--cached", "--quiet"], options);
+  if (changes.ok) {
+    throw new DevelopmentExecutionError(
+      "git.no-changes",
+      "The Agent Runtime left the worktree with no changes to commit.",
+    );
+  }
+  if (changes.code !== "git.non-zero-exit") throwCommitFailure(changes, "inspect staged changes");
+
+  const committed = await git.run(
+    [
+      "-c",
+      "user.name=Jarvis",
+      "-c",
+      "user.email=jarvis@localhost",
+      "-c",
+      "commit.gpgSign=false",
+      "commit",
+      "--no-gpg-sign",
+      "--author=Jarvis <jarvis@localhost>",
+      "-m",
+      commitMessage(input.commitStrategy, input.workItemRef),
+    ],
+    options,
+  );
+  if (!committed.ok) throwCommitFailure(committed, "create the commit");
+
+  const branch = await git.run(["branch", "--show-current"], options);
+  if (!branch.ok) throwCommitFailure(branch, "read the working branch");
+  const branchName = branch.stdout.trim();
+  if (branchName === "") {
+    throw new DevelopmentExecutionError(
+      "git.commit-failed",
+      "The committed worktree has no branch.",
+    );
+  }
+
+  const head = await git.run(["rev-parse", "HEAD"], options);
+  if (!head.ok) throwCommitFailure(head, "read the commit SHA");
+  const sha = head.stdout.trim();
+  if (!/^[0-9a-f]{40}$/.test(sha)) {
+    throw new DevelopmentExecutionError("git.commit-failed", "Git returned an invalid commit SHA.");
+  }
+
+  const commitsAfter = await git.run(
+    ["rev-list", "--count", `${input.baseRevisionSha}..HEAD`],
+    options,
+  );
+  if (!commitsAfter.ok) throwCommitFailure(commitsAfter, "verify the commit history");
+  if (commitsAfter.stdout.trim() !== "1") {
+    throw new DevelopmentExecutionError(
+      "git.commit-failed",
+      "The working branch does not contain exactly one new commit.",
+    );
+  }
+  return { branch: branchName, sha };
+}
+
+function commitMessage(
+  strategy: "conventional" | "ticket-prefix" | "freeform",
+  workItemRef: string,
+): string {
+  const subject = branchValue(workItemRef);
+  const reference = workItemRef.replace(/\s+/g, " ").trim();
+  const title =
+    strategy === "conventional"
+      ? `feat: implement ${subject}`
+      : strategy === "ticket-prefix"
+        ? `${subject}: implement`
+        : `Implement ${subject}`;
+  return `${title}\n\nWork Item: ${reference}`;
+}
+
+function throwCommitFailure(
+  result: Exclude<GitCommandResult, { readonly ok: true }>,
+  operation: string,
+): never {
+  throw new DevelopmentExecutionError(
+    "git.commit-failed",
+    `Git could not ${operation}.`,
+    ["git.executable-not-found", "git.spawn-failed", "git.timed-out"].includes(result.code),
+  );
 }
 
 function readImplementationRequest(
