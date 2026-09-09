@@ -163,10 +163,23 @@ describe("CodexRuntime", () => {
         status: "completed",
         summary: FINAL_SUMMARY,
         changedFiles: ["added.txt", "updated.txt", "deleted.txt"],
+        usage: { inputTokens: 43922, outputTokens: 285 },
       });
       expect(events.filter(({ type }) => type === "message").map(({ message }) => message)).toEqual(
         ["I inspected the requested workspace.", FINAL_SUMMARY],
       );
+      expect(
+        events
+          .filter(({ type }) => type === "tool-started" || type === "tool-completed")
+          .map(({ type, message, chunk }) => [type, message, chunk]),
+      ).toEqual([
+        ["tool-started", "pwd", undefined],
+        ["tool-started", "printf 'second\\n'", undefined],
+        ["tool-completed", "pwd (exit code: 0)", "/workspace/project\\n"],
+        ["tool-completed", "printf 'second\\n' (exit code: 7)", "command failed\\n"],
+      ]);
+      expect(events.filter(({ type }) => type === "usage")).toHaveLength(1);
+      expect(events.find(({ type }) => type === "usage")?.message).toContain("43922");
       const changedFiles = events
         .filter((event) => event.type === "file-changed")
         .map((event) => event.path);
@@ -194,6 +207,166 @@ describe("CodexRuntime", () => {
     } finally {
       if (previousEngineOnly === undefined) delete process.env[ENGINE_ONLY_ENVIRONMENT];
       else process.env[ENGINE_ONLY_ENVIRONMENT] = previousEngineOnly;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not complete a command that remains dangling at turn completion", async () => {
+    const root = await makeRoot();
+    try {
+      const request = agentRequest(root);
+      const fixture = jsonl([
+        { type: "thread.started", thread_id: "thread_dangling" },
+        { type: "turn.started" },
+        {
+          type: "item.started",
+          item: { id: "item_dangling", type: "command_execution", command: "git status" },
+        },
+        {
+          type: "item.completed",
+          item: { id: "item_summary", type: "agent_message", text: FINAL_SUMMARY },
+        },
+        { type: "turn.completed" },
+      ]);
+      const executable = await makeSessionExecutable(root, request, fixture);
+      const run = await new CodexRuntime(executable).start(request, new AbortController().signal);
+
+      const events = await collectEvents(run);
+      const result = await run.result();
+
+      expect(events.filter(({ type }) => type === "tool-started")).toHaveLength(1);
+      expect(events.find(({ type }) => type === "tool-started")?.message).toBe("git status");
+      expect(events.filter(({ type }) => type === "tool-completed")).toHaveLength(0);
+      expect(result).toMatchObject({ status: "completed", summary: FINAL_SUMMARY });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("omits usage when the terminal event has no usage block", async () => {
+    const root = await makeRoot();
+    try {
+      const request = agentRequest(root);
+      const fixture = jsonl([
+        { type: "thread.started", thread_id: "thread_no_usage" },
+        {
+          type: "item.completed",
+          item: { id: "item_summary", type: "agent_message", text: FINAL_SUMMARY },
+        },
+        { type: "turn.completed" },
+      ]);
+      const executable = await makeSessionExecutable(root, request, fixture);
+      const run = await new CodexRuntime(executable).start(request, new AbortController().signal);
+
+      const events = await collectEvents(run);
+      const result = await run.result();
+
+      expect(events.filter(({ type }) => type === "usage")).toHaveLength(0);
+      expect(result).not.toHaveProperty("usage");
+      expect(result.status).toBe("completed");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("redacts workspace paths and secrets in command events and output", async () => {
+    const root = await makeRoot();
+    const secret = "codex-command-secret";
+    try {
+      const request = {
+        ...agentRequest(root),
+        environment: { JARVIS_CODEX_TOKEN: secret },
+      };
+      const command = `cat ${root}/input.txt --token=${secret}`;
+      const fixture = jsonl([
+        { type: "thread.started", thread_id: "thread_redaction" },
+        {
+          type: "item.started",
+          item: { id: "item_redaction", type: "command_execution", command },
+        },
+        {
+          type: "item.completed",
+          item: {
+            id: "item_redaction",
+            type: "command_execution",
+            command,
+            aggregated_output: `${root}/output.txt ${secret}`,
+            exit_code: 0,
+            status: "completed",
+          },
+        },
+        {
+          type: "item.completed",
+          item: { id: "item_summary", type: "agent_message", text: FINAL_SUMMARY },
+        },
+        { type: "turn.completed" },
+      ]);
+      const executable = await makeSessionExecutable(root, request, fixture);
+      const run = await new CodexRuntime(executable).start(request, new AbortController().signal);
+
+      const events = await collectEvents(run);
+
+      expect(JSON.stringify(events)).not.toContain(root);
+      expect(JSON.stringify(events)).not.toContain(secret);
+      expect(events.find(({ type }) => type === "tool-started")?.message).toContain(
+        "<workspace>/input.txt",
+      );
+      expect(events.find(({ type }) => type === "tool-completed")?.chunk).toContain(
+        "<workspace>/output.txt",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("applies the shared captured-output limit to command lines and output", async () => {
+    const root = await makeRoot();
+    try {
+      const request = { ...agentRequest(root), outputLimitBytes: 64 };
+      const fixture = jsonl([
+        { type: "thread.started", thread_id: "thread_output_limit" },
+        {
+          type: "item.started",
+          item: {
+            id: "item_output_limit",
+            type: "command_execution",
+            command: "x".repeat(128),
+          },
+        },
+        {
+          type: "item.completed",
+          item: {
+            id: "item_output_limit",
+            type: "command_execution",
+            aggregated_output: "o".repeat(128),
+            exit_code: 0,
+            status: "completed",
+          },
+        },
+        {
+          type: "item.completed",
+          item: { id: "item_summary", type: "agent_message", text: FINAL_SUMMARY },
+        },
+        { type: "turn.completed" },
+      ]);
+      const executable = await makeSessionExecutable(root, request, fixture);
+      const run = await new CodexRuntime(executable).start(request, new AbortController().signal);
+
+      const events = await collectEvents(run);
+      const capturedBytes = events
+        .filter(({ type }) => type === "tool-started" || type === "tool-completed")
+        .reduce(
+          (total, event) =>
+            total +
+            Buffer.byteLength(event.message ?? "", "utf8") +
+            Buffer.byteLength(event.chunk ?? "", "utf8"),
+          0,
+        );
+
+      expect(capturedBytes).toBeLessThanOrEqual(64);
+      expect(events.filter(({ type }) => type === "warning")).toHaveLength(1);
+      expect(events.at(-1)?.type).toBe("completed");
+    } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -411,4 +584,8 @@ function agentRequest(workingDirectory: string): AgentRunRequest {
     timeoutMs: 2_000,
     outputLimitBytes: 1_000_000,
   };
+}
+
+function jsonl(records: readonly Record<string, unknown>[]): string {
+  return `${records.map((record) => JSON.stringify(record)).join("\n")}\n`;
 }
