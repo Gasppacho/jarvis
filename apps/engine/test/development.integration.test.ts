@@ -90,6 +90,58 @@ describe("Development Module tracer bullet", () => {
           allowForcePush: false,
         },
       });
+      const outputRows = database
+        .prepare(
+          `SELECT envelope FROM outbox
+           WHERE project_id = ?
+             AND json_extract(envelope, '$.type') IN ('development.implementation.completed', 'scm.change-request.creation-requested')
+           ORDER BY rowid`,
+        )
+        .all(projectId) as { envelope: string }[];
+      expect(outputRows).toHaveLength(2);
+      const [completed, creationRequested] = outputRows.map(
+        ({ envelope }) => JSON.parse(envelope) as Record<string, unknown>,
+      );
+      expect(completed).toMatchObject({
+        type: "development.implementation.completed",
+        version: 1,
+        kind: "fact",
+        repositoryId: "main",
+        subject: { type: "pushed-branch", ref: `git://main/${recordedResult.headBranch}` },
+        payload: {
+          workItemRef: `fixture://${projectId}/first`,
+          repositoryId: "main",
+          baseBranch: "main",
+          headBranch: recordedResult.headBranch,
+          headCommit: recordedResult.headCommit,
+          validation: {
+            passed: true,
+            commands: [{ name: "test", status: "passed", durationMs: expect.any(Number) }],
+          },
+          summary: "Fake Runtime applied deterministic change.",
+        },
+      });
+      expect(creationRequested).toMatchObject({
+        type: "scm.change-request.creation-requested",
+        version: 1,
+        kind: "request",
+        repositoryId: "main",
+        subject: { type: "pushed-branch", ref: `git://main/${recordedResult.headBranch}` },
+        target: { binding: "sourceControl" },
+        idempotencyKey: expect.stringMatching(/^change-request:[0-9a-f]{64}$/),
+        payload: {
+          repositoryId: "main",
+          workItemRef: `fixture://${projectId}/first`,
+          baseBranch: "main",
+          headBranch: recordedResult.headBranch,
+          headCommit: recordedResult.headCommit,
+          title: `Implement fixture-${projectId}-first`,
+          description: `Implements Work Item fixture://${projectId}/first.`,
+        },
+      });
+      expect((completed?.["payload"] as { headCommit: string }).headCommit).toBe(
+        (creationRequested?.["payload"] as { headCommit: string }).headCommit,
+      );
       expect(
         git(fixture.root, ["rev-list", "--count", `${before.head}..${recordedResult.headCommit}`]),
       ).toBe("1");
@@ -134,6 +186,15 @@ describe("Development Module tracer bullet", () => {
         executionId: string | null;
       };
       expect(redeliveryBody).toMatchObject({ redelivered: true, executionId: null });
+      expect(
+        database
+          .prepare(
+            `SELECT COUNT(*) AS count FROM outbox
+             WHERE project_id = ?
+               AND json_extract(envelope, '$.type') IN ('development.implementation.completed', 'scm.change-request.creation-requested')`,
+          )
+          .get(projectId),
+      ).toEqual({ count: 2 });
       expect(database.prepare("SELECT COUNT(*) AS count FROM executions").get()).toEqual({
         count: 2,
       });
@@ -261,6 +322,15 @@ describe("Development Module tracer bullet", () => {
           .prepare("SELECT status FROM workspace_leases WHERE project_id = ? AND execution_id = ?")
           .get(projectId, development!.id),
       ).toEqual({ status: "retained" });
+      expect(
+        database
+          .prepare(
+            `SELECT COUNT(*) AS count FROM outbox
+             WHERE project_id = ?
+               AND json_extract(envelope, '$.type') IN ('development.implementation.completed', 'scm.change-request.creation-requested')`,
+          )
+          .get(projectId),
+      ).toEqual({ count: 0 });
     } finally {
       database.close();
     }
@@ -309,6 +379,15 @@ describe("Development Module tracer bullet", () => {
       expect(JSON.parse(inbox.result)).toEqual({
         error: { code: "git.push-failed", message: expect.any(String), retryable: true },
       });
+      expect(
+        database
+          .prepare(
+            `SELECT COUNT(*) AS count FROM outbox
+             WHERE project_id = ?
+               AND json_extract(envelope, '$.type') IN ('development.implementation.completed', 'scm.change-request.creation-requested')`,
+          )
+          .get(projectId),
+      ).toEqual({ count: 0 });
       expect(
         database
           .prepare(

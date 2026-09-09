@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import type { AgentRun, AgentRunResult } from "../../../agent-runtime/src/index.js";
@@ -19,6 +20,16 @@ export const developmentModulePackage = {
 export const DEVELOPMENT_MODULE_ID = developmentModulePackage.id;
 export const DEVELOPMENT_IMPLEMENTATION_REQUESTED = {
   type: "development.implementation.requested",
+  version: 1,
+  kind: "request",
+} as const;
+export const DEVELOPMENT_IMPLEMENTATION_COMPLETED = {
+  type: "development.implementation.completed",
+  version: 1,
+  kind: "fact",
+} as const;
+export const CHANGE_REQUEST_CREATION_REQUESTED = {
+  type: "scm.change-request.creation-requested",
   version: 1,
   kind: "request",
 } as const;
@@ -246,6 +257,7 @@ export const handleImplementationRequested: ModuleHandler = async (
       branch: commit.branch,
       sha: commit.sha,
     });
+    publishDevelopmentOutputs(ctx, request, result, commit, validation);
     releaseOutcome = "success";
     return {
       status: result.status,
@@ -271,6 +283,66 @@ export const handleImplementationRequested: ModuleHandler = async (
     await workspace.release({ executionId: ctx.executionId, outcome: releaseOutcome });
   }
 };
+
+function publishDevelopmentOutputs(
+  ctx: ModuleHandlerContext,
+  request: ImplementationRequest,
+  result: AgentRunResult & { readonly summary: string },
+  commit: { readonly branch: string; readonly sha: string },
+  validation: DevelopmentRunResult["validation"],
+): void {
+  const subject = {
+    type: "pushed-branch",
+    ref: `git://${request.repositoryId}/${commit.branch}`,
+  };
+  const completedPayload = {
+    workItemRef: request.workItemRef,
+    repositoryId: request.repositoryId,
+    baseBranch: request.baseBranch,
+    headBranch: commit.branch,
+    headCommit: commit.sha,
+    validation: { passed: true, commands: validation },
+    summary: result.summary.slice(0, 4_000),
+  };
+
+  ctx.publish({
+    ...DEVELOPMENT_IMPLEMENTATION_COMPLETED,
+    subject,
+    repositoryId: request.repositoryId,
+    payload: completedPayload,
+  });
+  ctx.publish({
+    ...CHANGE_REQUEST_CREATION_REQUESTED,
+    subject,
+    repositoryId: request.repositoryId,
+    target: { binding: "sourceControl" },
+    idempotencyKey: buildChangeRequestIdempotencyKey(
+      ctx.projectId,
+      request.repositoryId,
+      request.workItemRef,
+      commit.sha,
+    ),
+    payload: {
+      repositoryId: request.repositoryId,
+      workItemRef: request.workItemRef,
+      baseBranch: request.baseBranch,
+      headBranch: commit.branch,
+      headCommit: commit.sha,
+      title: `Implement ${branchValue(request.workItemRef)}`.slice(0, 256),
+      description: `Implements Work Item ${request.workItemRef}.`,
+    },
+  });
+}
+
+export function buildChangeRequestIdempotencyKey(
+  projectId: string,
+  repositoryId: string,
+  workItemRef: string,
+  headCommit: string,
+): string {
+  const material = [projectId, repositoryId, workItemRef, headCommit].join("\0");
+  return `change-request:${createHash("sha256").update(material).digest("hex")}`;
+}
 
 async function runValidationPlan(input: {
   readonly order: readonly ValidationCheck[];
