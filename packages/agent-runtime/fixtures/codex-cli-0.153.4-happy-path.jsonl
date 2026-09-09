@@ -1,7 +1,9 @@
 {"type":"thread.started","thread_id":"thread_fixture"}
 {"type":"turn.started"}
 {"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"pwd"}}
-{"type":"item.completed","item":{"id":"item_0","type":"command_execution","status":"completed"}}
+{"type":"item.started","item":{"id":"item_5","type":"command_execution","command":"printf 'second\\n'"}}
+{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"pwd","aggregated_output":"/workspace/project\\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_5","type":"command_execution","command":"printf 'second\\n'","aggregated_output":"command failed\\n","exit_code":7,"status":"failed"}}
 {"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"I inspected the requested workspace."}}
 {"type":"item.started","item":{"id":"item_2","type":"file_change","changes":[{"path":"$WORKSPACE/added.txt","kind":"add"}]}}
 {"type":"item.completed","item":{"id":"item_2","type":"file_change","changes":[{"path":"$WORKSPACE/added.txt","kind":"add"}],"status":"completed"}}

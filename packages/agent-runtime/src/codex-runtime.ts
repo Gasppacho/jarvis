@@ -8,7 +8,13 @@ import {
   type AgentRunObservation,
   type AgentRunTranslator,
 } from "./child-process-agent-run.js";
-import type { AgentRun, AgentRunRequest, AgentRuntime, RuntimeDescriptor } from "./index.js";
+import type {
+  AgentRun,
+  AgentRunRequest,
+  AgentRunResult,
+  AgentRuntime,
+  RuntimeDescriptor,
+} from "./index.js";
 
 const CODEX_ID = "runtime/codex-default";
 const CODEX_DISPLAY_NAME = "Codex — default";
@@ -131,6 +137,8 @@ export class CodexRuntime implements AgentRuntime {
 class CodexRunTranslator implements AgentRunTranslator {
   private terminal = false;
   private lastAgentMessage: string | undefined;
+  private readonly startedCommands = new Map<string, string>();
+  private readonly completedCommandIds = new Set<string>();
   private readonly observedChangedFiles: string[] = [];
   private readonly completedFileChangeIds = new Set<string>();
 
@@ -143,9 +151,16 @@ class CodexRunTranslator implements AgentRunTranslator {
     if (record === null || typeof record["type"] !== "string") return [];
 
     switch (record["type"]) {
+      case "item.started": {
+        const item = record["item"];
+        return isRecord(item) && item["type"] === "command_execution"
+          ? this.translateCommandStarted(item)
+          : [];
+      }
       case "item.completed": {
         const item = record["item"];
         if (!isRecord(item)) return [];
+        if (item["type"] === "command_execution") return this.translateCommandCompleted(item);
         if (item["type"] === "file_change") return this.translateFileChange(item);
         if (item["type"] !== "agent_message") return [];
         const text = item["text"];
@@ -154,21 +169,63 @@ class CodexRunTranslator implements AgentRunTranslator {
         return [{ type: "message", message: text }];
       }
       case "turn.completed":
-        if (this.lastAgentMessage === undefined) return [];
-        this.terminal = true;
-        return [
-          {
-            type: "result",
-            result: {
-              status: "completed",
-              summary: this.lastAgentMessage,
-              changedFiles: [...this.observedChangedFiles],
-            },
-          },
-        ];
+        return this.translateTurnCompleted(record);
       default:
         return [];
     }
+  }
+
+  private translateCommandStarted(item: Record<string, unknown>): readonly AgentRunObservation[] {
+    const id = typeof item["id"] === "string" ? item["id"] : undefined;
+    const command = item["command"];
+    if (
+      id === undefined ||
+      typeof command !== "string" ||
+      command === "" ||
+      this.startedCommands.has(id)
+    ) {
+      return [];
+    }
+
+    this.startedCommands.set(id, command);
+    return [{ type: "tool-started", message: command }];
+  }
+
+  private translateCommandCompleted(item: Record<string, unknown>): readonly AgentRunObservation[] {
+    const id = typeof item["id"] === "string" ? item["id"] : undefined;
+    const command = id === undefined ? undefined : this.startedCommands.get(id);
+    if (id === undefined || command === undefined || this.completedCommandIds.has(id)) return [];
+
+    this.completedCommandIds.add(id);
+    const exitCode = readExitCode(item["exit_code"]);
+    const output =
+      typeof item["aggregated_output"] === "string" ? item["aggregated_output"] : undefined;
+    return [
+      {
+        type: "tool-completed",
+        message: `${command} (exit code: ${String(exitCode)})`,
+        ...(output === undefined ? {} : { chunk: output }),
+      },
+    ];
+  }
+
+  private translateTurnCompleted(record: Record<string, unknown>): readonly AgentRunObservation[] {
+    if (this.lastAgentMessage === undefined) return [];
+
+    const usage = readUsage(record["usage"]);
+    this.terminal = true;
+    return [
+      ...(usage === undefined ? [] : [{ type: "usage" as const, message: formatUsage(usage) }]),
+      {
+        type: "result",
+        result: {
+          status: "completed",
+          summary: this.lastAgentMessage,
+          changedFiles: [...this.observedChangedFiles],
+          ...(usage === undefined ? {} : { usage }),
+        },
+      },
+    ];
   }
 
   private translateFileChange(item: Record<string, unknown>): readonly AgentRunObservation[] {
@@ -237,6 +294,36 @@ function parseRecord(line: string): Record<string, unknown> | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readExitCode(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) ? value : null;
+}
+
+function readUsage(value: unknown): AgentRunResult["usage"] | undefined {
+  if (!isRecord(value)) return undefined;
+
+  const inputTokens = readTokenCount(value["input_tokens"]);
+  const outputTokens = readTokenCount(value["output_tokens"]);
+  if (inputTokens === undefined && outputTokens === undefined) return undefined;
+
+  return {
+    ...(inputTokens === undefined ? {} : { inputTokens }),
+    ...(outputTokens === undefined ? {} : { outputTokens }),
+  };
+}
+
+function readTokenCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+function formatUsage(usage: NonNullable<AgentRunResult["usage"]>): string {
+  return [
+    usage.inputTokens === undefined ? undefined : `inputTokens=${String(usage.inputTokens)}`,
+    usage.outputTokens === undefined ? undefined : `outputTokens=${String(usage.outputTokens)}`,
+  ]
+    .filter((part): part is string => part !== undefined)
+    .join(" ");
 }
 
 interface ProbeResult {
