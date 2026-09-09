@@ -143,7 +143,7 @@ describe("RuntimeDetector", () => {
       knownExecutablePaths: [],
       shellPath: shell,
       shellEnvironment: { JARVIS_DETECTOR_PID: pidMarker },
-      timeoutMs: 200,
+      timeoutMs: 1_000,
     }).detect("codex");
 
     expect(result).toBeNull();
