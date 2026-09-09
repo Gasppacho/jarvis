@@ -56,6 +56,10 @@ import type {
   ExecutionSummary,
 } from "./types.js";
 import type { ProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
+import type {
+  ProjectResourceGrant,
+  ProjectResourceGrantDetailsPort,
+} from "./resource-grants.js";
 
 const PROJECT_YAML = join(".jarvis", "project.yaml");
 const MAX_PROJECT_YAML_BYTES = 512 * 1024;
@@ -290,7 +294,7 @@ export class ProjectService implements ProjectRegistry<
   compositionReview(id: unknown, proposedConfiguration: unknown): ProjectCompositionReview {
     const project = this.requireProject(id);
     const { configuration, validation } = this.validateComposition(project, proposedConfiguration);
-    const grantedResources = this.resourceGrants.grantedToProject(project.id);
+    const grantedResources = resourceGrantDetails(this.resourceGrants, project.id);
     const composition = previewProjectCompositionChoices(this.modules, {
       projectId: project.id,
       configuration,
@@ -442,7 +446,7 @@ export class ProjectService implements ProjectRegistry<
       current,
       current.portableConfig,
       this.modules,
-      this.resourceGrants.grantedToProject(current.id),
+      resourceGrantDetails(this.resourceGrants, current.id),
     );
   }
 
@@ -456,7 +460,7 @@ export class ProjectService implements ProjectRegistry<
       current,
       configuration,
       this.modules,
-      this.resourceGrants.grantedToProject(current.id),
+      resourceGrantDetails(this.resourceGrants, current.id),
     );
   }
 
@@ -608,9 +612,13 @@ function resourceChoices(
   project: ProjectRow,
   configuration: StoredPortableProjectConfiguration,
   modules: ModuleHost,
-  grantedResources: readonly ProjectResourceCandidate[],
+  grantedResources: readonly ProjectResourceGrant[],
 ): ProjectResourceChoices {
-  const scopedCandidates = projectResourceCandidates(configuration, modules, grantedResources)
+  const grantedCandidates = grantedResources.map(({ candidate }) => candidate);
+  const statusByCandidate = new Map(
+    grantedResources.map(({ candidate, status }) => [resourceCandidateId(candidate), status]),
+  );
+  const scopedCandidates = projectResourceCandidates(configuration, modules, grantedCandidates)
     .slice()
     .sort(compareResourceCandidate);
   const slots = Object.keys(configuration.slots)
@@ -621,6 +629,7 @@ function resourceChoices(
       const binding = project.slotBindings[slotId];
       const candidates = scopedCandidates.filter(
         (candidate) =>
+          (statusByCandidate.get(resourceCandidateId(candidate)) ?? "available") === "available" &&
           requiredCapabilities.every((capability) => candidate.capabilities.includes(capability)) &&
           // Same ref, wrong kind: this Slot's own binding says which kind that
           // ref must be. Named as ineligible (ADR 0014), never left eligible.
@@ -668,6 +677,7 @@ function resourceChoices(
         candidates,
         requiredCapabilities,
         binding,
+        (candidate) => statusByCandidate.get(resourceCandidateId(candidate)),
       );
       return {
         slotId,
@@ -744,11 +754,17 @@ function ineligibleGrantedResourcesFor(
   eligibleCandidates: readonly ProjectResourceCandidate[],
   requiredCapabilities: readonly string[],
   binding: { readonly kind: string; readonly ref: string } | undefined,
+  statusFor: (candidate: ProjectResourceCandidate) => ProjectResourceGrant["status"],
 ): readonly ProjectIneligibleResource[] {
   return scopedCandidates
     .filter((candidate) => !eligibleCandidates.includes(candidate))
     .flatMap((candidate) => {
-      const reason = ineligibilityReason(candidate, requiredCapabilities, binding);
+      const reason = ineligibilityReason(
+        candidate,
+        requiredCapabilities,
+        binding,
+        statusFor(candidate),
+      );
       return reason === undefined ? [] : [{ candidate, reason }];
     })
     .sort((left, right) => compareResourceCandidate(left.candidate, right.candidate));
@@ -758,7 +774,11 @@ function ineligibilityReason(
   candidate: ProjectResourceCandidate,
   requiredCapabilities: readonly string[],
   binding: { readonly kind: string; readonly ref: string } | undefined,
+  status: ProjectResourceGrant["status"],
 ): string | undefined {
+  if (status !== undefined && status !== "available") {
+    return `This resource is ineligible because its runtime status is "${status}".`;
+  }
   if (binding !== undefined && candidate.ref === binding.ref && candidate.kind !== binding.kind) {
     return `This Slot's binding expects kind "${binding.kind}" for ref ${binding.ref}, but the resource granted under that ref is kind "${candidate.kind}".`;
   }
@@ -770,6 +790,19 @@ function ineligibilityReason(
     return `This resource provides none of the required capabilities: ${requiredCapabilities.join(", ")}.`;
   }
   return `This resource provides only ${satisfied.join(", ")} of the required capabilities: ${requiredCapabilities.join(", ")}.`;
+}
+
+function resourceGrantDetails(
+  grants: ProjectResourceGrantPort,
+  projectId: string,
+): readonly ProjectResourceGrant[] {
+  if (
+    "grantedResourceDetails" in grants &&
+    typeof grants.grantedResourceDetails === "function"
+  ) {
+    return (grants as ProjectResourceGrantDetailsPort).grantedResourceDetails(projectId);
+  }
+  return grants.grantedToProject(projectId).map((candidate) => ({ candidate }));
 }
 
 function resourceCandidateId(candidate: ProjectResourceCandidate): string {
