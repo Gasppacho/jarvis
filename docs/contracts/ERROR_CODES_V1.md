@@ -81,6 +81,12 @@ Errors crossing the Local API or stored as terminal Execution errors use stable 
 | `agent.runtime-unavailable` | Maybe | Bound executable/runtime cannot run |
 | `agent.runtime-unauthenticated` | No | User must authenticate/reconnect |
 | `agent.run-failed` | Depends | Adapter returned a terminal failure |
+| `agent.codex.turn-failed` | Yes | Codex reported that the current turn failed |
+| `agent.codex.process-failed` | Yes | Codex exited unsuccessfully before a reliable terminal result |
+| `agent.codex.missing-result` | No | Codex ended without reporting a terminal result |
+| `agent.codex.invalid-json` | No | Codex emitted a stdout line that is not valid JSON |
+| `agent.codex.unauthenticated` | No | Codex refused the turn because the user is not authenticated |
+| `agent.codex.spawn-failed` | No | The bound Codex executable could not be started |
 | `agent.run-timed-out` | Maybe | Configured timeout elapsed |
 | `agent.run-cancelled` | No | User/system cancelled the run |
 | `agent.output-limit-exceeded` | No | Output exceeded configured safe limit |

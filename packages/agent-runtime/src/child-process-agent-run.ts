@@ -20,6 +20,21 @@ export interface AgentRunTranslator {
   translate(line: string): readonly AgentRunObservation[];
 }
 
+export type ChildProcessFailure =
+  | { readonly kind: "spawn"; readonly error: Error }
+  | {
+      readonly kind: "process";
+      readonly exitCode: number | null;
+      readonly signal: NodeJS.Signals | null;
+    }
+  | {
+      readonly kind: "missing-result";
+      readonly exitCode: number | null;
+      readonly signal: NodeJS.Signals | null;
+    };
+
+export type ChildProcessFailureClassifier = (failure: ChildProcessFailure) => AgentRunResult;
+
 export interface ChildProcessAgentRunOptions {
   readonly request: AgentRunRequest;
   readonly signal: AbortSignal;
@@ -28,6 +43,7 @@ export interface ChildProcessAgentRunOptions {
   readonly stdin: string;
   readonly translator: AgentRunTranslator;
   readonly displayName?: string;
+  readonly classifyFailure?: ChildProcessFailureClassifier;
 }
 
 const MAX_PROTOCOL_LINE_BYTES = 64 * 1024;
@@ -45,6 +61,7 @@ export class ChildProcessAgentRun implements AgentRun {
   private readonly observedRequest: AgentRunRequest;
   private readonly translator: AgentRunTranslator;
   private readonly displayName: string;
+  private readonly classifyFailure: ChildProcessFailureClassifier | undefined;
   private readonly signal: AbortSignal;
   private readonly abortHandler: () => void;
   private readonly timeoutTimer: NodeJS.Timeout;
@@ -65,6 +82,7 @@ export class ChildProcessAgentRun implements AgentRun {
     this.observedRequest = options.request;
     this.translator = options.translator;
     this.displayName = options.displayName ?? "Agent Runtime";
+    this.classifyFailure = options.classifyFailure;
     this.signal = options.signal;
     this.abortHandler = () => void this.interrupt();
     this.child = spawn(options.executable, [...options.args], {
@@ -74,10 +92,7 @@ export class ChildProcessAgentRun implements AgentRun {
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
     });
-    if (this.child.pid === undefined) {
-      throw new Error(`The ${this.displayName} child process did not expose a pid.`);
-    }
-    this.processId = this.child.pid;
+    this.processId = this.child.pid ?? -1;
     this.emit({ type: "started" });
     this.resultPromise = this.readResult();
     this.child.stdin.end(options.stdin);
@@ -139,11 +154,12 @@ export class ChildProcessAgentRun implements AgentRun {
           this.terminationReason === undefined
             ? result
             : terminatedResult(this.displayName, this.terminationReason);
-        this.finish(finalResult);
-        resolveResult(finalResult);
+        const safeResult = sanitizeResult(finalResult, this.observedRequest);
+        this.finish(safeResult);
+        resolveResult(safeResult);
       };
 
-      this.child.stdout.on("data", (chunk: string) => this.consumeOutput("stdout", chunk));
+        this.child.stdout.on("data", (chunk: string) => this.consumeOutput("stdout", chunk));
       this.child.stderr.on("data", (chunk: string) => this.consumeOutput("stderr", chunk));
       this.child.once("error", (error) => {
         this.processError = error;
@@ -151,32 +167,22 @@ export class ChildProcessAgentRun implements AgentRun {
       this.child.once("close", (exitCode, signal) => {
         this.flushOutput("stdout");
         this.flushOutput("stderr");
+        if (this.pendingResult?.status !== undefined && this.pendingResult.status !== "completed") {
+          finish(this.pendingResult);
+          return;
+        }
         if (this.processError !== undefined) {
-          finish(
-            failedResult(this.displayName, "agent.process-error", this.processError.message, true),
-          );
+          finish(this.failureResult({ kind: "spawn", error: this.processError }));
           return;
         }
         if (exitCode !== 0) {
-          finish(
-            failedResult(
-              this.displayName,
-              "agent.process-failed",
-              `${this.displayName} exited with ${signal ?? `code ${String(exitCode)}`}.${this.stderrSummary === "" ? "" : ` ${this.stderrSummary}`}`,
-              false,
-            ),
-          );
+          finish(this.failureResult({ kind: "process", exitCode, signal }));
           return;
         }
 
         finish(
           this.pendingResult ??
-            failedResult(
-              this.displayName,
-              "agent.invalid-result",
-              `The ${this.displayName} closed without a result line.`,
-              false,
-            ),
+            this.failureResult({ kind: "missing-result", exitCode, signal }),
         );
       });
     });
@@ -327,6 +333,29 @@ export class ChildProcessAgentRun implements AgentRun {
       type: result.status === "completed" ? "completed" : "failed",
       result,
     });
+  }
+
+  private failureResult(failure: ChildProcessFailure): AgentRunResult {
+    if (this.classifyFailure !== undefined) return this.classifyFailure(failure);
+
+    switch (failure.kind) {
+      case "spawn":
+        return failedResult(this.displayName, "agent.process-error", failure.error.message, true);
+      case "process":
+        return failedResult(
+          this.displayName,
+          "agent.process-failed",
+          `${this.displayName} exited with ${failure.signal ?? `code ${String(failure.exitCode)}`}.${this.stderrSummary === "" ? "" : ` ${this.stderrSummary}`}`,
+          false,
+        );
+      case "missing-result":
+        return failedResult(
+          this.displayName,
+          "agent.invalid-result",
+          `The ${this.displayName} closed without a result line.`,
+          false,
+        );
+    }
   }
 
   private signalChild(signal: NodeJS.Signals): void {

@@ -7,6 +7,7 @@ import {
   ChildProcessAgentRun,
   type AgentRunObservation,
   type AgentRunTranslator,
+  type ChildProcessFailure,
 } from "./child-process-agent-run.js";
 import type {
   AgentRun,
@@ -37,6 +38,8 @@ const CODEX_EXEC_ARGS = [
 const LOGGED_IN_OUTPUT = /^\s*Logged in using ChatGPT\s*$/m;
 const NOT_LOGGED_IN_OUTPUT = /^\s*Not logged in\s*$/m;
 const CODEX_VERSION_OUTPUT = /^\s*codex-cli\s+(\d+\.\d+\.\d+)\s*$/m;
+const AUTHENTICATION_REFUSAL =
+  /(?:not\s+logged\s+in|not\s+authenticated|unauthenticated|authentication\s+required|login\s+required|sign(?:[-\s])?in\s+required|please\s+(?:log\s+in|sign\s+in|login))/i;
 const CODEX_PROBE_ENVIRONMENT = {
   PATH: process.platform === "win32" ? "C:\\Windows\\System32" : "/usr/bin:/bin:/usr/sbin:/sbin",
   CODEX_HOME: join(homedir(), ".codex"),
@@ -112,7 +115,7 @@ export class CodexRuntime implements AgentRuntime {
 
   public async start(request: AgentRunRequest, signal: AbortSignal): Promise<AgentRun> {
     const executablePath = this.validDescriptorPath();
-    if (executablePath === null || !(await isExecutableFile(executablePath))) {
+    if (executablePath === null) {
       throw new Error("The Codex Runtime executable is unavailable.");
     }
 
@@ -124,6 +127,7 @@ export class CodexRuntime implements AgentRuntime {
       stdin: buildPrompt(request),
       translator: new CodexRunTranslator(request.workingDirectory),
       displayName: CODEX_DISPLAY_NAME,
+      classifyFailure: classifyCodexFailure,
     });
   }
 
@@ -147,10 +151,33 @@ class CodexRunTranslator implements AgentRunTranslator {
   public translate(line: string): readonly AgentRunObservation[] {
     if (this.terminal) return [];
 
-    const record = parseRecord(line);
-    if (record === null || typeof record["type"] !== "string") return [];
+    if (line.trim() === "") return [];
+
+    let value: unknown;
+    try {
+      value = JSON.parse(line) as unknown;
+    } catch {
+      return this.failure(
+        isAuthenticationRefusal(line)
+          ? "agent.codex.unauthenticated"
+          : "agent.codex.invalid-json",
+        isAuthenticationRefusal(line)
+          ? "Codex is not authenticated. Sign in and retry."
+          : "Codex emitted stdout that is not valid JSON.",
+        false,
+      );
+    }
+
+    if (!isRecord(value) || typeof value["type"] !== "string") {
+      return [{ type: "warning", message: "Codex emitted an unrecognized JSON event." }];
+    }
+
+    const record = value;
 
     switch (record["type"]) {
+      case "thread.started":
+      case "turn.started":
+        return [];
       case "item.started": {
         const item = record["item"];
         return isRecord(item) && item["type"] === "command_execution"
@@ -170,8 +197,18 @@ class CodexRunTranslator implements AgentRunTranslator {
       }
       case "turn.completed":
         return this.translateTurnCompleted(record);
+      case "turn.failed":
+        return this.translateTurnFailed(record);
+      case "error":
+        return isAuthenticationRefusal(record)
+          ? this.failure(
+              "agent.codex.unauthenticated",
+              "Codex is not authenticated. Sign in and retry.",
+              false,
+            )
+          : [{ type: "warning", message: "Codex emitted an unrecognized JSON event." }];
       default:
-        return [];
+        return [{ type: "warning", message: "Codex emitted an unrecognized JSON event." }];
     }
   }
 
@@ -228,6 +265,17 @@ class CodexRunTranslator implements AgentRunTranslator {
     ];
   }
 
+  private translateTurnFailed(record: Record<string, unknown>): readonly AgentRunObservation[] {
+    const unauthenticated = isAuthenticationRefusal(record);
+    return this.failure(
+      unauthenticated ? "agent.codex.unauthenticated" : "agent.codex.turn-failed",
+      unauthenticated
+        ? "Codex is not authenticated. Sign in and retry."
+        : "Codex reported that the turn failed.",
+      unauthenticated ? false : true,
+    );
+  }
+
   private translateFileChange(item: Record<string, unknown>): readonly AgentRunObservation[] {
     const id = typeof item["id"] === "string" ? item["id"] : undefined;
     if (id !== undefined && this.completedFileChangeIds.has(id)) return [];
@@ -266,6 +314,25 @@ class CodexRunTranslator implements AgentRunTranslator {
       },
     ];
   }
+
+  private failure(
+    code: string,
+    message: string,
+    retryable: boolean,
+  ): readonly AgentRunObservation[] {
+    this.terminal = true;
+    return [
+      {
+        type: "result",
+        result: {
+          status: "failed",
+          summary: "Codex Runtime failed.",
+          changedFiles: [...this.observedChangedFiles],
+          error: { code, message, retryable },
+        },
+      },
+    ];
+  }
 }
 
 function workspaceRelativePath(value: unknown, workingDirectory: string): string | null {
@@ -283,17 +350,14 @@ function workspaceRelativePath(value: unknown, workingDirectory: string): string
   return relativePath;
 }
 
-function parseRecord(line: string): Record<string, unknown> | null {
-  try {
-    const value: unknown = JSON.parse(line);
-    return isRecord(value) ? value : null;
-  } catch {
-    return null;
-  }
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isAuthenticationRefusal(value: unknown): boolean {
+  if (typeof value === "string") return AUTHENTICATION_REFUSAL.test(value);
+  if (!isRecord(value)) return false;
+  return [value["message"], value["reason"], value["error"]].some(isAuthenticationRefusal);
 }
 
 function readExitCode(value: unknown): number | null {
@@ -371,6 +435,38 @@ function buildPrompt(request: AgentRunRequest): string {
     `Objective:\n${request.objective}`,
     ...request.contextArtifacts.map((artifact) => `Context artifact:\n${artifact}`),
   ].join("\n\n");
+}
+
+function classifyCodexFailure(failure: ChildProcessFailure): AgentRunResult {
+  switch (failure.kind) {
+    case "spawn":
+      return codexFailure(
+        "agent.codex.spawn-failed",
+        "Codex could not be started. Refresh runtime discovery and retry.",
+        false,
+      );
+    case "process":
+      return codexFailure(
+        "agent.codex.process-failed",
+        "Codex process exited unsuccessfully.",
+        true,
+      );
+    case "missing-result":
+      return codexFailure(
+        "agent.codex.missing-result",
+        "Codex ended without reporting a terminal result.",
+        false,
+      );
+  }
+}
+
+function codexFailure(code: string, message: string, retryable: boolean): AgentRunResult {
+  return {
+    status: "failed",
+    summary: "Codex Runtime failed.",
+    changedFiles: [],
+    error: { code, message, retryable },
+  };
 }
 
 function probe(

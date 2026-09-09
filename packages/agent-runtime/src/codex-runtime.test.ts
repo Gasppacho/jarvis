@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ChildProcessAgentRun } from "./child-process-agent-run.js";
 import { CodexRuntime } from "./codex-runtime.js";
-import type { AgentRunEvent, AgentRunRequest, RuntimeDescriptor } from "./index.js";
+import type { AgentRunEvent, AgentRunRequest, AgentRunResult, RuntimeDescriptor } from "./index.js";
 
 const VERSION = "codex-cli 0.153.4";
 const FIXTURE = new URL("../fixtures/codex-cli-0.153.4-happy-path.jsonl", import.meta.url);
@@ -382,7 +382,7 @@ describe("CodexRuntime", () => {
       const result = await run.result();
 
       expect(result.status).toBe("failed");
-      expect(result.error?.code).toBe("agent.process-failed");
+      expect(result.error?.code).toBe("agent.codex.process-failed");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -400,9 +400,181 @@ describe("CodexRuntime", () => {
       const executable = await makeSessionExecutable(root, request, fixture);
       const run = await new CodexRuntime(executable).start(request, new AbortController().signal);
 
+      const events = await collectEvents(run);
       const result = await run.result();
 
-      expect(result).toMatchObject({ status: "failed", error: { code: "agent.invalid-result" } });
+      expect(result).toMatchObject({
+        status: "failed",
+        error: { code: "agent.codex.missing-result" },
+      });
+      expect(events.filter(({ type }) => type === "failed")).toHaveLength(1);
+      expect(events.at(-1)?.type).toBe("failed");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies a Codex turn.failed event without persisting its details", async () => {
+    const root = await makeRoot();
+    const secret = "codex-turn-secret";
+    try {
+      const request = {
+        ...agentRequest(root),
+        environment: { JARVIS_CODEX_TOKEN: secret },
+      };
+      const fixture = jsonl([
+        { type: "thread.started", thread_id: "thread_failed" },
+        {
+          type: "turn.failed",
+          error: { message: `provider failure at ${root}/credentials ${secret}` },
+        },
+      ]);
+      const executable = await makeSessionExecutable(
+        root,
+        request,
+        fixture,
+        1,
+        `Reading input from stdin\nMCP transport error at ${root}/mcp ${secret}\n`,
+      );
+      const { events, result } = await runScenario(executable, request);
+
+      expect(result).toMatchObject({
+        status: "failed",
+        error: { code: "agent.codex.turn-failed", retryable: true },
+      });
+      expect(JSON.stringify(result)).not.toContain(root);
+      expect(JSON.stringify(result)).not.toContain(secret);
+      expectFailedTerminal(events, result);
+      expect(events.findIndex(({ type }) => type === "stderr")).toBeLessThan(events.length - 1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies a non-zero Codex process without a successful terminal event", async () => {
+    const root = await makeRoot();
+    const secret = "codex-process-secret";
+    try {
+      const request = {
+        ...agentRequest(root),
+        environment: { JARVIS_CODEX_TOKEN: secret },
+      };
+      const executable = await makeSessionExecutable(
+        root,
+        request,
+        jsonl([{ type: "thread.started", thread_id: "thread_process_failed" }]),
+        17,
+        `MCP transport error at ${root}/transport ${secret}\n`,
+      );
+      const { events, result } = await runScenario(executable, request);
+
+      expect(result).toMatchObject({
+        status: "failed",
+        error: { code: "agent.codex.process-failed", retryable: true },
+      });
+      expect(JSON.stringify(result)).not.toContain(root);
+      expect(JSON.stringify(result)).not.toContain(secret);
+      expectFailedTerminal(events, result);
+      expect(events.findIndex(({ type }) => type === "stderr")).toBeLessThan(events.length - 1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies invalid Codex JSON stdout after the streams drain", async () => {
+    const root = await makeRoot();
+    const secret = "codex-json-secret";
+    try {
+      const request = {
+        ...agentRequest(root),
+        environment: { JARVIS_CODEX_TOKEN: secret },
+      };
+      const executable = await makeSessionExecutable(
+        root,
+        request,
+        `not-json ${root}/payload ${secret}\n`,
+        0,
+        `Reading input from stdin\n${root}/diagnostic ${secret}\n`,
+      );
+      const { events, result } = await runScenario(executable, request);
+
+      expect(result).toMatchObject({
+        status: "failed",
+        error: { code: "agent.codex.invalid-json", retryable: false },
+      });
+      expect(JSON.stringify(result)).not.toContain(root);
+      expect(JSON.stringify(result)).not.toContain(secret);
+      expectFailedTerminal(events, result);
+      expect(events.findIndex(({ type }) => type === "stderr")).toBeLessThan(events.length - 1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("warns on an unrecognized Codex event without failing a later valid turn", async () => {
+    const root = await makeRoot();
+    try {
+      const request = agentRequest(root);
+      const fixture = jsonl([
+        { type: "future.event", value: "ignored" },
+        {
+          type: "item.completed",
+          item: { id: "item_summary", type: "agent_message", text: FINAL_SUMMARY },
+        },
+        { type: "turn.completed" },
+      ]);
+      const executable = await makeSessionExecutable(root, request, fixture);
+      const { events, result } = await runScenario(executable, request);
+
+      expect(result.status).toBe("completed");
+      expect(events.filter(({ type }) => type === "warning")).toHaveLength(1);
+      expect(events.at(-1)?.type).toBe("completed");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies an unauthenticated Codex refusal as non-retryable", async () => {
+    const root = await makeRoot();
+    const secret = "codex-auth-secret";
+    try {
+      const request = {
+        ...agentRequest(root),
+        environment: { JARVIS_CODEX_TOKEN: secret },
+      };
+      const fixture = jsonl([
+        {
+          type: "turn.failed",
+          error: { message: `Not logged in; credential=${secret} at ${root}` },
+        },
+      ]);
+      const executable = await makeSessionExecutable(root, request, fixture, 1);
+      const { events, result } = await runScenario(executable, request);
+
+      expect(result).toMatchObject({
+        status: "failed",
+        error: { code: "agent.codex.unauthenticated", retryable: false },
+      });
+      expect(JSON.stringify(result)).not.toContain(root);
+      expect(JSON.stringify(result)).not.toContain(secret);
+      expectFailedTerminal(events, result);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies an executable that cannot be spawned", async () => {
+    const root = await makeRoot();
+    try {
+      const request = agentRequest(root);
+      const executable = join(root, "missing-codex");
+      const { events, result } = await runScenario(executable, request);
+
+      expect(result).toMatchObject({
+        status: "failed",
+        error: { code: "agent.codex.spawn-failed", retryable: false },
+      });
+      expectFailedTerminal(events, result);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -500,6 +672,7 @@ async function makeSessionExecutable(
   request: AgentRunRequest,
   fixture: string,
   exitCode = 0,
+  stderr = "fixture diagnostic\n",
 ): Promise<string> {
   const executable = join(root, "codex");
   await writeFile(
@@ -528,7 +701,7 @@ process.stdin.on("end", () => {
   fs.writeFileSync(${JSON.stringify(join(root, "session-cwd"))}, process.cwd());
   fs.writeFileSync(${JSON.stringify(join(root, "session-environment"))}, JSON.stringify(actualEnvironment));
   if (!valid) { process.exitCode = 31; return; }
-  process.stderr.write("fixture diagnostic\\n");
+  process.stderr.write(${JSON.stringify(stderr)});
   process.stdout.write(${JSON.stringify(fixture)});
   process.exitCode = ${String(exitCode)};
 });
@@ -536,6 +709,23 @@ process.stdin.on("end", () => {
   );
   await chmod(executable, 0o755);
   return executable;
+}
+
+async function runScenario(
+  executable: string,
+  request: AgentRunRequest,
+): Promise<{ readonly events: AgentRunEvent[]; readonly result: AgentRunResult }> {
+  const run = await new CodexRuntime(executable).start(request, new AbortController().signal);
+  const events = await collectEvents(run);
+  const result = await run.result();
+  return { events, result };
+}
+
+function expectFailedTerminal(events: readonly AgentRunEvent[], result: AgentRunResult): void {
+  const terminalEvents = events.filter(({ type }) => type === "failed");
+  expect(terminalEvents).toHaveLength(1);
+  expect(terminalEvents[0]?.result).toEqual(result);
+  expect(events.at(-1)?.type).toBe("failed");
 }
 
 async function readSessionMarkers(root: string): Promise<{
