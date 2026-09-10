@@ -2578,10 +2578,12 @@ capabilities:
         // Activation only ever writes projects, project_bindings and the Resolved
         // Project table; the Eventing tables ticket #56 adds (deliveries,
         // events, outbox), the Inbox/Execution Ledger tables ticket #57 adds
-        // (inbox, executions, execution_checkpoints), and the Workspace table
-        // ticket #68 adds (workspace_leases) exist but stay empty — activation
-        // alone never inserts a row into any of them.
+        // (inbox, executions, execution_checkpoints), the Workspace table ticket
+        // #68 adds (workspace_leases), and the global Connection Registry table
+        // #110 adds (connections) exist but stay empty — activation alone never
+        // inserts a row into any of them.
         expect(tableNames(dataRoot)).toEqual([
+          "connections",
           "deliveries",
           "engine_metadata",
           "events",
@@ -2807,6 +2809,7 @@ capabilities:
 
           await engine.dispose();
           expect(tableNames(dataRoot)).toEqual([
+            "connections",
             "deliveries",
             "engine_metadata",
             "events",
