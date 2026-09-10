@@ -92,9 +92,9 @@ describe("External Mapping capability Application Harness", () => {
       expect(
         JSON.parse(
           (
-            database
-              .prepare("SELECT result FROM inbox WHERE event_id = ?")
-              .get(read.id) as { readonly result: string }
+            database.prepare("SELECT result FROM inbox WHERE event_id = ?").get(read.id) as {
+              readonly result: string;
+            }
           ).result,
         ),
       ).toMatchObject({
@@ -104,9 +104,7 @@ describe("External Mapping capability Application Harness", () => {
         },
       });
       expect(
-        database
-          .prepare("SELECT status FROM executions WHERE input_event_id = ?")
-          .get(read.id),
+        database.prepare("SELECT status FROM executions WHERE input_event_id = ?").get(read.id),
       ).toEqual({ status: "completed" });
     } finally {
       database.close();
@@ -139,7 +137,7 @@ async function publishPing(
       projectId,
       producer: { moduleId: "jarvis.module.test", moduleInstanceId: "test" },
       subject: { type: "work-item", ref: `github://acme/${projectId}/issues/1` },
-      correlationId: `corr_${projectId}_${moduleInstanceId}_${externalMapping.action}`,
+      correlationId: `corr_${projectId}_${moduleInstanceId}_${externalMapping["action"]}`,
       causationId: null,
       payload: { externalMapping },
     }),
