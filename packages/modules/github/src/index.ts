@@ -35,6 +35,7 @@ export {
   mapGitHubPullRequestError,
   parseGitHubWorkItemRef,
   translateGitHubPullRequestMapping,
+  translateGitHubPullRequestLookupResponse,
   translateGitHubPullRequestResponse,
   type GitHubChangeRequestCreationRequestedPayload,
   type GitHubChangeRequestCreatedPayload,

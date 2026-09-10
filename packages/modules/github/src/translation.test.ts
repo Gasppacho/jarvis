@@ -8,6 +8,7 @@ import {
   mapGitHubPullRequestError,
   parseGitHubWorkItemRef,
   translateGitHubPullRequestMapping,
+  translateGitHubPullRequestLookupResponse,
   translateGitHubPullRequestResponse,
   type GitHubChangeRequestCreationRequestedPayload,
 } from "./translation.js";
@@ -143,6 +144,40 @@ describe("GitHub change-request translation", () => {
       workItemRef: REQUEST.workItemRef,
       draft: false,
     });
+  });
+
+  it("adopts only a lookup result with the requested head and base", () => {
+    const response = {
+      status: 200,
+      body: [
+        {
+          number: 56,
+          html_url: "https://github.com/QServices/token-warehouse/pull/56",
+          base: { ref: "release" },
+          head: { ref: REQUEST.headBranch },
+        },
+        {
+          number: 57,
+          html_url: "https://github.com/QServices/token-warehouse/pull/57",
+          base: { ref: REQUEST.baseBranch },
+          head: { ref: REQUEST.headBranch },
+        },
+      ],
+    };
+    expect(translateGitHubPullRequestLookupResponse(response, REQUEST)).toMatchObject({
+      externalNumber: 57,
+      changeRequestRef: "github://QServices/token-warehouse/pulls/57",
+      url: response.body[1]!.html_url,
+    });
+    expect(
+      translateGitHubPullRequestLookupResponse({ status: 200, body: [response.body[0]] }, REQUEST),
+    ).toBeUndefined();
+    expect(() =>
+      translateGitHubPullRequestLookupResponse(
+        { status: 503, body: { message: "temporary provider failure" } },
+        REQUEST,
+      ),
+    ).toThrowError(expect.objectContaining({ retryable: true }));
   });
 
   it("maps GitHub statuses and signals to stable redacted failures", () => {

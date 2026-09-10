@@ -186,6 +186,28 @@ export function translateGitHubPullRequestMapping(
   };
 }
 
+/** Translates an open-PR lookup, returning only a head/base match. */
+export function translateGitHubPullRequestLookupResponse(
+  response: unknown,
+  request: GitHubChangeRequestCreationRequestedPayload,
+): GitHubChangeRequestCreatedPayload | undefined {
+  const providerResponse = asProviderResponse(response);
+  if (providerResponse.status !== undefined && !isSuccessful(providerResponse.status)) {
+    throw failureAsError(
+      mapGitHubPullRequestError({
+        status: providerResponse.status,
+        body: providerResponse.body,
+        ...(providerResponse.headers === undefined ? {} : { headers: providerResponse.headers }),
+      }),
+    );
+  }
+  if (!Array.isArray(providerResponse.body)) throw creationFailed();
+  const match = providerResponse.body.find((candidate) => matchesPullRequest(candidate, request));
+  return match === undefined
+    ? undefined
+    : translateGitHubPullRequestResponse({ status: 200, body: match }, request);
+}
+
 export function mapGitHubPullRequestError(
   response: GitHubPullRequestErrorResponse,
 ): GitHubTranslationFailure {
@@ -348,4 +370,19 @@ function creationFailed(): GitHubTranslationError {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function matchesPullRequest(
+  value: unknown,
+  request: GitHubChangeRequestCreationRequestedPayload,
+): boolean {
+  if (!isRecord(value)) return false;
+  const head = value["head"];
+  const base = value["base"];
+  return (
+    isRecord(head) &&
+    head["ref"] === request.headBranch &&
+    isRecord(base) &&
+    base["ref"] === request.baseBranch
+  );
 }

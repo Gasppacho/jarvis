@@ -4,6 +4,7 @@ import {
   GitHubTranslationError,
   parseGitHubWorkItemRef,
   translateGitHubPullRequestMapping,
+  translateGitHubPullRequestLookupResponse,
   translateGitHubPullRequestResponse,
   type GitHubChangeRequestCreationRequestedPayload,
 } from "./translation.js";
@@ -58,6 +59,31 @@ export const handleChangeRequestCreationRequested: ModuleHandler = async (
     );
   }
   externalMappings.recordAttempt(idempotencyKey);
+
+  if (existing?.status === "attempted") {
+    let lookup: Awaited<ReturnType<typeof githubApi.get>>;
+    try {
+      lookup = await githubApi.get(
+        `/repos/${reference.owner}/${reference.repository}/pulls?head=${encodeURIComponent(request.headBranch)}&state=open`,
+      );
+    } catch (error) {
+      if (error instanceof GitHubTranslationError) throw error;
+      throw new GitHubTranslationError(
+        "github.change-request-create-failed",
+        "GitHub pull request lookup failed; retry later.",
+        true,
+      );
+    }
+    const adopted = translateGitHubPullRequestLookupResponse(lookup, request);
+    if (adopted !== undefined) {
+      externalMappings.recordResource({
+        idempotencyKey,
+        resourceRef: adopted.url,
+      });
+      publishCreated(ctx, adopted);
+      return adopted;
+    }
+  }
 
   const response = await githubApi.request({
     method: "POST",

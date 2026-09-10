@@ -367,6 +367,114 @@ esac
     ).toHaveLength(0);
     expect(fakeGitHub.requests.some((request) => request.credential === credential)).toBe(true);
   });
+
+  it("adopts a pull request after creation crashes before mapping", async () => {
+    const fakeGitHub = await startFakeGitHubApi();
+    servers.push(fakeGitHub);
+    const credential = "ghs_lookup_recovery_sentinel";
+    const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-gh-credentials-"));
+    roots.push(executableRoot);
+    const executable = join(executableRoot, "gh");
+    writeFileSync(executable, `#!/bin/sh\nprintf '%s\\n' '${credential}'\n`, "utf8");
+    chmodSync(executable, 0o755);
+
+    const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-github-lookup-recovery-"));
+    roots.push(dataRoot);
+    const crashed = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_FAILPOINT: "after-github-create-before-external-mapping",
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+      },
+    });
+    engines.push(crashed);
+
+    await registerGitHubConnection(crashed, "connection/github", "Account");
+    const project = await createGitHubProject(crashed, "project-lookup-recovery");
+    await bindAndActivate(crashed, project, "connection/github");
+    const published = await publishCreationRequest(
+      crashed,
+      project.id,
+      "github://QServices/repo/issues/42",
+    );
+    const exitCode = await crashed.waitForExit();
+    expect(exitCode).not.toBe(0);
+    await crashed.dispose();
+    engines.splice(engines.indexOf(crashed), 1);
+
+    const beforeRestart = new Database(join(dataRoot, "jarvis.sqlite"));
+    try {
+      expect(
+        beforeRestart
+          .prepare(
+            `SELECT status, resource_ref FROM external_mappings
+             WHERE project_id = 'project-lookup-recovery' AND module_instance_id = 'github'`,
+          )
+          .get(),
+      ).toEqual({ status: "attempted", resource_ref: null });
+      expect(
+        beforeRestart
+          .prepare("SELECT 1 FROM events WHERE type = 'scm.change-request.created'")
+          .get(),
+      ).toBeUndefined();
+    } finally {
+      beforeRestart.close();
+    }
+    expect(fakeGitHub.pullRequests).toHaveLength(1);
+
+    const restarted = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+      },
+    });
+    engines.push(restarted);
+    await waitForExecution(restarted, project.id, published.id, "completed");
+    const events = await waitForEvents(restarted, project.id, 2);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "scm.change-request.created",
+          subjectRef: "github://QServices/repo/pulls/1",
+        }),
+      ]),
+    );
+    expect(fakeGitHub.pullRequests).toHaveLength(1);
+    expect(
+      fakeGitHub.requests.filter(
+        (request) => request.method === "POST" && request.path.endsWith("/pulls"),
+      ),
+    ).toHaveLength(1);
+    const lookups = fakeGitHub.requests.filter(
+      (request) => request.method === "GET" && request.path.includes("/pulls?head="),
+    );
+    expect(lookups).toHaveLength(1);
+    expect(lookups[0]?.path).toContain("head=agent%2Fproject-lookup-recovery%2Fissue-42");
+    expect(fakeGitHub.requests.some((request) => request.credential === credential)).toBe(true);
+
+    const afterRestart = new Database(join(dataRoot, "jarvis.sqlite"));
+    try {
+      expect(
+        afterRestart
+          .prepare(
+            `SELECT status, resource_ref FROM external_mappings
+             WHERE project_id = 'project-lookup-recovery' AND module_instance_id = 'github'`,
+          )
+          .get(),
+      ).toEqual({
+        status: "completed",
+        resource_ref: `${fakeGitHub.baseUrl}/repos/QServices/repo/pull/1`,
+      });
+    } finally {
+      afterRestart.close();
+    }
+  });
 });
 
 async function registerGitHubConnection(
