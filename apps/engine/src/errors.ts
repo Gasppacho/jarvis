@@ -7,6 +7,8 @@ export type ErrorCode =
   | "api.host-not-allowed"
   | "api.invalid-request"
   | "engine.database-unavailable"
+  | "connection.provider-unsupported"
+  | "connection.secret-ref-invalid"
   | "repository.path-invalid"
   | "project.already-imported"
   | "project.config-invalid"
