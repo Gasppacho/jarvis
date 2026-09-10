@@ -51,9 +51,27 @@ export interface ModuleShell {
   run(input: ModuleShellCommandInput): Promise<ModuleShellCommandResult>;
 }
 
+/** Project-bound GitHub API access. The client resolves its credential per call. */
+export interface GitHubApiRequest {
+  readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  readonly path: string;
+  readonly body?: Readonly<Record<string, unknown>>;
+}
+
+export interface GitHubApiResponse {
+  readonly status: number;
+  readonly body: unknown;
+}
+
+export interface GitHubApi {
+  request(input: GitHubApiRequest): Promise<GitHubApiResponse>;
+  get(path: string): Promise<GitHubApiResponse>;
+}
+
 /** Capabilities resolved for one Project and Module Instance only. */
 export interface ModuleHandlerCapabilities {
   readonly agentRuntime?: AgentRuntime;
+  readonly githubApi?: GitHubApi;
   readonly projectBindings?: AgentProjectBindings;
   readonly projectCommands?: ProjectCommandsCapability;
   readonly shell?: ModuleShell;

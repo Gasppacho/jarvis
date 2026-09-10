@@ -242,15 +242,15 @@ async function main(): Promise<void> {
   const runtimes = database === undefined ? undefined : new RuntimeRegistry(database.db);
   const connections = database === undefined ? undefined : new ConnectionRegistry(database.db);
   const ghExecutable = process.env["JARVIS_GH_EXECUTABLE"];
-  const connectionValidator = new GitHubProviderCheckAdapter({
-    credentialResolver: new GitHubCliCredentialResolver(
-      ghExecutable === undefined
-        ? {}
-        : { knownExecutablePaths: [ghExecutable], allowShellProbe: false },
-    ),
-    ...(process.env["JARVIS_GITHUB_API_BASE_URL"] === undefined
+  const githubCredentials = new GitHubCliCredentialResolver(
+    ghExecutable === undefined
       ? {}
-      : { apiBaseUrl: process.env["JARVIS_GITHUB_API_BASE_URL"] }),
+      : { knownExecutablePaths: [ghExecutable], allowShellProbe: false },
+  );
+  const githubApiBaseUrl = process.env["JARVIS_GITHUB_API_BASE_URL"];
+  const connectionValidator = new GitHubProviderCheckAdapter({
+    credentialResolver: githubCredentials,
+    ...(githubApiBaseUrl === undefined ? {} : { apiBaseUrl: githubApiBaseUrl }),
   });
   const runtimeGrants = new LocalAgentRuntimeRegistry(runtimes);
   const connectionGrants = new ConnectionGrantSource(connections);
@@ -442,6 +442,9 @@ async function main(): Promise<void> {
       modules,
       runtimeGrants,
       workspaceCapabilities,
+      connections,
+      githubCredentials,
+      githubApiBaseUrl,
     );
     const consumer = new DeliveryConsumer(
       database.db,

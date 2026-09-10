@@ -15,3 +15,10 @@ export {
   type GitHubProviderCheckResult,
   type GitHubProviderCheckStatus,
 } from "./provider-check.js";
+
+export {
+  GitHubApiClient,
+  GitHubApiError,
+  type GitHubApiClientOptions,
+  type GitHubApiFailure,
+} from "./api-client.js";

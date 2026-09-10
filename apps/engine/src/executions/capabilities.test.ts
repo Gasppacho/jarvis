@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { FakeRuntime } from "../../../../packages/agent-runtime/src/index.js";
+import { GitHubApiClient } from "../../../../packages/modules/github/src/index.js";
 import { EngineError } from "../errors.js";
 import { LocalAgentRuntimeRegistry } from "../projects/resource-grants.js";
 import type { ResolvedProjectSnapshot } from "../projects/store.js";
@@ -19,7 +20,9 @@ const moduleComposition = {
               },
             ],
           }
-        : { requires: [] };
+        : moduleId === "github-module"
+          ? { requires: [{ id: "github.api", binding: "sourceControl" as const }] }
+          : { requires: [] };
   },
 };
 
@@ -157,4 +160,100 @@ describe("ProjectModuleCapabilityResolver", () => {
       });
     }
   });
+
+  it("resolves only the bound available GitHub connection into github.api", () => {
+    const snapshots = new Map([
+      [
+        "project-a",
+        {
+          ...snapshot(),
+          moduleInstances: [{ instanceId: "github", moduleId: "github-module", enabled: true }],
+          bindings: {
+            ...snapshot().bindings,
+            slots: { sourceControl: { kind: "connection" as const, ref: "connection/a" } },
+          },
+        },
+      ],
+      [
+        "project-b",
+        {
+          ...snapshot(),
+          moduleInstances: [{ instanceId: "github", moduleId: "github-module", enabled: true }],
+          bindings: {
+            ...snapshot().bindings,
+            slots: { sourceControl: { kind: "connection" as const, ref: "connection/b" } },
+          },
+        },
+      ],
+    ]);
+    const connections = new Map([
+      ["connection/a", connection("connection/a", "Account A")],
+      ["connection/b", connection("connection/b", "Account B")],
+    ]);
+    const resolver = new ProjectModuleCapabilityResolver(
+      { getResolvedProject: (projectId) => snapshots.get(projectId) },
+      moduleComposition,
+      new LocalAgentRuntimeRegistry(),
+      undefined,
+      { find: (id) => connections.get(id) },
+      { resolve: async () => ({ status: "available", credential: "not-retained" }) },
+      "http://127.0.0.1:1234",
+    );
+
+    const projectA = resolver.resolve("project-a", "github", "github-module");
+    const projectB = resolver.resolve("project-b", "github", "github-module");
+    expect(projectA.githubApi).toBeInstanceOf(GitHubApiClient);
+    expect(projectB.githubApi).toBeInstanceOf(GitHubApiClient);
+    expect(projectA.projectBindings?.slots).toEqual({
+      sourceControl: { kind: "connection", ref: "connection/a" },
+    });
+    expect(projectB.projectBindings?.slots).toEqual({
+      sourceControl: { kind: "connection", ref: "connection/b" },
+    });
+  });
+
+  it.each([
+    ["unbound", {}, "has no Local Binding"],
+    [
+      "wrong kind",
+      { sourceControl: { kind: "runtime", ref: "runtime/fake-test" } },
+      "not a connection",
+    ],
+    [
+      "unavailable",
+      { sourceControl: { kind: "connection", ref: "connection/a" } },
+      "is unauthenticated",
+    ],
+  ] as const)("rejects a GitHub binding that is %s", (_label, slots, reason) => {
+    const project = {
+      ...snapshot(),
+      moduleInstances: [{ instanceId: "github", moduleId: "github-module", enabled: true }],
+      bindings: { ...snapshot().bindings, slots },
+    };
+    const resolver = new ProjectModuleCapabilityResolver(
+      { getResolvedProject: () => project },
+      moduleComposition,
+      new LocalAgentRuntimeRegistry(),
+      undefined,
+      { find: () => connection("connection/a", "Account A", "unauthenticated") },
+      { resolve: async () => ({ status: "available", credential: "not-retained" }) },
+    );
+
+    expect(() => resolver.resolve("project-a", "github", "github-module")).toThrow(reason);
+  });
 });
+
+function connection(
+  id: string,
+  accountLabel: string,
+  status: "available" | "unauthenticated" = "available",
+) {
+  return {
+    id,
+    provider: "github",
+    accountLabel,
+    capabilities: ["github.api", "scm.change-request.manage", "work-items.read"],
+    status,
+    secretRef: `gh://${accountLabel}`,
+  };
+}
