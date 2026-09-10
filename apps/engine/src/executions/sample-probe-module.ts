@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import type {
+  ExternalMappingRecord,
   ModuleHandler,
   ModuleHandlerContext,
 } from "../../../../packages/module-sdk/src/index.js";
@@ -28,7 +29,12 @@ export const SAMPLE_PROBE_PONGED = {
 export interface SampleProbeResult {
   readonly pingCount: number;
   readonly echoedEventId: string;
+  readonly externalMapping?: ExternalMappingRecord;
 }
+
+type ExternalMappingCommand =
+  | { readonly action: "attempt" | "read"; readonly idempotencyKey: string }
+  | { readonly action: "complete"; readonly idempotencyKey: string; readonly resourceRef: string };
 
 /**
  * The fixture's own module-owned state table (docs/architecture/PERSISTENCE.md
@@ -94,6 +100,12 @@ export function createSampleProbeHandler(db: Database.Database): ModuleHandler {
          DO UPDATE SET ping_count = @nextCount`,
     ).run({ projectId: ctx.projectId, moduleInstanceId: ctx.moduleInstanceId, nextCount });
 
+    const mappingCommand = readExternalMappingCommand(ctx.event.payload["externalMapping"]);
+    const externalMapping =
+      mappingCommand === undefined
+        ? undefined
+        : applyExternalMappingCommand(ctx, mappingCommand);
+
     if (ctx.event.payload["shouldFail"] === true) {
       throw new Error("sample-probe: deterministic failure requested by payload.shouldFail");
     }
@@ -103,9 +115,57 @@ export function createSampleProbeHandler(db: Database.Database): ModuleHandler {
       version: SAMPLE_PROBE_PONGED.version,
       kind: SAMPLE_PROBE_PONGED.kind,
       subject: ctx.event.subject,
-      payload: { pingCount: nextCount },
+      payload: {
+        pingCount: nextCount,
+        ...(externalMapping === undefined ? {} : { externalMapping }),
+      },
     });
 
-    return { pingCount: nextCount, echoedEventId: echoed.id };
+    return {
+      pingCount: nextCount,
+      echoedEventId: echoed.id,
+      ...(externalMapping === undefined ? {} : { externalMapping }),
+    };
   };
+}
+
+function applyExternalMappingCommand(
+  ctx: ModuleHandlerContext,
+  command: ExternalMappingCommand,
+): ExternalMappingRecord | undefined {
+  const mappings = ctx.capabilities.externalMappings;
+  if (mappings === undefined) throw new Error("sample-probe: external mappings unavailable");
+  if (command.action === "attempt") mappings.recordAttempt(command.idempotencyKey);
+  if (command.action === "complete") {
+    mappings.recordResource({
+      idempotencyKey: command.idempotencyKey,
+      resourceRef: command.resourceRef,
+    });
+  }
+  return mappings.read(command.idempotencyKey);
+}
+
+function readExternalMappingCommand(value: unknown): ExternalMappingCommand | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null) {
+    throw new Error("sample-probe: externalMapping must be an object");
+  }
+  const record = value as Record<string, unknown>;
+  const action = record["action"];
+  const idempotencyKey = record["idempotencyKey"];
+  if (
+    (action !== "attempt" && action !== "complete" && action !== "read") ||
+    typeof idempotencyKey !== "string" ||
+    idempotencyKey.length === 0
+  ) {
+    throw new Error("sample-probe: externalMapping command is invalid");
+  }
+  if (action === "complete") {
+    const resourceRef = record["resourceRef"];
+    if (typeof resourceRef !== "string" || resourceRef.length === 0) {
+      throw new Error("sample-probe: externalMapping.resourceRef is required");
+    }
+    return { action, idempotencyKey, resourceRef };
+  }
+  return { action, idempotencyKey };
 }

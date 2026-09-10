@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
+import { applyMigrations } from "../db/test-migrations.js";
 import { ControllableClock } from "../events/test-doubles.js";
 import { ExternalMappingStore } from "./external-mappings.js";
 
@@ -9,21 +10,7 @@ afterEach(() => db?.close());
 
 function openDb(): Database.Database {
   db = new Database(":memory:");
-  db.exec(`
-    CREATE TABLE external_mappings (
-      project_id TEXT NOT NULL,
-      module_instance_id TEXT NOT NULL,
-      idempotency_key TEXT NOT NULL,
-      status TEXT NOT NULL CHECK (status IN ('attempted', 'completed')),
-      resource_ref TEXT,
-      created_at TEXT NOT NULL,
-      PRIMARY KEY (project_id, module_instance_id, idempotency_key),
-      CHECK (
-        (status = 'attempted' AND resource_ref IS NULL) OR
-        (status = 'completed' AND resource_ref IS NOT NULL)
-      )
-    ) STRICT
-  `);
+  applyMigrations(db);
   return db;
 }
 
@@ -34,6 +21,7 @@ describe("ExternalMappingStore", () => {
       database,
       new ControllableClock(new Date("2026-09-10T08:00:00.000Z")),
     );
+    insertProject(database, "project-a");
     const mapping = store.bind("project-a", "module-a");
 
     database.transaction(() => {
@@ -66,8 +54,11 @@ describe("ExternalMappingStore", () => {
       database,
       new ControllableClock(new Date("2026-09-10T08:00:00.000Z")),
     );
+    insertProject(database, "project-a");
+    insertProject(database, "project-b");
     const mapping = store.bind("project-a", "module-a");
     const otherMapping = store.bind("project-b", "module-a");
+    const otherInstance = store.bind("project-a", "module-b");
 
     mapping.recordResource({ idempotencyKey: "request-1", resourceRef: "resource-1" });
 
@@ -76,6 +67,16 @@ describe("ExternalMappingStore", () => {
       resourceRef: "resource-1",
     });
     expect(otherMapping.read("request-1")).toBeUndefined();
+    expect(otherInstance.read("request-1")).toBeUndefined();
     expect(mapping.read("missing")).toBeUndefined();
   });
 });
+
+function insertProject(database: Database.Database, id: string): void {
+  database
+    .prepare(
+      `INSERT INTO projects (id, name, status, portable_config, created_at, updated_at)
+       VALUES (?, ?, 'active', '{}', ?, ?)`,
+    )
+    .run(id, id, "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z");
+}
