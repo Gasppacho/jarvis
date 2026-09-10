@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { request as httpRequest } from "node:http";
+import { createServer, request as httpRequest, type Server } from "node:http";
 import { randomBytes } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,6 +17,34 @@ export interface ReadyHandshake {
   readonly port: number;
   readonly apiVersion: string;
   readonly sessionId: string;
+}
+
+export interface FakeGitHubRequest {
+  readonly method: string;
+  readonly path: string;
+  readonly credential: string | undefined;
+}
+
+export interface FakeGitHubPullRequest {
+  readonly number: number;
+  readonly htmlUrl: string;
+  readonly base: string;
+  readonly head: string;
+  readonly draft: boolean;
+}
+
+export interface FakeGitHubRouteResponse {
+  readonly status: number;
+  readonly body: unknown;
+}
+
+export interface FakeGitHubApi {
+  readonly baseUrl: string;
+  readonly requests: readonly FakeGitHubRequest[];
+  readonly pullRequests: readonly FakeGitHubPullRequest[];
+  /** Temporarily overrides one method/path and returns its restoration function. */
+  scriptRoute(method: string, path: string, response: FakeGitHubRouteResponse): () => void;
+  close(): Promise<void>;
 }
 
 /**
@@ -200,6 +228,180 @@ export async function startEngine(options: StartEngineOptions = {}): Promise<Har
       if (ownsDataRoot) await rm(dataRoot, { recursive: true, force: true });
     },
   };
+}
+
+/** Test-only HTTP fake for the GitHub API used by Application Harness tests. */
+export async function startFakeGitHubApi(): Promise<FakeGitHubApi> {
+  const requests: FakeGitHubRequest[] = [];
+  const pullRequests: FakeGitHubPullRequest[] = [];
+  const routes = new Map<string, FakeGitHubRouteResponse>();
+  let nextPullRequestNumber = 1;
+
+  const server = createServer((request, response) => {
+    const method = request.method ?? "GET";
+    const path = request.url ?? "/";
+    requests.push({ method, path, credential: presentedCredential(request.headers.authorization) });
+    void handleFakeGitHubRequest(
+      request,
+      response,
+      method,
+      path,
+      routes,
+      pullRequests,
+      () => nextPullRequestNumber++,
+    ).catch(() => {
+      if (!response.headersSent) writeJson(response, 500, { message: "Fake GitHub failure" });
+    });
+  });
+
+  await listenServer(server);
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    await closeServer(server);
+    throw new Error("Fake GitHub server did not expose a TCP address.");
+  }
+
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  let closePromise: Promise<void> | undefined;
+  return {
+    baseUrl,
+    requests,
+    pullRequests,
+    scriptRoute: (method, path, response) => {
+      const key = routeKey(method, path);
+      const previous = routes.get(key);
+      routes.set(key, response);
+      return () => {
+        if (routes.get(key) !== response) return;
+        if (previous === undefined) routes.delete(key);
+        else routes.set(key, previous);
+      };
+    },
+    close: () => (closePromise ??= closeServer(server)),
+  };
+}
+
+async function handleFakeGitHubRequest(
+  request: import("node:http").IncomingMessage,
+  response: import("node:http").ServerResponse,
+  method: string,
+  path: string,
+  routes: Map<string, FakeGitHubRouteResponse>,
+  pullRequests: FakeGitHubPullRequest[],
+  nextPullRequestNumber: () => number,
+): Promise<void> {
+  const scripted = routes.get(routeKey(method, path));
+  if (scripted !== undefined) {
+    writeJson(response, scripted.status, scripted.body);
+    return;
+  }
+
+  const url = new URL(path, `http://${request.headers.host ?? "127.0.0.1"}`);
+  if (method === "GET" && url.pathname.endsWith("/pulls")) {
+    const requestedHead = url.searchParams.get("head");
+    const matches = pullRequests.filter(
+      ({ head }) =>
+        requestedHead === null || requestedHead === head || requestedHead.endsWith(`:${head}`),
+    );
+    writeJson(response, 200, matches.map(githubPullRequest));
+    return;
+  }
+
+  if (method === "POST" && url.pathname.endsWith("/pulls")) {
+    const input = await readJson(request);
+    if (!isPullRequestInput(input)) {
+      writeJson(response, 400, { message: "base and head are required" });
+      return;
+    }
+    const number = nextPullRequestNumber();
+    const record: FakeGitHubPullRequest = {
+      number,
+      htmlUrl: `${url.origin}${url.pathname.slice(0, -"/pulls".length)}/pull/${number}`,
+      base: input.base,
+      head: input.head,
+      draft: input.draft ?? false,
+    };
+    pullRequests.push(record);
+    writeJson(response, 201, githubPullRequest(record));
+    return;
+  }
+
+  if (method === "GET" && url.pathname === "/user") {
+    writeJson(response, 200, { login: "FakeGitHub" });
+    return;
+  }
+
+  writeJson(response, 404, { message: "Not Found" });
+}
+
+function routeKey(method: string, path: string): string {
+  return `${method.toUpperCase()} ${path}`;
+}
+
+function presentedCredential(authorization: string | string[] | undefined): string | undefined {
+  const value = Array.isArray(authorization) ? authorization[0] : authorization;
+  return value?.startsWith("Bearer ") ? value.slice("Bearer ".length) : value;
+}
+
+function isPullRequestInput(
+  value: unknown,
+): value is { readonly base: string; readonly head: string; readonly draft?: boolean } {
+  if (typeof value !== "object" || value === null) return false;
+  const input = value as Record<string, unknown>;
+  return (
+    typeof input["base"] === "string" &&
+    typeof input["head"] === "string" &&
+    (input["draft"] === undefined || typeof input["draft"] === "boolean")
+  );
+}
+
+function githubPullRequest(record: FakeGitHubPullRequest): Record<string, unknown> {
+  return {
+    number: record.number,
+    html_url: record.htmlUrl,
+    base: { ref: record.base },
+    head: { ref: record.head },
+    draft: record.draft,
+  };
+}
+
+function readJson(request: import("node:http").IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk: string) => (body += chunk));
+    request.on("end", () => {
+      try {
+        resolve(body === "" ? {} : (JSON.parse(body) as unknown));
+      } catch (error: unknown) {
+        reject(error);
+      }
+    });
+    request.on("error", reject);
+  });
+}
+
+function writeJson(
+  response: import("node:http").ServerResponse,
+  status: number,
+  body: unknown,
+): void {
+  response.writeHead(status, { "content-type": "application/json" });
+  response.end(JSON.stringify(body));
+}
+
+function listenServer(server: Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+}
+
+function closeServer(server: Server): Promise<void> {
+  server.closeAllConnections();
+  return new Promise((resolve, reject) => {
+    server.close((error?: Error) => (error === undefined ? resolve() : reject(error)));
+  });
 }
 
 async function waitForHandshake(

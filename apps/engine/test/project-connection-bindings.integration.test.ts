@@ -1,6 +1,5 @@
 import Database from "better-sqlite3";
 import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,7 +11,7 @@ import {
   type ConnectionStatus,
 } from "../src/connections/registry.js";
 import type { ProjectBindings } from "../../../packages/project-runtime/src/project-types.js";
-import { startEngine, type Harness } from "./harness.js";
+import { startEngine, startFakeGitHubApi, type FakeGitHubApi, type Harness } from "./harness.js";
 import { makeNodeRepositoryFixture } from "./repository-fixture.js";
 import { SystemClock } from "../../../packages/kernel/src/clock.js";
 import { GitHubCliCredentialResolver } from "../../../packages/modules/github/src/index.js";
@@ -30,22 +29,14 @@ const TEST_BUNDLE = fileURLToPath(
 const engines: Harness[] = [];
 const roots: string[] = [];
 const repositories: string[] = [];
-const servers: Server[] = [];
+const servers: FakeGitHubApi[] = [];
 
 afterEach(async () => {
   await Promise.all(engines.splice(0).map((engine) => engine.dispose()));
   for (const path of [...repositories.splice(0), ...roots.splice(0)]) {
     rmSync(path, { recursive: true, force: true });
   }
-  await Promise.all(
-    servers.splice(0).map(
-      (server) =>
-        new Promise<void>((resolve) => {
-          server.closeAllConnections();
-          server.close(() => resolve());
-        }),
-    ),
-  );
+  await Promise.all(servers.splice(0).map((server) => server.close()));
 });
 
 describe("project connection bindings", () => {
@@ -186,27 +177,9 @@ esac
       "utf8",
     );
     chmodSync(fakeGh, 0o755);
-    const requests: { path: string; account: "A" | "B" | "unknown" }[] = [];
-    const github = createServer((request, response) => {
-      const authorization = request.headers.authorization;
-      const account =
-        authorization === `Bearer ${credentialA}`
-          ? "A"
-          : authorization === `Bearer ${credentialB}`
-            ? "B"
-            : "unknown";
-      requests.push({ path: request.url ?? "", account });
-      response.writeHead(account === "unknown" ? 401 : 200, {
-        "content-type": "application/json",
-      });
-      response.end(
-        JSON.stringify(
-          account === "unknown" ? { message: "Bad credentials" } : { login: `Account${account}` },
-        ),
-      );
-    });
+    const github = await startFakeGitHubApi();
     servers.push(github);
-    const apiBaseUrl = await listen(github);
+    const apiBaseUrl = github.baseUrl;
     const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-connection-isolation-"));
     roots.push(dataRoot);
     const engine = await startEngine({
@@ -304,6 +277,10 @@ esac
     ).toThrow("sourceControl");
     database.close();
 
+    const requests = github.requests.map(({ path, credential }) => ({
+      path,
+      account: credential === credentialA ? "A" : credential === credentialB ? "B" : "unknown",
+    }));
     expect(
       requests.filter((request) => request.path === "/user").map((request) => request.account),
     ).toEqual(["A", "B", "A", "B"]);
@@ -460,20 +437,6 @@ function readdirBytes(root: string): string {
     .filter((name) => name.startsWith("jarvis.sqlite"))
     .map((name) => readFileSync(join(root, name)).toString("utf8"))
     .join("\n");
-}
-
-function listen(server: Server): Promise<string> {
-  return new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (address === null || typeof address === "string") {
-        reject(new Error("fake GitHub server did not expose a port"));
-        return;
-      }
-      resolve(`http://127.0.0.1:${address.port}`);
-    });
-  });
 }
 
 function seedConnection(
