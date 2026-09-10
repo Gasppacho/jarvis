@@ -7,3 +7,11 @@ export {
   type GitHubCredentialResolutionPort,
   type GitHubCredentialResolverOptions,
 } from "./credentials.js";
+
+export {
+  GitHubProviderCheckAdapter,
+  type GitHubProviderCheckOptions,
+  type GitHubProviderCheckPort,
+  type GitHubProviderCheckResult,
+  type GitHubProviderCheckStatus,
+} from "./provider-check.js";
