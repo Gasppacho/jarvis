@@ -25,7 +25,9 @@ scm.change-request.manage
 work-items.read
 ```
 
-The provider adapter resolves credentials at call time from Keychain.
+The MVP GitHub adapter resolves credentials at call time from the authenticated
+`gh` CLI; the decision and its boundaries are recorded in
+[ADR 0017](../adr/0017-github-cli-credential-resolution.md).
 
 ## MCP descriptor
 
