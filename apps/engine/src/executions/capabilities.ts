@@ -1,6 +1,7 @@
 import { EngineError } from "../errors.js";
 import type { ModuleCapabilityRequirement } from "../../../../packages/kernel/src/module-host.js";
 import type {
+  ExternalMappingCapability,
   ModuleHandlerCapabilities,
   ModuleShellCommandInput,
   ModuleShellCommandResult,
@@ -41,6 +42,10 @@ export interface ProjectWorkspaceResolver {
 
 export interface ProjectConnectionResolver {
   find(id: string): ConnectionDescriptor | undefined;
+}
+
+export interface ExternalMappingCapabilityResolver {
+  bind(projectId: string, moduleInstanceId: string): ExternalMappingCapability;
 }
 
 /** Binds the existing workspace manager to one frozen Project snapshot. */
@@ -92,6 +97,7 @@ export class ProjectModuleCapabilityResolver {
     private readonly connections?: ProjectConnectionResolver,
     private readonly githubCredentials?: GitHubCredentialResolutionPort,
     private readonly githubApiBaseUrl?: string,
+    private readonly externalMappings?: ExternalMappingCapabilityResolver,
   ) {}
 
   public resolve(
@@ -110,7 +116,8 @@ export class ProjectModuleCapabilityResolver {
       agentRequirement === undefined &&
       !workspaceRequired &&
       !projectCommandsRequired &&
-      githubRequirement === undefined
+      githubRequirement === undefined &&
+      this.externalMappings === undefined
     ) {
       return {};
     }
@@ -120,7 +127,8 @@ export class ProjectModuleCapabilityResolver {
       snapshot === undefined &&
       agentRequirement === undefined &&
       !workspaceRequired &&
-      githubRequirement === undefined
+      githubRequirement === undefined &&
+      this.externalMappings === undefined
     ) {
       return {};
     }
@@ -132,14 +140,17 @@ export class ProjectModuleCapabilityResolver {
       throw unresolvedCapability(
         projectId,
         moduleInstanceId,
-        requirement?.id ?? "repository.write",
-        requirement?.binding ?? (workspaceRequired ? "repository" : "agentRuntime"),
+        requirement?.id ?? "external.mapping",
+        requirement?.binding ?? (workspaceRequired ? "repository" : "engine"),
         "has no resolved Project snapshot",
       );
     }
 
     const capabilities: ModuleHandlerCapabilities = {
       projectBindings: { projectId, slots: snapshot.bindings.slots },
+      ...(this.externalMappings === undefined
+        ? {}
+        : { externalMappings: this.externalMappings.bind(projectId, moduleInstanceId) }),
     };
     let resolved: ModuleHandlerCapabilities = capabilities;
     if (agentRequirement !== undefined) {

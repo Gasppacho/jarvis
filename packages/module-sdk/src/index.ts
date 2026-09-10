@@ -68,9 +68,24 @@ export interface GitHubApi {
   get(path: string): Promise<GitHubApiResponse>;
 }
 
+export interface ExternalMappingRecord {
+  readonly status: "attempted" | "completed";
+  readonly resourceRef?: string;
+}
+
+export interface ExternalMappingCapability {
+  readonly recordAttempt: (idempotencyKey: string) => void;
+  readonly recordResource: (input: {
+    readonly idempotencyKey: string;
+    readonly resourceRef: string;
+  }) => void;
+  readonly read: (idempotencyKey: string) => ExternalMappingRecord | undefined;
+}
+
 /** Capabilities resolved for one Project and Module Instance only. */
 export interface ModuleHandlerCapabilities {
   readonly agentRuntime?: AgentRuntime;
+  readonly externalMappings?: ExternalMappingCapability;
   readonly githubApi?: GitHubApi;
   readonly projectBindings?: AgentProjectBindings;
   readonly projectCommands?: ProjectCommandsCapability;

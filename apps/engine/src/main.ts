@@ -41,6 +41,7 @@ import {
   ProjectModuleCapabilityResolver,
   ProjectWorkspaceCapabilityResolver,
 } from "./executions/capabilities.js";
+import { ExternalMappingStore } from "./executions/external-mappings.js";
 import { loadBundledModuleHost } from "./modules/bundled-module-registry.js";
 import { EventPublisher } from "./events/publisher.js";
 import {
@@ -365,6 +366,7 @@ async function main(): Promise<void> {
       eventPayloads: loadEventPayloadContracts(runtimeRoot),
     });
     const publisher = new EventPublisher(database.db, clock, ids, envelopes);
+    const externalMappings = new ExternalMappingStore(database.db, clock);
     const fixtures = testFixtures;
     const sampleProbeHandler = fixtures?.createSampleProbeHandler(database.db);
     const openSubscriptions: OpenSubscriptionsPort = (projectId) =>
@@ -454,6 +456,7 @@ async function main(): Promise<void> {
       connections,
       githubCredentials,
       githubApiBaseUrl,
+      externalMappings,
     );
     const consumer = new DeliveryConsumer(
       database.db,

@@ -65,9 +65,10 @@ export class ExternalMappingStore {
           .get({ projectId, moduleInstanceId, idempotencyKey }) as
           | ExternalMappingRow
           | undefined;
-        return row === undefined
-          ? undefined
-          : { status: row.status, resourceRef: row.resource_ref ?? undefined };
+        if (row === undefined) return undefined;
+        return row.resource_ref === null
+          ? { status: row.status }
+          : { status: row.status, resourceRef: row.resource_ref };
       },
     };
   }
