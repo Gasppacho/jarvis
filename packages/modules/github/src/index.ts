@@ -22,3 +22,19 @@ export {
   type GitHubApiClientOptions,
   type GitHubApiFailure,
 } from "./api-client.js";
+
+export {
+  buildGitHubPullRequestBody,
+  GitHubTranslationError,
+  mapGitHubPullRequestError,
+  parseGitHubWorkItemRef,
+  translateGitHubPullRequestResponse,
+  type GitHubChangeRequestCreationRequestedPayload,
+  type GitHubChangeRequestCreatedPayload,
+  type GitHubPullRequestCreationBody,
+  type GitHubPullRequestErrorResponse,
+  type GitHubResponseHeaders,
+  type GitHubTranslationErrorCode,
+  type GitHubTranslationFailure,
+  type GitHubWorkItemReference,
+} from "./translation.js";
