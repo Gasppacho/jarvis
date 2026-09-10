@@ -145,6 +145,47 @@ export function translateGitHubPullRequestResponse(
   };
 }
 
+/** Rebuilds a created fact from the URL stored in an External Mapping. */
+export function translateGitHubPullRequestMapping(
+  resourceRef: string,
+  request: GitHubChangeRequestCreationRequestedPayload,
+): GitHubChangeRequestCreatedPayload {
+  const parsedRequest = parseGitHubWorkItemRef(request.workItemRef);
+  const url = usableUrl(resourceRef);
+  if (url === undefined) throw creationFailed();
+
+  const path = new URL(url).pathname.split("/").filter(Boolean);
+  const offset = path[0] === "repos" ? 1 : 0;
+  const owner = path[offset];
+  const repository = path[offset + 1];
+  const kind = path[offset + 2];
+  const numberText = path[offset + 3];
+  const externalNumber = Number(numberText);
+  if (
+    owner !== parsedRequest.owner ||
+    repository !== parsedRequest.repository ||
+    kind !== "pull" ||
+    numberText === undefined ||
+    !Number.isSafeInteger(externalNumber) ||
+    externalNumber < 1 ||
+    path.length !== offset + 4
+  ) {
+    throw creationFailed();
+  }
+
+  return {
+    repositoryId: request.repositoryId,
+    changeRequestRef: `github://${parsedRequest.owner}/${parsedRequest.repository}/pulls/${externalNumber}`,
+    externalNumber,
+    url,
+    baseBranch: request.baseBranch,
+    headBranch: request.headBranch,
+    headCommit: request.headCommit,
+    workItemRef: request.workItemRef,
+    draft: request.draft ?? false,
+  };
+}
+
 export function mapGitHubPullRequestError(
   response: GitHubPullRequestErrorResponse,
 ): GitHubTranslationFailure {

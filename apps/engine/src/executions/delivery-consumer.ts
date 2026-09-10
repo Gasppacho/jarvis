@@ -391,6 +391,21 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
       );
     }
 
+    if (
+      (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) &&
+      process.env["JARVIS_FAILPOINT"] === "after-github-create-before-external-mapping"
+    ) {
+      failpoint("after-github-create-before-external-mapping");
+    }
+
+    if (
+      (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) &&
+      process.env["JARVIS_FAILPOINT"] === "after-external-mapping-before-fact"
+    ) {
+      this.db.transaction(() => capabilities?.externalMappings?.flushPending?.())();
+      failpoint("after-external-mapping-before-fact");
+    }
+
     const { executionRow } = this.db.transaction(() => {
       capabilities?.externalMappings?.flushPending?.();
       for (const publication of bufferedPublications) {

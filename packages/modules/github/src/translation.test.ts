@@ -7,6 +7,7 @@ import {
   GitHubTranslationError,
   mapGitHubPullRequestError,
   parseGitHubWorkItemRef,
+  translateGitHubPullRequestMapping,
   translateGitHubPullRequestResponse,
   type GitHubChangeRequestCreationRequestedPayload,
 } from "./translation.js";
@@ -123,6 +124,25 @@ describe("GitHub change-request translation", () => {
       });
       expect(JSON.stringify(error)).not.toContain(secret);
     }
+  });
+
+  it("rebuilds the created payload from a durable pull request URL", () => {
+    expect(
+      translateGitHubPullRequestMapping(
+        "http://127.0.0.1:1234/repos/QServices/token-warehouse/pull/57",
+        REQUEST,
+      ),
+    ).toEqual({
+      repositoryId: REQUEST.repositoryId,
+      changeRequestRef: "github://QServices/token-warehouse/pulls/57",
+      externalNumber: 57,
+      url: "http://127.0.0.1:1234/repos/QServices/token-warehouse/pull/57",
+      baseBranch: REQUEST.baseBranch,
+      headBranch: REQUEST.headBranch,
+      headCommit: REQUEST.headCommit,
+      workItemRef: REQUEST.workItemRef,
+      draft: false,
+    });
   });
 
   it("maps GitHub statuses and signals to stable redacted failures", () => {

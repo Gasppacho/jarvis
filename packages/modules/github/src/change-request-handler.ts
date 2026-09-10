@@ -3,6 +3,7 @@ import {
   buildGitHubPullRequestBody,
   GitHubTranslationError,
   parseGitHubWorkItemRef,
+  translateGitHubPullRequestMapping,
   translateGitHubPullRequestResponse,
   type GitHubChangeRequestCreationRequestedPayload,
 } from "./translation.js";
@@ -33,19 +34,26 @@ export const handleChangeRequestCreationRequested: ModuleHandler = async (
     throw invalidRequest("The request idempotency key is required.");
   }
 
-  const githubApi = ctx.capabilities.githubApi;
-  if (githubApi === undefined) {
-    throw new GitHubTranslationError(
-      "github.change-request-create-failed",
-      "The GitHub API capability is unavailable.",
-      true,
-    );
-  }
   const externalMappings = ctx.capabilities.externalMappings;
   if (externalMappings === undefined) {
     throw new GitHubTranslationError(
       "github.change-request-create-failed",
       "The external mapping capability is unavailable.",
+      true,
+    );
+  }
+  const existing = externalMappings.read(idempotencyKey);
+  if (existing?.status === "completed" && existing.resourceRef !== undefined) {
+    const created = translateGitHubPullRequestMapping(existing.resourceRef, request);
+    publishCreated(ctx, created);
+    return created;
+  }
+
+  const githubApi = ctx.capabilities.githubApi;
+  if (githubApi === undefined) {
+    throw new GitHubTranslationError(
+      "github.change-request-create-failed",
+      "The GitHub API capability is unavailable.",
       true,
     );
   }
@@ -59,16 +67,23 @@ export const handleChangeRequestCreationRequested: ModuleHandler = async (
   const created = translateGitHubPullRequestResponse(response, request);
   externalMappings.recordResource({
     idempotencyKey,
-    resourceRef: created.changeRequestRef,
+    resourceRef: created.url,
   });
+  publishCreated(ctx, created);
+  return created;
+};
+
+function publishCreated(
+  ctx: ModuleHandlerContext,
+  created: ReturnType<typeof translateGitHubPullRequestResponse>,
+): void {
   ctx.publish({
     ...GITHUB_CHANGE_REQUEST_CREATED,
     subject: { type: "change-request", ref: created.changeRequestRef },
     repositoryId: created.repositoryId,
     payload: { ...created },
   });
-  return created;
-};
+}
 
 function readCreationRequest(
   value: Readonly<Record<string, unknown>>,

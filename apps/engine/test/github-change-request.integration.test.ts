@@ -226,21 +226,21 @@ esac
           module_instance_id: "github",
           idempotency_key: "project-a:github://QServices/repo/issues/42",
           status: "completed",
-          resource_ref: "github://QServices/repo/pulls/1",
+          resource_ref: `${fakeGitHub.baseUrl}/repos/QServices/repo/pull/1`,
         },
         {
           project_id: "project-b",
           module_instance_id: "github",
           idempotency_key: "project-b:github://QServices/repo/issues/43",
           status: "completed",
-          resource_ref: "github://QServices/repo/pulls/2",
+          resource_ref: `${fakeGitHub.baseUrl}/repos/QServices/repo/pull/2`,
         },
         {
           project_id: "project-a",
           module_instance_id: "github",
           idempotency_key: "project-a:github://QServices/repo/issues/45",
           status: "completed",
-          resource_ref: "github://QServices/repo/pulls/3",
+          resource_ref: `${fakeGitHub.baseUrl}/repos/QServices/repo/pull/3`,
         },
       ]);
       expect(JSON.stringify(createdFacts)).not.toContain(credentialA);
@@ -254,6 +254,118 @@ esac
       .join("\n");
     expect(durable).not.toContain(credentialA);
     expect(durable).not.toContain(credentialB);
+  });
+
+  it("recovers a durable mapping after the fact boundary crashes", async () => {
+    const fakeGitHub = await startFakeGitHubApi();
+    servers.push(fakeGitHub);
+    const credential = "ghs_mapping_recovery_sentinel";
+    const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-gh-credentials-"));
+    roots.push(executableRoot);
+    const executable = join(executableRoot, "gh");
+    writeFileSync(executable, `#!/bin/sh\nprintf '%s\\n' '${credential}'\n`, "utf8");
+    chmodSync(executable, 0o755);
+
+    const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-github-mapping-recovery-"));
+    roots.push(dataRoot);
+    const crashed = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_FAILPOINT: "after-external-mapping-before-fact",
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+      },
+    });
+    engines.push(crashed);
+
+    await registerGitHubConnection(crashed, "connection/github", "Account");
+    const project = await createGitHubProject(crashed, "project-recovery");
+    await bindAndActivate(crashed, project, "connection/github");
+    const published = await publishCreationRequest(
+      crashed,
+      project.id,
+      "github://QServices/repo/issues/42",
+    );
+    const exitCode = await crashed.waitForExit();
+    expect(exitCode).not.toBe(0);
+    await crashed.dispose();
+    engines.splice(engines.indexOf(crashed), 1);
+
+    const beforeRestart = new Database(join(dataRoot, "jarvis.sqlite"));
+    try {
+      expect(
+        beforeRestart
+          .prepare(
+            `SELECT status, resource_ref FROM external_mappings
+             WHERE project_id = 'project-recovery' AND module_instance_id = 'github'`,
+          )
+          .get(),
+      ).toEqual({
+        status: "completed",
+        resource_ref: `${fakeGitHub.baseUrl}/repos/QServices/repo/pull/1`,
+      });
+      expect(
+        beforeRestart
+          .prepare("SELECT 1 FROM events WHERE type = 'scm.change-request.created'")
+          .get(),
+      ).toBeUndefined();
+      expect(beforeRestart.prepare("SELECT status FROM executions").get()).toEqual({
+        status: "running",
+      });
+      expect(beforeRestart.prepare("SELECT consumed_at FROM deliveries").get()).toEqual({
+        consumed_at: null,
+      });
+    } finally {
+      beforeRestart.close();
+    }
+
+    const restarted = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+      },
+    });
+    engines.push(restarted);
+    await waitForExecution(restarted, project.id, published.id, "completed");
+    const redelivery = await restarted.call("/test/redeliver", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        projectId: project.id,
+        moduleInstanceId: "github",
+        moduleId: "jarvis.module.github",
+        eventId: published.id,
+      }),
+    });
+    expect(redelivery.status, await redelivery.clone().text()).toBe(200);
+    expect(await redelivery.json()).toMatchObject({ redelivered: true, executionId: null });
+
+    const events = await waitForEvents(restarted, project.id, 2);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "scm.change-request.created",
+          subjectRef: "github://QServices/repo/pulls/1",
+        }),
+      ]),
+    );
+    expect(fakeGitHub.pullRequests).toHaveLength(1);
+    expect(
+      fakeGitHub.requests.filter(
+        (request) => request.method === "POST" && request.path.endsWith("/pulls"),
+      ),
+    ).toHaveLength(1);
+    expect(
+      fakeGitHub.requests.filter(
+        (request) => request.method === "GET" && request.path.includes("/pulls"),
+      ),
+    ).toHaveLength(0);
+    expect(fakeGitHub.requests.some((request) => request.credential === credential)).toBe(true);
   });
 });
 
