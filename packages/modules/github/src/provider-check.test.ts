@@ -83,6 +83,21 @@ describe("GitHubProviderCheckAdapter", () => {
     expect(server.requests).toEqual([]);
   });
 
+  it("classifies a resolver failure without making an HTTP request", async () => {
+    const server = await fakeGitHub((_request, response) => response.end());
+    const adapter = new GitHubProviderCheckAdapter({
+      apiBaseUrl: server.url,
+      credentialResolver: {
+        resolve: async () => {
+          throw new Error("credential resolution failed");
+        },
+      },
+    });
+
+    await expect(adapter.check("gh://Gasppacho")).resolves.toEqual({ status: "unavailable" });
+    expect(server.requests).toEqual([]);
+  });
+
   it("maps a network failure to unavailable", async () => {
     const server = await fakeGitHub((_request, response) => response.end());
     const url = server.url;
