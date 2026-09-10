@@ -61,6 +61,7 @@ export interface GitHubApiRequest {
 export interface GitHubApiResponse {
   readonly status: number;
   readonly body: unknown;
+  readonly headers?: Readonly<Record<string, string>>;
 }
 
 export interface GitHubApi {

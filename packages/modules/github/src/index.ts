@@ -25,6 +25,7 @@ export {
 
 export {
   GITHUB_CHANGE_REQUEST_CREATED,
+  GITHUB_CHANGE_REQUEST_CREATION_FAILED,
   GITHUB_CHANGE_REQUEST_CREATION_REQUESTED,
   handleChangeRequestCreationRequested,
 } from "./change-request-handler.js";

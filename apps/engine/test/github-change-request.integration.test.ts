@@ -475,6 +475,159 @@ esac
       afterRestart.close();
     }
   });
+
+  it("publishes redacted classified failures and retries an attempted request", async () => {
+    const fakeGitHub = await startFakeGitHubApi();
+    servers.push(fakeGitHub);
+    const credential = "ghs_failure_secret";
+    const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-gh-credentials-"));
+    roots.push(executableRoot);
+    const executable = join(executableRoot, "gh");
+    writeFileSync(executable, `#!/bin/sh\nprintf '%s\\n' '${credential}'\n`, "utf8");
+    chmodSync(executable, 0o755);
+
+    const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-github-failures-"));
+    roots.push(dataRoot);
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+      },
+    });
+    engines.push(engine);
+
+    await registerGitHubConnection(engine, "connection/github", "Account");
+    const project = await createGitHubProject(engine, "project-failures");
+    await bindAndActivate(engine, project, "connection/github");
+
+    const failureCases = [
+      {
+        workItemRef: "github://QServices/repo/issues/401",
+        response: { status: 401, body: { message: credential } },
+        code: "github.unauthorized",
+        retryable: false,
+      },
+      {
+        workItemRef: "github://QServices/repo/issues/402",
+        response: { status: 422, body: { message: "Head branch not found" } },
+        code: "github.branch-not-found",
+        retryable: false,
+      },
+      {
+        workItemRef: "github://QServices/repo/issues/403",
+        response: { status: 422, body: { message: "Validation Failed" } },
+        code: "github.change-request-invalid",
+        retryable: false,
+      },
+      {
+        workItemRef: "github://QServices/repo/issues/404",
+        response: { status: 403, body: { message: "API rate limit exceeded" } },
+        code: "github.rate-limited",
+        retryable: true,
+      },
+      {
+        workItemRef: "github://QServices/repo/issues/405",
+        response: { status: 500, body: { message: "opaque provider detail" } },
+        code: "github.change-request-create-failed",
+        retryable: true,
+      },
+    ] as const;
+    const failedEvents: string[] = [];
+    for (const failureCase of failureCases) {
+      const restore = fakeGitHub.scriptRoute(
+        "POST",
+        "/repos/QServices/repo/pulls",
+        failureCase.response,
+      );
+      try {
+        const published = await publishCreationRequest(engine, project.id, failureCase.workItemRef);
+        failedEvents.push(published.id);
+        await waitForExecution(engine, project.id, published.id, "failed");
+      } finally {
+        restore();
+      }
+    }
+
+    const retried = await publishCreationRequest(engine, project.id, failureCases[0]!.workItemRef);
+    await waitForExecution(engine, project.id, retried.id, "completed");
+    const events = await waitForEvents(engine, project.id, 12);
+    const failures = events.filter(
+      (event) => event["type"] === "scm.change-request.creation-failed",
+    );
+    expect(failures).toHaveLength(5);
+    expect(events.filter((event) => event["type"] === "scm.change-request.created")).toEqual([
+      expect.objectContaining({ subjectRef: "github://QServices/repo/pulls/1" }),
+    ]);
+    expect(fakeGitHub.pullRequests).toHaveLength(1);
+    expect(
+      fakeGitHub.requests.filter(
+        (request) => request.method === "POST" && request.path.endsWith("/pulls"),
+      ),
+    ).toHaveLength(6);
+    expect(
+      fakeGitHub.requests.filter(
+        (request) => request.method === "GET" && request.path.includes("/pulls?head="),
+      ),
+    ).toHaveLength(1);
+
+    await engine.dispose();
+    engines.splice(engines.indexOf(engine), 1);
+    const database = new Database(join(dataRoot, "jarvis.sqlite"));
+    try {
+      const inbox = database
+        .prepare("SELECT event_id, status, result FROM inbox ORDER BY rowid")
+        .all() as readonly {
+        readonly event_id: string;
+        readonly status: string;
+        readonly result: string;
+      }[];
+      const failurePayloads = database
+        .prepare(
+          "SELECT envelope FROM events WHERE type = 'scm.change-request.creation-failed' ORDER BY rowid",
+        )
+        .all() as readonly { readonly envelope: string }[];
+      expect(
+        failurePayloads.map(
+          ({ envelope }) => (JSON.parse(envelope) as { payload: Record<string, unknown> }).payload,
+        ),
+      ).toEqual(
+        failureCases.map(({ workItemRef, code, retryable }) => ({
+          repositoryId: "main",
+          workItemRef,
+          code,
+          message: expect.stringContaining(
+            `GitHub could not create a Change Request for repository main and Work Item ${workItemRef}:`,
+          ),
+          retryable,
+        })),
+      );
+      expect(JSON.stringify(failurePayloads)).not.toContain(credential);
+      expect(JSON.stringify(failurePayloads)).not.toContain("opaque provider detail");
+      expect(inbox).toHaveLength(6);
+      expect(
+        inbox
+          .filter(({ event_id }) => failedEvents.includes(event_id))
+          .map(({ result }) => JSON.parse(result) as { error: { code: string } }),
+      ).toEqual(failureCases.map(({ code }) => ({ error: expect.objectContaining({ code }) })));
+      expect(
+        database
+          .prepare(
+            `SELECT status, COUNT(*) AS count FROM external_mappings
+             WHERE project_id = 'project-failures' GROUP BY status ORDER BY status`,
+          )
+          .all(),
+      ).toEqual([
+        { status: "attempted", count: 4 },
+        { status: "completed", count: 1 },
+      ]);
+      expect(JSON.stringify(inbox)).not.toContain(credential);
+    } finally {
+      database.close();
+    }
+  });
 });
 
 async function registerGitHubConnection(

@@ -64,8 +64,23 @@ export class GitHubApiClient implements GitHubApi {
       redirect: "error",
       signal: AbortSignal.timeout(this.timeoutMs),
     });
-    return { status: response.status, body: parseResponse(await response.text()) };
+    const body = parseResponse(await response.text());
+    const headers = readRateLimitHeaders(response.headers);
+    return {
+      status: response.status,
+      body,
+      ...(Object.keys(headers).length === 0 ? {} : { headers }),
+    };
   }
+}
+
+function readRateLimitHeaders(headers: Headers): Readonly<Record<string, string>> {
+  const selected: Record<string, string> = {};
+  for (const name of ["retry-after", "x-ratelimit-remaining"] as const) {
+    const value = headers.get(name);
+    if (value !== null) selected[name] = value;
+  }
+  return selected;
 }
 
 function apiUrl(base: URL, path: string): URL {

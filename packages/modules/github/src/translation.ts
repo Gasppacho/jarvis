@@ -252,7 +252,7 @@ function asProviderResponse(value: unknown): {
     return {
       status: value["status"],
       body: value["body"],
-      headers: isHeaders(value["headers"]) ? value["headers"] : undefined,
+      headers: isResponseHeaders(value["headers"]) ? value["headers"] : undefined,
     };
   }
   return { status: undefined, body: value, headers: undefined };
@@ -338,6 +338,10 @@ function header(headers: GitHubResponseHeaders | undefined, name: string): strin
 
 function isHeaders(value: unknown): value is Headers {
   return typeof Headers !== "undefined" && value instanceof Headers;
+}
+
+function isResponseHeaders(value: unknown): value is GitHubResponseHeaders {
+  return isHeaders(value) || isRecord(value);
 }
 
 function failure(

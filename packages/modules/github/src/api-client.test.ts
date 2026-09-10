@@ -67,6 +67,32 @@ describe("GitHubApiClient", () => {
     expect(JSON.stringify(new GitHubApiError("unavailable"))).not.toContain("gh_");
   });
 
+  it("returns only rate-limit response headers needed for classification", async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(403, {
+        "content-type": "application/json",
+        "retry-after": "30",
+        "x-ratelimit-remaining": "0",
+        "x-provider-secret": "must-not-cross-the-client-boundary",
+      });
+      response.end(JSON.stringify({ message: "rate limited" }));
+    });
+    servers.push(server);
+    const client = new GitHubApiClient({
+      secretRef: "gh://Gasppacho",
+      apiBaseUrl: await listen(server),
+      credentialResolver: {
+        resolve: async () => ({ status: "available", credential: "gh_client_sentinel" }),
+      },
+    });
+
+    await expect(client.get("/user")).resolves.toEqual({
+      status: 403,
+      body: { message: "rate limited" },
+      headers: { "retry-after": "30", "x-ratelimit-remaining": "0" },
+    });
+  });
+
   it("rejects absolute URLs so a bound client cannot escape its API host", async () => {
     const client = new GitHubApiClient({
       secretRef: "gh://Gasppacho",
