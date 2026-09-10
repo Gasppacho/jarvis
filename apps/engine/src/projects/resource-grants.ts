@@ -1,4 +1,6 @@
 import { isAbsolute } from "node:path";
+import { EngineError } from "../errors.js";
+import type { ConnectionDescriptor } from "../connections/registry.js";
 import type {
   ProjectResourceCandidate,
   ProjectResourceGrantPort,
@@ -19,20 +21,61 @@ export const FAKE_RUNTIME_CANDIDATE: ProjectResourceCandidate = {
   capabilities: ["agent.execute"],
 };
 
+export type ProjectResourceGrantStatus =
+  "available" | "unavailable" | "unauthenticated" | "degraded" | "revoked";
+
 export interface ProjectResourceGrant {
   readonly candidate: ProjectResourceCandidate;
-  readonly status?: RuntimeDescriptor["status"];
+  readonly status?: ProjectResourceGrantStatus;
 }
 
 export interface ProjectResourceGrantDetailsPort {
   grantedResourceDetails(projectId: string): readonly ProjectResourceGrant[];
 }
 
+/** Composes the project-scoped grants exposed by each global resource source. */
+export class ProjectResourceGrantAggregate
+  implements ProjectResourceGrantPort, ProjectResourceGrantDetailsPort
+{
+  public constructor(private readonly sources: readonly ProjectResourceGrantDetailsPort[] = []) {}
+
+  public grantedToProject(projectId: string): readonly ProjectResourceCandidate[] {
+    return this.grantedResourceDetails(projectId)
+      .filter(({ status }) => status === undefined || status === "available")
+      .map(({ candidate }) => candidate);
+  }
+
+  public grantedResourceDetails(projectId: string): readonly ProjectResourceGrant[] {
+    const grants = this.sources.flatMap((source) => source.grantedResourceDetails(projectId));
+    const claimed = new Set<string>();
+    for (const { candidate } of grants) {
+      const key = resourceKey(candidate);
+      if (claimed.has(key)) {
+        throw new EngineError(
+          "system.internal-error",
+          500,
+          `Project resource grant conflict: multiple sources claim ${key}.`,
+        );
+      }
+      claimed.add(key);
+    }
+    return [...grants].sort(compareGrants);
+  }
+}
+
 interface RuntimeDescriptorReader {
   list(): readonly RuntimeDescriptor[];
 }
 
-/** Until connection/runtime/MCP registries land, no global resource is granted implicitly. */
+function resourceKey(candidate: ProjectResourceCandidate): string {
+  return `${candidate.kind}/${candidate.ref}`;
+}
+
+function compareGrants(left: ProjectResourceGrant, right: ProjectResourceGrant): number {
+  return resourceKey(left.candidate).localeCompare(resourceKey(right.candidate));
+}
+
+/** Reserved fallback for projects that have no global resource sources wired. */
 export class EmptyProjectResourceGrants implements ProjectResourceGrantPort {
   grantedToProject(_projectId: string): readonly ProjectResourceCandidate[] {
     return [];
@@ -40,7 +83,9 @@ export class EmptyProjectResourceGrants implements ProjectResourceGrantPort {
 }
 
 /** Local runtimes are candidates only after the Project binds their Slot. */
-export class LocalAgentRuntimeRegistry implements ProjectResourceGrantPort {
+export class LocalAgentRuntimeRegistry
+  implements ProjectResourceGrantPort, ProjectResourceGrantDetailsPort
+{
   private readonly fakeRuntime = new FakeRuntime();
 
   public constructor(private readonly runtimes?: RuntimeDescriptorReader) {}
@@ -87,4 +132,25 @@ export class LocalAgentRuntimeRegistry implements ProjectResourceGrantPort {
     }
     return new CodexRuntime(descriptor.executablePath);
   }
+}
+
+/** Global GitHub connections become Project candidates only through this source. */
+export class ConnectionGrantSource implements ProjectResourceGrantDetailsPort {
+  public constructor(private readonly connections?: Pick<ConnectionDescriptorReader, "list">) {}
+
+  public grantedResourceDetails(_projectId: string): readonly ProjectResourceGrant[] {
+    return (this.connections?.list() ?? []).map((descriptor) => ({
+      candidate: {
+        ref: descriptor.id,
+        kind: "connection" as const,
+        displayName: descriptor.accountLabel,
+        capabilities: [...descriptor.capabilities],
+      },
+      status: descriptor.status,
+    }));
+  }
+}
+
+interface ConnectionDescriptorReader {
+  list(): readonly ConnectionDescriptor[];
 }

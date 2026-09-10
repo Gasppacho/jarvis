@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
     let timeline: ProjectTimelineModel
+    let connections: ConnectionsModel
 
     override init() {
         session = EngineSessionModel.bundled()
@@ -20,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         projectConfiguration = ProjectConfigurationModel(session: session, projects: projects)
         moduleCatalog = ModuleCatalogModel(session: session)
         timeline = ProjectTimelineModel(session: session)
+        connections = ConnectionsModel(session: session)
         super.init()
     }
 
@@ -47,7 +49,8 @@ struct JarvisApp: App {
                 projects: delegate.projects,
                 projectConfiguration: delegate.projectConfiguration,
                 moduleCatalog: delegate.moduleCatalog,
-                timeline: delegate.timeline)
+                timeline: delegate.timeline,
+                connections: delegate.connections)
                 .frame(minWidth: 520, minHeight: 320)
                 .task { await delegate.session.start() }
         }

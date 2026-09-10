@@ -9,6 +9,7 @@ struct RootView: View {
     let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
     let timeline: ProjectTimelineModel
+    let connections: ConnectionsModel
 
     private let selectionPolicy = ProjectSelectionReconciliationPolicy()
     @State private var selection: SidebarSelection?
@@ -52,6 +53,10 @@ struct RootView: View {
             Section("Modules") {
                 Label("Module Catalog", systemImage: "shippingbox")
                     .tag(SidebarSelection.moduleCatalog)
+            }
+            Section("Connections") {
+                Label("Connections", systemImage: "link")
+                    .tag(SidebarSelection.connections)
             }
             Section("Projects") {
                 ForEach(projects.projects) { project in
@@ -107,6 +112,8 @@ struct RootView: View {
         switch selection {
         case .moduleCatalog:
             ModuleCatalogView(moduleCatalog: moduleCatalog)
+        case .connections:
+            ConnectionsView(model: connections)
         case .project(let projectId):
             if let project = projects.projects.first(where: { $0.id == projectId }) {
                 ProjectDetailView(
@@ -143,6 +150,7 @@ struct RootView: View {
 
 private enum SidebarSelection: Hashable {
     case moduleCatalog
+    case connections
     case project(String)
 }
 

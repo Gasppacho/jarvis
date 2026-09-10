@@ -27,6 +27,15 @@ Health, version, diagnostic et shutdown.
 
 Inspection read-only d'un repository et détection des runtimes/connexions.
 
+### Connections
+
+`GET /v1/connections` liste les descripteurs persistés et `POST /v1/connections`
+enregistre ou remplace un descripteur. `POST
+/v1/connections/{connectionId}/validate` relit l'état du fournisseur puis
+retourne le descripteur actualisé. Les réponses n'exposent jamais `secretRef`
+ni une valeur de credential ; pour GitHub, la référence est un pointeur opaque
+vers le compte authentifié par `gh`.
+
 ### Projects
 
 Import, liste, détail, validation, activation, pause et configuration locale.

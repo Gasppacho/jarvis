@@ -30,7 +30,11 @@ import { LocalRepositoryAccessibility } from "./projects/repository-accessibilit
 import { ProjectService, RepositoryDiscoveryService } from "./projects/service.js";
 import { EventJournalReader } from "./events/timeline.js";
 import { ExecutionLedgerReader } from "./executions/ledger.js";
-import { LocalAgentRuntimeRegistry } from "./projects/resource-grants.js";
+import {
+  LocalAgentRuntimeRegistry,
+  ConnectionGrantSource,
+  ProjectResourceGrantAggregate,
+} from "./projects/resource-grants.js";
 import { ProjectStore } from "./projects/store.js";
 import { RuntimeRegistry } from "./runtimes/registry.js";
 import {
@@ -64,6 +68,11 @@ import {
   type WorkspaceProjectReconciliationReport,
 } from "../../../packages/workspace/src/workspace-reconciler.js";
 import { WorkspaceManager } from "../../../packages/workspace/src/workspace-manager.js";
+import { ConnectionRegistry } from "./connections/registry.js";
+import {
+  GitHubCliCredentialResolver,
+  GitHubProviderCheckAdapter,
+} from "../../../packages/modules/github/src/index.js";
 
 /** See apps/engine/src/events/dispatcher.ts's identical declaration for why
  * this exists and how tsup.config.ts's `define` makes it eliminate the
@@ -231,7 +240,30 @@ async function main(): Promise<void> {
   const projectStore =
     database === undefined ? undefined : new ProjectStore(database.db, new SystemClock());
   const runtimes = database === undefined ? undefined : new RuntimeRegistry(database.db);
-  const resourceGrants = new LocalAgentRuntimeRegistry(runtimes);
+  const connections = database === undefined ? undefined : new ConnectionRegistry(database.db);
+  // Test-only seams are compiled out of the production engine, just like the
+  // durability hooks below. A local environment must not redirect credential
+  // resolution or GitHub API traffic in the shipped app.
+  const ghExecutable =
+    typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__
+      ? process.env["JARVIS_GH_EXECUTABLE"]
+      : undefined;
+  const githubCredentials = new GitHubCliCredentialResolver(
+    ghExecutable === undefined
+      ? {}
+      : { knownExecutablePaths: [ghExecutable], allowShellProbe: false },
+  );
+  const githubApiBaseUrl =
+    typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__
+      ? process.env["JARVIS_GITHUB_API_BASE_URL"]
+      : undefined;
+  const connectionValidator = new GitHubProviderCheckAdapter({
+    credentialResolver: githubCredentials,
+    ...(githubApiBaseUrl === undefined ? {} : { apiBaseUrl: githubApiBaseUrl }),
+  });
+  const runtimeGrants = new LocalAgentRuntimeRegistry(runtimes);
+  const connectionGrants = new ConnectionGrantSource(connections);
+  const resourceGrants = new ProjectResourceGrantAggregate([runtimeGrants, connectionGrants]);
   const projects =
     database === undefined || projectStore === undefined
       ? undefined
@@ -417,8 +449,11 @@ async function main(): Promise<void> {
     const capabilities = new ProjectModuleCapabilityResolver(
       projectStore,
       modules,
-      resourceGrants,
+      runtimeGrants,
       workspaceCapabilities,
+      connections,
+      githubCredentials,
+      githubApiBaseUrl,
     );
     const consumer = new DeliveryConsumer(
       database.db,
@@ -450,6 +485,8 @@ async function main(): Promise<void> {
     databaseState: (): DatabaseState => database?.state() ?? "failed",
     repositoryDiscovery,
     runtimes,
+    connections,
+    connectionValidator,
     projects,
     modules,
     isShuttingDown: () => shuttingDown,

@@ -31,6 +31,8 @@ const productionBundlePath = fileURLToPath(
 const FORBIDDEN_STRINGS = [
   "JARVIS_FAILPOINT",
   "JARVIS_ENABLE_TEST_HOOKS",
+  "JARVIS_GH_EXECUTABLE",
+  "JARVIS_GITHUB_API_BASE_URL",
   "/test/events",
   "/test/projects",
   "/test/redeliver",

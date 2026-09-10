@@ -44,6 +44,9 @@ final class ProjectResourceGuidanceTests: XCTestCase {
         let tickets = try candidate(
             ref: "connection/issues", kind: "connection", displayName: "Issues",
             capabilities: ["work-items.read"])
+        let ineligible = ProjectIneligibleResource(
+            candidate: tickets,
+            reason: "This resource is ineligible because its status is \"unauthenticated\".")
 
         var state = ProjectConfigurationState()
         state.draft = ProjectConfigurationDraft(configuration: configuration, packages: [])
@@ -58,7 +61,8 @@ final class ProjectResourceGuidanceTests: XCTestCase {
                 requiredCapabilities: ["github.api", "scm.change-request.manage"],
                 candidates: [github], status: .bound,
                 impact: "Development needs this source-control capability.",
-                repairAction: "Choose another eligible Project resource."),
+                repairAction: "Choose another eligible Project resource.",
+                ineligibleGrantedResources: [ineligible]),
             ProjectResourceBindingChoice(
                 slotId: "agentRuntime", requiredCapabilities: ["agent.execute"],
                 candidates: [runtime], status: .available,
@@ -88,6 +92,7 @@ final class ProjectResourceGuidanceTests: XCTestCase {
             presentation.resourceBindings.first { $0.id == "sourceControl" })
         XCTAssertEqual(sourceControl.status, .bound)
         XCTAssertEqual(sourceControl.candidates.map(\.id), [github.id])
+        XCTAssertEqual(sourceControl.ineligibleGrantedResources, [ineligible])
         XCTAssertFalse(sourceControl.accessibilityLabel.isEmpty)
         XCTAssertTrue(sourceControl.accessibilityHint.contains("Development"))
 

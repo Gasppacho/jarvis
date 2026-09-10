@@ -75,7 +75,7 @@ tickets       → mcp/github-qservices
 agentRuntime  → runtime/codex-default
 ```
 
-Un module référence un slot, jamais le catalogue global. Les Module Instances sélectionnées sont des candidats déjà project-scoped pour les capabilities qu'elles fournissent. Les autres candidats passent par un port de grants explicites ; tant que les registres Connection, MCP et Agent Runtime ne sont pas implémentés, leur catalogue est vide et les slots concernés restent `Unbound`. Jarvis ne fabrique ni grant, ni connexion, ni activation implicite.
+Un module référence un slot, jamais le catalogue global. Les Module Instances sélectionnées sont des candidats déjà project-scoped pour les capabilities qu'elles fournissent. Les catalogues persistés de connexions et de runtimes peuvent proposer des candidats globaux ; ils ne deviennent une autorisation pour un Module qu'après un binding local explicite du Project. Jarvis ne fabrique ni connexion ni activation implicite.
 
 ## Import flow
 

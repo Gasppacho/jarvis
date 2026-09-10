@@ -9,8 +9,13 @@ import type {
   ProjectCommandsCapability,
 } from "../../../../packages/module-sdk/src/index.js";
 import type { AgentRuntime } from "../../../../packages/agent-runtime/src/index.js";
+import {
+  GitHubApiClient,
+  type GitHubCredentialResolutionPort,
+} from "../../../../packages/modules/github/src/index.js";
 import { runBoundedProcess } from "../../../../packages/workspace/src/bounded-process-runner.js";
 import type { ResolvedProjectSnapshot } from "../projects/store.js";
+import type { ConnectionDescriptor } from "../connections/registry.js";
 import type {
   WorkspaceManager,
   WorkspaceProjectConfiguration,
@@ -32,6 +37,10 @@ export interface AgentRuntimeResolver {
 
 export interface ProjectWorkspaceResolver {
   resolve(projectId: string): ModuleWorkspace | undefined;
+}
+
+export interface ProjectConnectionResolver {
+  find(id: string): ConnectionDescriptor | undefined;
 }
 
 /** Binds the existing workspace manager to one frozen Project snapshot. */
@@ -80,6 +89,9 @@ export class ProjectModuleCapabilityResolver {
     private readonly modules: ModuleCompositionReader,
     private readonly runtimes: AgentRuntimeResolver,
     private readonly workspaces?: ProjectWorkspaceResolver,
+    private readonly connections?: ProjectConnectionResolver,
+    private readonly githubCredentials?: GitHubCredentialResolutionPort,
+    private readonly githubApiBaseUrl?: string,
   ) {}
 
   public resolve(
@@ -93,21 +105,35 @@ export class ProjectModuleCapabilityResolver {
     const projectCommandsRequired = requirements.some(
       (candidate) => candidate.id === "shell.execute",
     );
-    if (agentRequirement === undefined && !workspaceRequired && !projectCommandsRequired) return {};
+    const githubRequirement = requirements.find((candidate) => candidate.id === "github.api");
+    if (
+      agentRequirement === undefined &&
+      !workspaceRequired &&
+      !projectCommandsRequired &&
+      githubRequirement === undefined
+    ) {
+      return {};
+    }
 
     const snapshot = this.snapshots.getResolvedProject(projectId);
-    if (snapshot === undefined && agentRequirement === undefined && !workspaceRequired) {
+    if (
+      snapshot === undefined &&
+      agentRequirement === undefined &&
+      !workspaceRequired &&
+      githubRequirement === undefined
+    ) {
       return {};
     }
     const instance = snapshot?.moduleInstances.find(
       (candidate) => candidate.instanceId === moduleInstanceId,
     );
     if (snapshot === undefined || instance === undefined) {
+      const requirement = agentRequirement ?? githubRequirement;
       throw unresolvedCapability(
         projectId,
         moduleInstanceId,
-        "agent.execute",
-        "agentRuntime",
+        requirement?.id ?? "repository.write",
+        requirement?.binding ?? (workspaceRequired ? "repository" : "agentRuntime"),
         "has no resolved Project snapshot",
       );
     }
@@ -177,6 +203,91 @@ export class ProjectModuleCapabilityResolver {
         ...resolved,
         projectCommands: projectCommands(snapshot.composition),
         shell: { run: runProjectCommand },
+      };
+    }
+    if (githubRequirement !== undefined) {
+      const slot = capabilitySlot(githubRequirement, undefined);
+      if (slot === undefined) {
+        throw unresolvedCapability(
+          projectId,
+          moduleInstanceId,
+          "github.api",
+          "sourceControl",
+          "has no bound connection slot",
+        );
+      }
+      const binding = snapshot.bindings.slots[slot];
+      if (binding === undefined) {
+        throw unresolvedCapability(
+          projectId,
+          moduleInstanceId,
+          "github.api",
+          slot,
+          "has no Local Binding",
+        );
+      }
+      if (binding.kind !== "connection") {
+        throw unresolvedCapability(
+          projectId,
+          moduleInstanceId,
+          "github.api",
+          slot,
+          `is bound to ${binding.kind}/${binding.ref}, not a connection`,
+        );
+      }
+      const connection = this.connections?.find(binding.ref);
+      if (connection === undefined) {
+        throw unresolvedCapability(
+          projectId,
+          moduleInstanceId,
+          "github.api",
+          slot,
+          `connection ${binding.ref} is unavailable`,
+        );
+      }
+      if (connection.provider !== "github") {
+        throw unresolvedCapability(
+          projectId,
+          moduleInstanceId,
+          "github.api",
+          slot,
+          `connection ${binding.ref} is provided by ${connection.provider}, not GitHub`,
+        );
+      }
+      if (connection.status !== "available") {
+        throw unresolvedCapability(
+          projectId,
+          moduleInstanceId,
+          "github.api",
+          slot,
+          `connection ${binding.ref} is ${connection.status}`,
+        );
+      }
+      if (!connection.capabilities.includes("github.api")) {
+        throw unresolvedCapability(
+          projectId,
+          moduleInstanceId,
+          "github.api",
+          slot,
+          `connection ${binding.ref} does not provide github.api`,
+        );
+      }
+      if (this.githubCredentials === undefined) {
+        throw unresolvedCapability(
+          projectId,
+          moduleInstanceId,
+          "github.api",
+          slot,
+          "the GitHub credential resolver is unavailable",
+        );
+      }
+      resolved = {
+        ...resolved,
+        githubApi: new GitHubApiClient({
+          secretRef: connection.secretRef,
+          credentialResolver: this.githubCredentials,
+          ...(this.githubApiBaseUrl === undefined ? {} : { apiBaseUrl: this.githubApiBaseUrl }),
+        }),
       };
     }
     return resolved;

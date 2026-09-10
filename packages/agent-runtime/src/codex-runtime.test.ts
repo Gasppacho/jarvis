@@ -123,7 +123,7 @@ describe("CodexRuntime", () => {
       const environmentMarker = join(root, "probe-environment");
       const authText = `Logged in using ChatGPT credential=${secret}`;
       const executable = await makeExecutable(root, {
-        version: `printf '%s\\n' ${quote("x".repeat(256))}\nenv > ${quote(environmentMarker)}`,
+        version: `env > ${quote(environmentMarker)}\nprintf '%s\\n' ${quote("x".repeat(256))}`,
         auth: print(authText, "stderr"),
       });
 

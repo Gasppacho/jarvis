@@ -173,6 +173,23 @@ public struct ProjectResourceCandidate: Identifiable, Sendable, Equatable {
     }
 }
 
+public struct ProjectIneligibleResource: Identifiable, Sendable, Equatable {
+    public var id: String { candidate.id }
+    public let candidate: ProjectResourceCandidate
+    public let reason: String
+
+    public init(candidate: ProjectResourceCandidate, reason: String) {
+        self.candidate = candidate
+        self.reason = reason
+    }
+
+    init(payload: Components.Schemas.ProjectIneligibleResource) {
+        self.init(
+            candidate: ProjectResourceCandidate(payload: payload.candidate),
+            reason: payload.reason)
+    }
+}
+
 public enum ProjectResourceBindingStatus: String, Sendable, Equatable {
     case bound
     case available
@@ -189,6 +206,7 @@ public struct ProjectResourceBindingChoice: Identifiable, Sendable, Equatable {
     public let status: ProjectResourceBindingStatus
     public let impact: String
     public let repairAction: String
+    public let ineligibleGrantedResources: [ProjectIneligibleResource]
 
     init(payload: Components.Schemas.ProjectResourceBindingChoice) {
         slotId = payload.slotId
@@ -201,6 +219,8 @@ public struct ProjectResourceBindingChoice: Identifiable, Sendable, Equatable {
         self.status = status
         impact = payload.impact
         repairAction = payload.repairAction
+        ineligibleGrantedResources = payload.ineligibleGrantedResources?.map(
+            ProjectIneligibleResource.init(payload:)) ?? []
     }
 
     init(
@@ -209,7 +229,8 @@ public struct ProjectResourceBindingChoice: Identifiable, Sendable, Equatable {
         candidates: [ProjectResourceCandidate],
         status: ProjectResourceBindingStatus,
         impact: String,
-        repairAction: String
+        repairAction: String,
+        ineligibleGrantedResources: [ProjectIneligibleResource] = []
     ) {
         self.slotId = slotId
         self.requiredCapabilities = requiredCapabilities
@@ -217,6 +238,7 @@ public struct ProjectResourceBindingChoice: Identifiable, Sendable, Equatable {
         self.status = status
         self.impact = impact
         self.repairAction = repairAction
+        self.ineligibleGrantedResources = ineligibleGrantedResources
     }
 }
 

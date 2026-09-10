@@ -40,6 +40,14 @@ Errors crossing the Local API or stored as terminal Execution errors use stable 
 | `project.repository-unavailable` | Maybe | Repository grant/path cannot be resolved |
 | `project.resource-degraded` | Maybe | Runtime/connection/MCP became unavailable |
 
+## Connections
+
+| Code | Retryable | Meaning |
+|---|---:|---|
+| `connection.provider-unsupported` | No | The requested connection provider is not bundled |
+| `connection.secret-ref-invalid` | No | The request supplied a credential value or unsupported reference instead of an opaque `gh://account` reference |
+| `connection.not-found` | No | The requested connection is not registered |
+
 ## Eventing
 
 | Code | Retryable | Meaning |

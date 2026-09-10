@@ -723,11 +723,11 @@ async function waitForActiveBranchLease(
   repositoryId: string,
   workingBranch: string,
 ): Promise<boolean> {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
     if (leases.findActiveByBranch(projectId, repositoryId, workingBranch) !== undefined) {
       return true;
     }
-    await new Promise<void>((resolve) => setTimeout(resolve, 1));
+    await new Promise<void>((resolve) => setTimeout(resolve, 5));
   }
   return false;
 }
