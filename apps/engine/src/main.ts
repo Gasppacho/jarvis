@@ -32,6 +32,7 @@ import { EventJournalReader } from "./events/timeline.js";
 import { ExecutionLedgerReader } from "./executions/ledger.js";
 import {
   LocalAgentRuntimeRegistry,
+  ConnectionGrantSource,
   ProjectResourceGrantAggregate,
 } from "./projects/resource-grants.js";
 import { ProjectStore } from "./projects/store.js";
@@ -252,7 +253,8 @@ async function main(): Promise<void> {
       : { apiBaseUrl: process.env["JARVIS_GITHUB_API_BASE_URL"] }),
   });
   const runtimeGrants = new LocalAgentRuntimeRegistry(runtimes);
-  const resourceGrants = new ProjectResourceGrantAggregate([runtimeGrants]);
+  const connectionGrants = new ConnectionGrantSource(connections);
+  const resourceGrants = new ProjectResourceGrantAggregate([runtimeGrants, connectionGrants]);
   const projects =
     database === undefined || projectStore === undefined
       ? undefined

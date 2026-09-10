@@ -774,7 +774,7 @@ function ineligibilityReason(
   status: ProjectResourceGrant["status"],
 ): string | undefined {
   if (status !== undefined && status !== "available") {
-    return `This resource is ineligible because its runtime status is "${status}".`;
+    return `This resource is ineligible because its status is "${status}".`;
   }
   if (binding !== undefined && candidate.ref === binding.ref && candidate.kind !== binding.kind) {
     return `This Slot's binding expects kind "${binding.kind}" for ref ${binding.ref}, but the resource granted under that ref is kind "${candidate.kind}".`;
