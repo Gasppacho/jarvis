@@ -241,13 +241,22 @@ async function main(): Promise<void> {
     database === undefined ? undefined : new ProjectStore(database.db, new SystemClock());
   const runtimes = database === undefined ? undefined : new RuntimeRegistry(database.db);
   const connections = database === undefined ? undefined : new ConnectionRegistry(database.db);
-  const ghExecutable = process.env["JARVIS_GH_EXECUTABLE"];
+  // Test-only seams are compiled out of the production engine, just like the
+  // durability hooks below. A local environment must not redirect credential
+  // resolution or GitHub API traffic in the shipped app.
+  const ghExecutable =
+    typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__
+      ? process.env["JARVIS_GH_EXECUTABLE"]
+      : undefined;
   const githubCredentials = new GitHubCliCredentialResolver(
     ghExecutable === undefined
       ? {}
       : { knownExecutablePaths: [ghExecutable], allowShellProbe: false },
   );
-  const githubApiBaseUrl = process.env["JARVIS_GITHUB_API_BASE_URL"];
+  const githubApiBaseUrl =
+    typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__
+      ? process.env["JARVIS_GITHUB_API_BASE_URL"]
+      : undefined;
   const connectionValidator = new GitHubProviderCheckAdapter({
     credentialResolver: githubCredentials,
     ...(githubApiBaseUrl === undefined ? {} : { apiBaseUrl: githubApiBaseUrl }),

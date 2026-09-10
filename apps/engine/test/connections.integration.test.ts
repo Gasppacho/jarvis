@@ -2,11 +2,15 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { explain, localApiValidator } from "./contract.js";
 import { startEngine, type Harness } from "./harness.js";
 
 describe("connection Local API", () => {
+  const testBundlePath = fileURLToPath(
+    new URL("../../../dist/engine/engine.test-bundle.mjs", import.meta.url),
+  );
   const engines: Harness[] = [];
   const roots: string[] = [];
   const servers: Server[] = [];
@@ -27,7 +31,7 @@ describe("connection Local API", () => {
   });
 
   async function start(options: Parameters<typeof startEngine>[0] = {}): Promise<Harness> {
-    const engine = await startEngine(options);
+    const engine = await startEngine({ enginePath: testBundlePath, ...options });
     engines.push(engine);
     return engine;
   }
@@ -131,6 +135,18 @@ describe("connection Local API", () => {
     expect(credentialBody).toContain("connection.secret-ref-invalid");
     expect(credentialBody).not.toContain(secret);
     expect(engine.stderr()).not.toContain(secret);
+
+    const arbitraryReference = "opaque-but-not-a-gh-account";
+    const invalidReference = await request({
+      id: "connection/invalid-reference",
+      kind: "github",
+      displayName: "Invalid reference",
+      secretRef: arbitraryReference,
+    });
+    expect(invalidReference.status).toBe(400);
+    const invalidReferenceBody = JSON.stringify(await invalidReference.json());
+    expect(invalidReferenceBody).toContain("connection.secret-ref-invalid");
+    expect(invalidReferenceBody).not.toContain(arbitraryReference);
 
     const unsupported = await request({
       id: "connection/gitlab",

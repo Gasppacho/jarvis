@@ -8,6 +8,7 @@ import type { GitHubProviderCheckPort } from "../../../../packages/modules/githu
 type ResourceDescriptor = components["schemas"]["ResourceDescriptor"];
 
 const GITHUB_CAPABILITIES = ["github.api", "scm.change-request.manage", "work-items.read"] as const;
+const GITHUB_ACCOUNT_REFERENCE = /^gh:\/\/[A-Za-z0-9-]{1,39}$/;
 
 export interface ConnectionRouteDependencies {
   readonly databaseState: () => DatabaseState;
@@ -130,11 +131,11 @@ function requireConnectionRegistration(value: unknown): {
       `Connection provider ${kind} is not supported by this engine.`,
     );
   }
-  if (looksLikeCredential(secretRef)) {
+  if (!GITHUB_ACCOUNT_REFERENCE.test(secretRef)) {
     throw new EngineError(
       "connection.secret-ref-invalid",
       400,
-      "Connection secretRef must be an opaque credential reference, not a credential value.",
+      "GitHub connection secretRef must be an opaque gh:// account reference.",
     );
   }
 
@@ -154,10 +155,6 @@ function nonEmptyString(value: unknown, field: string): string {
     );
   }
   return value;
-}
-
-function looksLikeCredential(value: string): boolean {
-  return /^(?:gh[pousr]_|github_pat_)/.test(value);
 }
 
 function toResourceDescriptor(descriptor: ConnectionDescriptor): ResourceDescriptor {

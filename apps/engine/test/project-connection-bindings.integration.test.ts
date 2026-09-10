@@ -24,6 +24,9 @@ import { RuntimeRegistry } from "../src/runtimes/registry.js";
 import { ConnectionRegistry } from "../src/connections/registry.js";
 
 const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
+const TEST_BUNDLE = fileURLToPath(
+  new URL("../../../dist/engine/engine.test-bundle.mjs", import.meta.url),
+);
 const engines: Harness[] = [];
 const roots: string[] = [];
 const repositories: string[] = [];
@@ -208,6 +211,7 @@ esac
     roots.push(dataRoot);
     const engine = await startEngine({
       dataRoot,
+      enginePath: TEST_BUNDLE,
       env: { JARVIS_GH_EXECUTABLE: fakeGh, JARVIS_GITHUB_API_BASE_URL: apiBaseUrl },
     });
     engines.push(engine);
@@ -242,6 +246,11 @@ esac
       engine,
       "project-isolation-b",
       githubOnlyConfiguration("project-isolation-b"),
+    );
+    const projectWithoutBinding = await createProject(
+      engine,
+      "project-isolation-unbound",
+      githubOnlyConfiguration("project-isolation-unbound"),
     );
     await bindGitHubProject(engine, projectA.id, "connection/github-a");
     await bindGitHubProject(engine, projectB.id, "connection/github-b");
@@ -290,6 +299,9 @@ esac
     const capabilityB = resolver.resolve(projectB.id, "github", "jarvis.module.github");
     await expect(capabilityA.githubApi?.get("/user")).resolves.toMatchObject({ status: 200 });
     await expect(capabilityB.githubApi?.get("/user")).resolves.toMatchObject({ status: 200 });
+    expect(() =>
+      resolver.resolve(projectWithoutBinding.id, "github", "jarvis.module.github"),
+    ).toThrow("sourceControl");
     database.close();
 
     expect(

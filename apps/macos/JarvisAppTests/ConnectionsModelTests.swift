@@ -63,6 +63,32 @@ final class ConnectionsModelTests: XCTestCase {
     }
 
     @MainActor
+    func testValidateFailureKeepsTheDescriptorAndShowsTheEngineError() async {
+        let connection = Connection(
+            id: "connection/github-main",
+            provider: "github",
+            accountLabel: "Gasppacho",
+            status: "available",
+            capabilities: ["github.api"])
+        let model = ConnectionsModel(
+            api: StubConnectionsAPI(
+                connections: [connection],
+                validated: connection,
+                validateError: .engineError(
+                    operation: "POST /v1/connections/connection%2Fgithub-main/validate",
+                    code: "connection.not-found",
+                    message: "The connection is no longer registered.")))
+
+        await model.refresh()
+        await model.validate(connectionID: connection.id)
+
+        XCTAssertEqual(model.connections, [connection])
+        XCTAssertEqual(
+            model.errorMessage,
+            "The connection is no longer registered. (connection.not-found)")
+    }
+
+    @MainActor
     func testEngineErrorKeepsItsDocumentedCodeAndMessage() async {
         let model = ConnectionsModel(
             api: StubConnectionsAPI(

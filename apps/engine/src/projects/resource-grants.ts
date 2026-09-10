@@ -75,7 +75,7 @@ function compareGrants(left: ProjectResourceGrant, right: ProjectResourceGrant):
   return resourceKey(left.candidate).localeCompare(resourceKey(right.candidate));
 }
 
-/** Until connection/runtime/MCP registries land, no global resource is granted implicitly. */
+/** Reserved fallback for projects that have no global resource sources wired. */
 export class EmptyProjectResourceGrants implements ProjectResourceGrantPort {
   grantedToProject(_projectId: string): readonly ProjectResourceCandidate[] {
     return [];
