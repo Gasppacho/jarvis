@@ -102,16 +102,19 @@ export function resolveRequestConsumer(
     );
   }
 
+  const targetConsumers =
+    target.moduleInstanceId !== undefined
+      ? [target.moduleInstanceId]
+      : target.binding === undefined
+        ? undefined
+        : resolveBindingTargets(envelope, target.binding, snapshot);
   const routes = snapshot.requestRoutes.filter(
     (route) =>
       route.contract.type === envelope.type &&
       route.contract.version === envelope.version &&
       route.producer.moduleId === envelope.producer.moduleId &&
       route.producer.instanceId === envelope.producer.moduleInstanceId &&
-      (target.moduleInstanceId === undefined ||
-        route.consumer.instanceId === target.moduleInstanceId) &&
-      (target.binding === undefined ||
-        route.consumer.instanceId === resolveBindingTarget(envelope, target.binding, snapshot)),
+      (targetConsumers === undefined || targetConsumers.includes(route.consumer.instanceId)),
   );
 
   // Counted by distinct consumer, not by route: a producer that configures
@@ -147,11 +150,11 @@ export function resolveRequestConsumer(
   return [...consumers.values()][0]!;
 }
 
-function resolveBindingTarget(
+function resolveBindingTargets(
   envelope: RequestEnvelope,
   binding: string,
   snapshot: EventingRequestRoutingSnapshot,
-): string | undefined {
+): readonly string[] {
   const producer = snapshot.moduleInstances.find(
     (instance) =>
       instance.instanceId === envelope.producer.moduleInstanceId &&
@@ -159,7 +162,27 @@ function resolveBindingTarget(
   );
   const slot = producer?.bindings?.[binding] ?? binding;
   const slotBinding = snapshot.bindings.slots[slot];
-  return slotBinding?.kind === "module-instance" ? slotBinding.ref : undefined;
+  if (slotBinding?.kind === "module-instance") return [slotBinding.ref];
+  if (slotBinding === undefined) return [];
+
+  const targetConsumers = new Set<string>();
+  for (const route of snapshot.requestRoutes) {
+    if (
+      route.contract.type !== envelope.type ||
+      route.contract.version !== envelope.version ||
+      route.producer.moduleId !== envelope.producer.moduleId ||
+      route.producer.instanceId !== envelope.producer.moduleInstanceId
+    ) {
+      continue;
+    }
+    const consumer = snapshot.moduleInstances.find(
+      (instance) => instance.instanceId === route.consumer.instanceId,
+    );
+    if (Object.values(consumer?.bindings ?? {}).includes(slot)) {
+      targetConsumers.add(route.consumer.instanceId);
+    }
+  }
+  return [...targetConsumers];
 }
 
 /**

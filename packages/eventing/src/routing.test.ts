@@ -110,6 +110,47 @@ describe("resolveRequestConsumer", () => {
     ).toEqual({ moduleInstanceId: "development", moduleId: "jarvis.module.development" });
   });
 
+  it("resolves a provider bound to a connection-backed Project slot", () => {
+    expect(
+      resolveRequestConsumer(
+        { ...request, target: { binding: "sourceControl" } },
+        requestSnapshot({
+          moduleInstances: [
+            {
+              instanceId: request.producer.moduleInstanceId,
+              moduleId: request.producer.moduleId,
+              bindings: { sourceControl: "source-control" },
+            },
+            {
+              instanceId: "development",
+              moduleId: "jarvis.module.development",
+              bindings: { sourceControl: "source-control" },
+            },
+          ],
+          bindings: { slots: { "source-control": { kind: "connection", ref: "github" } } },
+        }),
+      ),
+    ).toEqual({ moduleInstanceId: "development", moduleId: "jarvis.module.development" });
+  });
+
+  it("does not deliver a connection-backed binding to a different Module Instance", () => {
+    expect(() =>
+      resolveRequestConsumer(
+        { ...request, target: { binding: "sourceControl" } },
+        requestSnapshot({
+          moduleInstances: [
+            {
+              instanceId: request.producer.moduleInstanceId,
+              moduleId: request.producer.moduleId,
+              bindings: { sourceControl: "development-slot" },
+            },
+          ],
+          bindings: { slots: { "development-slot": { kind: "module-instance", ref: "other" } } },
+        }),
+      ),
+    ).toThrowError(/has no target consumer/);
+  });
+
   it("fails clearly when the target has no matching consumer", () => {
     expect(() =>
       resolveRequestConsumer(

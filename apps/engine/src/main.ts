@@ -73,6 +73,7 @@ import { ConnectionRegistry } from "./connections/registry.js";
 import {
   GitHubCliCredentialResolver,
   GitHubProviderCheckAdapter,
+  handleChangeRequestCreationRequested,
 } from "../../../packages/modules/github/src/index.js";
 
 /** See apps/engine/src/events/dispatcher.ts's identical declaration for why
@@ -431,6 +432,7 @@ async function main(): Promise<void> {
     const handlers: ModuleHandlerLookup = (moduleId) => {
       if (moduleId === AUTOMATION_RULES_MODULE_ID) return handleWorkItemTagAdded;
       if (moduleId === DEVELOPMENT_MODULE_ID) return handleImplementationRequested;
+      if (moduleId === "jarvis.module.github") return handleChangeRequestCreationRequested;
       if (
         fixtures !== undefined &&
         moduleId === fixtures.SAMPLE_PROBE_MODULE_ID &&
