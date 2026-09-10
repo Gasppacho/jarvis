@@ -29,6 +29,8 @@ Jarvis exécute du code et des agents sur des repositories potentiellement non f
 - Stockage dans macOS Keychain uniquement.
 - La base conserve des `secretRef` opaques.
 - Le secret est résolu au dernier moment par l'adapter qui en a besoin.
+- Pour GitHub, seul un `secretRef` opaque est conservé ; le client appelle
+  `gh` à chaque requête et ne conserve pas le token en mémoire durable.
 - Aucun secret dans event, prompt, artifact, log, crash report ou project config.
 - Redaction centralisée sur patterns et clés connues avant persistence.
 - Rotation sans modifier la configuration portable.
@@ -36,6 +38,13 @@ Jarvis exécute du code et des agents sur des repositories potentiellement non f
 ## Project capability grants
 
 Un projet lie explicitement ses ressources. Une instance de module reçoit un objet capability limité à ce qu'elle déclare et ce que le projet accorde.
+
+Les descripteurs globaux ne sont que des candidats. Le Kernel agrège les
+ressources disponibles, vérifie la capability demandée et la liaison locale du
+Project, puis construit la capability au moment de l'Execution. Pour
+`github.api`, il vérifie aussi le fournisseur, le statut `available` et la
+résolution `gh` associée au descripteur ; une connexion enregistrée dans un
+autre Project n'est jamais une autorisation portable.
 
 Exemple : Development peut recevoir Git write, shell projet, runtime et ticket read ; il ne reçoit pas l'action `scm.change-request.merge`.
 

@@ -45,6 +45,11 @@ apps/macos/
 
 Features UI sont verticales ; elles partagent seulement design system, navigation et client API.
 
+La feature `Connections` liste les descripteurs, enregistre une référence de
+compte GitHub `gh://...` et déclenche leur validation via le Local API. Elle ne
+demande ni n'affiche de token ; les bindings `sourceControl` restent une
+configuration propre au Project.
+
 ## Engine bundle
 
 ```text

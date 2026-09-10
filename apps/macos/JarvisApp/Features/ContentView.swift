@@ -10,6 +10,7 @@ struct ContentView: View {
     let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
     let timeline: ProjectTimelineModel
+    let connections: ConnectionsModel
 
     var body: some View {
         switch session.state {
@@ -21,7 +22,8 @@ struct ContentView: View {
                 projects: projects,
                 projectConfiguration: projectConfiguration,
                 moduleCatalog: moduleCatalog,
-                timeline: timeline)
+                timeline: timeline,
+                connections: connections)
         }
     }
 }

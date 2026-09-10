@@ -30,6 +30,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         public let emptyCandidateExplanation: String
         public let impact: String
         public let repairAction: String
+        public let ineligibleGrantedResources: [ProjectIneligibleResource]
         public let requesters: [SlotRequester]
         public let accessibilityLabel: String
         public let accessibilityHint: String
@@ -635,6 +636,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                     "No eligible Project resource is available. Engine status: \(choice.status.rawValue).",
                 impact: choice.impact,
                 repairAction: choice.repairAction,
+                ineligibleGrantedResources: choice.ineligibleGrantedResources,
                 requesters: requestersForSlot(choice.slotId),
                 accessibilityLabel: "\(choice.slotId), \(choice.status.rawValue), \(capabilities)",
                 accessibilityHint: "\(choice.impact) \(choice.repairAction)")

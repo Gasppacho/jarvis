@@ -560,6 +560,62 @@ public struct EngineClient: Sendable {
         }
     }
 
+    // MARK: Connections (ticket 118)
+
+    public func listConnections() async throws -> [Connection] {
+        let operation = "GET /v1/connections"
+        let output = try await underlying.listConnections(.init())
+        switch output {
+        case .ok(let ok):
+            return try ok.body.json.items.map(Connection.init(payload:))
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .undocumented(let statusCode, _):
+            throw EngineClientError.unexpectedResponse("\(operation) returned \(statusCode)")
+        }
+    }
+
+    public func registerGitHubConnection(accountReference: String) async throws -> Connection {
+        let operation = "POST /v1/connections"
+        let account = String(accountReference.dropFirst("gh://".count))
+        let output = try await underlying.upsertConnection(
+            .init(
+                body: .json(
+                    .init(
+                        id: "connection/github-\(account)",
+                        kind: "github",
+                        displayName: account,
+                        secretRef: accountReference))))
+        switch output {
+        case .created(let created):
+            return Connection(payload: try created.body.json)
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
+    public func validateConnection(id: String) async throws -> Connection {
+        let operation = "POST /v1/connections/\(id)/validate"
+        let output = try await underlying.validateConnection(
+            .init(path: .init(connectionId: id)))
+        switch output {
+        case .ok(let ok):
+            return Connection(payload: try ok.body.json)
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
     private func mappedEngineError(
         operation: String,
         payload: Components.Schemas.ErrorResponse

@@ -15,6 +15,12 @@ connection/gitlab-client         not visible
 
 A registry list is never passed to a module or agent.
 
+The Local API exposes the descriptor registry through `GET /v1/connections`,
+registration through `POST /v1/connections`, and provider validation through
+`POST /v1/connections/{connectionId}/validate`. These operations return only
+safe descriptor fields; `secretRef` is accepted as an opaque locator and is
+never returned as a credential.
+
 ## Connection descriptor
 
 A descriptor contains provider, account label, capabilities, status and `secretRef`. It does not contain the secret value. Typical capabilities:
@@ -28,6 +34,12 @@ work-items.read
 The MVP GitHub adapter resolves credentials at call time from the authenticated
 `gh` CLI; the decision and its boundaries are recorded in
 [ADR 0017](../adr/0017-github-cli-credential-resolution.md).
+
+Validation refreshes the descriptor's account label, capabilities and status.
+When a Project binds an available GitHub connection to `sourceControl`, a
+GitHub Module receives `github.api`; the client keeps only the opaque account
+reference and resolves `gh` credentials for each request. A globally registered
+connection is not an implicit grant to any Project.
 
 ## MCP descriptor
 

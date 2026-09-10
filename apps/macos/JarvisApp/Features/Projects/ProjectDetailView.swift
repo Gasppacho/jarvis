@@ -777,6 +777,13 @@ public struct ProjectDetailView: View {
                             }
                         }
                     }
+                    ForEach(resource.ineligibleGrantedResources) { ineligible in
+                        Label(
+                            "\(ineligible.candidate.displayName): \(ineligible.reason)",
+                            systemImage: "info.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Text("Writes Local Bindings only. Portable Configuration is untouched.")
                         .font(.caption.weight(.medium))
                 }
