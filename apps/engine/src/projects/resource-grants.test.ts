@@ -8,6 +8,7 @@ import {
 import { applyMigrations } from "../db/test-migrations.js";
 import { RuntimeRegistry } from "../runtimes/registry.js";
 import {
+  ConnectionGrantSource,
   LocalAgentRuntimeRegistry,
   ProjectResourceGrantAggregate,
   type ProjectResourceGrant,
@@ -128,5 +129,85 @@ describe("ProjectResourceGrantAggregate", () => {
         message: expect.stringContaining("resource grant conflict"),
       }),
     );
+  });
+});
+
+describe("ConnectionGrantSource", () => {
+  it("maps descriptors to project candidates without exposing secret references", () => {
+    const source = new ConnectionGrantSource({
+      list: () => [
+        {
+          id: "connection/github",
+          provider: "github",
+          accountLabel: "Gasppacho",
+          capabilities: ["github.api", "scm.change-request.manage"],
+          status: "available",
+          secretRef: "gh://Gasppacho",
+        },
+        {
+          id: "connection/revoked",
+          provider: "github",
+          accountLabel: "Revoked",
+          capabilities: ["github.api"],
+          status: "revoked",
+          secretRef: "gh://revoked",
+        },
+      ],
+    });
+
+    expect(source.grantedResourceDetails("project-a")).toEqual([
+      {
+        candidate: {
+          ref: "connection/github",
+          kind: "connection",
+          displayName: "Gasppacho",
+          capabilities: ["github.api", "scm.change-request.manage"],
+        },
+        status: "available",
+      },
+      {
+        candidate: {
+          ref: "connection/revoked",
+          kind: "connection",
+          displayName: "Revoked",
+          capabilities: ["github.api"],
+        },
+        status: "revoked",
+      },
+    ]);
+    expect(JSON.stringify(source.grantedResourceDetails("project-a"))).not.toContain("gh://");
+  });
+
+  it("exposes available connections through the grant port only", () => {
+    const source = new ConnectionGrantSource({
+      list: () => [
+        {
+          id: "connection/available",
+          provider: "github",
+          accountLabel: "Available",
+          capabilities: ["github.api"],
+          status: "available",
+          secretRef: "gh://available",
+        },
+        {
+          id: "connection/unavailable",
+          provider: "github",
+          accountLabel: "Unavailable",
+          capabilities: ["github.api"],
+          status: "unavailable",
+          secretRef: "gh://unavailable",
+        },
+      ],
+    });
+    const aggregate = new ProjectResourceGrantAggregate([source]);
+
+    expect(aggregate.grantedToProject("project-a")).toEqual([
+      {
+        ref: "connection/available",
+        kind: "connection",
+        displayName: "Available",
+        capabilities: ["github.api"],
+      },
+    ]);
   });
 });

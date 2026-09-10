@@ -1,5 +1,6 @@
 import { isAbsolute } from "node:path";
 import { EngineError } from "../errors.js";
+import type { ConnectionDescriptor } from "../connections/registry.js";
 import type {
   ProjectResourceCandidate,
   ProjectResourceGrantPort,
@@ -21,11 +22,7 @@ export const FAKE_RUNTIME_CANDIDATE: ProjectResourceCandidate = {
 };
 
 export type ProjectResourceGrantStatus =
-  | "available"
-  | "unavailable"
-  | "unauthenticated"
-  | "degraded"
-  | "revoked";
+  "available" | "unavailable" | "unauthenticated" | "degraded" | "revoked";
 
 export interface ProjectResourceGrant {
   readonly candidate: ProjectResourceCandidate;
@@ -135,4 +132,25 @@ export class LocalAgentRuntimeRegistry
     }
     return new CodexRuntime(descriptor.executablePath);
   }
+}
+
+/** Global GitHub connections become Project candidates only through this source. */
+export class ConnectionGrantSource implements ProjectResourceGrantDetailsPort {
+  public constructor(private readonly connections?: Pick<ConnectionDescriptorReader, "list">) {}
+
+  public grantedResourceDetails(_projectId: string): readonly ProjectResourceGrant[] {
+    return (this.connections?.list() ?? []).map((descriptor) => ({
+      candidate: {
+        ref: descriptor.id,
+        kind: "connection" as const,
+        displayName: descriptor.accountLabel,
+        capabilities: [...descriptor.capabilities],
+      },
+      status: descriptor.status,
+    }));
+  }
+}
+
+interface ConnectionDescriptorReader {
+  list(): readonly ConnectionDescriptor[];
 }
