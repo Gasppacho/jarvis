@@ -28,6 +28,10 @@ export const handleChangeRequestCreationRequested: ModuleHandler = async (
   if (ctx.repositoryId !== request.repositoryId) {
     throw invalidRequest("The request repository does not match its Event repository.");
   }
+  const idempotencyKey = ctx.event.idempotencyKey;
+  if (idempotencyKey === undefined || idempotencyKey.length === 0) {
+    throw invalidRequest("The request idempotency key is required.");
+  }
 
   const githubApi = ctx.capabilities.githubApi;
   if (githubApi === undefined) {
@@ -37,6 +41,15 @@ export const handleChangeRequestCreationRequested: ModuleHandler = async (
       true,
     );
   }
+  const externalMappings = ctx.capabilities.externalMappings;
+  if (externalMappings === undefined) {
+    throw new GitHubTranslationError(
+      "github.change-request-create-failed",
+      "The external mapping capability is unavailable.",
+      true,
+    );
+  }
+  externalMappings.recordAttempt(idempotencyKey);
 
   const response = await githubApi.request({
     method: "POST",
@@ -44,6 +57,10 @@ export const handleChangeRequestCreationRequested: ModuleHandler = async (
     body: { ...buildGitHubPullRequestBody(request) },
   });
   const created = translateGitHubPullRequestResponse(response, request);
+  externalMappings.recordResource({
+    idempotencyKey,
+    resourceRef: created.changeRequestRef,
+  });
   ctx.publish({
     ...GITHUB_CHANGE_REQUEST_CREATED,
     subject: { type: "change-request", ref: created.changeRequestRef },

@@ -80,6 +80,8 @@ export interface ExternalMappingCapability {
     readonly resourceRef: string;
   }) => void;
   readonly read: (idempotencyKey: string) => ExternalMappingRecord | undefined;
+  /** Engine-only terminal hook for async handlers. */
+  readonly flushPending?: () => void;
 }
 
 /** Capabilities resolved for one Project and Module Instance only. */

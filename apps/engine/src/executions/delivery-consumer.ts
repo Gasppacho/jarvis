@@ -239,6 +239,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     let transactionOpen = true;
     let promiseResult: PromiseLike<unknown> | undefined;
     let runningExecutionCommitted = false;
+    let handlerCapabilities: ModuleHandlerCapabilities | undefined;
 
     try {
       const transactionResult = this.db.transaction(() => {
@@ -246,6 +247,11 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
         // synchronous Module can record durable checkpoints too. Async
         // handlers use the same row after this transaction commits.
         this.insertExecution(executionId, delivery, envelope, "running", startedAt, null);
+        handlerCapabilities = this.capabilities(
+          delivery.projectId,
+          delivery.moduleInstanceId,
+          delivery.moduleId,
+        );
         const handlerResult = handler(
           this.buildContext(
             delivery,
@@ -255,7 +261,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
             bufferedPublications,
             failurePublications,
             controller.signal,
-            this.capabilities(delivery.projectId, delivery.moduleInstanceId, delivery.moduleId),
+            handlerCapabilities,
           ),
         );
         if (isPromiseLike(handlerResult)) {
@@ -274,6 +280,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
           startedAt,
           handlerResult,
           bufferedPublications,
+          handlerCapabilities,
         );
       })();
       transactionOpen = false;
@@ -296,6 +303,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
                 bufferedPublications,
                 failurePublications,
                 controller.signal,
+                handlerCapabilities,
               ),
             (error) =>
               controller.signal.aborted
@@ -350,6 +358,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     bufferedPublications: readonly EventEnvelope[],
     failurePublications: readonly EventEnvelope[],
     signal: AbortSignal,
+    capabilities: ModuleHandlerCapabilities | undefined,
   ): ConsumeResult {
     if (signal.aborted) {
       return this.recordCancelled(
@@ -383,6 +392,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     }
 
     const { executionRow } = this.db.transaction(() => {
+      capabilities?.externalMappings?.flushPending?.();
       for (const publication of bufferedPublications) {
         this.insertBufferedPublication(publication);
       }
@@ -405,7 +415,9 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     startedAt: string,
     handlerResult: unknown,
     bufferedPublications: readonly EventEnvelope[],
+    capabilities: ModuleHandlerCapabilities | undefined,
   ): SuccessfulConsumption {
+    capabilities?.externalMappings?.flushPending?.();
     for (const publication of bufferedPublications) {
       this.insertBufferedPublication(publication);
     }

@@ -89,14 +89,43 @@ esac
     await waitForExecution(engine, projectA.id, createdA.id, "completed");
     await waitForExecution(engine, projectB.id, createdB.id, "completed");
 
+    const redelivery = await engine.call("/test/redeliver", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        projectId: projectA.id,
+        moduleInstanceId: "github",
+        moduleId: "jarvis.module.github",
+        eventId: createdA.id,
+      }),
+    });
+    expect(redelivery.status, await redelivery.clone().text()).toBe(200);
+    expect(await redelivery.json()).toMatchObject({
+      redelivered: true,
+      executionId: null,
+      status: "completed",
+    });
+
+    const createdASecond = await publishCreationRequest(
+      engine,
+      projectA.id,
+      "github://QServices/repo/issues/45",
+    );
+    await waitForExecution(engine, projectA.id, createdASecond.id, "completed");
+
     const invalid = await publishCreationRequest(
       engine,
       projectA.id,
       "gitlab://QServices/repo/issues/44",
     );
     await waitForExecution(engine, projectA.id, invalid.id, "failed");
+    await rejectCreationRequestWithoutIdempotencyKey(
+      engine,
+      projectA.id,
+      "github://QServices/repo/issues/46",
+    );
 
-    expect(fakeGitHub.pullRequests).toHaveLength(2);
+    expect(fakeGitHub.pullRequests).toHaveLength(3);
     expect(fakeGitHub.pullRequests).toEqual([
       expect.objectContaining({
         number: 1,
@@ -107,34 +136,54 @@ esac
       expect.objectContaining({
         number: 2,
         base: "main",
-        head: "agent/project-b/issue-42",
+        head: "agent/project-b/issue-43",
+        draft: false,
+      }),
+      expect.objectContaining({
+        number: 3,
+        base: "main",
+        head: "agent/project-a/issue-45",
         draft: false,
       }),
     ]);
-    expect(fakeGitHub.requests.filter((request) => request.method === "POST")).toEqual([
-      expect.objectContaining({ credential: credentialA }),
-      expect.objectContaining({ credential: credentialB }),
-    ]);
+    expect(fakeGitHub.requests.filter((request) => request.method === "POST")).toHaveLength(3);
+    expect(
+      fakeGitHub.requests
+        .filter((request) => request.method === "POST")
+        .map((request) => request.credential),
+    ).toEqual(expect.arrayContaining([credentialA, credentialA, credentialB]));
 
-    const eventsA = await waitForEvents(engine, projectA.id, 2);
+    const eventsA = await waitForEvents(engine, projectA.id, 5);
     const eventsB = await waitForEvents(engine, projectB.id, 2);
-    expect(eventsA.filter((event) => event["type"] === "scm.change-request.created")).toEqual([
-      expect.objectContaining({
-        type: "scm.change-request.created",
-        kind: "fact",
-        producer: "github",
-        subjectRef: "github://QServices/repo/pulls/1",
-        correlationId: expect.stringMatching(/^corr_/),
-        causationId: createdA.id,
-      }),
-    ]);
-    expect(eventsB.filter((event) => event["type"] === "scm.change-request.created")).toEqual([
-      expect.objectContaining({
-        producer: "github",
-        subjectRef: "github://QServices/repo/pulls/2",
-        causationId: createdB.id,
-      }),
-    ]);
+    expect(eventsA.filter((event) => event["type"] === "scm.change-request.created")).toHaveLength(
+      2,
+    );
+    expect(eventsA).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "scm.change-request.created",
+          kind: "fact",
+          producer: "github",
+          subjectRef: "github://QServices/repo/pulls/1",
+          correlationId: expect.stringMatching(/^corr_/),
+          causationId: createdA.id,
+        }),
+        expect.objectContaining({
+          type: "scm.change-request.created",
+          subjectRef: "github://QServices/repo/pulls/3",
+          causationId: createdASecond.id,
+        }),
+      ]),
+    );
+    expect(eventsB).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          producer: "github",
+          subjectRef: "github://QServices/repo/pulls/2",
+          causationId: createdB.id,
+        }),
+      ]),
+    );
     expect(eventsA.some((event) => event["type"] === "scm.change-request.created")).toBe(true);
     expect(eventsA.some((event) => event["type"] === "scm.change-request.creation-failed")).toBe(
       false,
@@ -147,10 +196,14 @@ esac
     try {
       const createdFacts = database
         .prepare(
-          "SELECT project_id, envelope FROM events WHERE type = 'scm.change-request.created' ORDER BY project_id",
+          "SELECT project_id, envelope FROM events WHERE type = 'scm.change-request.created' ORDER BY rowid",
         )
         .all() as readonly { readonly project_id: string; readonly envelope: string }[];
-      expect(createdFacts.map(({ project_id }) => project_id)).toEqual(["project-a", "project-b"]);
+      expect(createdFacts.map(({ project_id }) => project_id)).toEqual([
+        "project-a",
+        "project-b",
+        "project-a",
+      ]);
       expect(JSON.parse(createdFacts[0]!.envelope)).toMatchObject({
         projectId: "project-a",
         subject: { type: "change-request", ref: "github://QServices/repo/pulls/1" },
@@ -161,6 +214,35 @@ esac
           workItemRef: "github://QServices/repo/issues/42",
         },
       });
+      const mappings = database
+        .prepare(
+          `SELECT project_id, module_instance_id, idempotency_key, status, resource_ref
+           FROM external_mappings ORDER BY rowid`,
+        )
+        .all();
+      expect(mappings).toEqual([
+        {
+          project_id: "project-a",
+          module_instance_id: "github",
+          idempotency_key: "project-a:github://QServices/repo/issues/42",
+          status: "completed",
+          resource_ref: "github://QServices/repo/pulls/1",
+        },
+        {
+          project_id: "project-b",
+          module_instance_id: "github",
+          idempotency_key: "project-b:github://QServices/repo/issues/43",
+          status: "completed",
+          resource_ref: "github://QServices/repo/pulls/2",
+        },
+        {
+          project_id: "project-a",
+          module_instance_id: "github",
+          idempotency_key: "project-a:github://QServices/repo/issues/45",
+          status: "completed",
+          resource_ref: "github://QServices/repo/pulls/3",
+        },
+      ]);
       expect(JSON.stringify(createdFacts)).not.toContain(credentialA);
       expect(JSON.stringify(createdFacts)).not.toContain(credentialB);
     } finally {
@@ -273,7 +355,29 @@ async function publishCreationRequest(
   engine: Harness,
   projectId: string,
   workItemRef: string,
+  idempotencyKey = `${projectId}:${workItemRef}`,
 ): Promise<{ readonly id: string }> {
+  const response = await sendCreationRequest(engine, projectId, workItemRef, idempotencyKey);
+  expect(response.status, await response.clone().text()).toBe(201);
+  return (await response.json()) as { readonly id: string };
+}
+
+async function rejectCreationRequestWithoutIdempotencyKey(
+  engine: Harness,
+  projectId: string,
+  workItemRef: string,
+): Promise<void> {
+  const response = await sendCreationRequest(engine, projectId, workItemRef, null);
+  expect(response.status, await response.clone().text()).toBe(400);
+}
+
+async function sendCreationRequest(
+  engine: Harness,
+  projectId: string,
+  workItemRef: string,
+  idempotencyKey: string | null,
+): Promise<Response> {
+  const issueNumber = /\/issues\/([1-9]\d*)$/.exec(workItemRef)?.[1] ?? "42";
   const response = await engine.call("/test/events", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -291,20 +395,21 @@ async function publishCreationRequest(
       correlationId: `corr_${projectId}`,
       causationId: null,
       target: { binding: "sourceControl" },
-      idempotencyKey: `${projectId}:${workItemRef}`,
+      ...(idempotencyKey === null
+        ? {}
+        : { idempotencyKey: idempotencyKey ?? `${projectId}:${workItemRef}` }),
       payload: {
         repositoryId: "main",
         workItemRef,
         baseBranch: "main",
-        headBranch: `agent/${projectId}/issue-42`,
+        headBranch: `agent/${projectId}/issue-${issueNumber}`,
         headCommit: "abc1234",
         title: "feat: create pull request",
         description: "A deterministic test pull request.",
       },
     }),
   });
-  expect(response.status, await response.clone().text()).toBe(201);
-  return (await response.json()) as { readonly id: string };
+  return response;
 }
 
 async function waitForEvents(

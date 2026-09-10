@@ -18,6 +18,27 @@ export class ExternalMappingStore {
   ) {}
 
   public bind(projectId: string, moduleInstanceId: string): ExternalMappingCapability {
+    const pending = new Map<string, string>();
+    const recordResource = (idempotencyKey: string, resourceRef: string): void => {
+      this.db
+        .prepare(
+          `INSERT INTO external_mappings
+             (project_id, module_instance_id, idempotency_key, status, resource_ref, created_at)
+           VALUES (@projectId, @moduleInstanceId, @idempotencyKey, 'completed', @resourceRef, @createdAt)
+           ON CONFLICT (project_id, module_instance_id, idempotency_key) DO UPDATE SET
+             status = 'completed',
+             resource_ref = excluded.resource_ref
+           WHERE external_mappings.resource_ref IS NULL`,
+        )
+        .run({
+          projectId,
+          moduleInstanceId,
+          idempotencyKey,
+          resourceRef,
+          createdAt: this.clock.now().toISOString(),
+        });
+    };
+
     return {
       recordAttempt: (idempotencyKey) => {
         this.db
@@ -35,25 +56,17 @@ export class ExternalMappingStore {
           });
       },
       recordResource: ({ idempotencyKey, resourceRef }) => {
-        this.db
-          .prepare(
-            `INSERT INTO external_mappings
-               (project_id, module_instance_id, idempotency_key, status, resource_ref, created_at)
-             VALUES (@projectId, @moduleInstanceId, @idempotencyKey, 'completed', @resourceRef, @createdAt)
-             ON CONFLICT (project_id, module_instance_id, idempotency_key) DO UPDATE SET
-               status = 'completed',
-               resource_ref = excluded.resource_ref
-             WHERE external_mappings.resource_ref IS NULL`,
-          )
-          .run({
-            projectId,
-            moduleInstanceId,
-            idempotencyKey,
-            resourceRef,
-            createdAt: this.clock.now().toISOString(),
-          });
+        if (this.db.inTransaction) {
+          recordResource(idempotencyKey, resourceRef);
+        } else {
+          pending.set(idempotencyKey, resourceRef);
+        }
       },
       read: (idempotencyKey) => {
+        const pendingResource = pending.get(idempotencyKey);
+        if (pendingResource !== undefined) {
+          return { status: "completed", resourceRef: pendingResource };
+        }
         const row = this.db
           .prepare(
             `SELECT status, resource_ref
@@ -62,13 +75,17 @@ export class ExternalMappingStore {
                AND module_instance_id = @moduleInstanceId
                AND idempotency_key = @idempotencyKey`,
           )
-          .get({ projectId, moduleInstanceId, idempotencyKey }) as
-          | ExternalMappingRow
-          | undefined;
+          .get({ projectId, moduleInstanceId, idempotencyKey }) as ExternalMappingRow | undefined;
         if (row === undefined) return undefined;
         return row.resource_ref === null
           ? { status: row.status }
           : { status: row.status, resourceRef: row.resource_ref };
+      },
+      flushPending: () => {
+        for (const [idempotencyKey, resourceRef] of pending) {
+          recordResource(idempotencyKey, resourceRef);
+        }
+        pending.clear();
       },
     };
   }

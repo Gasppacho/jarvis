@@ -69,6 +69,16 @@ describe("ExternalMappingStore", () => {
     expect(otherMapping.read("request-1")).toBeUndefined();
     expect(otherInstance.read("request-1")).toBeUndefined();
     expect(mapping.read("missing")).toBeUndefined();
+
+    database.transaction(() => mapping.flushPending?.())();
+    expect(
+      database
+        .prepare(
+          `SELECT status, resource_ref FROM external_mappings
+           WHERE project_id = 'project-a' AND module_instance_id = 'module-a'`,
+        )
+        .get(),
+    ).toEqual({ status: "completed", resource_ref: "resource-1" });
   });
 });
 
