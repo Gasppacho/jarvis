@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,17 +14,35 @@ import {
 import type { ProjectBindings } from "../../../packages/project-runtime/src/project-types.js";
 import { startEngine, type Harness } from "./harness.js";
 import { makeNodeRepositoryFixture } from "./repository-fixture.js";
+import { SystemClock } from "../../../packages/kernel/src/clock.js";
+import { GitHubCliCredentialResolver } from "../../../packages/modules/github/src/index.js";
+import { loadBundledModuleHost } from "../src/modules/bundled-module-registry.js";
+import { ProjectModuleCapabilityResolver } from "../src/executions/capabilities.js";
+import { LocalAgentRuntimeRegistry } from "../src/projects/resource-grants.js";
+import { ProjectStore } from "../src/projects/store.js";
+import { RuntimeRegistry } from "../src/runtimes/registry.js";
+import { ConnectionRegistry } from "../src/connections/registry.js";
 
 const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const engines: Harness[] = [];
 const roots: string[] = [];
 const repositories: string[] = [];
+const servers: Server[] = [];
 
 afterEach(async () => {
   await Promise.all(engines.splice(0).map((engine) => engine.dispose()));
   for (const path of [...repositories.splice(0), ...roots.splice(0)]) {
     rmSync(path, { recursive: true, force: true });
   }
+  await Promise.all(
+    servers.splice(0).map(
+      (server) =>
+        new Promise<void>((resolve) => {
+          server.closeAllConnections();
+          server.close(() => resolve());
+        }),
+    ),
+  );
 });
 
 describe("project connection bindings", () => {
@@ -145,6 +164,146 @@ describe("project connection bindings", () => {
 
     expect((await readBindings(engine, project.id)).slots).toEqual({});
   });
+
+  it("proves project-scoped GitHub resolution and keeps credentials out of durable state", async () => {
+    const credentialA = "ghs_project_a_sentinel";
+    const credentialB = "ghs_project_b_sentinel";
+    const fakeGhRoot = mkdtempSync(join(tmpdir(), "jarvis-gh-isolation-"));
+    roots.push(fakeGhRoot);
+    const fakeGh = join(fakeGhRoot, "gh");
+    writeFileSync(
+      fakeGh,
+      `#!/bin/sh
+case "$*" in
+  *"--user AccountA"*) printf '%s\\n' '${credentialA}';;
+  *"--user AccountB"*) printf '%s\\n' '${credentialB}';;
+  *) exit 1;;
+esac
+`,
+      "utf8",
+    );
+    chmodSync(fakeGh, 0o755);
+    const requests: { path: string; account: "A" | "B" | "unknown" }[] = [];
+    const github = createServer((request, response) => {
+      const authorization = request.headers.authorization;
+      const account =
+        authorization === `Bearer ${credentialA}`
+          ? "A"
+          : authorization === `Bearer ${credentialB}`
+            ? "B"
+            : "unknown";
+      requests.push({ path: request.url ?? "", account });
+      response.writeHead(account === "unknown" ? 401 : 200, {
+        "content-type": "application/json",
+      });
+      response.end(
+        JSON.stringify(
+          account === "unknown" ? { message: "Bad credentials" } : { login: `Account${account}` },
+        ),
+      );
+    });
+    servers.push(github);
+    const apiBaseUrl = await listen(github);
+    const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-connection-isolation-"));
+    roots.push(dataRoot);
+    const engine = await startEngine({
+      dataRoot,
+      env: { JARVIS_GH_EXECUTABLE: fakeGh, JARVIS_GITHUB_API_BASE_URL: apiBaseUrl },
+    });
+    engines.push(engine);
+    const responses: string[] = [];
+    const register = async (id: string, account: string): Promise<void> => {
+      const response = await engine.call("/v1/connections", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          id,
+          kind: "github",
+          displayName: account,
+          secretRef: `gh://${account}`,
+        }),
+      });
+      responses.push(await response.clone().text());
+      expect(response.status).toBe(201);
+      const validated = await engine.call(`/v1/connections/${encodeURIComponent(id)}/validate`, {
+        method: "POST",
+      });
+      responses.push(await validated.clone().text());
+      expect(validated.status).toBe(200);
+    };
+    await register("connection/github-a", "AccountA");
+    await register("connection/github-b", "AccountB");
+    const projectA = await createProject(
+      engine,
+      "project-isolation-a",
+      githubOnlyConfiguration("project-isolation-a"),
+    );
+    const projectB = await createProject(
+      engine,
+      "project-isolation-b",
+      githubOnlyConfiguration("project-isolation-b"),
+    );
+    await bindGitHubProject(engine, projectA.id, "connection/github-a");
+    await bindGitHubProject(engine, projectB.id, "connection/github-b");
+    const reportA = await engine.call(`/v1/projects/${projectA.id}/validation-report`, {
+      method: "POST",
+    });
+    const reportB = await engine.call(`/v1/projects/${projectB.id}/validation-report`, {
+      method: "POST",
+    });
+    const reportABody = (await reportA.json()) as {
+      valid: boolean;
+      compositionFingerprint: string;
+    };
+    const reportBBody = (await reportB.json()) as {
+      valid: boolean;
+      compositionFingerprint: string;
+    };
+    expect(reportABody.valid, JSON.stringify(reportABody)).toBe(true);
+    expect(reportBBody.valid, JSON.stringify(reportBBody)).toBe(true);
+    await activate(engine, projectA.id, reportABody.compositionFingerprint);
+    await activate(engine, projectB.id, reportBBody.compositionFingerprint);
+    const stderr = engine.stderr();
+    await engine.dispose();
+    engines.splice(engines.indexOf(engine), 1);
+
+    const database = new Database(join(dataRoot, "jarvis.sqlite"));
+    const store = new ProjectStore(database, new SystemClock());
+    const connections = new ConnectionRegistry(database);
+    const runtimeRegistry = new RuntimeRegistry(database);
+    const modules = loadBundledModuleHost(join(ROOT, "dist/engine"));
+    const credentials = new GitHubCliCredentialResolver({
+      cwd: process.cwd(),
+      knownExecutablePaths: [fakeGh],
+      allowShellProbe: false,
+    });
+    const resolver = new ProjectModuleCapabilityResolver(
+      store,
+      modules,
+      new LocalAgentRuntimeRegistry(runtimeRegistry),
+      undefined,
+      connections,
+      credentials,
+      apiBaseUrl,
+    );
+    const capabilityA = resolver.resolve(projectA.id, "github", "jarvis.module.github");
+    const capabilityB = resolver.resolve(projectB.id, "github", "jarvis.module.github");
+    await expect(capabilityA.githubApi?.get("/user")).resolves.toMatchObject({ status: 200 });
+    await expect(capabilityB.githubApi?.get("/user")).resolves.toMatchObject({ status: 200 });
+    database.close();
+
+    expect(
+      requests.filter((request) => request.path === "/user").map((request) => request.account),
+    ).toEqual(["A", "B", "A", "B"]);
+    expect(responses.join("\n")).not.toContain(credentialA);
+    expect(responses.join("\n")).not.toContain(credentialB);
+    expect(stderr).not.toContain(credentialA);
+    expect(stderr).not.toContain(credentialB);
+    const durable = readdirBytes(dataRoot);
+    expect(durable).not.toContain(credentialA);
+    expect(durable).not.toContain(credentialB);
+    expect(durable).not.toContain("/Users/");
+  });
 });
 
 async function start(dataRoot: string): Promise<Harness> {
@@ -161,8 +320,8 @@ async function stop(engine: Harness): Promise<void> {
 async function createProject(
   engine: Harness,
   id: string,
+  configuration: Record<string, unknown> = portableConfiguration(id),
 ): Promise<{ id: string; repositoryPath: string }> {
-  const configuration = portableConfiguration(id);
   const repositoryPath = makeNodeRepositoryFixture({
     projectYaml: stringifyYaml(configuration),
   });
@@ -206,6 +365,103 @@ function portableConfiguration(id: string): Record<string, unknown> {
   ) as Record<string, unknown>;
   configuration["metadata"] = { id, name: id };
   return configuration;
+}
+
+function githubOnlyConfiguration(id: string): Record<string, unknown> {
+  const configuration = portableConfiguration(id);
+  configuration["slots"] = {
+    sourceControl: { requires: "scm.change-request.manage" },
+    tickets: { requires: "work-items.read" },
+  };
+  configuration["modules"] = [
+    {
+      instanceId: "github",
+      moduleId: "jarvis.module.github",
+      enabled: true,
+      bindings: { sourceControl: "sourceControl", tickets: "tickets" },
+      configuration: {
+        bootstrapLabelPolicy: "ignore-existing",
+        pollIntervalSeconds: 60,
+        repositories: ["main"],
+      },
+    },
+  ];
+  return configuration;
+}
+
+async function bindComplete(
+  engine: Harness,
+  projectId: string,
+  connectionRef: string,
+): Promise<void> {
+  const current = await readBindings(engine, projectId);
+  const response = await engine.call(`/v1/projects/${projectId}/bindings`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      ...current,
+      slots: {
+        sourceControl: { kind: "connection", ref: connectionRef },
+        tickets: { kind: "connection", ref: connectionRef },
+        agentRuntime: { kind: "runtime", ref: "runtime/fake-test" },
+      },
+    }),
+  });
+  expect(response.status, await response.clone().text()).toBe(200);
+}
+
+async function bindGitHubProject(
+  engine: Harness,
+  projectId: string,
+  connectionRef: string,
+): Promise<void> {
+  const current = await readBindings(engine, projectId);
+  const response = await engine.call(`/v1/projects/${projectId}/bindings`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      ...current,
+      slots: {
+        sourceControl: { kind: "connection", ref: connectionRef },
+        tickets: { kind: "connection", ref: connectionRef },
+      },
+    }),
+  });
+  expect(response.status, await response.clone().text()).toBe(200);
+}
+
+async function activate(
+  engine: Harness,
+  projectId: string,
+  compositionFingerprint: string,
+): Promise<void> {
+  const response = await engine.call(`/v1/projects/${projectId}/activate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ compositionFingerprint }),
+  });
+  expect(response.status, await response.clone().text()).toBe(200);
+}
+
+function readdirBytes(root: string): string {
+  return readdirSync(root)
+    .filter((name) => name.startsWith("jarvis.sqlite"))
+    .map((name) => readFileSync(join(root, name)).toString("utf8"))
+    .join("\n");
+}
+
+function listen(server: Server): Promise<string> {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        reject(new Error("fake GitHub server did not expose a port"));
+        return;
+      }
+      resolve(`http://127.0.0.1:${address.port}`);
+    });
+  });
 }
 
 function seedConnection(
