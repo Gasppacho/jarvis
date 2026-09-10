@@ -43,6 +43,7 @@ export interface ServerDependencies {
   readonly runtimes: LocalRuntimeRegistry | undefined;
   /** Global connection inventory; absent while the engine runs degraded. */
   readonly connections: ConnectionRouteDependencies["connections"];
+  readonly connectionValidator: ConnectionRouteDependencies["validator"];
   /** The Project Registry; absent while the engine runs degraded. */
   readonly projects: LocalProjectRegistry | undefined;
   /** Validated official Module Packages available to every project. */
@@ -187,6 +188,7 @@ export function buildServer(deps: ServerDependencies): FastifyInstance {
   registerConnectionRoutes(app, {
     databaseState: deps.databaseState,
     connections: deps.connections,
+    validator: deps.connectionValidator,
   });
 
   if (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) {

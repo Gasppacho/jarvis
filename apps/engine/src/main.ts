@@ -68,6 +68,10 @@ import {
 } from "../../../packages/workspace/src/workspace-reconciler.js";
 import { WorkspaceManager } from "../../../packages/workspace/src/workspace-manager.js";
 import { ConnectionRegistry } from "./connections/registry.js";
+import {
+  GitHubCliCredentialResolver,
+  GitHubProviderCheckAdapter,
+} from "../../../packages/modules/github/src/index.js";
 
 /** See apps/engine/src/events/dispatcher.ts's identical declaration for why
  * this exists and how tsup.config.ts's `define` makes it eliminate the
@@ -236,6 +240,17 @@ async function main(): Promise<void> {
     database === undefined ? undefined : new ProjectStore(database.db, new SystemClock());
   const runtimes = database === undefined ? undefined : new RuntimeRegistry(database.db);
   const connections = database === undefined ? undefined : new ConnectionRegistry(database.db);
+  const ghExecutable = process.env["JARVIS_GH_EXECUTABLE"];
+  const connectionValidator = new GitHubProviderCheckAdapter({
+    credentialResolver: new GitHubCliCredentialResolver(
+      ghExecutable === undefined
+        ? {}
+        : { knownExecutablePaths: [ghExecutable], allowShellProbe: false },
+    ),
+    ...(process.env["JARVIS_GITHUB_API_BASE_URL"] === undefined
+      ? {}
+      : { apiBaseUrl: process.env["JARVIS_GITHUB_API_BASE_URL"] }),
+  });
   const runtimeGrants = new LocalAgentRuntimeRegistry(runtimes);
   const resourceGrants = new ProjectResourceGrantAggregate([runtimeGrants]);
   const projects =
@@ -457,6 +472,7 @@ async function main(): Promise<void> {
     repositoryDiscovery,
     runtimes,
     connections,
+    connectionValidator,
     projects,
     modules,
     isShuttingDown: () => shuttingDown,

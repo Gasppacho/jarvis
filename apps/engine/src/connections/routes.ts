@@ -3,6 +3,7 @@ import type { components } from "../api/generated/local-api.js";
 import type { DatabaseState } from "../db/open.js";
 import { EngineError } from "../errors.js";
 import type { ConnectionDescriptor, ConnectionRegistry } from "./registry.js";
+import type { GitHubProviderCheckPort } from "../../../../packages/modules/github/src/provider-check.js";
 
 type ResourceDescriptor = components["schemas"]["ResourceDescriptor"];
 
@@ -11,6 +12,7 @@ const GITHUB_CAPABILITIES = ["github.api", "scm.change-request.manage", "work-it
 export interface ConnectionRouteDependencies {
   readonly databaseState: () => DatabaseState;
   readonly connections: ConnectionRegistry | undefined;
+  readonly validator: GitHubProviderCheckPort | undefined;
 }
 
 export function registerConnectionRoutes(
@@ -34,6 +36,48 @@ export function registerConnectionRoutes(
     });
     return reply.code(201).send(toResourceDescriptor(descriptor));
   });
+
+  app.post("/v1/connections/:connectionId/validate", async (request, reply) => {
+    const registry = requireConnectionRegistry(deps);
+    const connectionId = (request.params as { connectionId?: unknown } | undefined)?.connectionId;
+    if (typeof connectionId !== "string" || connectionId === "") {
+      throw connectionNotFound(String(connectionId ?? ""));
+    }
+    const descriptor = registry.find(connectionId);
+    if (descriptor === undefined) throw connectionNotFound(connectionId);
+    if (descriptor.provider !== "github") {
+      throw new EngineError(
+        "connection.provider-unsupported",
+        400,
+        `Connection provider ${descriptor.provider} is not supported by this engine.`,
+      );
+    }
+    if (deps.validator === undefined) {
+      throw new EngineError(
+        "system.internal-error",
+        500,
+        "The GitHub connection validator is unavailable.",
+      );
+    }
+
+    const result = await deps.validator.check(descriptor.secretRef);
+    const refreshed: ConnectionDescriptor = {
+      ...descriptor,
+      status: result.status,
+      capabilities: result.status === "available" ? [...result.capabilities] : [],
+      ...(result.status === "available" ? { accountLabel: result.accountLabel } : {}),
+    };
+    registry.upsert(refreshed);
+    return reply.code(200).send(toResourceDescriptor(refreshed));
+  });
+}
+
+function connectionNotFound(connectionId: string): EngineError {
+  return new EngineError(
+    "connection.not-found",
+    404,
+    `Connection ${connectionId || "(empty)"} is not registered.`,
+  );
 }
 
 function requireConnectionRegistry(deps: ConnectionRouteDependencies): ConnectionRegistry {

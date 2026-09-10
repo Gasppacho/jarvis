@@ -46,6 +46,7 @@ Errors crossing the Local API or stored as terminal Execution errors use stable 
 |---|---:|---|
 | `connection.provider-unsupported` | No | The requested connection provider is not bundled |
 | `connection.secret-ref-invalid` | No | The request supplied a credential value instead of an opaque reference |
+| `connection.not-found` | No | The requested connection is not registered |
 
 ## Eventing
 

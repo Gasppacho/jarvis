@@ -9,6 +9,7 @@ export type ErrorCode =
   | "engine.database-unavailable"
   | "connection.provider-unsupported"
   | "connection.secret-ref-invalid"
+  | "connection.not-found"
   | "repository.path-invalid"
   | "project.already-imported"
   | "project.config-invalid"

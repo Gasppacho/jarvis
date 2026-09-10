@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,10 +9,20 @@ import { startEngine, type Harness } from "./harness.js";
 describe("connection Local API", () => {
   const engines: Harness[] = [];
   const roots: string[] = [];
+  const servers: Server[] = [];
   const validateDescriptor = localApiValidator("ResourceDescriptor");
 
   afterEach(async () => {
     await Promise.all(engines.splice(0).map((engine) => engine.dispose()));
+    await Promise.all(
+      servers.splice(0).map(
+        (server) =>
+          new Promise<void>((resolve) => {
+            server.closeAllConnections();
+            server.close(() => resolve());
+          }),
+      ),
+    );
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
   });
 
@@ -173,4 +184,143 @@ describe("connection Local API", () => {
       error: { code: "engine.database-unavailable" },
     });
   });
+
+  it("validates a registered GitHub connection, persists the refreshed descriptor and is retry-safe", async () => {
+    const credential = "ghs_validation_sentinel";
+    const fakeGhRoot = mkdtempSync(join(tmpdir(), "jarvis-gh-validation-"));
+    roots.push(fakeGhRoot);
+    const fakeGh = join(fakeGhRoot, "gh");
+    writeFileSync(fakeGh, `#!/bin/sh\nprintf '%s\\n' '${credential}'\n`, "utf8");
+    chmodSync(fakeGh, 0o755);
+
+    const requests: { method: string; path: string; authorized: boolean }[] = [];
+    const github = createServer((request, response) => {
+      requests.push({
+        method: request.method ?? "",
+        path: request.url ?? "",
+        authorized: request.headers.authorization === `Bearer ${credential}`,
+      });
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ login: "github-login" }));
+    });
+    servers.push(github);
+    const apiBaseUrl = await listen(github);
+    const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-connections-validation-"));
+    roots.push(dataRoot);
+    const options = {
+      dataRoot,
+      env: { JARVIS_GH_EXECUTABLE: fakeGh, JARVIS_GITHUB_API_BASE_URL: apiBaseUrl },
+    };
+    const engine = await start(options);
+    const registered = await register(engine, "connection/github-validation");
+    expect(registered.status).toBe(201);
+
+    const first = await engine.call("/v1/connections/connection%2Fgithub-validation/validate", {
+      method: "POST",
+    });
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as Record<string, unknown>;
+    expect(validateDescriptor(firstBody), explain(validateDescriptor)).toBe(true);
+    expect(firstBody).toEqual({
+      id: "connection/github-validation",
+      kind: "github",
+      displayName: "github-login",
+      status: "available",
+      capabilities: ["github.api", "scm.change-request.manage", "work-items.read"],
+    });
+    expect(JSON.stringify(firstBody)).not.toContain(credential);
+
+    const second = await engine.call("/v1/connections/connection%2Fgithub-validation/validate", {
+      method: "POST",
+    });
+    expect(second.status).toBe(200);
+    expect((await second.json()) as unknown).toEqual(firstBody);
+    expect(requests).toEqual([
+      { method: "GET", path: "/user", authorized: true },
+      { method: "GET", path: "/user", authorized: true },
+    ]);
+    expect((await (await engine.call("/v1/connections")).json()) as unknown).toEqual({
+      items: [firstBody],
+    });
+    expect(engine.stderr()).not.toContain(credential);
+
+    await engine.dispose();
+    engines.splice(engines.indexOf(engine), 1);
+    const restarted = await start(options);
+    const restored = await restarted.call("/v1/connections");
+    expect((await restored.json()) as unknown).toEqual({ items: [firstBody] });
+  });
+
+  it("keeps a rejected connection registered and reports unknown validation ids", async () => {
+    const fakeGhRoot = mkdtempSync(join(tmpdir(), "jarvis-gh-rejected-"));
+    roots.push(fakeGhRoot);
+    const fakeGh = join(fakeGhRoot, "gh");
+    writeFileSync(fakeGh, "#!/bin/sh\nprintf '%s\\n' 'ghs_rejected_sentinel'\n", "utf8");
+    chmodSync(fakeGh, 0o755);
+    const github = createServer((_request, response) => {
+      response.writeHead(401, { "content-type": "application/json" });
+      response.end(JSON.stringify({ message: "Bad credentials" }));
+    });
+    servers.push(github);
+    const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-connections-rejected-"));
+    roots.push(dataRoot);
+    const engine = await start({
+      dataRoot,
+      env: {
+        JARVIS_GH_EXECUTABLE: fakeGh,
+        JARVIS_GITHUB_API_BASE_URL: await listen(github),
+      },
+    });
+    await register(engine, "connection/github-rejected");
+
+    const rejected = await engine.call("/v1/connections/connection%2Fgithub-rejected/validate", {
+      method: "POST",
+    });
+    expect(rejected.status).toBe(200);
+    expect((await rejected.json()) as unknown).toMatchObject({
+      id: "connection/github-rejected",
+      status: "unauthenticated",
+      capabilities: [],
+    });
+    expect((await (await engine.call("/v1/connections")).json()) as unknown).toMatchObject({
+      items: [
+        expect.objectContaining({ id: "connection/github-rejected", status: "unauthenticated" }),
+      ],
+    });
+
+    const unknown = await engine.call("/v1/connections/connection%2Fmissing/validate", {
+      method: "POST",
+    });
+    expect(unknown.status).toBe(404);
+    expect((await unknown.json()) as unknown).toMatchObject({
+      error: { code: "connection.not-found" },
+    });
+  });
+
+  async function register(engine: Harness, id: string): Promise<Response> {
+    return engine.call("/v1/connections", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id,
+        kind: "github",
+        displayName: "Registered account",
+        secretRef: "gh://Gasppacho",
+      }),
+    });
+  }
+
+  function listen(server: Server): Promise<string> {
+    return new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => {
+        const address = server.address();
+        if (address === null || typeof address === "string") {
+          reject(new Error("fake GitHub server did not expose a port"));
+          return;
+        }
+        resolve(`http://127.0.0.1:${address.port}`);
+      });
+    });
+  }
 });
