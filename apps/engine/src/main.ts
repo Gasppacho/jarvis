@@ -30,7 +30,10 @@ import { LocalRepositoryAccessibility } from "./projects/repository-accessibilit
 import { ProjectService, RepositoryDiscoveryService } from "./projects/service.js";
 import { EventJournalReader } from "./events/timeline.js";
 import { ExecutionLedgerReader } from "./executions/ledger.js";
-import { LocalAgentRuntimeRegistry } from "./projects/resource-grants.js";
+import {
+  LocalAgentRuntimeRegistry,
+  ProjectResourceGrantAggregate,
+} from "./projects/resource-grants.js";
 import { ProjectStore } from "./projects/store.js";
 import { RuntimeRegistry } from "./runtimes/registry.js";
 import {
@@ -231,7 +234,8 @@ async function main(): Promise<void> {
   const projectStore =
     database === undefined ? undefined : new ProjectStore(database.db, new SystemClock());
   const runtimes = database === undefined ? undefined : new RuntimeRegistry(database.db);
-  const resourceGrants = new LocalAgentRuntimeRegistry(runtimes);
+  const runtimeGrants = new LocalAgentRuntimeRegistry(runtimes);
+  const resourceGrants = new ProjectResourceGrantAggregate([runtimeGrants]);
   const projects =
     database === undefined || projectStore === undefined
       ? undefined
@@ -417,7 +421,7 @@ async function main(): Promise<void> {
     const capabilities = new ProjectModuleCapabilityResolver(
       projectStore,
       modules,
-      resourceGrants,
+      runtimeGrants,
       workspaceCapabilities,
     );
     const consumer = new DeliveryConsumer(

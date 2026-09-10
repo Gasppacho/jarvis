@@ -7,7 +7,12 @@ import {
 } from "../../../../packages/agent-runtime/src/index.js";
 import { applyMigrations } from "../db/test-migrations.js";
 import { RuntimeRegistry } from "../runtimes/registry.js";
-import { LocalAgentRuntimeRegistry } from "./resource-grants.js";
+import {
+  LocalAgentRuntimeRegistry,
+  ProjectResourceGrantAggregate,
+  type ProjectResourceGrant,
+  type ProjectResourceGrantDetailsPort,
+} from "./resource-grants.js";
 
 const descriptor = (
   status: RuntimeDescriptor["status"],
@@ -65,5 +70,63 @@ describe("LocalAgentRuntimeRegistry", () => {
     });
     expect(registry.grantedToProject("project-a")).toEqual([]);
     db.close();
+  });
+});
+
+const grant = (ref: string, status: RuntimeDescriptor["status"] = "available") => ({
+  candidate: {
+    ref,
+    kind: "runtime" as const,
+    displayName: ref,
+    capabilities: ["agent.execute"],
+  },
+  status,
+});
+
+const source = (grants: readonly ProjectResourceGrant[]): ProjectResourceGrantDetailsPort => ({
+  grantedResourceDetails: () => grants,
+});
+
+describe("ProjectResourceGrantAggregate", () => {
+  it("merges source details unchanged while filtering unavailable candidates", () => {
+    const unavailable = grant("runtime/unavailable", "unavailable");
+    const available = grant("runtime/available");
+    const aggregate = new ProjectResourceGrantAggregate([
+      source([unavailable]),
+      source([available]),
+    ]);
+
+    expect(aggregate.grantedResourceDetails("project-a")).toEqual([available, unavailable]);
+    expect(aggregate.grantedResourceDetails("project-a")[0]).toBe(available);
+    expect(aggregate.grantedToProject("project-a")).toEqual([available.candidate]);
+  });
+
+  it("sorts independently of source registration and insertion order", () => {
+    const first = grant("runtime/first");
+    const second = grant("runtime/second");
+    const third = grant("runtime/third");
+    const forward = new ProjectResourceGrantAggregate([source([third, first]), source([second])]);
+    const reverse = new ProjectResourceGrantAggregate([source([second]), source([first, third])]);
+
+    expect(forward.grantedResourceDetails("project-a")).toEqual([first, second, third]);
+    expect(reverse.grantedResourceDetails("project-a")).toEqual([first, second, third]);
+  });
+
+  it("returns nothing without sources and fails on duplicate resource claims", () => {
+    const duplicate = grant("runtime/duplicate");
+    expect(new ProjectResourceGrantAggregate().grantedToProject("project-a")).toEqual([]);
+
+    expect(() =>
+      new ProjectResourceGrantAggregate([
+        source([duplicate]),
+        source([duplicate]),
+      ]).grantedToProject("project-a"),
+    ).toThrowError(
+      expect.objectContaining({
+        name: "EngineError",
+        code: "system.internal-error",
+        message: expect.stringContaining("resource grant conflict"),
+      }),
+    );
   });
 });
