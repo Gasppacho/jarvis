@@ -27,16 +27,52 @@ afterEach(async () => {
 });
 
 describe("project connection bindings", () => {
+  it("offers available connections and discloses granted ineligible statuses", async () => {
+    const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-connection-candidates-"));
+    roots.push(dataRoot);
+    const engine = await start(dataRoot);
+    seedConnection(dataRoot, "connection/github-available");
+    seedConnection(dataRoot, "connection/github-unauthenticated", "unauthenticated");
+    seedConnection(dataRoot, "connection/github-missing-capability", "available", ["github.api"]);
+    const project = await createProject(engine, "project-candidates");
+
+    const response = await engine.call(`/v1/projects/${project.id}/binding-candidates`);
+    expect(response.status).toBe(200);
+    const choices = (await response.json()) as {
+      slots: {
+        slotId: string;
+        candidates: { ref: string }[];
+        ineligibleGrantedResources?: { candidate: { ref: string }; reason: string }[];
+      }[];
+    };
+    const sourceControl = choices.slots.find((slot) => slot.slotId === "sourceControl");
+    expect(sourceControl?.candidates).toEqual([
+      expect.objectContaining({ ref: "connection/github-available" }),
+    ]);
+    expect(sourceControl?.ineligibleGrantedResources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          candidate: expect.objectContaining({ ref: "connection/github-unauthenticated" }),
+          reason: expect.stringContaining('status is "unauthenticated"'),
+        }),
+        expect.objectContaining({
+          candidate: expect.objectContaining({ ref: "connection/github-missing-capability" }),
+          reason: expect.stringContaining("scm.change-request.manage"),
+        }),
+      ]),
+    );
+  });
+
   it("isolates concurrent bindings, keeps them through restart, and replaces one slot", async () => {
     const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-connection-bindings-"));
     roots.push(dataRoot);
     const connectionA = "connection/github-a";
     const connectionB = "connection/github-b";
     const replacement = "connection/github-replacement";
+    const engine = await start(dataRoot);
     seedConnection(dataRoot, connectionA);
     seedConnection(dataRoot, connectionB);
     seedConnection(dataRoot, replacement);
-    const engine = await start(dataRoot);
 
     const projectA = await createProject(engine, "project-a");
     const projectB = await createProject(engine, "project-b");
@@ -94,9 +130,9 @@ describe("project connection bindings", () => {
     roots.push(dataRoot);
     const unavailable = "connection/github-unavailable";
     const unauthenticated = "connection/github-unauthenticated";
+    const engine = await start(dataRoot);
     seedConnection(dataRoot, unavailable, "unavailable");
     seedConnection(dataRoot, unauthenticated, "unauthenticated");
-    const engine = await start(dataRoot);
     const project = await createProject(engine, "project-invalid");
 
     for (const ref of ["connection/github-absent", unavailable, unauthenticated]) {
@@ -176,13 +212,14 @@ function seedConnection(
   dataRoot: string,
   id: string,
   status: ConnectionStatus = "available",
+  capabilities = ["github.api", "scm.change-request.manage", "work-items.read"],
 ): void {
   const database = new Database(join(dataRoot, "jarvis.sqlite"));
   new ConnectionDescriptorStore(database).upsert({
     id,
     provider: "github",
     accountLabel: id,
-    capabilities: ["github.api", "scm.change-request.manage", "work-items.read"],
+    capabilities,
     status,
     secretRef: `gh://${id}`,
   } satisfies ConnectionDescriptor);
