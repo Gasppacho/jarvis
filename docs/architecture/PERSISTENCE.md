@@ -65,8 +65,9 @@ erreur terminale suit la séquence complète ci-dessus.
 
 Avant l'invocation, la boucle réclame chaque Delivery par un lease court et
 atomique. Un lease vivant la masque aux autres workers ; sa date d'expiration
-permet la reprise après crash. Une réussite, une dead letter ou une nouvelle
-planification libère le lease.
+la rend réclamable après disparition du worker. Une réussite, une dead letter ou
+une nouvelle planification libère le lease. Cette mécanique seule ne constitue
+pas la preuve end-to-end des scénarios de crash listés dans l'acceptance MVP.
 
 ### External side effect
 

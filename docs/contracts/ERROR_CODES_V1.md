@@ -56,10 +56,21 @@ Errors crossing the Local API or stored as terminal Execution errors use stable 
 | `event.envelope-invalid` | No | Event Envelope validation failed |
 | `event.payload-invalid` | No | Payload contract validation failed |
 | `event.type-not-declared` | No | Module attempted an undeclared publication |
-| `delivery.handler-failed` | Depends | Handler failed before terminal classification |
-| `delivery.not-found` | No | No Dead Letter exists with the requested Delivery ID |
+| `delivery.not-found` | No | No Dead Letter exists with the requested Delivery ID, or its replay is already held by a live lease |
 | `delivery.retry-exhausted` | No | Retry limit reached; delivery is dead-lettered |
-| `delivery.partition-busy` | Yes | Another worker holds the partition lease |
+
+Permanent structured handler failures keep the module/provider code supplied by
+the handler in the Dead Letter. `delivery.retry-exhausted` is used when a
+retryable Delivery reaches its attempt maximum; `delivery.not-found` is emitted
+when replay is requested for a missing Dead Letter or for one already held by a
+live replay lease. Unknown failures and bounded failures while recording an
+outcome use `system.internal-error`. The current runtime emits no generic
+`delivery.handler-failed` or `delivery.partition-busy` code.
+
+`system.delivery-lease-lost` is an internal `ConsumeResult` used to discard a
+stale worker's outcome. It is neither returned as a Local API `ErrorResponse`
+nor persisted as a terminal Execution error, so it is intentionally outside
+this public v1 catalog.
 
 ## Executions
 

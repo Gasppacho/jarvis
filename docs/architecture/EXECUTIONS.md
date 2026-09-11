@@ -41,6 +41,14 @@ timed_out
 
 Les retries créent une nouvelle `attempt` liée à la même delivery logique, pas une nouvelle chaîne métier. L'Execution Ledger garde les deux.
 
+Une nouvelle tentative automatique conserve le même `inputEventId` et porte
+`replayed = false`. Un replay explicite conserve aussi cet Event et son
+idempotency key, incrémente `attempt` et porte `replayed = true`. Une tentative
+permanente ou la dernière tentative après épuisement reste dans le Ledger comme
+`failed` et sa Dead Letter pointe vers cette dernière Execution lorsqu'elle
+existe ; aucune Inbox n'est créée pour ces échecs tant qu'un essai ne termine
+pas avec succès.
+
 ## Local loop
 
 Une loop est une implémentation privée au module. Exemple Development :

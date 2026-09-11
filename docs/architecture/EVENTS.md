@@ -106,12 +106,11 @@ L'Inbox possède une contrainte unique `(consumer_instance_id, event_id)`. Une r
 
 ## Retry and dead letters
 
-- Backoff exponentiel avec jitter.
-- Nombre maximal configurable, borné par défaut.
-- Erreurs de validation ou permission : non retryables.
-- Erreurs réseau/transitoires : retryables.
-- Après épuisement : dead letter avec erreur nettoyée, tentative, timestamps et lien d'exécution.
-- Le replay est une action explicite, auditée par une Execution marquée `replayed`, et réutilise l'idempotency key de l'Event original.
+- Le handler fournit une classification structurée quand elle est sûre ; les erreurs de validation, permission et autres erreurs manifestement permanentes sont non retryables. Une erreur non classifiée reste retryable par défaut afin de ne pas perdre une panne transitoire.
+- Une erreur retryable marque l'Execution de l'essai `failed`, n'écrit pas d'Inbox et laisse la Delivery non consommée jusqu'à `next_attempt_at`.
+- Une erreur permanente est dead-letterée immédiatement avec son code structuré, son message nettoyé, le nombre d'essais et le lien vers la dernière Execution lorsqu'elle a pu être enregistrée ; elle n'écrit pas d'Inbox.
+- Après épuisement, le code de la Dead Letter devient `delivery.retry-exhausted`.
+- Le replay est une action explicite sur la même Delivery et le même Event : il réutilise donc la même idempotency key, incrémente la tentative et crée une Execution marquée `replayed`. Une réussite écrit l'Inbox de l'Event original et retire la Dead Letter ; un échec repasse par le chemin normal de Dead Letter.
 
 La politique pure est portée par `packages/eventing/src/retry-policy.ts` :
 
@@ -120,6 +119,8 @@ La politique pure est portée par `packages/eventing/src/retry-policy.ts` :
 - `MAX_RETRY_DELAY_MS` fixe le plafond dur à 60 secondes.
 - `DEFAULT_MAX_ATTEMPTS` vaut 5 ; un appelant peut choisir de 1 à `MAX_RETRY_ATTEMPTS` (10).
 - Une tentative `attempt >= maxAttempts` est épuisée et ne doit pas être planifiée à nouveau.
+
+Avant l'invocation du handler, un worker réclame la Delivery par un lease expirant. Un lease vivant exclut les autres workers ; une réussite, une nouvelle planification ou une Dead Letter le libère. Cette règle décrit l'exclusivité de la mécanique de Delivery ; la preuve end-to-end des redémarrages aux frontières de crash reste non acquise dans `docs/plans/MVP_ACCEPTANCE.md`.
 
 ## Ordering
 

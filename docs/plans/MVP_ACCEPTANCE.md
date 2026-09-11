@@ -30,12 +30,14 @@ La preuve manuelle complémentaire est enregistrée dans [l’issue #150](https:
 
 ## Reliability acceptance
 
-- [ ] Un crash après commit Outbox et avant dispatch ne perd pas l'événement.
-- [ ] Un crash après side effect GitHub et avant fact local récupère le mapping sans dupliquer.
-- [ ] Les deliveries retryables suivent un backoff borné.
-- [ ] Les erreurs permanentes arrivent en dead letter avec replay explicite.
+- [x] Un crash après commit Outbox et avant dispatch ne perd pas l'événement ([durability](../../apps/engine/test/durability.integration.test.ts), `acceptance criteria 1+2: a failpoint deterministically stops the engine after the Outbox commit and before dispatch; after restart the pending row is dispatched, journaled once, the Delivery is created and the handler's side effect happens exactly once`).
+- [x] Un crash après side effect GitHub et avant fact local récupère le mapping sans dupliquer ([GitHub Change Request](../../apps/engine/test/github-change-request.integration.test.ts), `recovers a durable mapping after the fact boundary crashes` et `adopts a pull request after creation crashes before mapping`).
+- [x] Les deliveries retryables suivent un backoff borné ([policy](../../packages/eventing/src/retry-policy.test.ts) — `grows the delay exponentially by attempt`, `pins the jitter bounds for an attempt`, `never exceeds the hard maximum delay`, `reports exhaustion against the default and caller-selected bounds` ; [delivery](../../apps/engine/src/executions/delivery-consumer.test.ts) — `does not re-offer a retryable Delivery before due and succeeds on its next attempt`).
+- [x] Les erreurs permanentes arrivent en dead letter avec replay explicite ([consumer](../../apps/engine/src/executions/delivery-consumer.test.ts) — `a permanent handler failure creates one dead letter and records no Inbox row`, `replays a dead letter with the same event and a marked next attempt` ; [Local API](../../apps/engine/test/dead-letters.integration.test.ts) — `replays a listed Dead Letter through the authenticated Local API`).
 - [ ] Un redémarrage ne crée pas deux moteurs actifs ni deux workers sur le même lease.
 - [ ] Une annulation termine le process agent et conserve/nettoie le workspace selon politique.
+
+> Gap #17/#163 : le snapshot contient les preuves séparées des deux premières frontières et les tests de mécanique de claim et de lease, mais aucune suite versionnée ne couvre encore les trois frontières dans une même matrice en prouvant simultanément perte, duplication et continuité des tentatives. La ligne du redémarrage avec lease reste donc volontairement non cochée.
 
 ## Security acceptance
 

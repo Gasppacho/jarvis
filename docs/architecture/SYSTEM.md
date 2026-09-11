@@ -88,6 +88,7 @@ Alloue un worktree et un lease par exécution de développement, protège le rep
 1. `Jarvis.app` génère un token bearer de 256 bits et un identifiant de session.
 2. Le shell lance l'exécutable moteur embarqué avec le token transmis par descripteur ou environnement éphémère.
 3. Le moteur bind `127.0.0.1` sur un port dynamique, exécute les migrations, réconcilie les Workspaces restants puis valide son build.
+   Avant SQLite et l'API, il acquiert aussi le claim atomique `.jarvis-engine.lock` du data root canonique ; un second Engine actif sur ce root est refusé, tandis qu'un claim d'un processus disparu peut être repris.
 4. Le moteur écrit une unique ligne JSON sur stdout :
 
 ```json
