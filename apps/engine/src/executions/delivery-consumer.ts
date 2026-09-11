@@ -572,7 +572,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
           this.insertDeadLetter(delivery, "delivery.retry-exhausted", message, attempt, row.id);
           this.markDeliveryConsumed(delivery, attempt);
         } else {
-          this.insertInbox(delivery, "failed", result, attempt);
+          this.insertDeadLetter(delivery, classification.code, message, 1, row.id);
           this.markDeliveryConsumed(delivery, attempt);
         }
         return row;

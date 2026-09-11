@@ -467,7 +467,7 @@ describe("DeliveryConsumer", () => {
     ).toEqual({ n: 1 });
   });
 
-  it("a handler that throws leaves the Inbox, Module state, Outbox and Delivery completion untouched, and records a failed Execution", () => {
+  it("a permanent handler failure creates one dead letter and records no Inbox row", () => {
     const { db: database, store, publisher, dispatcher, consumer } = harness();
     activate(store, "project-a", [
       { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
@@ -499,12 +499,38 @@ describe("DeliveryConsumer", () => {
       database.prepare(`SELECT COUNT(*) AS n FROM outbox WHERE event_id != ?`).get(consumed.id),
     ).toEqual({ n: 0 });
 
-    // The Execution is still recorded, as failed — not a retry schedule (#17 stays out of scope).
+    expect(
+      database.prepare(`SELECT COUNT(*) AS n FROM inbox WHERE event_id = ?`).get(consumed.id),
+    ).toEqual({
+      n: 0,
+    });
+
+    // The Execution is still recorded as failed, with the permanent outcome in the Dead Letter.
     const execution = database
       .prepare(`SELECT status, error FROM executions WHERE input_event_id = ?`)
       .get(consumed.id) as { status: string; error: string };
     expect(execution.status).toBe("failed");
     expect(execution.error).toMatch(/deterministic failure/);
+    expect(
+      database
+        .prepare(`SELECT code, message, attempts FROM dead_letters WHERE event_id = ?`)
+        .get(consumed.id),
+    ).toEqual({
+      code: "sample-probe.deterministic-failure",
+      message: "sample-probe: deterministic failure requested by payload.shouldFail",
+      attempts: 1,
+    });
+    expect(
+      database
+        .prepare(
+          `SELECT attempt_count, consumed_at, next_attempt_at FROM deliveries WHERE event_id = ?`,
+        )
+        .get(consumed.id),
+    ).toMatchObject({
+      attempt_count: 1,
+      consumed_at: expect.any(String),
+      next_attempt_at: null,
+    });
 
     // Redelivery of a failed consumption also returns the recorded outcome without retrying.
     const redelivered = consumer.consume({
@@ -520,11 +546,16 @@ describe("DeliveryConsumer", () => {
         .prepare(`SELECT COUNT(*) AS n FROM executions WHERE input_event_id = ?`)
         .get(consumed.id),
     ).toEqual({ n: 1 });
-    // Fix review #57: the failure path must complete the Delivery too, not
-    // just the happy path (previously only asserted above).
     expect(
-      database.prepare(`SELECT consumed_at FROM deliveries WHERE event_id = ?`).get(consumed.id),
-    ).not.toEqual({ consumed_at: null });
+      database
+        .prepare(`SELECT COUNT(*) AS n FROM executions WHERE input_event_id = ?`)
+        .get(consumed.id),
+    ).toEqual({ n: 1 });
+    expect(
+      database
+        .prepare(`SELECT COUNT(*) AS n FROM dead_letters WHERE event_id = ?`)
+        .get(consumed.id),
+    ).toEqual({ n: 1 });
   });
 
   it("leaves a retryable failure unfinished with its next attempt scheduled", () => {
@@ -721,8 +752,8 @@ describe("DeliveryConsumer", () => {
     // runs and fails first, so the original handler error must survive the
     // wrapper without relying on an Execution collision before invocation.
     database.exec(
-      "CREATE TRIGGER fail_inbox_recording BEFORE INSERT ON inbox " +
-        "WHEN NEW.status = 'failed' BEGIN SELECT RAISE(ABORT, 'deterministic inbox recording failure'); END",
+      "CREATE TRIGGER fail_dead_letter_recording BEFORE INSERT ON dead_letters " +
+        "BEGIN SELECT RAISE(ABORT, 'deterministic dead-letter recording failure'); END",
     );
 
     const delivery = {
@@ -745,8 +776,7 @@ describe("DeliveryConsumer", () => {
     // The original handler failure must not be lost inside the wrapper.
     expect(engineError.message).toMatch(/deterministic failure/);
 
-    // The Delivery is left unresolved (no retry schedule exists yet — #17):
-    // this is a loud failure, not a silent strand.
+    // The Delivery is left unresolved when recording the permanent outcome itself fails.
     expect(
       database.prepare(`SELECT consumed_at FROM deliveries WHERE event_id = ?`).get(consumed.id),
     ).toEqual({ consumed_at: null });
@@ -906,7 +936,7 @@ describe("DeliveryConsumer", () => {
     });
   });
 
-  it("records an async rejection as failed without committing buffered publications", async () => {
+  it("dead-letters an async permanent rejection without committing buffered publications", async () => {
     const handler = async (context: ModuleHandlerContext) => {
       context.publish({
         type: SAMPLE_PROBE_PONGED.type,
@@ -915,7 +945,7 @@ describe("DeliveryConsumer", () => {
         subject: context.event.subject,
         payload: { shouldNotPublish: true },
       });
-      throw Object.assign(new Error("async deterministic failure"), {
+      throw Object.assign(new Error("async deterministic failure at /Users/alice/.cache"), {
         code: "sample-probe.async-failure",
         retryable: false,
       });
@@ -940,20 +970,23 @@ describe("DeliveryConsumer", () => {
       error: {
         code: "sample-probe.async-failure",
         retryable: false,
-        message: "async deterministic failure",
+        message: "async deterministic failure at <path>",
       },
     });
     expect(database.prepare("SELECT COUNT(*) AS n FROM executions").get()).toEqual({ n: 1 });
     expect(database.prepare("SELECT COUNT(*) AS n FROM outbox").get()).toEqual({ n: 1 });
-    expect(database.prepare("SELECT status, result FROM inbox").get()).toEqual({
-      status: "failed",
-      result: JSON.stringify({
-        error: {
-          code: "sample-probe.async-failure",
-          retryable: false,
-          message: "async deterministic failure",
-        },
-      }),
+    expect(database.prepare("SELECT COUNT(*) AS n FROM inbox").get()).toEqual({ n: 0 });
+    expect(database.prepare("SELECT code, message, attempts FROM dead_letters").get()).toEqual({
+      code: "sample-probe.async-failure",
+      message: "async deterministic failure at <path>",
+      attempts: 1,
+    });
+    expect(
+      database.prepare("SELECT attempt_count, consumed_at, next_attempt_at FROM deliveries").get(),
+    ).toMatchObject({
+      attempt_count: 1,
+      consumed_at: expect.any(String),
+      next_attempt_at: null,
     });
 
     const redelivered = consumer.consume(delivery);
@@ -963,11 +996,11 @@ describe("DeliveryConsumer", () => {
       result: {
         error: {
           code: "sample-probe.async-failure",
-          retryable: false,
-          message: "async deterministic failure",
+          message: "async deterministic failure at <path>",
         },
       },
     });
+    expect(database.prepare("SELECT COUNT(*) AS n FROM executions").get()).toEqual({ n: 1 });
   });
 
   it("cancels a running async handler through its AbortSignal and records cancelled", async () => {
