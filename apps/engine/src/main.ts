@@ -21,7 +21,13 @@ import {
   handleImplementationRequested,
 } from "../../../packages/modules/development/src/index.js";
 import { ConfigError, loadConfig } from "./config.js";
-import { openDatabase, type DatabaseState, type OpenedDatabase } from "./db/open.js";
+import {
+  openDatabase,
+  prepareDataRoot,
+  type DatabaseState,
+  type OpenedDatabase,
+} from "./db/open.js";
+import { acquireEngineClaim, EngineAlreadyRunningError, type EngineClaim } from "./engine-claim.js";
 import { buildServer } from "./http/server.js";
 import { watchParentProcess } from "./parent-watch.js";
 import { API_VERSION } from "./version.js";
@@ -129,6 +135,20 @@ async function main(): Promise<void> {
   process.stderr.on("error", () => {});
 
   const config = loadConfig(process.env);
+  let preparedDataRoot: string | undefined;
+  let engineClaim: EngineClaim | undefined;
+  try {
+    preparedDataRoot = prepareDataRoot(config.dataRoot);
+    engineClaim = acquireEngineClaim(preparedDataRoot, config.sessionId);
+    process.once("exit", () => engineClaim?.release());
+  } catch (error) {
+    // A root that cannot be prepared already follows the degraded-database
+    // path below. A prepared root must never continue without an exclusive
+    // claim, because that would reintroduce concurrent database access.
+    if (preparedDataRoot !== undefined || error instanceof EngineAlreadyRunningError) {
+      throw error;
+    }
+  }
   // Ticket #60: one per Engine Session, keyed by the same `sessionId` the
   // ready handshake already reports to the shell (config.ts) — the Engine
   // Session identifier this ticket's stream reuses rather than inventing a
@@ -196,6 +216,7 @@ async function main(): Promise<void> {
       // Closing the handle is what checkpoints the WAL, so its failure is the
       // one that must not be reported as a clean shutdown.
       if (!closeDatabase()) code = 1;
+      engineClaim?.release();
       process.exit(code);
     }
   }
@@ -234,7 +255,7 @@ async function main(): Promise<void> {
   // above is bypassed: a degraded engine creates no database file, it only
   // reports that it cannot.
   try {
-    opened = openDatabase(config.databasePath);
+    opened = openDatabase(config.databasePath, preparedDataRoot);
   } catch (error) {
     report(
       `jarvis-engine: the database could not be opened: ${String(error)}\n` +
@@ -577,7 +598,9 @@ function parsePositiveMilliseconds(raw: string | undefined): number | undefined 
 
 main().catch((error: unknown) => {
   // Bootstrap failures must be actionable: the shell surfaces this text verbatim.
-  if (error instanceof ConfigError) {
+  if (error instanceof EngineAlreadyRunningError) {
+    report(`jarvis-engine: ${error.code}\n${error.message}\n`);
+  } else if (error instanceof ConfigError) {
     report(`jarvis-engine: ${error.message}\n${error.remedy}\n`);
   } else {
     report(`jarvis-engine: failed to start.\n${String(error)}\n`);

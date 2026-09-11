@@ -38,13 +38,13 @@ export interface OpenedDatabase {
  */
 const MIGRATIONS_DIR = fileURLToPath(new URL("./migrations/", import.meta.url));
 
-export function openDatabase(databasePath: string): OpenedDatabase {
+export function openDatabase(databasePath: string, preparedDataRoot?: string): OpenedDatabase {
   // Order matters: the data root is made private to this user first, so nothing
   // can be planted beside the database between the check below and the open.
   // Everything afterwards uses the canonical directory the checks validated —
   // going back to the literal path would re-open the door to an intermediate
   // symlink that was never lstat'ed.
-  const dataRoot = prepareDataRoot(dirname(databasePath));
+  const dataRoot = preparedDataRoot ?? prepareDataRoot(dirname(databasePath));
   const canonicalPath = join(dataRoot, basename(databasePath));
   assertRegularFileOrAbsent(canonicalPath);
 
@@ -110,7 +110,7 @@ function prepare(db: Database.Database, databasePath: string): Omit<OpenedDataba
  *
  * Returns the canonical path, which is the only one later steps may use.
  */
-function prepareDataRoot(dataRoot: string): string {
+export function prepareDataRoot(dataRoot: string): string {
   const absolute = resolve(dataRoot);
 
   // lstat before mkdir: `mkdirSync` throws EEXIST or ENOENT for a file or a

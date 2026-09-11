@@ -7,6 +7,7 @@ Errors crossing the Local API or stored as terminal Execution errors use stable 
 | Code | Retryable | Meaning |
 |---|---:|---|
 | `system.engine-start-failed` | No | Embedded Engine did not complete handshake |
+| `system.engine-already-running` | No | Another Engine already owns the requested data root |
 | `system.api-version-incompatible` | No | Shell and Engine API versions cannot communicate |
 | `api.unauthorized` | No | Missing or invalid session token |
 | `api.host-not-allowed` | No | Request did not address the loopback interface |
