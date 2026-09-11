@@ -134,6 +134,7 @@ esac
     }
 
     await waitForFactCount(engine, project.id, 3);
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
     const database = new Database(`${engine.dataRoot}/jarvis.sqlite`);
     try {
@@ -170,6 +171,20 @@ esac
           .prepare("SELECT COUNT(*) AS count FROM outbox WHERE project_id = ?")
           .get(project.id),
       ).toEqual({ count: 3 });
+      expect(
+        database
+          .prepare(
+            `SELECT idempotency_key, resource_ref
+             FROM external_mappings
+             WHERE project_id = ? AND module_instance_id = ?
+             ORDER BY idempotency_key`,
+          )
+          .all(project.id, "github"),
+      ).toEqual([
+        { idempotency_key: "1", resource_ref: expect.stringMatching(/^evt_/) },
+        { idempotency_key: "2", resource_ref: expect.stringMatching(/^evt_/) },
+        { idempotency_key: "3", resource_ref: expect.stringMatching(/^evt_/) },
+      ]);
       expect(
         database
           .prepare(
