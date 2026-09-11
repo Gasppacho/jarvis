@@ -2566,6 +2566,98 @@ capabilities:
       ]);
     });
 
+    it("broadcasts fact edges to enabled compatible consumers and keeps unconsumed facts auditable", async () => {
+      const runtimeRoot = runtimeWithEmbeddedValidComposition();
+      const producerManifest = join(runtimeRoot, "modules/automation-rules/module.manifest.yaml");
+      writeFileSync(
+        producerManifest,
+        asUntargetedFactProducer(readFileSync(producerManifest, "utf8")),
+        "utf8",
+      );
+      const workerManifest = join(
+        runtimeRoot,
+        "modules/change-request-review/module.manifest.yaml",
+      );
+      writeFileSync(
+        workerManifest,
+        readFileSync(workerManifest, "utf8")
+          .replace("      kind: request", "      kind: fact")
+          .replace(
+            "  produces: []",
+            `  produces:
+    - type: scm.change-request.created
+      version: 1
+      kind: fact
+      schemaRef: contracts/events/scm.change-request.created.v1.schema.json`,
+          ),
+        "utf8",
+      );
+      const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+      const root = fixture(() => makeNodeRepositoryFixture());
+      const created = (await (
+        await importProject(engine, {
+          repositoryPath: root,
+          portableConfig: embeddedPortableConfig([
+            automationInstance(),
+            workerInstance(),
+            { ...workerInstance("disabled-worker"), enabled: false },
+          ]),
+        })
+      ).json()) as { id: string };
+      const report = (await (
+        await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+      ).json()) as { valid: boolean; compositionFingerprint: string; findings: unknown[] };
+      expect(report.valid, JSON.stringify(report.findings)).toBe(true);
+      expect(
+        (
+          await activate(engine, created.id, {
+            compositionFingerprint: report.compositionFingerprint,
+          })
+        ).status,
+      ).toBe(200);
+
+      const response = await engine.call(`/v1/projects/${created.id}/graph`);
+      expect(response.status, await response.clone().text()).toBe(200);
+      const graph = (await response.json()) as {
+        edges: {
+          kind: string;
+          contract: { type: string; version: number; kind: string };
+          from: { instanceId: string; moduleId: string };
+          to?: { instanceId: string; moduleId: string };
+          findings: string[];
+        }[];
+      };
+      expect(graph.edges).toEqual([
+        {
+          kind: "fact",
+          contract: {
+            type: "development.implementation.requested",
+            version: 1,
+            kind: "fact",
+          },
+          from: {
+            instanceId: "automation-rules",
+            moduleId: "jarvis.module.automation-rules",
+          },
+          to: {
+            instanceId: "request-worker",
+            moduleId: "jarvis.module.change-request-review",
+          },
+          findings: [],
+        },
+        {
+          kind: "fact",
+          contract: { type: "scm.change-request.created", version: 1, kind: "fact" },
+          from: {
+            instanceId: "request-worker",
+            moduleId: "jarvis.module.change-request-review",
+          },
+          findings: [],
+        },
+      ]);
+      expect(JSON.stringify(graph.edges)).not.toContain("disabled-worker");
+    });
+
     it("is idempotent: repeated activation of an unchanged composition writes no second Resolved Project", async () => {
       const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-project-activate-idempotent-"));
       try {

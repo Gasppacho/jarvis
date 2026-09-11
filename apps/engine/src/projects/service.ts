@@ -1,13 +1,17 @@
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
+import { resolveConsumers } from "../../../../packages/eventing/src/routing.js";
 import type { ModuleHost } from "../../../../packages/kernel/src/module-host.js";
 import {
   projectResourceCandidates,
   type ProjectCompositionValidationPort,
 } from "../../../../packages/project-runtime/src/composition-validator.js";
 import { previewProjectCompositionChoices } from "../../../../packages/project-runtime/src/composition-choices.js";
-import { buildProjectCompositionGraph } from "../../../../packages/project-runtime/src/composition-graph.js";
+import {
+  buildProjectCompositionGraph,
+  type ProjectCompositionGraphEdge,
+} from "../../../../packages/project-runtime/src/composition-graph.js";
 import { deriveProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
 import { EventJournalReader, type ListEventsQuery } from "../events/timeline.js";
 import type { DeadLetterReader } from "../events/dead-letters.js";
@@ -356,8 +360,48 @@ export class ProjectService implements ProjectRegistry<
         };
       })
       .sort((left, right) => left.instanceId.localeCompare(right.instanceId));
+    const subscriptions = deriveProjectSubscriptions(
+      project.id,
+      resolved?.moduleInstances ?? [],
+      this.modules,
+    );
+    const edges: ProjectCompositionGraphEdge[] = (resolved?.moduleInstances ?? [])
+      .filter((instance) => instance.enabled)
+      .flatMap((producer) =>
+        (this.modules.composition(producer.moduleId)?.produces ?? [])
+          .filter((contract) => contract.kind === "fact")
+          .flatMap((contract): ProjectCompositionGraphEdge[] => {
+            const consumers = resolveConsumers(
+              { type: contract.type, version: contract.version, kind: "fact" },
+              subscriptions.items,
+            );
+            const from = { instanceId: producer.instanceId, moduleId: producer.moduleId };
+            const graphContract = {
+              type: contract.type,
+              version: contract.version,
+              kind: "fact" as const,
+            };
+            if (consumers.length === 0) {
+              return [{ kind: "fact" as const, contract: graphContract, from, findings: [] }];
+            }
+            return consumers.map((consumer) => ({
+              kind: "fact" as const,
+              contract: graphContract,
+              from,
+              to: { instanceId: consumer.moduleInstanceId, moduleId: consumer.moduleId },
+              findings: [],
+            }));
+          }),
+      )
+      .sort(
+        (left, right) =>
+          left.contract.type.localeCompare(right.contract.type) ||
+          left.contract.version - right.contract.version ||
+          left.from.instanceId.localeCompare(right.from.instanceId) ||
+          (left.to?.instanceId ?? "").localeCompare(right.to?.instanceId ?? ""),
+      );
 
-    return { nodes, edges: [], valid: true, issues: [] };
+    return { nodes, edges, valid: true, issues: [] };
   }
 
   /**
