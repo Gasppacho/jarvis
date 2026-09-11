@@ -9,6 +9,7 @@ struct RootView: View {
     let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
     let timeline: ProjectTimelineModel
+    let deadLetters: ProjectDeadLettersModel
     let connections: ConnectionsModel
 
     private let selectionPolicy = ProjectSelectionReconciliationPolicy()
@@ -121,6 +122,7 @@ struct RootView: View {
                     projectConfiguration: projectConfiguration,
                     moduleCatalog: moduleCatalog,
                     timeline: timeline,
+                    deadLetters: deadLetters,
                     project: project)
             } else {
                 ContentUnavailableView(

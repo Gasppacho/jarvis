@@ -10,12 +10,14 @@ public struct ProjectDetailView: View {
     private enum Tab: Hashable {
         case composition
         case timeline
+        case deadLetters
     }
 
     let projects: ProjectsModel
     let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
     let timeline: ProjectTimelineModel
+    let deadLetters: ProjectDeadLettersModel
     let project: Project
 
     @State private var isDeleteConfirmationPresented = false
@@ -32,12 +34,14 @@ public struct ProjectDetailView: View {
         projectConfiguration: ProjectConfigurationModel,
         moduleCatalog: ModuleCatalogModel,
         timeline: ProjectTimelineModel,
+        deadLetters: ProjectDeadLettersModel,
         project: Project
     ) {
         self.projects = projects
         self.projectConfiguration = projectConfiguration
         self.moduleCatalog = moduleCatalog
         self.timeline = timeline
+        self.deadLetters = deadLetters
         self.project = project
     }
 
@@ -46,6 +50,7 @@ public struct ProjectDetailView: View {
             Picker("View", selection: $selectedTab) {
                 Text("Composition").tag(Tab.composition)
                 Text("Timeline").tag(Tab.timeline)
+                Text("Dead Letters").tag(Tab.deadLetters)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -61,6 +66,8 @@ public struct ProjectDetailView: View {
                 // that other one, including while it is still loading
                 // (ProjectTimelineModel keys state by projectId).
                 ProjectTimelineView(timeline: timeline, projectId: project.id)
+            case .deadLetters:
+                ProjectDeadLettersView(model: deadLetters, projectId: project.id)
             }
         }
         .task(id: refreshID) {

@@ -304,6 +304,38 @@ public struct EngineClient: Sendable {
         }
     }
 
+    public func listProjectDeadLetters(projectId: String) async throws -> [DeadLetter] {
+        let operation = "GET /v1/projects/\(projectId)/dead-letters"
+        let output = try await underlying.listProjectDeadLetters(
+            .init(path: .init(projectId: projectId)))
+        switch output {
+        case .ok(let ok):
+            return try ok.body.json.items.map(DeadLetter.init(payload:))
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .undocumented(let statusCode, _):
+            throw EngineClientError.unexpectedResponse("\(operation) returned \(statusCode)")
+        }
+    }
+
+    public func replayDeadLetter(deliveryId: String) async throws {
+        let operation = "POST /v1/dead-letters/\(deliveryId)/replay"
+        let output = try await underlying.replayDeadLetter(
+            .init(path: .init(deliveryId: deliveryId)))
+        switch output {
+        case .accepted(_):
+            return
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
     public func previewProjectCompositionChoices(
         projectId: String,
         portableConfig: Components.Schemas.PortableProjectConfiguration? = nil
