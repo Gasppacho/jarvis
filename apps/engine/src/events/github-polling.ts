@@ -291,9 +291,7 @@ function portableRepository(
     (repository) => repository.id === configuredRepositoryId,
   );
   if (declared !== undefined) return declared.id;
-  return snapshot.composition.repositories.length === 1 && configuredIndex === 0
-    ? snapshot.composition.repositories[0]?.id
-    : undefined;
+  return snapshot.composition.repositories[configuredIndex]?.id;
 }
 
 function bootstrapLabelPolicy(

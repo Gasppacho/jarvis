@@ -193,9 +193,13 @@ activation réussie, `items` est vide. Ouvrir une subscription n'est pas délivr
 Event : cette opération ne dispatche rien, ne délivre aucun Event et ne démarre aucune
 exécution — la delivery reste le ticket #6.
 
-## One repository in MVP
+## Logical repositories in MVP
 
-Le schema conserve une liste `repositories` avec `repositoryId`, mais le validateur MVP exige exactement un élément identifié `main`. Cette forme évite un breaking change lorsque le multi-repository sera ajouté.
+Le schema conserve une liste `repositories` avec des IDs uniques. Plusieurs IDs
+peuvent être observés par un Module Instance ; dans le MVP ils partagent encore
+le même root local `.` et donc le même Repository Grant. Cette limite sépare les
+remotes logiques (par exemple plusieurs dépôts GitHub) du futur multi-root local,
+sans confondre leurs cursors ni leurs identifiants dans les Events.
 
 ## Project template
 

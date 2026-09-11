@@ -477,28 +477,28 @@ export class ProjectService implements ProjectRegistry<
       eligibleCandidates(current.id, current.portableConfig, this.modules, this.resourceGrants),
       this.modules,
     );
-    const repositoryId = current.portableConfig.repositories[0]?.id ?? "main";
-    const supplied = bindings.repositories[repositoryId];
-    if (supplied === undefined || Object.keys(bindings.repositories).length !== 1) {
+    const repositoryIds = current.portableConfig.repositories.map((repository) => repository.id);
+    const suppliedIds = Object.keys(bindings.repositories);
+    const complete =
+      suppliedIds.length === repositoryIds.length &&
+      repositoryIds.every((repositoryId) => {
+        const supplied = bindings.repositories[repositoryId];
+        return (
+          supplied !== undefined &&
+          supplied.path === current.repositoryPath &&
+          supplied.bookmarkRef === current.bookmarkRef
+        );
+      });
+    if (!complete || suppliedIds.some((repositoryId) => !repositoryIds.includes(repositoryId))) {
       throw new EngineError(
         "project.bindings-invalid",
         400,
-        `/repositories must contain only the declared repository ${repositoryId}.`,
+        "/repositories must contain exactly the declared repositories and preserve their Local Bindings.",
       );
     }
 
     // Generic Local Bindings replacement cannot establish or replace the shell-owned
     // Repository Grant. Only the dedicated repository binding operation may do that.
-    if (
-      supplied.bookmarkRef !== null &&
-      (supplied.bookmarkRef !== current.bookmarkRef || supplied.path !== current.repositoryPath)
-    ) {
-      throw new EngineError(
-        "project.bindings-invalid",
-        400,
-        "/repositories/main must preserve the shell-established Repository Grant.",
-      );
-    }
 
     const updated = this.store.transaction(() =>
       this.store.replaceBindings(
@@ -515,8 +515,7 @@ export class ProjectService implements ProjectRegistry<
   updateRepositoryBinding(request: UpdateRepositoryBindingRequest): ProjectDetail {
     const { projectId, repositoryId, path, bookmarkRef } = request;
     const current = this.requireProject(projectId);
-    const expectedRepositoryId = current.portableConfig.repositories[0]?.id ?? "main";
-    if (repositoryId !== expectedRepositoryId) {
+    if (!current.portableConfig.repositories.some((repository) => repository.id === repositoryId)) {
       throw new EngineError(
         "api.invalid-request",
         400,
@@ -928,26 +927,34 @@ function toDetail(
   row: ProjectRow,
   repositoryAccessibility: RepositoryAccessibilityPort,
 ): ProjectDetail {
-  const repositoryId = row.portableConfig.repositories[0]?.id ?? "main";
-  const bindingStatus: BindingStatus = {
-    [repositoryId]: {
-      path: row.repositoryPath,
-      accessible: repositoryAccessibility.isAccessibleDirectory(row.repositoryPath),
-      bookmarkRef: row.bookmarkRef,
-    },
-  };
+  const accessible = repositoryAccessibility.isAccessibleDirectory(row.repositoryPath);
+  const bindingStatus: BindingStatus = Object.fromEntries(
+    row.portableConfig.repositories.map((repository) => [
+      repository.id,
+      {
+        path: row.repositoryPath,
+        accessible,
+        bookmarkRef: row.bookmarkRef,
+      },
+    ]),
+  );
   return { ...toSummary(row), portableConfig: row.portableConfig, bindingStatus };
 }
 
 function toBindings(row: ProjectRow): ProjectBindings {
-  const repositoryId = row.portableConfig.repositories[0]?.id ?? "main";
   return {
     apiVersion: "jarvis.dev/project-bindings/v1",
     kind: "ProjectBindings",
     projectId: row.id,
-    repositories: {
-      [repositoryId]: { path: row.repositoryPath, bookmarkRef: row.bookmarkRef },
-    },
+    repositories: Object.fromEntries(
+      row.portableConfig.repositories.map((repository) => [
+        repository.id,
+        {
+          path: row.repositoryPath,
+          bookmarkRef: row.bookmarkRef,
+        },
+      ]),
+    ),
     slots: row.slotBindings,
   };
 }

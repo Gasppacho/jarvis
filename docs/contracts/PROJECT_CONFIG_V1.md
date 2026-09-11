@@ -12,7 +12,7 @@ La configuration portable définit la composition logique. Exemple complet : `ex
 ### Key sections
 
 - `metadata` : ID stable et nom.
-- `repositories` : exactement le repository logique MVP `main`, avec root `.` ; branche et remote.
+- `repositories` : un ou plusieurs repositories logiques aux IDs uniques, chacun avec root `.` ; branche et remote. Ils partagent le Repository Grant local unique du MVP.
 - `slots` : capabilities que la machine doit binder.
 - `commands` : commandes projet contrôlées.
 - `git` : pattern de branche, stratégie de commit et push.
@@ -77,7 +77,7 @@ Un `ref` de connexion peut pointer vers un record global contenant un `secretRef
 Certaines règles sont sémantiques :
 
 - ID unique de module instance ;
-- exactement un repository `main` de root `.` au MVP ;
+- au moins un repository logique aux IDs uniques, chacun de root `.` ;
 - tous les bindings requis présents ;
 - requests avec un consumer unique ;
 - commandes autorisées ;

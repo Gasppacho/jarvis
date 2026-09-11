@@ -68,11 +68,12 @@ export function requirePortableProjectConfiguration(
   const config = value as PortableProjectConfiguration;
   requirePortableConfigurationValues(config, "");
   if (
-    config.repositories.length !== 1 ||
-    config.repositories[0]?.id !== "main" ||
-    config.repositories[0].root !== "."
+    config.repositories.length === 0 ||
+    new Set(config.repositories.map((repository) => repository.id)).size !==
+      config.repositories.length ||
+    config.repositories.some((repository) => repository.root !== ".")
   ) {
-    invalid("/repositories must contain exactly one repository with id main and root .");
+    invalid("/repositories must contain unique repository IDs, each rooted at .");
   }
 
   const instanceIds = new Set<string>();

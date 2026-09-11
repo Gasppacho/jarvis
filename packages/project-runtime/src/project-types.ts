@@ -113,7 +113,7 @@ export interface ProjectMetadata {
 }
 
 export interface ProjectRepositoryConfiguration {
-  readonly id: "main";
+  readonly id: string;
   readonly root: ".";
   readonly defaultBranch: string;
   readonly remote: string;

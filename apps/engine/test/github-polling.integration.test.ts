@@ -541,23 +541,329 @@ esac
       }
     },
   );
+
+  it("keeps one cursor and one portable repository ID per configured remote", async () => {
+    const fakeGitHub = await startFakeGitHubApi();
+    servers.push(fakeGitHub);
+    const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-polling-multi-gh-"));
+    roots.push(executableRoot);
+    const executable = join(executableRoot, "gh");
+    writeFileSync(executable, "#!/bin/sh\necho ghs_polling_multi_sentinel\n", "utf8");
+    chmodSync(executable, 0o755);
+
+    const engine = await startEngine({
+      enginePath: TEST_BUNDLE,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+        JARVIS_GITHUB_POLL_INTERVAL_MS: "25",
+      },
+    });
+    engines.push(engine);
+    await registerConnection(engine);
+    const project = await createProject(
+      engine,
+      false,
+      "ignore-existing",
+      multiRepositoryConfig(["Gasppacho/jarvis", "Other/repo", "Unowned/repo"]),
+    );
+    await bindAndActivate(engine, project.id, project.path);
+    await waitForRequest(fakeGitHub, "/repos/Gasppacho/jarvis/issues/events");
+    await waitForRequest(fakeGitHub, "/repos/Other/repo/issues/events");
+    await waitForCursor(engine.dataRoot, "bootstrap-empty", project.id, "main");
+    await waitForCursor(engine.dataRoot, "bootstrap-empty", project.id, "secondary");
+
+    fakeGitHub.appendLabeledIssueEvent({
+      owner: "Gasppacho",
+      repository: "jarvis",
+      issueNumber: 15,
+      issueTitle: "Main repository",
+      label: "main-label",
+      actor: "octocat",
+      createdAt: "2026-09-11T10:01:00.000Z",
+    });
+    fakeGitHub.appendLabeledIssueEvent({
+      owner: "Other",
+      repository: "repo",
+      issueNumber: 16,
+      issueTitle: "Secondary repository",
+      label: "secondary-label",
+      actor: "octocat",
+      createdAt: "2026-09-11T10:02:00.000Z",
+    });
+    fakeGitHub.appendLabeledIssueEvent({
+      owner: "Unowned",
+      repository: "repo",
+      issueNumber: 17,
+      issueTitle: "Undeclared repository",
+      label: "unowned-label",
+      actor: "octocat",
+      createdAt: "2026-09-11T10:03:00.000Z",
+    });
+
+    await waitForFactCount(engine, project.id, 2);
+    const database = new Database(`${engine.dataRoot}/jarvis.sqlite`);
+    try {
+      const rows = database
+        .prepare(
+          `SELECT envelope
+           FROM events
+           WHERE project_id = ? AND type = 'scm.work-item.tag-added'
+           ORDER BY rowid`,
+        )
+        .all(project.id) as { readonly envelope: string }[];
+      const envelopes = rows.map((row) => JSON.parse(row.envelope) as Record<string, unknown>);
+      expect(
+        envelopes
+          .map((event) => ({
+            repositoryId: event["repositoryId"],
+            tag: (event["payload"] as Record<string, unknown>)["tag"],
+          }))
+          .sort((left, right) =>
+            String(left.repositoryId).localeCompare(String(right.repositoryId)),
+          ),
+      ).toEqual([
+        { repositoryId: "main", tag: "main-label" },
+        { repositoryId: "secondary", tag: "secondary-label" },
+      ]);
+      expect(
+        database
+          .prepare(
+            `SELECT repository_id, external_event_id
+             FROM github_cursors
+             WHERE project_id = ? ORDER BY repository_id`,
+          )
+          .all(project.id),
+      ).toEqual([
+        { repository_id: "main", external_event_id: "1" },
+        { repository_id: "secondary", external_event_id: "2" },
+      ]);
+      expect(
+        database
+          .prepare(
+            `SELECT COUNT(*) AS count
+             FROM events WHERE project_id = ? AND type = 'scm.work-item.tag-added'`,
+          )
+          .get(project.id),
+      ).toEqual({ count: 2 });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("bootstraps a repository added later without disturbing its existing cursor", async () => {
+    const fakeGitHub = await startFakeGitHubApi();
+    servers.push(fakeGitHub);
+    const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-polling-added-gh-"));
+    roots.push(executableRoot);
+    const executable = join(executableRoot, "gh");
+    writeFileSync(executable, "#!/bin/sh\necho ghs_polling_added_sentinel\n", "utf8");
+    chmodSync(executable, 0o755);
+
+    const engine = await startEngine({
+      enginePath: TEST_BUNDLE,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+        JARVIS_GITHUB_POLL_INTERVAL_MS: "25",
+      },
+    });
+    engines.push(engine);
+    await registerConnection(engine);
+    const project = await createProject(
+      engine,
+      false,
+      "ignore-existing",
+      multiRepositoryConfig(["Gasppacho/jarvis"]),
+    );
+    await bindAndActivate(engine, project.id, project.path);
+    await waitForRequest(fakeGitHub, "/repos/Gasppacho/jarvis/issues/events");
+    await waitForCursor(engine.dataRoot, "bootstrap-empty", project.id, "main");
+
+    fakeGitHub.appendLabeledIssueEvent({
+      owner: "Other",
+      repository: "repo",
+      issueNumber: 20,
+      issueTitle: "Existing secondary issue",
+      label: "existing-secondary",
+      actor: "octocat",
+      createdAt: "2026-09-11T10:06:00.000Z",
+    });
+    const addedConfig = multiRepositoryConfig(["Gasppacho/jarvis", "Other/repo"]);
+    const drafted = await engine.call(`/v1/projects/${project.id}/configuration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ portableConfig: addedConfig, writeToRepository: false }),
+    });
+    expect(drafted.status, await drafted.clone().text()).toBe(200);
+    await bindAndActivate(engine, project.id, project.path);
+    await waitForCursor(engine.dataRoot, "1", project.id, "secondary");
+
+    const beforeNewLabel = await engine.call(`/v1/projects/${project.id}/events`);
+    expect(((await beforeNewLabel.json()) as { readonly items: readonly unknown[] }).items).toEqual(
+      [],
+    );
+    await waitForCursor(engine.dataRoot, "bootstrap-empty", project.id, "main");
+
+    const newEvent = fakeGitHub.appendLabeledIssueEvent({
+      owner: "Other",
+      repository: "repo",
+      issueNumber: 20,
+      issueTitle: "Existing secondary issue",
+      label: "new-secondary",
+      actor: "octocat",
+      createdAt: "2026-09-11T10:07:00.000Z",
+    });
+    await waitForFactCount(engine, project.id, 1);
+    const database = new Database(`${engine.dataRoot}/jarvis.sqlite`);
+    try {
+      expect(
+        database
+          .prepare(
+            `SELECT repository_id, external_event_id, event_timestamp
+             FROM github_cursors
+             WHERE project_id = ? AND repository_id = 'secondary'`,
+          )
+          .get(project.id),
+      ).toEqual({
+        repository_id: "secondary",
+        external_event_id: String(newEvent.id),
+        event_timestamp: newEvent.created_at,
+      });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("keeps two Projects' GitHub timelines and credentials isolated", async () => {
+    const fakeGitHub = await startFakeGitHubApi();
+    servers.push(fakeGitHub);
+    const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-polling-isolation-gh-"));
+    roots.push(executableRoot);
+    const executable = join(executableRoot, "gh");
+    writeFileSync(
+      executable,
+      `#!/bin/sh
+case "$*" in
+  *"--user ProjectA"*) echo token_project_a;;
+  *"--user ProjectB"*) echo token_project_b;;
+  *) exit 1;;
+esac
+`,
+      "utf8",
+    );
+    chmodSync(executable, 0o755);
+
+    const engine = await startEngine({
+      enginePath: TEST_BUNDLE,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+        JARVIS_GITHUB_POLL_INTERVAL_MS: "25",
+      },
+    });
+    engines.push(engine);
+    await registerConnection(engine, "ProjectA", "connection/github-a");
+    await registerConnection(engine, "ProjectB", "connection/github-b");
+    const projectA = await createProject(
+      engine,
+      false,
+      "ignore-existing",
+      projectConfig(false, "ignore-existing", "project-a", ["Gasppacho/jarvis"]),
+    );
+    const projectB = await createProject(
+      engine,
+      false,
+      "ignore-existing",
+      projectConfig(false, "ignore-existing", "project-b", ["Other/repo"]),
+    );
+    await bindAndActivate(engine, projectA.id, projectA.path, "connection/github-a");
+    await bindAndActivate(engine, projectB.id, projectB.path, "connection/github-b");
+    await waitForRequest(fakeGitHub, "/repos/Gasppacho/jarvis/issues/events");
+    await waitForRequest(fakeGitHub, "/repos/Other/repo/issues/events");
+    await waitForCursor(engine.dataRoot, "bootstrap-empty", projectA.id);
+    await waitForCursor(engine.dataRoot, "bootstrap-empty", projectB.id);
+
+    fakeGitHub.appendLabeledIssueEvent({
+      owner: "Gasppacho",
+      repository: "jarvis",
+      issueNumber: 18,
+      issueTitle: "Project A issue",
+      label: "project-a-label",
+      actor: "octocat",
+      createdAt: "2026-09-11T10:04:00.000Z",
+    });
+    fakeGitHub.appendLabeledIssueEvent({
+      owner: "Other",
+      repository: "repo",
+      issueNumber: 19,
+      issueTitle: "Project B issue",
+      label: "project-b-label",
+      actor: "octocat",
+      createdAt: "2026-09-11T10:05:00.000Z",
+    });
+
+    await waitForFactCount(engine, projectA.id, 1);
+    await waitForFactCount(engine, projectB.id, 1);
+    const requestsA = issueEventRequests(fakeGitHub).filter((request) =>
+      request.path.includes("/repos/Gasppacho/jarvis/issues/events"),
+    );
+    const requestsB = issueEventRequests(fakeGitHub).filter((request) =>
+      request.path.includes("/repos/Other/repo/issues/events"),
+    );
+    expect(new Set(requestsA.map((request) => request.credential))).toEqual(
+      new Set(["token_project_a"]),
+    );
+    expect(new Set(requestsB.map((request) => request.credential))).toEqual(
+      new Set(["token_project_b"]),
+    );
+
+    const database = new Database(`${engine.dataRoot}/jarvis.sqlite`);
+    try {
+      expect(
+        database
+          .prepare(
+            `SELECT project_id, COUNT(*) AS count
+             FROM events
+             WHERE type = 'scm.work-item.tag-added'
+             GROUP BY project_id ORDER BY project_id`,
+          )
+          .all(),
+      ).toEqual([
+        { project_id: "project-a", count: 1 },
+        { project_id: "project-b", count: 1 },
+      ]);
+    } finally {
+      database.close();
+    }
+  });
 });
 
-async function registerConnection(engine: Harness): Promise<void> {
+async function registerConnection(
+  engine: Harness,
+  account = "PollingAccount",
+  connectionId = "connection/github-polling",
+): Promise<void> {
   const created = await engine.call("/v1/connections", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      id: "connection/github-polling",
+      id: connectionId,
       kind: "github",
-      displayName: "PollingAccount",
-      secretRef: "gh://PollingAccount",
+      displayName: account,
+      secretRef: `gh://${account}`,
     }),
   });
   expect(created.status, await created.clone().text()).toBe(201);
-  const validated = await engine.call("/v1/connections/connection%2Fgithub-polling/validate", {
-    method: "POST",
-  });
+  const validated = await engine.call(
+    `/v1/connections/${encodeURIComponent(connectionId)}/validate`,
+    {
+      method: "POST",
+    },
+  );
   expect(validated.status, await validated.clone().text()).toBe(200);
 }
 
@@ -565,9 +871,10 @@ async function createProject(
   engine: Harness,
   withSubscriber = false,
   bootstrapLabelPolicy: "ignore-existing" | "emit-existing" = "ignore-existing",
+  configuration = projectConfig(withSubscriber, bootstrapLabelPolicy),
 ): Promise<{ readonly id: string; readonly path: string }> {
   const projectPath = makeNodeRepositoryFixture({
-    projectYaml: stringifyYaml(projectConfig(withSubscriber, bootstrapLabelPolicy)),
+    projectYaml: stringifyYaml(configuration),
   });
   roots.push(projectPath);
   const response = await engine.call("/v1/projects", {
@@ -576,8 +883,9 @@ async function createProject(
     body: JSON.stringify({ repositoryPath: projectPath }),
   });
   const body = (await response.json()) as { readonly id?: string };
+  const metadata = configuration["metadata"] as { readonly id: string };
   expect(response.status, JSON.stringify(body)).toBe(201);
-  expect(body.id).toBe("polling-project");
+  expect(body.id).toBe(metadata.id);
   return { id: body.id!, path: projectPath };
 }
 
@@ -585,6 +893,7 @@ async function bindAndActivate(
   engine: Harness,
   projectId: string,
   repositoryPath: string,
+  connectionRef = "connection/github-polling",
 ): Promise<void> {
   const repositoryBinding = await engine.call(
     `/v1/projects/${projectId}/repositories/main/binding`,
@@ -608,8 +917,8 @@ async function bindAndActivate(
       ...bindings,
       slots: {
         ...bindings.slots,
-        sourceControl: { kind: "connection", ref: "connection/github-polling" },
-        tickets: { kind: "connection", ref: "connection/github-polling" },
+        sourceControl: { kind: "connection", ref: connectionRef },
+        tickets: { kind: "connection", ref: connectionRef },
         agentRuntime: { kind: "runtime", ref: "runtime/fake-test" },
       },
     }),
@@ -636,6 +945,8 @@ async function bindAndActivate(
 function projectConfig(
   withSubscriber = false,
   bootstrapLabelPolicy: "ignore-existing" | "emit-existing" = "ignore-existing",
+  projectId = "polling-project",
+  githubRepositories: readonly string[] = ["Gasppacho/jarvis", "Other/repo"],
 ): Record<string, unknown> {
   const configuration = parseYaml(
     readFileSync(join(ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
@@ -649,7 +960,7 @@ function projectConfig(
           (module as Record<string, unknown>)["instanceId"] === "development",
       )
     : undefined;
-  configuration["metadata"] = { id: "polling-project", name: "Polling Project" };
+  configuration["metadata"] = { id: projectId, name: `Polling Project ${projectId}` };
   configuration["slots"] = {
     sourceControl: { requires: "scm.change-request.manage" },
     tickets: { requires: "work-items.read" },
@@ -664,7 +975,7 @@ function projectConfig(
       configuration: {
         bootstrapLabelPolicy,
         pollIntervalSeconds: 15,
-        repositories: ["Gasppacho/jarvis", "Other/repo"],
+        repositories: [...githubRepositories],
       },
     },
     ...(withSubscriber
@@ -692,6 +1003,20 @@ function projectConfig(
           ...(developmentModule === undefined ? [] : [developmentModule]),
         ]
       : []),
+  ];
+  return configuration;
+}
+
+function multiRepositoryConfig(githubRepositories: readonly string[]): Record<string, unknown> {
+  const configuration = projectConfig(
+    false,
+    "ignore-existing",
+    "polling-project",
+    githubRepositories,
+  );
+  configuration["repositories"] = [
+    { id: "main", root: ".", defaultBranch: "main", remote: "origin" },
+    { id: "secondary", root: ".", defaultBranch: "main", remote: "upstream" },
   ];
   return configuration;
 }
@@ -725,7 +1050,12 @@ async function waitForFactCount(
   }
 }
 
-async function waitForCursor(dataRoot: string, externalEventId: string): Promise<void> {
+async function waitForCursor(
+  dataRoot: string,
+  externalEventId: string,
+  projectId = "polling-project",
+  repositoryId = "main",
+): Promise<void> {
   const deadline = Date.now() + 5_000;
   for (;;) {
     const database = new Database(`${dataRoot}/jarvis.sqlite`);
@@ -734,9 +1064,9 @@ async function waitForCursor(dataRoot: string, externalEventId: string): Promise
         .prepare(
           `SELECT external_event_id
            FROM github_cursors
-           WHERE project_id = 'polling-project' AND module_instance_id = 'github' AND repository_id = 'main'`,
+           WHERE project_id = ? AND module_instance_id = 'github' AND repository_id = ?`,
         )
-        .get() as { readonly external_event_id?: string } | undefined;
+        .get(projectId, repositoryId) as { readonly external_event_id?: string } | undefined;
       if (row?.external_event_id === externalEventId) return;
     } finally {
       database.close();
