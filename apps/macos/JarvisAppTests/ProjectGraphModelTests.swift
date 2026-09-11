@@ -23,6 +23,12 @@ final class ProjectGraphModelTests: XCTestCase {
         XCTAssertEqual(
             presentation.outline?.rows.map(\.statusLabel),
             ["Enabled", "Resolved → worker", "Enabled", "Resolved → worker"])
+        let firstRow = try XCTUnwrap(presentation.outline?.rows.first)
+        XCTAssertTrue(firstRow.accessibilityLabel.contains("producer"))
+        XCTAssertTrue(firstRow.accessibilityLabel.contains("Enabled"))
+        XCTAssertEqual(
+            presentation.outline?.rows.map(\.title),
+            ["Producer", "work.requested.v1 · Request · Produced", "Worker", "work.requested.v1 · Request · Consumed"])
         XCTAssertNil(presentation.outline?.selectionDetail(forID: "stale-selection"))
         XCTAssertNil(model.state(for: "other-project"))
     }
@@ -65,6 +71,10 @@ final class ProjectGraphModelTests: XCTestCase {
         XCTAssertEqual(emptyModel.state(for: "new"), .neverActivated)
         XCTAssertEqual(
             ProjectGraphPresentation(state: .neverActivated).status, .neverActivated)
+
+        let unavailable = ProjectGraphPresentation(state: .error("Engine is unavailable"))
+        XCTAssertEqual(unavailable.status, .error("Engine is unavailable"))
+        XCTAssertNil(unavailable.outline)
 
         let failedModel = makeModel { _ in throw FixtureError.failed }
         await failedModel.refresh(projectId: "broken")
