@@ -88,7 +88,14 @@ public final class ProjectDeadLettersModel {
         states[projectId]?.replayErrorMessages[deliveryId] = nil
         defer { states[projectId]?.replayingDeliveryIDs.remove(deliveryId) }
         do {
-            try await api.replayDeadLetter(deliveryId: deliveryId)
+            let execution = try await api.replayDeadLetter(deliveryId: deliveryId)
+            guard execution.status != .failed else {
+                setReplayError(
+                    "Replay execution \(execution.id) failed.",
+                    projectId: projectId,
+                    deliveryId: deliveryId)
+                return false
+            }
             states[projectId]?.deadLetters.removeAll { $0.deliveryId == deliveryId }
             states[projectId]?.replayErrorMessages[deliveryId] = nil
             return true

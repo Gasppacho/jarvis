@@ -54,7 +54,7 @@ public struct DeadLetter: Identifiable, Hashable, Sendable {
 /// The only operations consumed by the Project Dead Letters feature.
 public protocol DeadLettersAPI: Sendable {
     func listProjectDeadLetters(projectId: String) async throws -> [DeadLetter]
-    func replayDeadLetter(deliveryId: String) async throws
+    func replayDeadLetter(deliveryId: String) async throws -> TimelineExecution
 }
 
 extension EngineClient: DeadLettersAPI {}

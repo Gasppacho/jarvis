@@ -320,13 +320,13 @@ public struct EngineClient: Sendable {
         }
     }
 
-    public func replayDeadLetter(deliveryId: String) async throws {
+    public func replayDeadLetter(deliveryId: String) async throws -> TimelineExecution {
         let operation = "POST /v1/dead-letters/\(deliveryId)/replay"
         let output = try await underlying.replayDeadLetter(
             .init(path: .init(deliveryId: deliveryId)))
         switch output {
-        case .accepted(_):
-            return
+        case .accepted(let accepted):
+            return TimelineExecution(payload: try accepted.body.json)
         case .unauthorized:
             throw EngineClientError.unauthorized(operation: operation)
         case .forbidden:

@@ -54,15 +54,12 @@ final class ProjectDeadLettersModelTests: XCTestCase {
         XCTAssertEqual(replayedDeliveryIDs, ["delivery-1"])
     }
 
-    func testFailedReplayKeepsTheRowAndSurfacesTheProviderMessage() async {
+    func testFailedReplayKeepsTheRowAndSurfacesTheExecutionError() async {
         let deadLetter = makeDeadLetter(deliveryId: "delivery-1", projectId: "project-1")
         let model = ProjectDeadLettersModel(
             api: FakeDeadLettersAPI(
                 lists: ["project-1": [deadLetter]],
-                replayError: .engineError(
-                    operation: "POST /v1/dead-letters/delivery-1/replay",
-                    code: "delivery.replay-failed",
-                    message: "The consumer is still unavailable.")))
+                replayResult: makeExecution(status: .failed)))
         await model.refresh(projectId: "project-1")
 
         let replayed = await model.replay(projectId: "project-1", deliveryId: deadLetter.deliveryId)
@@ -71,7 +68,17 @@ final class ProjectDeadLettersModelTests: XCTestCase {
         XCTAssertEqual(model.state(for: "project-1").deadLetters, [deadLetter])
         XCTAssertEqual(
             model.state(for: "project-1").replayErrorMessages[deadLetter.deliveryId],
-            "The consumer is still unavailable. (delivery.replay-failed)")
+            "Replay execution execution-replay failed.")
+    }
+
+    private func makeExecution(status: TimelineExecution.Status) -> TimelineExecution {
+        TimelineExecution(
+            id: "execution-replay",
+            projectId: "project-1",
+            moduleInstanceId: "development",
+            status: status,
+            attempt: 4,
+            createdAt: createdAt)
     }
 
     private func makeDeadLetter(deliveryId: String, projectId: String) -> DeadLetter {
@@ -91,17 +98,23 @@ final class ProjectDeadLettersModelTests: XCTestCase {
 private actor FakeDeadLettersAPI: DeadLettersAPI {
     let lists: [String: [DeadLetter]]
     let listError: EngineClientError?
-    let replayError: EngineClientError?
+    let replayResult: TimelineExecution
     private(set) var replayedDeliveryIDs: [String] = []
 
     init(
         lists: [String: [DeadLetter]] = [:],
         listError: EngineClientError? = nil,
-        replayError: EngineClientError? = nil
+        replayResult: TimelineExecution = TimelineExecution(
+            id: "execution-replay",
+            projectId: "project-1",
+            moduleInstanceId: "development",
+            status: .completed,
+            attempt: 4,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000))
     ) {
         self.lists = lists
         self.listError = listError
-        self.replayError = replayError
+        self.replayResult = replayResult
     }
 
     func listProjectDeadLetters(projectId: String) async throws -> [DeadLetter] {
@@ -109,8 +122,8 @@ private actor FakeDeadLettersAPI: DeadLettersAPI {
         return lists[projectId] ?? []
     }
 
-    func replayDeadLetter(deliveryId: String) async throws {
+    func replayDeadLetter(deliveryId: String) async throws -> TimelineExecution {
         replayedDeliveryIDs.append(deliveryId)
-        if let replayError { throw replayError }
+        return replayResult
     }
 }
