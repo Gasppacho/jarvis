@@ -21,6 +21,7 @@ export type ModulePublishedContractsLookup = (
 import { EventPublisher, type PublishEventInput } from "../events/publisher.js";
 import { EngineError } from "../errors.js";
 import { failpoint } from "../test-support/failpoint.js";
+import { computeRetrySchedule } from "../../../../packages/eventing/src/retry-policy.js";
 import { ExecutionCheckpointStore } from "./checkpoints.js";
 import { STATUS_TO_API, type LedgerExecutionSummary } from "./ledger.js";
 
@@ -60,8 +61,9 @@ declare const __JARVIS_TEST_HOOKS__: boolean | undefined;
 /**
  * Ticket #57 (docs/architecture/PERSISTENCE.md "Consume and publish";
  * docs/architecture/EVENTS.md "Delivery semantics"): turns one claimed
- * Delivery into exactly one Module handler invocation, recorded in the
- * Inbox and the Execution Ledger.
+ * Delivery attempt into a durable Execution. Terminal attempts also write
+ * the Inbox; retryable failures leave the Delivery available for its due
+ * next attempt.
  *
  * Composition-root wiring in `apps/engine/src/main.ts` supplies the handler
  * and project-scoped configuration lookups. The Application Harness reaches
@@ -155,6 +157,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     private readonly publishedContracts: ModulePublishedContractsLookup = () => undefined,
     private readonly capabilities: ModuleCapabilityLookup = () => ({}),
     checkpointStore?: ExecutionCheckpointStore,
+    private readonly retryRandom: () => number = Math.random,
   ) {
     this.checkpointStore = checkpointStore ?? new ExecutionCheckpointStore(db);
   }
@@ -247,6 +250,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     }
 
     const envelope = this.requireEnvelope(delivery);
+    const attempt = this.readDeliveryAttempt(delivery);
     const handler = this.handlers(delivery.moduleId);
     const executionId = `exec_${this.ids.next()}`;
     const startedAt = this.clock.now().toISOString();
@@ -261,6 +265,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
         startedAt,
         new Error(`No handler registered for Module ${delivery.moduleId}.`),
         failurePublications,
+        attempt,
       );
     }
 
@@ -275,7 +280,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
         // Create the running Ledger row before invoking the handler so a
         // synchronous Module can record durable checkpoints too. Async
         // handlers use the same row after this transaction commits.
-        this.insertExecution(executionId, delivery, envelope, "running", startedAt, null);
+        this.insertExecution(executionId, delivery, envelope, "running", startedAt, null, attempt);
         handlerCapabilities = this.capabilities(
           delivery.projectId,
           delivery.moduleInstanceId,
@@ -310,6 +315,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
           handlerResult,
           bufferedPublications,
           handlerCapabilities,
+          attempt,
         );
       })();
       transactionOpen = false;
@@ -333,6 +339,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
                 failurePublications,
                 controller.signal,
                 handlerCapabilities,
+                attempt,
               ),
             (error) =>
               controller.signal.aborted
@@ -342,6 +349,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
                     executionId,
                     startedAt,
                     failurePublications,
+                    attempt,
                     true,
                   )
                 : this.recordFailure(
@@ -351,6 +359,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
                     startedAt,
                     error,
                     failurePublications,
+                    attempt,
                     true,
                   ),
           )
@@ -369,6 +378,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
         startedAt,
         error,
         failurePublications,
+        attempt,
         runningExecutionCommitted,
       );
     }
@@ -388,6 +398,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     failurePublications: readonly EventEnvelope[],
     signal: AbortSignal,
     capabilities: ModuleHandlerCapabilities | undefined,
+    attempt: number,
   ): ConsumeResult {
     if (signal.aborted) {
       return this.recordCancelled(
@@ -396,6 +407,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
         executionId,
         startedAt,
         failurePublications,
+        attempt,
         true,
       );
     }
@@ -406,6 +418,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
         executionId,
         startedAt,
         failurePublications,
+        attempt,
         true,
       );
     }
@@ -416,6 +429,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
         executionId,
         startedAt,
         failurePublications,
+        attempt,
         true,
       );
     }
@@ -444,8 +458,8 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
         failpoint("before-handler-commit");
       }
       const row = this.updateExecution(executionId, "completed", null);
-      this.insertInbox(delivery, "completed", result);
-      this.markDeliveryConsumed(delivery);
+      this.insertInbox(delivery, "completed", result, attempt);
+      this.markDeliveryConsumed(delivery, attempt);
       return { executionRow: row };
     })();
     this.failAfterHandlerCommit();
@@ -460,6 +474,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     handlerResult: unknown,
     bufferedPublications: readonly EventEnvelope[],
     capabilities: ModuleHandlerCapabilities | undefined,
+    attempt: number,
   ): SuccessfulConsumption {
     capabilities?.externalMappings?.flushPending?.();
     for (const publication of bufferedPublications) {
@@ -475,8 +490,8 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     }
 
     const executionRow = this.updateExecution(executionId, "completed", null);
-    this.insertInbox(delivery, "completed", handlerResult);
-    this.markDeliveryConsumed(delivery);
+    this.insertInbox(delivery, "completed", handlerResult, attempt);
+    this.markDeliveryConsumed(delivery, attempt);
     return { handlerResult, executionRow };
   }
 
@@ -502,9 +517,11 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     startedAt: string,
     error: unknown,
     failurePublications: readonly EventEnvelope[],
+    attempt: number,
     running = false,
   ): ConsumeResult {
-    const message = error instanceof Error ? error.message : String(error);
+    const classification = classifyHandlerFailure(error);
+    const message = classification.message;
     const structuredFailure = readStructuredFailure(error);
     const result =
       structuredFailure !== undefined
@@ -514,10 +531,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
           : { error: message };
     // Deliberately a second, separate transaction: it must commit even
     // though the attempt above rolled back, and it is the only place the
-    // failed Execution and its Inbox record are written (acceptance
-    // criterion 2's "leaves none of them applied and the Execution
-    // recorded as failed"; #17's retries/backoff/dead letters are out of
-    // scope — this is the terminal record, not a retry schedule).
+    // failed Execution and retry or terminal outcome are written.
     let executionRow: LedgerExecutionSummary;
     try {
       executionRow = this.db.transaction(() => {
@@ -526,18 +540,36 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
         }
         const row = running
           ? this.updateExecution(executionId, "failed", message)
-          : this.insertExecution(executionId, delivery, envelope, "failed", startedAt, message);
-        this.insertInbox(delivery, "failed", result);
-        this.markDeliveryConsumed(delivery);
+          : this.insertExecution(
+              executionId,
+              delivery,
+              envelope,
+              "failed",
+              startedAt,
+              message,
+              attempt,
+            );
+        const schedule = classification.retryable
+          ? computeRetrySchedule(attempt, this.retryRandom)
+          : undefined;
+        if (schedule !== undefined && !schedule.exhausted) {
+          this.scheduleRetry(
+            delivery,
+            attempt,
+            new Date(this.clock.now().getTime() + schedule.delayMs).toISOString(),
+          );
+        } else {
+          this.insertInbox(delivery, "failed", result, attempt);
+          this.markDeliveryConsumed(delivery, attempt);
+        }
         return row;
       })();
     } catch (recordingError) {
       // A failure while recording a failure (constraint violation, disk
       // error) must not crash the caller with a raw, unlabeled exception
       // and must not lose the original handler failure (`message`): the
-      // Delivery is left with `consumed_at` unset, unresolved — a loud,
-      // clearly labeled failure rather than a silent strand (no retry
-      // schedule exists yet — #17).
+      // Delivery is left with `consumed_at` unset when this transaction also
+      // fails; #159 bounds and dead-letters that exceptional path.
       const recordingMessage =
         recordingError instanceof Error ? recordingError.message : String(recordingError);
       throw new EngineError(
@@ -569,6 +601,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     executionId: string,
     startedAt: string,
     failurePublications: readonly EventEnvelope[],
+    attempt: number,
     running: boolean,
   ): ConsumeResult {
     const executionRow = this.db.transaction(() => {
@@ -577,9 +610,17 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
       }
       const row = running
         ? this.updateExecution(executionId, "cancelled", null)
-        : this.insertExecution(executionId, delivery, envelope, "cancelled", startedAt, null);
-      this.insertInbox(delivery, "cancelled", { cancelled: true });
-      this.markDeliveryConsumed(delivery);
+        : this.insertExecution(
+            executionId,
+            delivery,
+            envelope,
+            "cancelled",
+            startedAt,
+            null,
+            attempt,
+          );
+      this.insertInbox(delivery, "cancelled", { cancelled: true }, attempt);
+      this.markDeliveryConsumed(delivery, attempt);
       return row;
     })();
     this.failAfterHandlerCommit();
@@ -598,6 +639,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     executionId: string,
     startedAt: string,
     failurePublications: readonly EventEnvelope[],
+    attempt: number,
     running: boolean,
   ): ConsumeResult {
     const executionRow = this.db.transaction(() => {
@@ -606,9 +648,17 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
       }
       const row = running
         ? this.updateExecution(executionId, "timed_out", null)
-        : this.insertExecution(executionId, delivery, envelope, "timed_out", startedAt, null);
-      this.insertInbox(delivery, "timed_out", { timedOut: true });
-      this.markDeliveryConsumed(delivery);
+        : this.insertExecution(
+            executionId,
+            delivery,
+            envelope,
+            "timed_out",
+            startedAt,
+            null,
+            attempt,
+          );
+      this.insertInbox(delivery, "timed_out", { timedOut: true }, attempt);
+      this.markDeliveryConsumed(delivery, attempt);
       return row;
     })();
     this.failAfterHandlerCommit();
@@ -839,6 +889,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     status: "running" | "completed" | "failed" | "cancelled" | "timed_out",
     startedAt: string,
     error: string | null,
+    attempt = 1,
   ): LedgerExecutionSummary {
     const completedAt = status === "running" ? null : this.clock.now().toISOString();
     this.db
@@ -846,7 +897,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
         `INSERT INTO executions
            (id, project_id, module_instance_id, module_id, input_event_id, attempt, status, error, started_at, completed_at, created_at)
          VALUES
-           (@id, @projectId, @moduleInstanceId, @moduleId, @inputEventId, 1, @status, @error, @startedAt, @completedAt, @startedAt)`,
+           (@id, @projectId, @moduleInstanceId, @moduleId, @inputEventId, @attempt, @status, @error, @startedAt, @completedAt, @startedAt)`,
       )
       .run({
         id,
@@ -854,6 +905,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
         moduleInstanceId: delivery.moduleInstanceId,
         moduleId: delivery.moduleId,
         inputEventId: envelope.id,
+        attempt,
         status,
         error,
         startedAt,
@@ -864,7 +916,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
       projectId: delivery.projectId,
       moduleInstanceId: delivery.moduleInstanceId,
       status: status === "timed_out" ? "timed-out" : status,
-      attempt: 1,
+      attempt,
       createdAt: startedAt,
       completedAt,
       inputEventId: envelope.id,
@@ -896,33 +948,68 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     delivery: ClaimedDelivery,
     status: "completed" | "failed" | "cancelled" | "timed_out",
     result: unknown,
+    attempt = 1,
   ): void {
     this.db
       .prepare(
         `INSERT INTO inbox (project_id, module_instance_id, event_id, status, attempt, result, created_at)
-         VALUES (@projectId, @moduleInstanceId, @eventId, @status, 1, @result, @createdAt)`,
+         VALUES (@projectId, @moduleInstanceId, @eventId, @status, @attempt, @result, @createdAt)`,
       )
       .run({
         projectId: delivery.projectId,
         moduleInstanceId: delivery.moduleInstanceId,
         eventId: delivery.eventId,
+        attempt,
         status,
         result: JSON.stringify(result ?? null),
         createdAt: this.clock.now().toISOString(),
       });
   }
 
-  private markDeliveryConsumed(delivery: ClaimedDelivery): void {
+  private markDeliveryConsumed(delivery: ClaimedDelivery, attempt = 1): void {
     this.db
       .prepare(
-        `UPDATE deliveries SET consumed_at = @now
+        `UPDATE deliveries SET consumed_at = @now, attempt_count = @attempt, next_attempt_at = NULL
          WHERE project_id = @projectId AND module_instance_id = @moduleInstanceId AND event_id = @eventId`,
       )
       .run({
         projectId: delivery.projectId,
         moduleInstanceId: delivery.moduleInstanceId,
         eventId: delivery.eventId,
+        attempt,
         now: this.clock.now().toISOString(),
+      });
+  }
+
+  private readDeliveryAttempt(delivery: ClaimedDelivery): number {
+    const row = this.db
+      .prepare(
+        `SELECT attempt_count FROM deliveries
+         WHERE project_id = @projectId AND module_instance_id = @moduleInstanceId AND event_id = @eventId`,
+      )
+      .get(delivery) as { attempt_count: number } | undefined;
+    if (row === undefined) {
+      throw new Error(
+        `No Delivery exists for Project ${delivery.projectId}, module instance ${delivery.moduleInstanceId}, event ${delivery.eventId}.`,
+      );
+    }
+    return row.attempt_count + 1;
+  }
+
+  private scheduleRetry(delivery: ClaimedDelivery, attempt: number, nextAttemptAt: string): void {
+    this.db
+      .prepare(
+        `UPDATE deliveries
+         SET attempt_count = @attempt, next_attempt_at = @nextAttemptAt
+         WHERE project_id = @projectId AND module_instance_id = @moduleInstanceId AND event_id = @eventId
+           AND consumed_at IS NULL`,
+      )
+      .run({
+        projectId: delivery.projectId,
+        moduleInstanceId: delivery.moduleInstanceId,
+        eventId: delivery.eventId,
+        attempt,
+        nextAttemptAt,
       });
   }
 

@@ -503,7 +503,7 @@ async function main(): Promise<void> {
       capabilities.resolve.bind(capabilities),
     );
     executionCancellation = consumer;
-    stopEventLoop = startEventLoop({ db: database.db, dispatcher, consumer, liveUpdates });
+    stopEventLoop = startEventLoop({ db: database.db, clock, dispatcher, consumer, liveUpdates });
     stopGitHubPolling = new GitHubPollingScheduler({
       projects: projectStore,
       modules,

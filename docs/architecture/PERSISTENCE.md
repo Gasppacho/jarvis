@@ -57,6 +57,12 @@ Dans une seule transaction :
 5. marquer la delivery terminée ;
 6. commit.
 
+Une erreur retryable est l'exception bornée à cette séquence : l'Execution de
+l'essai est marquée `failed`, la Delivery avance son compteur et son
+`next_attempt_at`, mais aucune Inbox n'est écrite et `consumed_at` reste nul.
+La boucle ne repropose cette Delivery qu'une fois cette date atteinte. Une
+erreur terminale suit la séquence complète ci-dessus.
+
 ### External side effect
 
 Le handler enregistre une tentative idempotente, effectue l'appel externe hors transaction longue, puis ouvre une transaction courte pour stocker le mapping, l'output fact et la fin d'exécution. Le side effect doit être récupérable après crash via l'idempotency key et une lookup externe.

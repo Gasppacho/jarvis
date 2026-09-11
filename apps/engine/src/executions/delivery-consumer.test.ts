@@ -16,6 +16,7 @@ import { ProjectStore, type ResolvedProjectSnapshot } from "../projects/store.js
 import { OutboxDispatcher, type OpenSubscriptionsPort } from "../events/dispatcher.js";
 import { EventPublisher } from "../events/publisher.js";
 import { ControllableClock, DeterministicIdGenerator } from "../events/test-doubles.js";
+import { tickEventLoop } from "../events/dispatch-loop.js";
 import {
   DeliveryConsumer,
   type ModuleCapabilityLookup,
@@ -137,6 +138,7 @@ function harness(
   configurations?: ModuleConfigurationLookup,
   publishedContracts?: ModulePublishedContractsLookup,
   capabilities?: ModuleCapabilityLookup,
+  retryRandom: () => number = () => 0,
 ): Harness {
   const clock = new ControllableClock(new Date("2026-09-06T08:00:00.000Z"));
   const ids = new DeterministicIdGenerator();
@@ -162,6 +164,8 @@ function harness(
     undefined,
     publishedContracts,
     capabilities,
+    undefined,
+    retryRandom,
   );
   return { db: database, clock, ids, store, publisher, dispatcher, consumer };
 }
@@ -522,6 +526,106 @@ describe("DeliveryConsumer", () => {
     ).not.toEqual({ consumed_at: null });
   });
 
+  it("leaves a retryable failure unfinished with its next attempt scheduled", () => {
+    let calls = 0;
+    const handler = (context: ModuleHandlerContext) => {
+      calls += 1;
+      if (calls === 1) {
+        throw Object.assign(new Error("transient provider outage"), {
+          code: "provider.unavailable",
+          retryable: true,
+        });
+      }
+      return { accepted: true };
+    };
+    const { db: database, store, publisher, dispatcher, consumer } = harness(() => handler);
+    activate(store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+
+    const published = publisher.publish(pingInput("project-a"));
+    dispatcher.dispatchPending();
+    const delivery = {
+      projectId: "project-a",
+      moduleInstanceId: "probe-1",
+      moduleId: SAMPLE_PROBE_MODULE_ID,
+      eventId: published.id,
+    };
+
+    const outcome = consumer.consume(delivery);
+
+    expect(outcome.status).toBe("failed");
+    expect(calls).toBe(1);
+    expect(database.prepare("SELECT COUNT(*) AS n FROM inbox").get()).toEqual({ n: 0 });
+    expect(database.prepare("SELECT consumed_at FROM deliveries").get()).toEqual({
+      consumed_at: null,
+    });
+    expect(
+      database
+        .prepare("SELECT attempt, status FROM executions WHERE input_event_id = ? ORDER BY attempt")
+        .all(published.id),
+    ).toEqual([{ attempt: 1, status: "failed" }]);
+    expect(database.prepare("SELECT attempt_count, next_attempt_at FROM deliveries").get()).toEqual(
+      expect.objectContaining({ attempt_count: 1, next_attempt_at: expect.any(String) }),
+    );
+  });
+
+  it("does not re-offer a retryable Delivery before due and succeeds on its next attempt", async () => {
+    let database!: Database.Database;
+    let calls = 0;
+    const handler = (context: ModuleHandlerContext) => {
+      calls += 1;
+      if (calls === 1) {
+        throw Object.assign(new Error("transient provider outage"), {
+          code: "provider.unavailable",
+          retryable: true,
+        });
+      }
+      return createSampleProbeHandler(database)(context);
+    };
+    const harnessState = harness(
+      () => handler,
+      undefined,
+      undefined,
+      undefined,
+      () => 0,
+    );
+    database = harnessState.db;
+    const { clock, store, publisher, dispatcher, consumer } = harnessState;
+    activate(store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+    publisher.publish(pingInput("project-a"));
+
+    const liveUpdates = { publish: () => {} };
+    await tickEventLoop({ db: database, clock, dispatcher, consumer, liveUpdates });
+    expect(calls).toBe(1);
+
+    clock.advance(499);
+    await tickEventLoop({ db: database, clock, dispatcher, consumer, liveUpdates });
+    expect(calls).toBe(1);
+
+    clock.advance(1);
+    await tickEventLoop({ db: database, clock, dispatcher, consumer, liveUpdates });
+    expect(calls).toBe(2);
+    expect(database.prepare("SELECT ping_count FROM sample_probe_state").get()).toEqual({
+      ping_count: 1,
+    });
+    expect(
+      database.prepare("SELECT attempt, status FROM executions ORDER BY attempt").all(),
+    ).toEqual([
+      { attempt: 1, status: "failed" },
+      { attempt: 2, status: "completed" },
+    ]);
+    expect(database.prepare("SELECT attempt FROM inbox").get()).toEqual({ attempt: 2 });
+    expect(
+      database.prepare("SELECT consumed_at, attempt_count, next_attempt_at FROM deliveries").get(),
+    ).toMatchObject({
+      attempt_count: 2,
+      next_attempt_at: null,
+    });
+  });
+
   it("a failure while recording a handler failure surfaces as a labeled EngineError instead of the raw constraint error, and does not lose the original handler failure", () => {
     const { db: database, store, publisher, dispatcher, consumer } = harness();
     activate(store, "project-a", [
@@ -731,7 +835,10 @@ describe("DeliveryConsumer", () => {
         subject: context.event.subject,
         payload: { shouldNotPublish: true },
       });
-      throw new Error("async deterministic failure");
+      throw Object.assign(new Error("async deterministic failure"), {
+        code: "sample-probe.async-failure",
+        retryable: false,
+      });
     };
     const { db: database, store, publisher, dispatcher, consumer } = harness(() => handler);
     activate(store, "project-a", [
@@ -749,19 +856,37 @@ describe("DeliveryConsumer", () => {
     const outcome = await consumer.consume(delivery);
 
     expect(outcome.status).toBe("failed");
-    expect(outcome.result).toEqual({ error: "async deterministic failure" });
+    expect(outcome.result).toEqual({
+      error: {
+        code: "sample-probe.async-failure",
+        retryable: false,
+        message: "async deterministic failure",
+      },
+    });
     expect(database.prepare("SELECT COUNT(*) AS n FROM executions").get()).toEqual({ n: 1 });
     expect(database.prepare("SELECT COUNT(*) AS n FROM outbox").get()).toEqual({ n: 1 });
     expect(database.prepare("SELECT status, result FROM inbox").get()).toEqual({
       status: "failed",
-      result: JSON.stringify({ error: "async deterministic failure" }),
+      result: JSON.stringify({
+        error: {
+          code: "sample-probe.async-failure",
+          retryable: false,
+          message: "async deterministic failure",
+        },
+      }),
     });
 
     const redelivered = consumer.consume(delivery);
     expect(redelivered).toMatchObject({
       redelivered: true,
       status: "failed",
-      result: { error: "async deterministic failure" },
+      result: {
+        error: {
+          code: "sample-probe.async-failure",
+          retryable: false,
+          message: "async deterministic failure",
+        },
+      },
     });
   });
 

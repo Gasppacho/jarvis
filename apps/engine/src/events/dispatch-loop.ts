@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import type { Clock } from "../../../../packages/kernel/src/clock.js";
 import type { ClaimedDelivery, DeliveryConsumer } from "../executions/delivery-consumer.js";
 import type { LiveUpdatePort } from "../stream/hub.js";
 import { summarizeEventEnvelope } from "./timeline.js";
@@ -6,6 +7,7 @@ import type { OutboxDispatcher } from "./dispatcher.js";
 
 export interface EventLoopDependencies {
   readonly db: Database.Database;
+  readonly clock: Clock;
   readonly dispatcher: OutboxDispatcher;
   readonly consumer: DeliveryConsumer;
   /** Ticket #60: fed one Live Update per journaled Event and per recorded
@@ -32,10 +34,9 @@ export interface EventLoopDependencies {
  * consumed (ticket #58 acceptance criteria 2-4): nothing here assumes the
  * process that dispatched a row is the one that consumes it.
  *
- * Fixed interval, no backoff or retry classification: #17 owns that. A
- * handler failure is already terminal per ticket #57 (the Delivery is marked
- * consumed either way), so this loop never retries one — it only guarantees
- * that a Delivery nothing has consumed yet eventually is.
+ * The loop polls at a fixed interval, while retry eligibility is persisted on
+ * each Delivery. A Delivery whose next attempt is not due is not loaded or
+ * offered to its handler.
  */
 export async function tickEventLoop(deps: EventLoopDependencies): Promise<void> {
   // Review fix for ticket #58: guarded the same way the per-delivery
@@ -70,7 +71,7 @@ export async function tickEventLoop(deps: EventLoopDependencies): Promise<void> 
     );
   }
 
-  for (const delivery of listUnconsumedDeliveries(deps.db)) {
+  for (const delivery of listUnconsumedDeliveries(deps.db, deps.clock.now().toISOString())) {
     try {
       const outcome = await deps.consumer.consumeAsync(delivery);
       process.stderr.write(
@@ -125,12 +126,22 @@ export function startEventLoop(deps: EventLoopDependencies, intervalMs = 200): (
   return () => clearInterval(timer);
 }
 
-function listUnconsumedDeliveries(db: Database.Database): readonly ClaimedDelivery[] {
+const MAX_DELIVERIES_PER_TICK = 50;
+
+function listUnconsumedDeliveries(
+  db: Database.Database,
+  now: string,
+  limit = MAX_DELIVERIES_PER_TICK,
+): readonly ClaimedDelivery[] {
   return db
     .prepare(
       `SELECT project_id AS projectId, module_instance_id AS moduleInstanceId,
               module_id AS moduleId, event_id AS eventId
-       FROM deliveries WHERE consumed_at IS NULL ORDER BY created_at`,
+       FROM deliveries
+       WHERE consumed_at IS NULL
+         AND (next_attempt_at IS NULL OR next_attempt_at <= @now)
+       ORDER BY created_at
+       LIMIT @limit`,
     )
-    .all() as ClaimedDelivery[];
+    .all({ now, limit }) as ClaimedDelivery[];
 }

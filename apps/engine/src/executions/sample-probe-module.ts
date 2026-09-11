@@ -105,7 +105,10 @@ export function createSampleProbeHandler(db: Database.Database): ModuleHandler {
       mappingCommand === undefined ? undefined : applyExternalMappingCommand(ctx, mappingCommand);
 
     if (ctx.event.payload["shouldFail"] === true) {
-      throw new Error("sample-probe: deterministic failure requested by payload.shouldFail");
+      throw Object.assign(
+        new Error("sample-probe: deterministic failure requested by payload.shouldFail"),
+        { code: "sample-probe.deterministic-failure", retryable: false },
+      );
     }
 
     const echoed = ctx.publish({
