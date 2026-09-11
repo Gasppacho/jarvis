@@ -53,6 +53,18 @@ describe("classifyHandlerFailure", () => {
     expect(classified.message).toContain("<path>");
   });
 
+  it("redacts file URI paths and quoted JSON secret values", () => {
+    const classified = classifyHandlerFailure(
+      new Error(
+        'failed reading file:///Users/alice/private/config.json; payload={"token":"json-secret","api_key":"api-secret","access_token":"access-secret"}',
+      ),
+    );
+
+    expect(classified.message).toBe(
+      'failed reading <path>; payload={"token":<redacted>,"api_key":<redacted>,"access_token":<redacted>}',
+    );
+  });
+
   it("preserves JSON pointers while redacting single-component absolute paths", () => {
     const classified = classifyHandlerFailure(new Error("failed at /tmp and schema /payload/file"));
 

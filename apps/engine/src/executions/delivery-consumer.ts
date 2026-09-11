@@ -1460,13 +1460,14 @@ function cleanHandlerFailureMessage(message: string): string {
     .replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, "$1<redacted>@")
     .replace(/((?:authorization|proxy-authorization)\s*[:=]\s*bearer\s+)[^\s,;]+/gi, "$1<redacted>")
     .replace(
-      /((?:token|secret|password|passwd|authorization|credential|api[_-]?key|access[_-]?(?:key|token)|private[_-]?key|cookie|session)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      /((?:["']?)(?:token|secret|password|passwd|authorization|credential|api[_-]?key|access[_-]?(?:key|token)|private[_-]?key|cookie|session)(?:["']?)\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;{}]+)/gi,
       "$1<redacted>",
     )
     .replace(
       /\b(?:gh[opsru]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|sk-[A-Za-z0-9_-]+)\b/g,
       "<redacted>",
     )
+    .replace(/\bfile:\/\/[^\s"'<>;,)\]}]+/gi, "<path>")
     .replace(/(^|[\s("'`=:])\/(?!\/)(?!payload(?:\/|\b))[^\s"'`<>]+/g, "$1<path>")
     .replace(/(^|[\s("'`=:])(?:[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+/g, "$1<path>");
 }
