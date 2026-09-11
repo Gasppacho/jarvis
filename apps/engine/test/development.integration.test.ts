@@ -625,6 +625,53 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
     engines.push(engine);
 
     await activateProject(engine, projectId, fixture, true);
+    const graphResponse = await engine.call(`/v1/projects/${projectId}/graph`);
+    expect(graphResponse.status, await graphResponse.clone().text()).toBe(200);
+    const graph = (await graphResponse.json()) as {
+      nodes: { instanceId: string; enabled: boolean }[];
+      edges: {
+        kind: string;
+        contract: { type: string; version: number; kind: string };
+        from: { instanceId: string };
+        to?: { instanceId: string };
+        routing?: { status: string };
+      }[];
+      valid: boolean;
+      issues: unknown[];
+    };
+    expect(graph).toMatchObject({ valid: true, issues: [] });
+    expect(graph.nodes.map(({ instanceId }) => instanceId)).toEqual([
+      "automation-rules",
+      "development",
+      "request-worker",
+    ]);
+    expect(graph.nodes.every(({ enabled }) => enabled)).toBe(true);
+    expect(graph.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "request",
+          contract: expect.objectContaining({
+            type: "development.implementation.requested",
+            version: 1,
+            kind: "request",
+          }),
+          from: expect.objectContaining({ instanceId: "automation-rules" }),
+          to: expect.objectContaining({ instanceId: "development" }),
+          routing: expect.objectContaining({ status: "resolved" }),
+        }),
+        expect.objectContaining({
+          kind: "request",
+          contract: expect.objectContaining({
+            type: "scm.change-request.creation-requested",
+            version: 1,
+            kind: "request",
+          }),
+          from: expect.objectContaining({ instanceId: "development" }),
+          to: expect.objectContaining({ instanceId: "request-worker" }),
+          routing: expect.objectContaining({ status: "resolved" }),
+        }),
+      ]),
+    );
     await publishTag(engine, projectId, "cancelled");
     const running = await waitForExecution(engine, projectId, "development", "running");
     const workspacePath = join(dataRoot, "projects", projectId, "workspaces", running.id);
@@ -665,6 +712,15 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
              WHERE json_extract(envelope, '$.type') IN ('development.implementation.completed', 'scm.change-request.creation-requested')`,
           )
           .get(),
+      ).toEqual({ count: 0 });
+      expect(
+        database
+          .prepare(
+            `SELECT COUNT(*) AS count FROM events
+             WHERE project_id = ?
+               AND json_extract(envelope, '$.type') IN ('development.implementation.completed', 'scm.change-request.creation-requested')`,
+          )
+          .get(projectId),
       ).toEqual({ count: 0 });
       expect(readFailureEvent(database, projectId)).toMatchObject({
         type: "development.implementation.failed",

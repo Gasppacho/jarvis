@@ -193,7 +193,7 @@ Affiche :
 - liens repository et provider ;
 - actions `Pause`, `Validate`, `Run diagnostics`.
 
-Cette surface reste bloquée : statut actif/dégradé, dernière activité, exécutions en cours et dead letters sont un état runtime détenu par #18 et #6, ni l'un ni l'autre construits. #52 ne l'invente pas partiellement ; la seconde surface qu'il livre est décrite dans « Graphe émergent » → « Sélection et deuxième surface ».
+Cette surface reste limitée pour le statut global, la dernière activité et les dead letters, qui relèvent encore de #6. En revanche, #18 livre la visibilité runtime de Project Detail dans les onglets Graph et Timeline, avec l'annulation d'une Execution depuis la Timeline. #52 ne l'invente pas partiellement ; la seconde surface qu'il livre est décrite dans « Graphe émergent » → « Sélection et deuxième surface ».
 
 ## Suppression d'un projet
 
@@ -203,7 +203,7 @@ Project Detail expose l'action destructive `Delete Project…`. Elle ouvre une c
 
 ## Graphe émergent
 
-Le graphe est dérivé des manifests et instances actives. Il n'est pas un éditeur de workflow impératif. Cette vue reste une prévisualisation de configuration : #18 conserve la visibilité runtime/exécution et l'annulation.
+Le graphe est dérivé des manifests et instances actives. Il n'est pas un éditeur de workflow impératif. La vue runtime livrée par #18 est l'onglet **Graph** de Project Detail : après activation, il lit `GET /v1/projects/{projectId}/graph` et affiche les Module Instances et contrats effectivement actifs. L'onglet **Timeline** expose les Executions et leur action d'annulation par la même Local API.
 
 ```text
 [GitHub]
@@ -242,7 +242,7 @@ Cette décision vient d'une comparaison de trois prototypes SwiftUI structurelle
 | Hierarchical outline | Module Instance en ligne parente, Events produits/consommés et capabilities en lignes filles | Le statut de routage est porté directement par la ligne fille concernée, sans recherche croisée | Liste native qui défile verticalement ; une identité de ligne non unique par Module Instance a provoqué un doublon d'affichage sur la fixture Ambiguous, corrigé en qualifiant chaque ligne par Module Instance, rôle et index | Ordre clavier et VoiceOver strictement descendant, identique au split view déjà retenu pour la grammaire de composition guidée ; le contenu affiché est déjà la représentation texte/liste |
 | Routing table | Une ligne par contrat Request : producer, consumer résolu ou échec, version, finding | Statut de routage directement lisible par ligne, la plus compacte des trois | `Table` native, la plus robuste à la densité, mais les Facts diffusés ne figurent dans aucune ligne : la table ne montre qu'une partie du graphe de composition | Ordre clavier et VoiceOver natif ligne/colonne ; coût texte/liste nul, mais au prix de rendre invisibles les événements diffusés |
 
-Le deuxième prototype est retenu : il montre l'intégralité du graphe de composition — Module Instances, Requests routées, Facts diffusés et capabilities — sans recherche croisée pour lire un statut, avec l'ordre clavier/VoiceOver descendant déjà retenu pour la grammaire de composition guidée, et son contenu constitue déjà la représentation texte/liste que #51 doit fournir. Le flow map ne dessine aucune connexion réelle entre les cartes une fois construit sur le read model : il dégénère en trois listes non reliées, moins lisibles et plus coûteuses à faire correspondre à la liste texte. Le routing table reste le plus compact pour les seules Requests, mais omet entièrement les Facts diffusés du graphe de composition, ce qui ne convient pas à une prévisualisation qui doit rester complète. Les statuts `resolved`, `broadcast`, `orphaned` et `ambiguous` ainsi que les états `bound`/`unresolved`/`unbound` du rail viennent tels quels de la réponse `POST /v1/projects/{projectId}/composition-graph` ; Swift ne recalcule ni consumer ni compatibilité.
+Le deuxième prototype est retenu : il montre l'intégralité du graphe de composition — Module Instances, Requests routées, Facts diffusés et capabilities — sans recherche croisée pour lire un statut, avec l'ordre clavier/VoiceOver descendant déjà retenu pour la grammaire de composition guidée, et son contenu constitue déjà la représentation texte/liste que #51 doit fournir. Le flow map ne dessine aucune connexion réelle entre les cartes une fois construit sur le read model : il dégénère en trois listes non reliées, moins lisibles et plus coûteuses à faire correspondre à la liste texte. Le routing table reste le plus compact pour les seules Requests, mais omet entièrement les Facts diffusés du graphe de composition, ce qui ne convient pas à une prévisualisation qui doit rester complète. Les statuts `resolved`, `broadcast`, `orphaned` et `ambiguous` ainsi que les états `bound`/`unresolved`/`unbound` du rail viennent tels quels de la réponse `POST /v1/projects/{projectId}/composition-graph` ; pour le runtime activé, les nœuds, contrats et statuts viennent de `GET /v1/projects/{projectId}/graph`. Swift ne recalcule ni consumer ni compatibilité.
 
 Les trois prototypes ont été comparés depuis le build empaqueté (`pnpm build:app`, captures `screencapture` sur les fixtures Orphaned et Ambiguous), puis supprimés avec leur point d'entrée temporaire une fois la comparaison faite ; aucune `View` prototype ne devient une surface de production.
 
