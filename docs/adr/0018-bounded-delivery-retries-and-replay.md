@@ -1,6 +1,6 @@
 # ADR 0018 — Bounded Delivery retries and explicit replay
 
-**Status:** Accepted  
+**Status:** Accepted
 **Date:** 2026-09-11
 
 ## Context
