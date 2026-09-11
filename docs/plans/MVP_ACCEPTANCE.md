@@ -2,10 +2,10 @@
 
 ## Product acceptance
 
-- [ ] Un utilisateur installe une DMG notariée, déplace `Jarvis.app` dans Applications et démarre le produit par double-clic.
-- [ ] Aucun Node.js, broker, conteneur ou base externe n'est requis.
-- [ ] Le shell affiche un moteur prêt ou une erreur actionnable.
-- [ ] Un repository local peut être importé, configuré et réouvert après redémarrage.
+- [ ] Un utilisateur installe une DMG notariée, déplace `Jarvis.app` dans Applications et démarre le produit par double-clic. Preuve manquante : le poste ne possède ni identité Developer ID ni accès de notarisation ; cette ligne se ferme après installation d'une DMG notariée sur un compte propre.
+- [x] Aucun Node.js, broker, conteneur ou base externe n'est requis ([`scripts/smoke-bundle.sh`](../../scripts/smoke-bundle.sh), `bash scripts/smoke-bundle.sh --step launch` : Node embarqué, PATH minimal, health/database ready et arrêt propre).
+- [ ] Le shell affiche un moteur prêt ou une erreur actionnable. Le smoke local prouve le handshake et la santé du moteur, pas le démarrage UI du shell macOS.
+- [x] Un repository local peut être importé, configuré et réouvert après redémarrage ([`scripts/smoke-bundle.sh`](../../scripts/smoke-bundle.sh), `--step import` puis `--step recovery` : import Git, rejet d'un dossier non-Git, relance sur le même root et Project conservé).
 - [ ] Les connexions et runtimes sont bindés par projet, pas imposés globalement.
 - [x] Les modules actifs et leur graphe événementiel sont visibles dans l'onglet Graph de Project Detail ([ProjectGraphView](../../apps/macos/JarvisApp/Features/Projects/ProjectGraphView.swift), [ProjectGraphModelTests](../../apps/macos/JarvisAppTests/ProjectGraphModelTests.swift)).
 
@@ -56,4 +56,4 @@ La preuve manuelle complémentaire est enregistrée dans [l’issue #150](https:
 - [ ] Les tests d'architecture interdisent les imports module-à-module.
 - [ ] Le test Application Harness complet est déterministe.
 - [ ] Les suites TypeScript et Swift passent.
-- [ ] Le bundle signé passe le smoke test sur une machine propre.
+- [ ] Le bundle signé passe le smoke test sur une machine propre. Preuve manquante : la validation actuelle est ad hoc sur ce poste ; cette ligne se ferme avec une DMG notariée, un compte/machine propre et le smoke `launch|import|recovery` après installation.

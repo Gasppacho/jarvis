@@ -21,6 +21,7 @@ Errors crossing the Local API or stored as terminal Execution errors use stable 
 | Code | Retryable | Meaning |
 |---|---:|---|
 | `repository.path-invalid` | No | Repository discovery/import received a missing, relative, inaccessible or non-directory path |
+| `repository.not-git` | No | Repository import received a directory that is not a Git repository |
 | `project.already-imported` | No | The canonical repository path is already bound to a Project |
 | `project.config-invalid` | No | Portable configuration fails schema/semantic validation |
 | `project.bindings-invalid` | No | Local Bindings fail schema, project identity or declared-slot validation |

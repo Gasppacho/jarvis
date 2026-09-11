@@ -1,4 +1,4 @@
-import { mkdirSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type Database from "better-sqlite3";
 import type { FastifyInstance } from "fastify";
@@ -77,6 +77,9 @@ export function registerDurabilityTestRoutes(
     const repositoryPath =
       body.repositoryPath ?? join(hooks.testRepositoryRoot, "repositories", body.id);
     mkdirSync(repositoryPath, { recursive: true });
+    if (!existsSync(join(repositoryPath, ".git"))) {
+      mkdirSync(join(repositoryPath, ".git"));
+    }
     const canonicalRepositoryPath = realpathSync(repositoryPath);
     const created = hooks.projects.importProject({
       repositoryPath: canonicalRepositoryPath,

@@ -27,13 +27,44 @@ mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
 cp "$BINARY" "$CONTENTS/MacOS/Jarvis"
 # The engine tree, exactly as TECHNOLOGY_STACK.md "Build outputs" describes it.
 cp -R "$ROOT/dist/engine" "$CONTENTS/Resources/engine"
-# ADR 0015: dist/engine also carries engine.test-bundle.mjs, the Application
-# Harness's build with the failpoint/test-hooks mechanism compiled in. Only
-# engine.bundle.mjs (defined __JARVIS_TEST_HOOKS__ false) is production; strip
-# the test bundle explicitly so it can never ship even if this copy step ever
-# changes.
-rm -f "$CONTENTS/Resources/engine/engine.test-bundle.mjs" \
-      "$CONTENTS/Resources/engine/engine.test-bundle.mjs.map"
+
+# Validate the assembled copy, not dist/engine: this gate must inspect exactly
+# what would be signed and shipped. A path outside the declared output shapes
+# is a release failure, even when a later cleanup could remove it.
+ENGINE="$CONTENTS/Resources/engine"
+reject_engine_artifact() {
+  echo "build-app: refusing to ship unexpected artifact in assembled engine bundle: $1" >&2
+  exit 1
+}
+
+while IFS= read -r -d '' path; do
+  [ "$path" = "$ENGINE" ] && continue
+  relative="${path#"$ENGINE/"}"
+  name="${relative##*/}"
+
+  case "$name" in
+    .env|.env.*|engine.test-bundle.mjs|engine.test-bundle.mjs.map)
+      reject_engine_artifact "$path"
+      ;;
+  esac
+
+  IFS='/' read -r -a components <<< "$relative"
+  for component in "${components[@]}"; do
+    case "$component" in
+      fixture|fixtures|test|tests)
+        reject_engine_artifact "$path"
+        ;;
+    esac
+  done
+
+  case "$relative" in
+    engine.bundle.mjs|engine.bundle.mjs.map|module-registry.json|node|native|native/better_sqlite3.node|modules|modules/*|contracts|contracts/*|migrations|migrations/*)
+      ;;
+    *)
+      reject_engine_artifact "$path"
+      ;;
+  esac
+done < <(find "$ENGINE" -print0)
 
 VERSION="$(node -p "require('$ROOT/package.json').version")"
 
@@ -57,5 +88,9 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+# Record the artifact facts after assembly, from the exact bundle that will be
+# signed. The helper starts that Engine for its live version/API health check.
+node "$ROOT/scripts/build-manifest.mjs" --app "$APP" --source-root "$ROOT"
 
 echo "build-app: $APP"

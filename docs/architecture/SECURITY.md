@@ -103,6 +103,15 @@ Le futur SDK tiers exigera signature, permissions, version compatibility et prob
 
 Distribution directe avec Developer ID, hardened runtime et notarisation. Le MVP n'utilise pas App Sandbox parce que le produit doit lancer des CLIs, accéder à des repositories choisis et utiliser Git/worktrees. Cette décision ne supprime pas le principe de moindre privilège interne.
 
+Le bundle signé utilise deux entitlements sur le Node embarqué :
+`com.apple.security.cs.allow-jit`, parce que V8 doit créer ses pages JIT sous
+hardened runtime, et `com.apple.security.cs.disable-library-validation`, parce
+que Node charge l'addon SQLite natif signé séparément au démarrage. Le binaire
+Swift, l'addon SQLite natif et l'app portent la signature mais aucun entitlement
+supplémentaire. Le script `scripts/sign-app.sh` vérifie cette séparation à
+chaque signature ; un besoin d'entitlement nouveau exige une justification ici
+avant d'être ajouté.
+
 ## Diagnostics
 
 Un bundle de diagnostic contient versions, statuts, logs nettoyés et métadonnées contractuelles. Il exclut :

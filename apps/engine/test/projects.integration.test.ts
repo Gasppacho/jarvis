@@ -235,6 +235,18 @@ capabilities:
     expect(body["isGitRepository"]).toBe(false);
   });
 
+  it("rejects importing a plain directory with the contractual error code", async () => {
+    const engine = await start();
+    const root = fixture(() => makeRepositoryFixture({}));
+    rmSync(join(root, ".git"), { recursive: true, force: true });
+
+    const response = await importProject(engine, { repositoryPath: root });
+    expect(response.status).toBe(400);
+    expect((await response.json()) as Record<string, unknown>).toMatchObject({
+      error: { code: "repository.not-git" },
+    });
+  });
+
   it("never modifies the inspected repository", async () => {
     const engine = await start();
     const root = fixture(() => makeNodeRepositoryFixture());

@@ -11,6 +11,7 @@ export type ErrorCode =
   | "connection.secret-ref-invalid"
   | "connection.not-found"
   | "repository.path-invalid"
+  | "repository.not-git"
   | "project.already-imported"
   | "project.config-invalid"
   | "project.bindings-invalid"
