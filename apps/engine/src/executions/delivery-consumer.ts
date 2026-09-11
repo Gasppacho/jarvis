@@ -21,7 +21,10 @@ export type ModulePublishedContractsLookup = (
 import { EventPublisher, type PublishEventInput } from "../events/publisher.js";
 import { EngineError } from "../errors.js";
 import { failpoint } from "../test-support/failpoint.js";
-import { computeRetrySchedule } from "../../../../packages/eventing/src/retry-policy.js";
+import {
+  computeRetrySchedule,
+  DEFAULT_MAX_ATTEMPTS,
+} from "../../../../packages/eventing/src/retry-policy.js";
 import { ExecutionCheckpointStore } from "./checkpoints.js";
 import { STATUS_TO_API, type LedgerExecutionSummary } from "./ledger.js";
 
@@ -581,21 +584,17 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
       // A failure while recording a failure (constraint violation, disk
       // error) must not crash the caller with a raw, unlabeled exception
       // and must not lose the original handler failure (`message`): the
-      // Delivery is left with `consumed_at` unset when this transaction also
-      // fails; #159 bounds and dead-letters that exceptional path.
-      const recordingMessage =
-        recordingError instanceof Error ? recordingError.message : String(recordingError);
-      throw new EngineError(
-        "system.internal-error",
-        500,
-        `Recording the failed Execution for Delivery (project ${delivery.projectId}, module instance ${delivery.moduleInstanceId}, event ${delivery.eventId}) itself failed: ${recordingMessage}. Original handler failure: ${message}`,
-        {
-          projectId: delivery.projectId,
-          moduleInstanceId: delivery.moduleInstanceId,
-          eventId: delivery.eventId,
-          handlerError: message,
-          recordingError: recordingMessage,
-        },
+      // Delivery is re-offered with the same bounded retry policy; #159
+      // settles it as a Dead Letter when that policy is exhausted.
+      return this.recoverRecordingFailure(
+        delivery,
+        envelope,
+        executionId,
+        startedAt,
+        message,
+        recordingError,
+        attempt,
+        running,
       );
     }
 
@@ -606,6 +605,85 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
       redelivered: false,
       executionSummary: { ...executionRow, correlationId: envelope.correlationId },
     };
+  }
+
+  private recoverRecordingFailure(
+    delivery: ClaimedDelivery,
+    envelope: EventEnvelope,
+    executionId: string,
+    startedAt: string,
+    handlerMessage: string,
+    recordingError: unknown,
+    attempt: number,
+    running: boolean,
+  ): ConsumeResult {
+    const recordingMessage = classifyHandlerFailure(recordingError).message;
+    const combinedMessage =
+      `Original handler failure: ${handlerMessage}; ` + `failure recording: ${recordingMessage}`;
+    const schedule = computeRetrySchedule(attempt, this.retryRandom, DEFAULT_MAX_ATTEMPTS);
+
+    try {
+      if (!schedule.exhausted) {
+        this.scheduleRetry(
+          delivery,
+          attempt,
+          new Date(this.clock.now().getTime() + schedule.delayMs).toISOString(),
+        );
+        throw new EngineError(
+          "system.internal-error",
+          500,
+          `Recording the failed Execution for Delivery (project ${delivery.projectId}, module instance ${delivery.moduleInstanceId}, event ${delivery.eventId}) itself failed: ${recordingMessage}. Original handler failure: ${handlerMessage}`,
+          {
+            projectId: delivery.projectId,
+            moduleInstanceId: delivery.moduleInstanceId,
+            eventId: delivery.eventId,
+            handlerError: handlerMessage,
+            recordingError: recordingMessage,
+          },
+        );
+      }
+
+      const recoveryExecutionId = `exec_${this.ids.next()}`;
+      const executionRow = this.db.transaction(() => {
+        const row = running
+          ? this.updateExecution(executionId, "failed", combinedMessage)
+          : this.insertExecution(
+              recoveryExecutionId,
+              delivery,
+              envelope,
+              "failed",
+              startedAt,
+              combinedMessage,
+              attempt,
+            );
+        this.insertDeadLetter(delivery, "system.internal-error", combinedMessage, attempt, row.id);
+        this.markDeliveryConsumed(delivery, attempt);
+        return row;
+      })();
+      return {
+        executionId: executionRow.id,
+        status: "failed",
+        result: { error: { code: "system.internal-error", message: combinedMessage } },
+        redelivered: false,
+        executionSummary: { ...executionRow, correlationId: envelope.correlationId },
+      };
+    } catch (recoveryError) {
+      if (recoveryError instanceof EngineError) throw recoveryError;
+      const message = classifyHandlerFailure(recoveryError).message;
+      throw new EngineError(
+        "system.internal-error",
+        500,
+        `Bounded failure recovery for Delivery (project ${delivery.projectId}, module instance ${delivery.moduleInstanceId}, event ${delivery.eventId}) itself failed: ${message}. Original handler failure: ${handlerMessage}`,
+        {
+          projectId: delivery.projectId,
+          moduleInstanceId: delivery.moduleInstanceId,
+          eventId: delivery.eventId,
+          handlerError: handlerMessage,
+          recordingError: recordingMessage,
+          recoveryError: message,
+        },
+      );
+    }
   }
 
   private recordCancelled(

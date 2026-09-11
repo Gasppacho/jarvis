@@ -19,6 +19,7 @@ import { EventPublisher } from "../events/publisher.js";
 import { ControllableClock, DeterministicIdGenerator } from "../events/test-doubles.js";
 import { tickEventLoop } from "../events/dispatch-loop.js";
 import {
+  type ConsumeResult,
   DeliveryConsumer,
   type ModuleCapabilityLookup,
   type ModuleConfigurationLookup,
@@ -780,6 +781,90 @@ describe("DeliveryConsumer", () => {
     expect(
       database.prepare(`SELECT consumed_at FROM deliveries WHERE event_id = ?`).get(consumed.id),
     ).toEqual({ consumed_at: null });
+  });
+
+  it("bounds repeated failure-recording errors and dead-letters both failure messages", () => {
+    let calls = 0;
+    const handler = () => {
+      calls += 1;
+      throw Object.assign(new Error("permanent provider rejection at /Users/alice/.cache"), {
+        code: "provider.invalid",
+        retryable: false,
+      });
+    };
+    const harnessState = harness(
+      () => handler,
+      undefined,
+      undefined,
+      undefined,
+      () => 0,
+    );
+    const { db: database, clock, store, publisher, dispatcher, consumer } = harnessState;
+    activate(store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+    const consumed = publisher.publish(pingInput("project-a"));
+    dispatcher.dispatchPending();
+    database.exec(
+      "CREATE TRIGGER fail_rich_dead_letter BEFORE INSERT ON dead_letters " +
+        "WHEN NEW.code = 'provider.invalid' BEGIN " +
+        "SELECT RAISE(ABORT, 'disk recording failure at /Users/bob/.jarvis'); END",
+    );
+
+    const delivery = {
+      projectId: "project-a",
+      moduleInstanceId: "probe-1",
+      moduleId: SAMPLE_PROBE_MODULE_ID,
+      eventId: consumed.id,
+    };
+    let finalOutcome: ConsumeResult | undefined;
+    for (let attempt = 1; attempt <= DEFAULT_MAX_ATTEMPTS; attempt += 1) {
+      if (attempt > 1) {
+        const nextAttempt = database.prepare("SELECT next_attempt_at FROM deliveries").get() as {
+          next_attempt_at: string;
+        };
+        clock.advance(Date.parse(nextAttempt.next_attempt_at) - clock.now().getTime() + 1);
+      }
+      try {
+        finalOutcome = consumer.consume(delivery);
+      } catch (error) {
+        expect(error).toBeInstanceOf(EngineError);
+        expect((error as EngineError).message).toMatch(/provider rejection/);
+        expect(attempt).toBeLessThan(DEFAULT_MAX_ATTEMPTS);
+      }
+    }
+
+    expect(finalOutcome).toMatchObject({
+      status: "failed",
+      redelivered: false,
+      executionId: expect.any(String),
+    });
+    expect(calls).toBe(DEFAULT_MAX_ATTEMPTS);
+    expect(database.prepare("SELECT COUNT(*) AS n FROM executions").get()).toEqual({ n: 1 });
+    expect(database.prepare("SELECT COUNT(*) AS n FROM inbox").get()).toEqual({ n: 0 });
+    expect(
+      database.prepare("SELECT code, message, attempts FROM dead_letters").get(),
+    ).toMatchObject({
+      code: "system.internal-error",
+      message:
+        "Original handler failure: permanent provider rejection at <path>; " +
+        "failure recording: disk recording failure at <path>",
+      attempts: DEFAULT_MAX_ATTEMPTS,
+    });
+    expect(
+      database.prepare("SELECT consumed_at, next_attempt_at FROM deliveries").get(),
+    ).toMatchObject({
+      consumed_at: expect.any(String),
+      next_attempt_at: null,
+    });
+
+    const redelivery = consumer.consume(delivery);
+    expect(redelivery).toMatchObject({
+      executionId: null,
+      redelivered: true,
+      status: "failed",
+    });
+    expect(calls).toBe(DEFAULT_MAX_ATTEMPTS);
   });
 
   it("rejects a ClaimedDelivery naming another Project's id instead of silently consuming across Projects (AGENTS.md invariant 9)", () => {
