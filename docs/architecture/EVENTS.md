@@ -113,6 +113,14 @@ L'Inbox possède une contrainte unique `(consumer_instance_id, event_id)`. Une r
 - Après épuisement : dead letter avec erreur nettoyée, tentative, timestamps et lien d'exécution.
 - Le replay est une action explicite, auditée et réutilise l'idempotency key.
 
+La politique pure est portée par `packages/eventing/src/retry-policy.ts` :
+
+- `BASE_RETRY_DELAY_MS` vaut 1 seconde et le délai exponentiel est `base × 2^(attempt - 1)`.
+- Le jitter injecté couvre 50 à 100 % du délai exponentiel borné.
+- `MAX_RETRY_DELAY_MS` fixe le plafond dur à 60 secondes.
+- `DEFAULT_MAX_ATTEMPTS` vaut 5 ; un appelant peut choisir de 1 à `MAX_RETRY_ATTEMPTS` (10).
+- Une tentative `attempt >= maxAttempts` est épuisée et ne doit pas être planifiée à nouveau.
+
 ## Ordering
 
 Aucun ordre global n'est garanti. Lorsqu'un invariant exige l'ordre, le consumer déclare une `partitionKey`, généralement :
