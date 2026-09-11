@@ -250,6 +250,16 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     }
 
     const envelope = this.requireEnvelope(delivery);
+    const existingDeadLetter = this.readDeadLetter(delivery);
+    if (existingDeadLetter !== undefined) {
+      return {
+        executionId: null,
+        status: "failed",
+        result: { error: { code: existingDeadLetter.code, message: existingDeadLetter.message } },
+        redelivered: true,
+        executionSummary: null,
+      };
+    }
     const attempt = this.readDeliveryAttempt(delivery);
     const handler = this.handlers(delivery.moduleId);
     const executionId = `exec_${this.ids.next()}`;
@@ -558,6 +568,9 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
             attempt,
             new Date(this.clock.now().getTime() + schedule.delayMs).toISOString(),
           );
+        } else if (schedule?.exhausted === true) {
+          this.insertDeadLetter(delivery, "delivery.retry-exhausted", message, attempt, row.id);
+          this.markDeliveryConsumed(delivery, attempt);
         } else {
           this.insertInbox(delivery, "failed", result, attempt);
           this.markDeliveryConsumed(delivery, attempt);
@@ -1010,6 +1023,60 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
         eventId: delivery.eventId,
         attempt,
         nextAttemptAt,
+      });
+  }
+
+  private readDeadLetter(
+    delivery: ClaimedDelivery,
+  ): { readonly code: string; readonly message: string } | undefined {
+    return this.db
+      .prepare(
+        `SELECT dead_letters.code, dead_letters.message
+         FROM dead_letters
+         INNER JOIN deliveries ON deliveries.id = dead_letters.delivery_id
+         WHERE deliveries.project_id = @projectId
+           AND deliveries.module_instance_id = @moduleInstanceId
+           AND deliveries.event_id = @eventId`,
+      )
+      .get(delivery) as { code: string; message: string } | undefined;
+  }
+
+  private insertDeadLetter(
+    delivery: ClaimedDelivery,
+    code: string,
+    message: string,
+    attempts: number,
+    lastExecutionId: string,
+  ): void {
+    const row = this.db
+      .prepare(
+        `SELECT id FROM deliveries
+         WHERE project_id = @projectId AND module_instance_id = @moduleInstanceId AND event_id = @eventId`,
+      )
+      .get(delivery) as { id: string } | undefined;
+    if (row === undefined) {
+      throw new Error(
+        `No Delivery exists for Project ${delivery.projectId}, module instance ${delivery.moduleInstanceId}, event ${delivery.eventId}.`,
+      );
+    }
+    this.db
+      .prepare(
+        `INSERT INTO dead_letters
+           (delivery_id, project_id, event_id, module_instance_id, code, message, attempts, last_execution_id, created_at)
+         VALUES
+           (@deliveryId, @projectId, @eventId, @moduleInstanceId, @code, @message, @attempts, @lastExecutionId, @createdAt)
+         ON CONFLICT (delivery_id) DO NOTHING`,
+      )
+      .run({
+        deliveryId: row.id,
+        projectId: delivery.projectId,
+        eventId: delivery.eventId,
+        moduleInstanceId: delivery.moduleInstanceId,
+        code,
+        message,
+        attempts,
+        lastExecutionId,
+        createdAt: this.clock.now().toISOString(),
       });
   }
 

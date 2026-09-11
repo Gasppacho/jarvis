@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Clock } from "../../../../packages/kernel/src/clock.js";
 import { FakeRuntime } from "../../../../packages/agent-runtime/src/index.js";
 import { EventEnvelopeContractRegistry } from "../../../../packages/eventing/src/envelope.js";
+import { DEFAULT_MAX_ATTEMPTS } from "../../../../packages/eventing/src/retry-policy.js";
 import { deriveProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
 import type {
   ProjectModuleInstanceConfiguration,
@@ -624,6 +625,85 @@ describe("DeliveryConsumer", () => {
       attempt_count: 2,
       next_attempt_at: null,
     });
+  });
+
+  it("dead-letters a retryable Delivery exactly once when its attempts are exhausted", () => {
+    let database!: Database.Database;
+    let calls = 0;
+    const handler = () => {
+      calls += 1;
+      throw Object.assign(new Error("provider stayed unavailable at /Users/alice/.cache"), {
+        code: "provider.unavailable",
+        retryable: true,
+      });
+    };
+    const harnessState = harness(
+      () => handler,
+      undefined,
+      undefined,
+      undefined,
+      () => 0,
+    );
+    database = harnessState.db;
+    const { clock, store, publisher, dispatcher, consumer } = harnessState;
+    activate(store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+    const published = publisher.publish(pingInput("project-a"));
+    dispatcher.dispatchPending();
+    const delivery = {
+      projectId: "project-a",
+      moduleInstanceId: "probe-1",
+      moduleId: SAMPLE_PROBE_MODULE_ID,
+      eventId: published.id,
+    };
+
+    for (let attempt = 1; attempt <= DEFAULT_MAX_ATTEMPTS; attempt += 1) {
+      if (attempt > 1) {
+        const nextAttempt = database.prepare("SELECT next_attempt_at FROM deliveries").get() as {
+          next_attempt_at: string;
+        };
+        clock.advance(Date.parse(nextAttempt.next_attempt_at) - clock.now().getTime() + 1);
+      }
+      expect(consumer.consume(delivery).status).toBe("failed");
+    }
+
+    expect(calls).toBe(DEFAULT_MAX_ATTEMPTS);
+    expect(database.prepare("SELECT COUNT(*) AS n FROM executions").get()).toEqual({
+      n: DEFAULT_MAX_ATTEMPTS,
+    });
+    expect(database.prepare("SELECT COUNT(*) AS n FROM inbox").get()).toEqual({ n: 0 });
+    const deadLetter = database
+      .prepare("SELECT code, attempts, message, last_execution_id FROM dead_letters")
+      .get() as {
+      code: string;
+      attempts: number;
+      message: string;
+      last_execution_id: string;
+    };
+    expect(deadLetter).toMatchObject({
+      code: "delivery.retry-exhausted",
+      attempts: DEFAULT_MAX_ATTEMPTS,
+      message: "provider stayed unavailable at <path>",
+    });
+    expect(deadLetter.last_execution_id).toBe(
+      database.prepare("SELECT id FROM executions ORDER BY attempt DESC LIMIT 1").pluck().get(),
+    );
+    expect(
+      database.prepare("SELECT consumed_at, next_attempt_at FROM deliveries").get(),
+    ).toMatchObject({
+      next_attempt_at: null,
+      consumed_at: expect.any(String),
+    });
+
+    const redelivery = consumer.consume(delivery);
+    expect(redelivery).toMatchObject({
+      executionId: null,
+      redelivered: true,
+      status: "failed",
+    });
+    expect(calls).toBe(DEFAULT_MAX_ATTEMPTS);
+    expect(database.prepare("SELECT COUNT(*) AS n FROM dead_letters").get()).toEqual({ n: 1 });
   });
 
   it("a failure while recording a handler failure surfaces as a labeled EngineError instead of the raw constraint error, and does not lose the original handler failure", () => {
