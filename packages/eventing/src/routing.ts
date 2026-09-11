@@ -75,6 +75,7 @@ export class RequestRoutingError extends Error {
   public constructor(
     public readonly code: RequestRoutingErrorCode,
     message: string,
+    public readonly candidates: readonly RoutedConsumer[] = [],
   ) {
     super(message);
     this.name = "RequestRoutingError";
@@ -94,20 +95,50 @@ export function resolveRequestConsumer(
   envelope: RequestEnvelope,
   snapshot: EventingRequestRoutingSnapshot,
 ): RoutedConsumer {
-  const target = envelope.target;
-  if (target === undefined) {
+  if (envelope.target === undefined) {
     throw new RequestRoutingError(
       "request-target-missing",
       `Request ${envelope.type}.v${envelope.version} has no target.`,
     );
   }
 
+  const consumers = resolveRequestCandidates(envelope, snapshot);
+
+  if (consumers.length === 0) {
+    throw new RequestRoutingError(
+      "request-consumer-not-found",
+      `Request ${envelope.type}.v${envelope.version} from ${envelope.producer.moduleInstanceId} has no target consumer.`,
+    );
+  }
+  if (consumers.length > 1) {
+    throw new RequestRoutingError(
+      "request-consumer-ambiguous",
+      `Request ${envelope.type}.v${envelope.version} from ${envelope.producer.moduleInstanceId} has multiple target consumers.`,
+      consumers,
+    );
+  }
+
+  return consumers[0]!;
+}
+
+/**
+ * Returns the distinct consumers a request would reach under the frozen
+ * routing rules. A missing target is accepted here for graph projection only;
+ * the real dispatcher still rejects such an envelope in resolveRequestConsumer.
+ */
+export function resolveRequestCandidates(
+  envelope: RequestEnvelope,
+  snapshot: EventingRequestRoutingSnapshot,
+): readonly RoutedConsumer[] {
+  const target = envelope.target;
   const targetConsumers =
-    target.moduleInstanceId !== undefined
-      ? [target.moduleInstanceId]
-      : target.binding === undefined
-        ? undefined
-        : resolveBindingTargets(envelope, target.binding, snapshot);
+    target === undefined
+      ? undefined
+      : target.moduleInstanceId !== undefined
+        ? [target.moduleInstanceId]
+        : target.binding === undefined
+          ? undefined
+          : resolveBindingTargets(envelope, target.binding, snapshot);
   const routes = snapshot.requestRoutes.filter(
     (route) =>
       route.contract.type === envelope.type &&
@@ -117,14 +148,9 @@ export function resolveRequestConsumer(
       (targetConsumers === undefined || targetConsumers.includes(route.consumer.instanceId)),
   );
 
-  // Counted by distinct consumer, not by route: a producer that configures
-  // several emissions of one contract at the same consumer (an Automation Rules
-  // Rule Set matching different tags into one Development instance is the
-  // normal case) contributes one route per configured target, and those routes
-  // are identical. Ambiguity means genuinely *different* candidates — counting
-  // rows instead would reject every such Rule Set as ambiguous. Deduplicating
-  // here rather than only where the report is built also covers snapshots
-  // frozen into `resolved_project` before that dedupe existed.
+  // Count distinct consumers, not route rows: several configured emissions to
+  // the same consumer are one candidate, while genuinely different consumers
+  // make the request ambiguous.
   const consumers = new Map<string, RoutedConsumer>();
   for (const route of routes) {
     const consumer = route.consumer;
@@ -133,21 +159,11 @@ export function resolveRequestConsumer(
       moduleId: consumer.moduleId,
     });
   }
-
-  if (consumers.size === 0) {
-    throw new RequestRoutingError(
-      "request-consumer-not-found",
-      `Request ${envelope.type}.v${envelope.version} from ${envelope.producer.moduleInstanceId} has no target consumer.`,
-    );
-  }
-  if (consumers.size > 1) {
-    throw new RequestRoutingError(
-      "request-consumer-ambiguous",
-      `Request ${envelope.type}.v${envelope.version} from ${envelope.producer.moduleInstanceId} has multiple target consumers.`,
-    );
-  }
-
-  return [...consumers.values()][0]!;
+  return [...consumers.values()].sort(
+    (left, right) =>
+      left.moduleInstanceId.localeCompare(right.moduleInstanceId) ||
+      left.moduleId.localeCompare(right.moduleId),
+  );
 }
 
 function resolveBindingTargets(

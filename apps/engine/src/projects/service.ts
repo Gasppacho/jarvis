@@ -1,7 +1,13 @@
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { resolveConsumers } from "../../../../packages/eventing/src/routing.js";
+import {
+  RequestRoutingError,
+  resolveConsumers,
+  resolveRequestCandidates,
+  resolveRequestConsumer,
+  type RequestEnvelope,
+} from "../../../../packages/eventing/src/routing.js";
 import type { ModuleHost } from "../../../../packages/kernel/src/module-host.js";
 import {
   projectResourceCandidates,
@@ -338,11 +344,7 @@ export class ProjectService implements ProjectRegistry<
     });
   }
 
-  /**
-   * The emergent graph is empty until activation freezes a Resolved Project.
-   * Node and edge projection is added by the subsequent graph slices; this
-   * endpoint still goes through the normal Project lookup for its 404 contract.
-   */
+  /** The emergent graph is derived fresh from the immutable Resolved Project. */
   getProjectGraph(id: unknown): ProjectGraph {
     const project = this.requireProject(id);
     const resolved = this.store.getResolvedProject(project.id);
@@ -360,12 +362,122 @@ export class ProjectService implements ProjectRegistry<
         };
       })
       .sort((left, right) => left.instanceId.localeCompare(right.instanceId));
+    if (resolved === undefined) return { nodes, edges: [], valid: true, issues: [] };
     const subscriptions = deriveProjectSubscriptions(
       project.id,
-      resolved?.moduleInstances ?? [],
+      resolved.moduleInstances,
       this.modules,
     );
-    const edges: ProjectCompositionGraphEdge[] = (resolved?.moduleInstances ?? [])
+    const issues: Omit<ProjectGraph["issues"][number], "id">[] = [];
+    const requestEdges: ProjectCompositionGraphEdge[] = resolved.moduleInstances
+      .filter((instance) => instance.enabled)
+      .flatMap((producer) =>
+        (this.modules.composition(producer.moduleId)?.produces ?? [])
+          .filter((contract) => contract.kind === "request")
+          .flatMap((contract): ProjectCompositionGraphEdge[] => {
+            const configuredTargets = this.modules.configuredRequestTargets(
+              producer.moduleId,
+              producer.configuration,
+              contract,
+            );
+            const targets = configuredTargets ?? [undefined];
+            return targets.map((target) => {
+              const from = { instanceId: producer.instanceId, moduleId: producer.moduleId };
+              const graphContract = {
+                type: contract.type,
+                version: contract.version,
+                kind: "request" as const,
+              };
+              const request: RequestEnvelope = {
+                projectId: project.id,
+                type: contract.type,
+                version: contract.version,
+                kind: "request",
+                producer: {
+                  moduleId: producer.moduleId,
+                  moduleInstanceId: producer.instanceId,
+                },
+                ...(target === undefined ? {} : { target }),
+              };
+              let candidates: readonly {
+                moduleInstanceId: string;
+                moduleId: string;
+              }[];
+              if (target === undefined) {
+                candidates = resolveRequestCandidates(request, resolved);
+              } else {
+                try {
+                  candidates = [resolveRequestConsumer(request, resolved)];
+                } catch (error) {
+                  if (
+                    error instanceof RequestRoutingError &&
+                    (error.code === "request-consumer-not-found" ||
+                      error.code === "request-consumer-ambiguous")
+                  ) {
+                    candidates = error.candidates;
+                  } else {
+                    throw error;
+                  }
+                }
+              }
+              if (candidates.length === 1) {
+                const consumer = {
+                  instanceId: candidates[0]!.moduleInstanceId,
+                  moduleId: candidates[0]!.moduleId,
+                };
+                return {
+                  kind: "request" as const,
+                  contract: graphContract,
+                  from,
+                  to: consumer,
+                  routing: { status: "resolved" as const, consumer },
+                  findings: [],
+                };
+              }
+
+              const ambiguous = candidates.length > 1;
+              const code = ambiguous
+                ? ("project.request-ambiguous" as const)
+                : ("project.request-orphaned" as const);
+              issues.push({
+                code,
+                severity: "error",
+                message: ambiguous
+                  ? `Request ${contract.type}.v${contract.version} from ${producer.instanceId} has multiple consumers.`
+                  : `Request ${contract.type}.v${contract.version} from ${producer.instanceId} has no consumer.`,
+                target: {
+                  kind: "request-edge",
+                  contract: graphContract,
+                  producer: from,
+                  ...(ambiguous
+                    ? {
+                        candidates: candidates.map((candidate) => ({
+                          instanceId: candidate.moduleInstanceId,
+                          moduleId: candidate.moduleId,
+                        })),
+                      }
+                    : {}),
+                },
+              });
+              return {
+                kind: "request" as const,
+                contract: graphContract,
+                from,
+                routing: ambiguous
+                  ? {
+                      status: "ambiguous" as const,
+                      candidates: candidates.map((candidate) => ({
+                        instanceId: candidate.moduleInstanceId,
+                        moduleId: candidate.moduleId,
+                      })),
+                    }
+                  : { status: "orphaned" as const },
+                findings: [code],
+              };
+            });
+          }),
+      );
+    const factEdges: ProjectCompositionGraphEdge[] = resolved.moduleInstances
       .filter((instance) => instance.enabled)
       .flatMap((producer) =>
         (this.modules.composition(producer.moduleId)?.produces ?? [])
@@ -392,16 +504,37 @@ export class ProjectService implements ProjectRegistry<
               findings: [],
             }));
           }),
-      )
+      );
+    const edges = [
+      ...new Map(
+        [...requestEdges, ...factEdges].map((edge) => [JSON.stringify(edge), edge]),
+      ).values(),
+    ].sort(
+      (left, right) =>
+        left.kind.localeCompare(right.kind) ||
+        left.contract.type.localeCompare(right.contract.type) ||
+        left.contract.version - right.contract.version ||
+        left.from.instanceId.localeCompare(right.from.instanceId) ||
+        (left.to?.instanceId ?? "").localeCompare(right.to?.instanceId ?? ""),
+    );
+    const graphIssues = [...new Map(issues.map((issue) => [JSON.stringify(issue), issue])).values()]
       .sort(
         (left, right) =>
-          left.contract.type.localeCompare(right.contract.type) ||
-          left.contract.version - right.contract.version ||
-          left.from.instanceId.localeCompare(right.from.instanceId) ||
-          (left.to?.instanceId ?? "").localeCompare(right.to?.instanceId ?? ""),
-      );
+          left.target.kind.localeCompare(right.target.kind) ||
+          (left.target.kind === "request-edge" && right.target.kind === "request-edge"
+            ? left.target.contract.type.localeCompare(right.target.contract.type) ||
+              left.target.contract.version - right.target.contract.version ||
+              left.target.producer.instanceId.localeCompare(right.target.producer.instanceId)
+            : 0),
+      )
+      .map((issue, index) => ({ ...issue, id: `f${index + 1}` }));
 
-    return { nodes, edges, valid: true, issues: [] };
+    return {
+      nodes,
+      edges,
+      valid: requestEdges.every((edge) => edge.routing?.status === "resolved"),
+      issues: graphIssues,
+    };
   }
 
   /**
