@@ -210,6 +210,85 @@ esac
       database.close();
     }
   });
+
+  it.each([
+    ["ignore-existing", 0],
+    ["emit-existing", 1],
+  ] as const)(
+    "applies the %s bootstrap policy once",
+    async (bootstrapLabelPolicy, expectedFacts) => {
+      const fakeGitHub = await startFakeGitHubApi();
+      servers.push(fakeGitHub);
+      const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-bootstrap-gh-"));
+      roots.push(executableRoot);
+      const executable = join(executableRoot, "gh");
+      writeFileSync(executable, "#!/bin/sh\necho ghs_bootstrap_sentinel\n", "utf8");
+      chmodSync(executable, 0o755);
+      fakeGitHub.appendLabeledIssueEvent({
+        owner: "Gasppacho",
+        repository: "jarvis",
+        issueNumber: 20,
+        issueTitle: "Open issue",
+        label: "agent:ready",
+        actor: "octocat",
+        createdAt: "2026-09-11T09:00:00.000Z",
+        issueState: "open",
+      });
+      fakeGitHub.appendLabeledIssueEvent({
+        owner: "Gasppacho",
+        repository: "jarvis",
+        issueNumber: 21,
+        issueTitle: "Closed issue",
+        label: "agent:ready",
+        actor: "octocat",
+        createdAt: "2026-09-11T09:01:00.000Z",
+        issueState: "closed",
+      });
+
+      const engine = await startEngine({
+        enginePath: TEST_BUNDLE,
+        env: {
+          JARVIS_ENABLE_TEST_HOOKS: "1",
+          JARVIS_GH_EXECUTABLE: executable,
+          JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+          JARVIS_GITHUB_POLL_INTERVAL_MS: "25",
+        },
+      });
+      engines.push(engine);
+      await registerConnection(engine);
+      const project = await createProject(engine, false, bootstrapLabelPolicy);
+      await bindAndActivate(engine, project.id, project.path);
+      await waitForRequest(fakeGitHub, "/repos/Gasppacho/jarvis/issues/events");
+      if (expectedFacts > 0) await waitForFactCount(engine, project.id, expectedFacts);
+      else await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const database = new Database(`${engine.dataRoot}/jarvis.sqlite`);
+      try {
+        expect(
+          database
+            .prepare(
+              `SELECT COUNT(*) AS count
+               FROM events WHERE project_id = ? AND type = 'scm.work-item.tag-added'`,
+            )
+            .get(project.id),
+        ).toEqual({ count: expectedFacts });
+        expect(
+          database
+            .prepare(
+              `SELECT external_event_id, event_timestamp
+               FROM github_cursors
+               WHERE project_id = ? AND module_instance_id = ? AND repository_id = ?`,
+            )
+            .get(project.id, "github", "main"),
+        ).toEqual({
+          external_event_id: "2",
+          event_timestamp: "2026-09-11T09:01:00.000Z",
+        });
+      } finally {
+        database.close();
+      }
+    },
+  );
 });
 
 async function registerConnection(engine: Harness): Promise<void> {
@@ -233,9 +312,10 @@ async function registerConnection(engine: Harness): Promise<void> {
 async function createProject(
   engine: Harness,
   withSubscriber = false,
+  bootstrapLabelPolicy: "ignore-existing" | "emit-existing" = "ignore-existing",
 ): Promise<{ readonly id: string; readonly path: string }> {
   const projectPath = makeNodeRepositoryFixture({
-    projectYaml: stringifyYaml(projectConfig(withSubscriber)),
+    projectYaml: stringifyYaml(projectConfig(withSubscriber, bootstrapLabelPolicy)),
   });
   roots.push(projectPath);
   const response = await engine.call("/v1/projects", {
@@ -301,7 +381,10 @@ async function bindAndActivate(
   expect(activated.status, await activated.clone().text()).toBe(200);
 }
 
-function projectConfig(withSubscriber = false): Record<string, unknown> {
+function projectConfig(
+  withSubscriber = false,
+  bootstrapLabelPolicy: "ignore-existing" | "emit-existing" = "ignore-existing",
+): Record<string, unknown> {
   const configuration = parseYaml(
     readFileSync(join(ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
   ) as Record<string, unknown>;
@@ -327,7 +410,7 @@ function projectConfig(withSubscriber = false): Record<string, unknown> {
       enabled: true,
       bindings: { sourceControl: "sourceControl" },
       configuration: {
-        bootstrapLabelPolicy: "ignore-existing",
+        bootstrapLabelPolicy,
         pollIntervalSeconds: 15,
         repositories: ["Gasppacho/jarvis", "Other/repo"],
       },

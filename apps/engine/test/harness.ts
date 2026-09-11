@@ -38,7 +38,11 @@ export interface FakeGitHubIssueEvent {
   readonly created_at: string;
   readonly event: string;
   readonly label?: { readonly name: string };
-  readonly issue: { readonly number: number; readonly title: string };
+  readonly issue: {
+    readonly number: number;
+    readonly title: string;
+    readonly state?: "open" | "closed";
+  };
   readonly actor: { readonly login: string };
   readonly [key: string]: unknown;
 }
@@ -51,6 +55,7 @@ export interface FakeGitHubLabeledIssueEventInput {
   readonly label: string;
   readonly actor: string;
   readonly createdAt: string;
+  readonly issueState?: "open" | "closed";
 }
 
 export interface FakeGitHubIssueEventSeed {
@@ -302,7 +307,11 @@ export async function startFakeGitHubApi(): Promise<FakeGitHubApi> {
       created_at: input.createdAt,
       event: "labeled",
       label: { name: input.label },
-      issue: { number: input.issueNumber, title: input.issueTitle },
+      issue: {
+        number: input.issueNumber,
+        title: input.issueTitle,
+        ...(input.issueState === undefined ? {} : { state: input.issueState }),
+      },
       actor: { login: input.actor },
     };
     issueEvents.push({ owner: input.owner, repository: input.repository, event });

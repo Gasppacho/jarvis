@@ -70,7 +70,13 @@ export interface GitHubWorkItemTagAddedPayload {
 export interface GitHubIssueEventTranslation {
   readonly externalEventId: string;
   readonly happenedAt: string;
+  readonly issueState?: "open" | "closed";
   readonly payload: GitHubWorkItemTagAddedPayload;
+}
+
+export interface GitHubIssueEventPosition {
+  readonly externalEventId: string;
+  readonly happenedAt: string;
 }
 
 export type GitHubResponseHeaders =
@@ -122,6 +128,28 @@ export function translateGitHubIssueEvents(
     if (typeof eventType !== "string") throw invalidIssueEvent();
     return eventType === "labeled" ? [translateGitHubIssueEvent(candidate, owner, repository)] : [];
   });
+}
+
+/** Reads the newest event position without exposing the provider response. */
+export function latestGitHubIssueEvent(response: unknown): GitHubIssueEventPosition | undefined {
+  const providerResponse = asProviderResponse(response);
+  if (providerResponse.status !== undefined && !isSuccessful(providerResponse.status)) {
+    throw failureAsError(
+      mapGitHubPullRequestError({
+        status: providerResponse.status,
+        body: providerResponse.body,
+        ...(providerResponse.headers === undefined ? {} : { headers: providerResponse.headers }),
+      }),
+    );
+  }
+  if (!Array.isArray(providerResponse.body)) throw invalidIssueEvent();
+  const [newest] = providerResponse.body;
+  if (newest === undefined) return undefined;
+  if (!isRecord(newest)) throw invalidIssueEvent();
+  const externalEventId = readExternalEventId(newest["id"]);
+  const happenedAt = readTimestamp(newest["created_at"]);
+  if (externalEventId === undefined || happenedAt === undefined) throw invalidIssueEvent();
+  return { externalEventId, happenedAt };
 }
 
 export function buildGitHubPullRequestBody(
@@ -433,6 +461,7 @@ function translateGitHubIssueEvent(
   const label = event["label"];
   const issue = event["issue"];
   const actor = event["actor"];
+  const issueState = issueStateOf(issue);
   if (
     externalEventId === undefined ||
     happenedAt === undefined ||
@@ -453,6 +482,7 @@ function translateGitHubIssueEvent(
     title === undefined ||
     title.length > 500 ||
     actorLogin === undefined ||
+    issueState === "invalid" ||
     issueNumber === undefined ||
     typeof issueNumber !== "number" ||
     !Number.isSafeInteger(issueNumber) ||
@@ -470,6 +500,7 @@ function translateGitHubIssueEvent(
   return {
     externalEventId,
     happenedAt,
+    ...(issueState === undefined ? {} : { issueState }),
     payload: {
       workItemRef,
       tag,
@@ -477,6 +508,11 @@ function translateGitHubIssueEvent(
       actorRef,
     },
   };
+}
+
+function issueStateOf(value: unknown): "open" | "closed" | "invalid" | undefined {
+  if (!isRecord(value) || value["state"] === undefined) return undefined;
+  return value["state"] === "open" || value["state"] === "closed" ? value["state"] : "invalid";
 }
 
 function readExternalEventId(value: unknown): string | undefined {

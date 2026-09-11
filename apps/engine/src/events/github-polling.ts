@@ -5,7 +5,12 @@ import type {
 } from "../../../../packages/module-sdk/src/index.js";
 import type { ModuleHost } from "../../../../packages/kernel/src/module-host.js";
 import type { IdGenerator } from "../../../../packages/kernel/src/id-generator.js";
-import { translateGitHubIssueEvents } from "../../../../packages/modules/github/src/translation.js";
+import {
+  latestGitHubIssueEvent,
+  translateGitHubIssueEvents,
+  type GitHubIssueEventPosition,
+  type GitHubIssueEventTranslation,
+} from "../../../../packages/modules/github/src/translation.js";
 import type { ProjectModuleInstanceConfiguration } from "../../../../packages/project-runtime/src/project-types.js";
 import type { ProjectStore, ResolvedProjectSnapshot } from "../projects/store.js";
 import type { EventPublisher } from "./publisher.js";
@@ -13,6 +18,10 @@ import type { EventPublisher } from "./publisher.js";
 const GITHUB_MODULE_ID = "jarvis.module.github";
 const DEFAULT_POLL_INTERVAL_SECONDS = 60;
 const DEFAULT_TICK_INTERVAL_MS = 1_000;
+const EMPTY_BOOTSTRAP_POSITION = {
+  externalEventId: "bootstrap-empty",
+  happenedAt: "1970-01-01T00:00:00.000Z",
+} as const;
 
 export interface GitHubPollingDependencies {
   readonly projects: Pick<ProjectStore, "list" | "getResolvedProject">;
@@ -118,6 +127,7 @@ export class GitHubPollingScheduler {
           githubApi,
           pollCursor,
           externalMappings,
+          instance.configuration,
         );
       }),
     );
@@ -131,6 +141,7 @@ export class GitHubPollingScheduler {
     githubApi: GitHubApi,
     pollCursor: PollCursorCapability,
     externalMappings: NonNullable<ModuleHandlerCapabilities["externalMappings"]>,
+    configuration: Readonly<Record<string, unknown>> | undefined,
   ): Promise<void> {
     try {
       const repositoryParts = githubRepositoryId.split("/").filter((part) => part !== "");
@@ -142,42 +153,46 @@ export class GitHubPollingScheduler {
       const response = await githubApi.get(issueEventsPath(githubRepositoryId));
       if (repositoryId === undefined) return;
       const cursor = pollCursor.read(repositoryId);
-      const translated = translateGitHubIssueEvents(response, owner, repository)
-        .filter((event) => isAfterCursor(event, cursor))
-        .sort(compareEvents);
-      if (translated.length === 0) return;
-      const pending = translated.filter(
+      const newest = latestGitHubIssueEvent(response);
+      const translated = translateGitHubIssueEvents(response, owner, repository).sort(
+        compareEvents,
+      );
+      if (cursor !== undefined) {
+        const afterCursor = translated.filter((event) => isAfterCursor(event, cursor));
+        if (afterCursor.length === 0) return;
+        const pending = afterCursor.filter(
+          (event) => externalMappings.read(event.externalEventId) === undefined,
+        );
+        publishAndAdvance(
+          pending,
+          afterCursor[afterCursor.length - 1]!,
+          projectId,
+          moduleInstanceId,
+          repositoryId,
+          pollCursor,
+          externalMappings,
+          this.dependencies,
+        );
+        return;
+      }
+
+      const bootstrapEvents =
+        bootstrapLabelPolicy(configuration) === "emit-existing"
+          ? existingBootstrapEvents(translated)
+          : [];
+      const pending = bootstrapEvents.filter(
         (event) => externalMappings.read(event.externalEventId) === undefined,
       );
-
-      this.dependencies.transaction(() => {
-        for (const event of pending) {
-          const envelope = this.dependencies.publisher.publish({
-            type: "scm.work-item.tag-added",
-            version: 1,
-            kind: "fact",
-            projectId,
-            repositoryId,
-            producer: { moduleId: GITHUB_MODULE_ID, moduleInstanceId },
-            subject: { type: "work-item", ref: event.payload.workItemRef },
-            correlationId: `corr_${this.dependencies.ids.next()}`,
-            causationId: null,
-            payload: { ...event.payload },
-            metadata: { externalObservedAt: event.happenedAt },
-          });
-          externalMappings.recordResource({
-            idempotencyKey: event.externalEventId,
-            resourceRef: envelope.id,
-          });
-        }
-
-        const newest = translated[translated.length - 1]!;
-        pollCursor.write({
-          repositoryId,
-          externalEventId: newest.externalEventId,
-          eventTimestamp: newest.happenedAt,
-        });
-      });
+      publishAndAdvance(
+        pending,
+        newest ?? EMPTY_BOOTSTRAP_POSITION,
+        projectId,
+        moduleInstanceId,
+        repositoryId,
+        pollCursor,
+        externalMappings,
+        this.dependencies,
+      );
     } catch {
       logPollingFailure(projectId, moduleInstanceId, githubRepositoryId, "provider-call-failed");
     }
@@ -207,6 +222,65 @@ function portableRepository(
   return snapshot.composition.repositories.length === 1 && configuredIndex === 0
     ? snapshot.composition.repositories[0]?.id
     : undefined;
+}
+
+function bootstrapLabelPolicy(
+  configuration: Readonly<Record<string, unknown>> | undefined,
+): "ignore-existing" | "emit-existing" {
+  return configuration?.["bootstrapLabelPolicy"] === "emit-existing"
+    ? "emit-existing"
+    : "ignore-existing";
+}
+
+function existingBootstrapEvents(
+  events: readonly GitHubIssueEventTranslation[],
+): readonly GitHubIssueEventTranslation[] {
+  const seen = new Set<string>();
+  return events.filter((event) => {
+    if (event.issueState === "closed") return false;
+    const key = `${event.payload.workItemRef}\u0000${event.payload.tag}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function publishAndAdvance(
+  events: readonly GitHubIssueEventTranslation[],
+  position: GitHubIssueEventPosition,
+  projectId: string,
+  moduleInstanceId: string,
+  repositoryId: string,
+  pollCursor: PollCursorCapability,
+  externalMappings: NonNullable<ModuleHandlerCapabilities["externalMappings"]>,
+  dependencies: Pick<GitHubPollingDependencies, "publisher" | "transaction" | "ids">,
+): void {
+  dependencies.transaction(() => {
+    for (const event of events) {
+      const envelope = dependencies.publisher.publish({
+        type: "scm.work-item.tag-added",
+        version: 1,
+        kind: "fact",
+        projectId,
+        repositoryId,
+        producer: { moduleId: GITHUB_MODULE_ID, moduleInstanceId },
+        subject: { type: "work-item", ref: event.payload.workItemRef },
+        correlationId: `corr_${dependencies.ids.next()}`,
+        causationId: null,
+        payload: { ...event.payload },
+        metadata: { externalObservedAt: event.happenedAt },
+      });
+      externalMappings.recordResource({
+        idempotencyKey: event.externalEventId,
+        resourceRef: envelope.id,
+      });
+    }
+    pollCursor.write({
+      repositoryId,
+      externalEventId: position.externalEventId,
+      eventTimestamp: position.happenedAt,
+    });
+  });
 }
 
 function effectivePollIntervalMs(
