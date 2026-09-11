@@ -7,6 +7,7 @@ import {
   GitHubTranslationError,
   mapGitHubPullRequestError,
   parseGitHubWorkItemRef,
+  translateGitHubIssueEvents,
   translateGitHubPullRequestMapping,
   translateGitHubPullRequestLookupResponse,
   translateGitHubPullRequestResponse,
@@ -22,6 +23,15 @@ const REQUEST: GitHubChangeRequestCreationRequestedPayload = {
   headCommit: "abc123def456",
   title: "feat: add health endpoint",
   description: "Implements #42 and adds automated coverage.",
+};
+
+const LABELLED_ISSUE_EVENT = {
+  id: 42,
+  created_at: "2026-08-28T08:00:00.000Z",
+  event: "labeled",
+  label: { name: "agent:ready" },
+  issue: { number: 42, title: "Add a health endpoint" },
+  actor: { login: "octocat" },
 };
 
 describe("GitHub change-request translation", () => {
@@ -225,4 +235,89 @@ describe("GitHub change-request translation", () => {
       JSON.stringify(mapGitHubPullRequestError({ status: 401, body: { message: "token secret" } })),
     ).not.toContain("token secret");
   });
+});
+
+describe("GitHub issue-event translation", () => {
+  it("translates labelled events into the canonical tag-added payload", () => {
+    const [translated] = translateGitHubIssueEvents(
+      { status: 200, body: [LABELLED_ISSUE_EVENT] },
+      "QServices",
+      "token-warehouse",
+    );
+
+    expect(translated).toEqual({
+      externalEventId: "42",
+      happenedAt: LABELLED_ISSUE_EVENT.created_at,
+      payload: {
+        workItemRef: "github://QServices/token-warehouse/issues/42",
+        tag: "agent:ready",
+        title: "Add a health endpoint",
+        actorRef: "github://users/octocat",
+      },
+    });
+
+    expect(parseGitHubWorkItemRef(translated!.payload.workItemRef)).toEqual({
+      ref: translated!.payload.workItemRef,
+      owner: "QServices",
+      repository: "token-warehouse",
+      number: 42,
+    });
+
+    const ajv = new Ajv2020({ strict: false });
+    addFormats(ajv);
+    const validate = ajv.compile(
+      JSON.parse(
+        readFileSync(
+          new URL(
+            "../../../../contracts/events/scm.work-item.tag-added.v1.schema.json",
+            import.meta.url,
+          ),
+          "utf8",
+        ),
+      ),
+    );
+    expect(validate(translated!.payload), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("filters non-labelled events without inspecting their labelled fields", () => {
+    expect(
+      translateGitHubIssueEvents(
+        [{ event: "closed" }, { ...LABELLED_ISSUE_EVENT, event: "assigned" }],
+        "QServices",
+        "token-warehouse",
+      ),
+    ).toEqual([]);
+  });
+
+  it.each([
+    ["a non-list response", { status: 200, body: {} }],
+    ["a malformed event", [null]],
+    ["a missing event id", [{ ...LABELLED_ISSUE_EVENT, id: undefined }]],
+    ["a missing label name", [{ ...LABELLED_ISSUE_EVENT, label: {} }]],
+    ["a missing issue number", [{ ...LABELLED_ISSUE_EVENT, issue: { title: "title" } }]],
+    ["a missing issue title", [{ ...LABELLED_ISSUE_EVENT, issue: { number: 42 } }]],
+  ])("rejects %s with the classified translation error", (_description, response) => {
+    expect(() => translateGitHubIssueEvents(response, "QServices", "token-warehouse")).toThrowError(
+      expect.objectContaining({ code: "github.change-request-invalid", retryable: false }),
+    );
+  });
+
+  it.each([
+    ["an invalid owner", "-QServices", "token-warehouse", undefined],
+    ["an invalid repository", "QServices", "token/warehouse", undefined],
+    ["an invalid issue number", "QServices", "token-warehouse", 0],
+  ])(
+    "rejects %s while building the Work Item reference",
+    (_description, owner, repository, number) => {
+      const response = [
+        number === undefined
+          ? LABELLED_ISSUE_EVENT
+          : { ...LABELLED_ISSUE_EVENT, issue: { ...LABELLED_ISSUE_EVENT.issue, number } },
+      ];
+
+      expect(() => translateGitHubIssueEvents(response, owner, repository)).toThrowError(
+        expect.objectContaining({ code: "github.change-request-invalid", retryable: false }),
+      );
+    },
+  );
 });

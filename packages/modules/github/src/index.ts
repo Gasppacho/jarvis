@@ -35,6 +35,7 @@ export {
   GitHubTranslationError,
   mapGitHubPullRequestError,
   parseGitHubWorkItemRef,
+  translateGitHubIssueEvents,
   translateGitHubPullRequestMapping,
   translateGitHubPullRequestLookupResponse,
   translateGitHubPullRequestResponse,
@@ -43,7 +44,9 @@ export {
   type GitHubPullRequestCreationBody,
   type GitHubPullRequestErrorResponse,
   type GitHubResponseHeaders,
+  type GitHubIssueEventTranslation,
   type GitHubTranslationErrorCode,
   type GitHubTranslationFailure,
+  type GitHubWorkItemTagAddedPayload,
   type GitHubWorkItemReference,
 } from "./translation.js";

@@ -60,6 +60,19 @@ export interface GitHubChangeRequestCreatedPayload {
   readonly draft?: boolean;
 }
 
+export interface GitHubWorkItemTagAddedPayload {
+  readonly workItemRef: string;
+  readonly tag: string;
+  readonly title: string;
+  readonly actorRef: string;
+}
+
+export interface GitHubIssueEventTranslation {
+  readonly externalEventId: string;
+  readonly happenedAt: string;
+  readonly payload: GitHubWorkItemTagAddedPayload;
+}
+
 export type GitHubResponseHeaders =
   Readonly<Record<string, string | readonly string[] | undefined>> | Headers;
 
@@ -83,6 +96,32 @@ export function parseGitHubWorkItemRef(ref: string): GitHubWorkItemReference {
   if (owner === undefined || repository === undefined) throw invalidReference();
 
   return { ref, owner, repository, number };
+}
+
+/** Translates the labelled entries from a repository issue-event response. */
+export function translateGitHubIssueEvents(
+  response: unknown,
+  owner: string,
+  repository: string,
+): GitHubIssueEventTranslation[] {
+  const providerResponse = asProviderResponse(response);
+  if (providerResponse.status !== undefined && !isSuccessful(providerResponse.status)) {
+    throw failureAsError(
+      mapGitHubPullRequestError({
+        status: providerResponse.status,
+        body: providerResponse.body,
+        ...(providerResponse.headers === undefined ? {} : { headers: providerResponse.headers }),
+      }),
+    );
+  }
+  if (!Array.isArray(providerResponse.body)) throw invalidIssueEvent();
+
+  return providerResponse.body.flatMap((candidate) => {
+    if (!isRecord(candidate)) throw invalidIssueEvent();
+    const eventType = candidate["event"];
+    if (typeof eventType !== "string") throw invalidIssueEvent();
+    return eventType === "labeled" ? [translateGitHubIssueEvent(candidate, owner, repository)] : [];
+  });
 }
 
 export function buildGitHubPullRequestBody(
@@ -364,6 +403,14 @@ function invalidReference(): GitHubTranslationError {
   );
 }
 
+function invalidIssueEvent(): GitHubTranslationError {
+  return new GitHubTranslationError(
+    "github.change-request-invalid",
+    "The GitHub issue event is invalid.",
+    false,
+  );
+}
+
 function creationFailed(): GitHubTranslationError {
   return new GitHubTranslationError(
     "github.change-request-create-failed",
@@ -374,6 +421,80 @@ function creationFailed(): GitHubTranslationError {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function translateGitHubIssueEvent(
+  event: Record<string, unknown>,
+  owner: string,
+  repository: string,
+): GitHubIssueEventTranslation {
+  const externalEventId = readExternalEventId(event["id"]);
+  const happenedAt = readTimestamp(event["created_at"]);
+  const label = event["label"];
+  const issue = event["issue"];
+  const actor = event["actor"];
+  if (
+    externalEventId === undefined ||
+    happenedAt === undefined ||
+    !isRecord(label) ||
+    !isRecord(issue) ||
+    !isRecord(actor)
+  ) {
+    throw invalidIssueEvent();
+  }
+
+  const tag = readNonBlankString(label["name"]);
+  const title = readNonBlankString(issue["title"]);
+  const actorLogin = readNonBlankString(actor["login"]);
+  const issueNumber = issue["number"];
+  if (
+    tag === undefined ||
+    tag.length > 200 ||
+    title === undefined ||
+    title.length > 500 ||
+    actorLogin === undefined ||
+    issueNumber === undefined ||
+    typeof issueNumber !== "number" ||
+    !Number.isSafeInteger(issueNumber) ||
+    issueNumber < 1
+  ) {
+    throw invalidIssueEvent();
+  }
+
+  if (typeof owner !== "string" || typeof repository !== "string") throw invalidReference();
+  const workItemRef = `github://${owner}/${repository}/issues/${issueNumber}`;
+  parseGitHubWorkItemRef(workItemRef);
+  const actorRef = `github://users/${actorLogin}`;
+  if (actorRef.length > 2048) throw invalidIssueEvent();
+
+  return {
+    externalEventId,
+    happenedAt,
+    payload: {
+      workItemRef,
+      tag,
+      title,
+      actorRef,
+    },
+  };
+}
+
+function readExternalEventId(value: unknown): string | undefined {
+  if (typeof value === "string") return readNonBlankString(value);
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+    ? String(value)
+    : undefined;
+}
+
+function readTimestamp(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.trim() === "" || Number.isNaN(Date.parse(value))) {
+    return undefined;
+  }
+  return value;
+}
+
+function readNonBlankString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
 }
 
 function matchesPullRequest(
