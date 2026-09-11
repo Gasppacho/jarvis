@@ -100,6 +100,11 @@ export class GitHubPollingScheduler {
       logPollingFailure(projectId, instance.instanceId, "capability", "capability-unavailable");
       return;
     }
+    const externalMappings = capabilities.externalMappings;
+    if (externalMappings === undefined) {
+      logPollingFailure(projectId, instance.instanceId, "capability", "capability-unavailable");
+      return;
+    }
 
     const repositories = configuredRepositories(instance.configuration);
     await Promise.all(
@@ -112,6 +117,7 @@ export class GitHubPollingScheduler {
           portableRepositoryId,
           githubApi,
           pollCursor,
+          externalMappings,
         );
       }),
     );
@@ -124,6 +130,7 @@ export class GitHubPollingScheduler {
     repositoryId: string | undefined,
     githubApi: GitHubApi,
     pollCursor: PollCursorCapability,
+    externalMappings: NonNullable<ModuleHandlerCapabilities["externalMappings"]>,
   ): Promise<void> {
     try {
       const repositoryParts = githubRepositoryId.split("/").filter((part) => part !== "");
@@ -135,14 +142,17 @@ export class GitHubPollingScheduler {
       const response = await githubApi.get(issueEventsPath(githubRepositoryId));
       if (repositoryId === undefined) return;
       const cursor = pollCursor.read(repositoryId);
-      const pending = translateGitHubIssueEvents(response, owner, repository)
+      const translated = translateGitHubIssueEvents(response, owner, repository)
         .filter((event) => isAfterCursor(event, cursor))
         .sort(compareEvents);
-      if (pending.length === 0) return;
+      if (translated.length === 0) return;
+      const pending = translated.filter(
+        (event) => externalMappings.read(event.externalEventId) === undefined,
+      );
 
       this.dependencies.transaction(() => {
         for (const event of pending) {
-          this.dependencies.publisher.publish({
+          const envelope = this.dependencies.publisher.publish({
             type: "scm.work-item.tag-added",
             version: 1,
             kind: "fact",
@@ -155,9 +165,13 @@ export class GitHubPollingScheduler {
             payload: { ...event.payload },
             metadata: { externalObservedAt: event.happenedAt },
           });
+          externalMappings.recordResource({
+            idempotencyKey: event.externalEventId,
+            resourceRef: envelope.id,
+          });
         }
 
-        const newest = pending[pending.length - 1]!;
+        const newest = translated[translated.length - 1]!;
         pollCursor.write({
           repositoryId,
           externalEventId: newest.externalEventId,

@@ -92,6 +92,11 @@ function schedulerFor(api: GitHubApi, pollIntervalMs: number): GitHubPollingSche
       resolve: () => ({
         githubApi: api,
         pollCursor: { read: () => undefined, write: () => undefined },
+        externalMappings: {
+          read: () => undefined,
+          recordAttempt: () => undefined,
+          recordResource: () => undefined,
+        },
       }),
     },
     publisher: { publish: () => null as unknown as EventEnvelope },
