@@ -117,7 +117,7 @@ export type {
 export type { EventSummary, ListEventsQuery } from "../events/timeline.js";
 export type { ListExecutionsQuery } from "../executions/ledger.js";
 export type { ExecutionApiStatus };
-export type DeadLetterSummary = components["schemas"]["DeadLetter"];
+export type { DeadLetterSummary } from "../events/dead-letters.js";
 
 /**
  * `ExecutionSummary` (contracts/openapi/local-api.v1.yaml) extended with the
@@ -135,6 +135,7 @@ export interface ExecutionSummary {
   readonly createdAt: string;
   readonly completedAt: string | null;
   readonly inputEventId: string;
+  readonly replayed: boolean;
   /** Optional per the additive contract change (issue #59 decision), even
    * though `executions.input_event_id` cascades from `events.id`
    * (0007_inbox_execution_ledger.sql) so today's Ledger never has an

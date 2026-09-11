@@ -35,6 +35,7 @@ import { AtomicProjectConfigurationWriter } from "./projects/repository-config-w
 import { LocalRepositoryAccessibility } from "./projects/repository-accessibility.js";
 import { ProjectService, RepositoryDiscoveryService } from "./projects/service.js";
 import { EventJournalReader } from "./events/timeline.js";
+import { EventingDeadLetterReader } from "./events/dead-letters.js";
 import { ExecutionLedgerReader } from "./executions/ledger.js";
 import {
   LocalAgentRuntimeRegistry,
@@ -303,6 +304,7 @@ async function main(): Promise<void> {
           new LocalRepositoryAccessibility(),
           new EventJournalReader(database.db),
           new ExecutionLedgerReader(database.db),
+          new EventingDeadLetterReader(database.db),
         );
 
   // SYSTEM.md startup protocol: migrations are complete, then stale Workspace
@@ -517,6 +519,7 @@ async function main(): Promise<void> {
       clock,
       dispatcher,
       consumer,
+      ids,
       deliveryLeaseMs,
       liveUpdates,
     });

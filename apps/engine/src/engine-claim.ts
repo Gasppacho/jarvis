@@ -1,6 +1,6 @@
-import { randomUUID } from "node:crypto";
 import { linkSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { SystemIdGenerator, type IdGenerator } from "../../../packages/kernel/src/id-generator.js";
 
 export const ENGINE_CLAIM_FILENAME = ".jarvis-engine.lock";
 export const ENGINE_ALREADY_RUNNING_CODE = "system.engine-already-running" as const;
@@ -30,20 +30,24 @@ export interface EngineClaim {
  * fully-written temporary file makes the visible claim atomic even if a
  * process dies between creating its temporary file and publishing the claim.
  */
-export function acquireEngineClaim(dataRoot: string, sessionId: string): EngineClaim {
+export function acquireEngineClaim(
+  dataRoot: string,
+  sessionId: string,
+  ids: Pick<IdGenerator, "next"> = new SystemIdGenerator(),
+): EngineClaim {
   const claimPath = join(dataRoot, ENGINE_CLAIM_FILENAME);
   const record: EngineClaimRecord = {
     version: 1,
     pid: process.pid,
     sessionId,
-    claimId: randomUUID(),
+    claimId: ids.next(),
   };
   const contents = `${JSON.stringify(record)}\n`;
 
   while (true) {
     const temporaryPath = join(
       dataRoot,
-      `${ENGINE_CLAIM_FILENAME}.${process.pid}.${randomUUID()}.tmp`,
+      `${ENGINE_CLAIM_FILENAME}.${process.pid}.${ids.next()}.tmp`,
     );
     try {
       writeFileSync(temporaryPath, contents, { encoding: "utf8", flag: "wx", mode: 0o600 });

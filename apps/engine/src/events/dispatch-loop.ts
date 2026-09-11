@@ -1,6 +1,9 @@
-import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import type { Clock } from "../../../../packages/kernel/src/clock.js";
+import {
+  SystemIdGenerator,
+  type IdGenerator,
+} from "../../../../packages/kernel/src/id-generator.js";
 import type { ClaimedDelivery, DeliveryConsumer } from "../executions/delivery-consumer.js";
 import type { LiveUpdatePort } from "../stream/hub.js";
 import { summarizeEventEnvelope } from "./timeline.js";
@@ -11,6 +14,7 @@ export interface EventLoopDependencies {
   readonly clock: Clock;
   readonly dispatcher: OutboxDispatcher;
   readonly consumer: DeliveryConsumer;
+  readonly ids?: Pick<IdGenerator, "next">;
   readonly deliveryLeaseMs?: number;
   /** Ticket #60: fed one Live Update per journaled Event and per recorded
    * Execution, always after that row's own transaction has already
@@ -75,7 +79,13 @@ export async function tickEventLoop(deps: EventLoopDependencies): Promise<void> 
     );
   }
 
-  for (const delivery of claimDueDeliveries(deps.db, deps.clock, deps.deliveryLeaseMs)) {
+  for (const delivery of claimDueDeliveries(
+    deps.db,
+    deps.clock,
+    deps.deliveryLeaseMs,
+    undefined,
+    deps.ids,
+  )) {
     try {
       const outcome = await deps.consumer.consumeAsync(delivery);
       process.stderr.write(
@@ -137,23 +147,34 @@ export function claimDueDeliveries(
   clock: Clock,
   leaseMs = DEFAULT_DELIVERY_LEASE_MS,
   limit = MAX_DELIVERIES_PER_TICK,
+  ids: Pick<IdGenerator, "next"> = new SystemIdGenerator(),
 ): readonly ClaimedDelivery[] {
   return db.transaction(() => {
     const now = clock.now();
-    const leaseOwner = `delivery-${randomUUID()}`;
+    const leaseOwner = `delivery-${ids.next()}`;
     const leaseExpiresAt = new Date(now.getTime() + leaseMs).toISOString();
     const rows = db
       .prepare(
-        `SELECT id, project_id AS projectId, module_instance_id AS moduleInstanceId,
-                module_id AS moduleId, event_id AS eventId
+        `SELECT deliveries.id, deliveries.project_id AS projectId,
+                deliveries.module_instance_id AS moduleInstanceId,
+                deliveries.module_id AS moduleId, deliveries.event_id AS eventId,
+                dead_letters.delivery_id IS NOT NULL AS replayed
          FROM deliveries
-         WHERE consumed_at IS NULL
-           AND (next_attempt_at IS NULL OR next_attempt_at <= @now)
-           AND (lease_expires_at IS NULL OR lease_expires_at <= @now)
-         ORDER BY created_at
+         LEFT JOIN dead_letters ON dead_letters.delivery_id = deliveries.id
+         WHERE deliveries.consumed_at IS NULL
+           AND (deliveries.next_attempt_at IS NULL OR deliveries.next_attempt_at <= @now)
+           AND (deliveries.lease_expires_at IS NULL OR deliveries.lease_expires_at <= @now)
+         ORDER BY deliveries.created_at
          LIMIT @limit`,
       )
-      .all({ now: now.toISOString(), limit }) as (ClaimedDelivery & { readonly id: string })[];
+      .all({ now: now.toISOString(), limit }) as {
+      readonly id: string;
+      readonly projectId: string;
+      readonly moduleInstanceId: string;
+      readonly moduleId: string;
+      readonly eventId: string;
+      readonly replayed: number;
+    }[];
     const claim = db.prepare(
       `UPDATE deliveries
        SET lease_owner = @leaseOwner, lease_expires_at = @leaseExpiresAt
@@ -168,7 +189,7 @@ export function claimDueDeliveries(
         leaseOwner,
         leaseExpiresAt,
       });
-      return claimed.changes === 1 ? [{ ...row, leaseOwner }] : [];
+      return claimed.changes === 1 ? [{ ...row, leaseOwner, replayed: row.replayed === 1 }] : [];
     });
   })();
 }

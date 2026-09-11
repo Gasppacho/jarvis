@@ -6,7 +6,7 @@ import type {
   ProjectRequestRoute,
   StoredPortableProjectConfiguration,
 } from "../../../../packages/project-runtime/src/project-types.js";
-import type { DeadLetterSummary, ProjectStatus } from "./types.js";
+import type { ProjectStatus } from "./types.js";
 
 /**
  * The immutable Resolved Project (ticket #53): the frozen composition, its
@@ -236,19 +236,6 @@ export class ProjectStore {
       .prepare(`${SELECT_PROJECT} ORDER BY p.name COLLATE NOCASE, p.id`)
       .all() as (ProjectRecord & BindingRecord)[];
     return records.map(toRow);
-  }
-
-  listDeadLetters(projectId: string): DeadLetterSummary[] {
-    return this.db
-      .prepare(
-        `SELECT delivery_id AS deliveryId, project_id AS projectId, event_id AS eventId,
-                module_instance_id AS moduleInstanceId, code, message, attempts,
-                created_at AS createdAt
-         FROM dead_letters
-         WHERE project_id = @projectId
-         ORDER BY created_at DESC, delivery_id DESC`,
-      )
-      .all({ projectId }) as DeadLetterSummary[];
   }
 }
 

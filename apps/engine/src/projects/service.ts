@@ -10,6 +10,7 @@ import { previewProjectCompositionChoices } from "../../../../packages/project-r
 import { buildProjectCompositionGraph } from "../../../../packages/project-runtime/src/composition-graph.js";
 import { deriveProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
 import { EventJournalReader, type ListEventsQuery } from "../events/timeline.js";
+import type { DeadLetterReader } from "../events/dead-letters.js";
 import { ExecutionLedgerReader, type ListExecutionsQuery } from "../executions/ledger.js";
 import type {
   ActivateProjectRequest,
@@ -88,6 +89,7 @@ export class ProjectService implements ProjectRegistry<
     private readonly repositoryAccessibility: RepositoryAccessibilityPort,
     private readonly eventJournal: EventJournalReader,
     private readonly executionLedger: ExecutionLedgerReader,
+    private readonly deadLetters: DeadLetterReader = { list: () => [] },
   ) {}
 
   importProject(request: ImportProjectRequest): ProjectDetail {
@@ -284,7 +286,7 @@ export class ProjectService implements ProjectRegistry<
 
   listProjectDeadLetters(id: unknown): { readonly items: DeadLetterSummary[] } {
     const project = this.requireProject(id);
-    return { items: this.store.listDeadLetters(project.id) };
+    return { items: this.deadLetters.list(project.id) };
   }
 
   previewCompositionChoices(

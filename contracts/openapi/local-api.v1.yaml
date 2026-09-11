@@ -1758,7 +1758,7 @@ components:
           type: string
     ExecutionSummary:
       type: object
-      required: [id, projectId, moduleInstanceId, status, attempt, createdAt]
+      required: [id, projectId, moduleInstanceId, status, attempt, createdAt, replayed]
       properties:
         id:
           type: string
@@ -1784,6 +1784,9 @@ components:
             Ticket #59: the id of the Event that caused this Execution
             (0007_inbox_execution_ledger.sql `input_event_id`). Optional so a
             client relying on the pre-#59 shape still validates.
+        replayed:
+          type: boolean
+          description: Whether this Execution was explicitly created by a Dead Letter replay.
         correlationId:
           type: string
           description: >-
@@ -2267,7 +2270,7 @@ components:
             type: object
     DeadLetter:
       type: object
-      required: [deliveryId, projectId, eventId, moduleInstanceId, code, attempts, createdAt]
+      required: [deliveryId, projectId, eventId, moduleInstanceId, code, attempts, lastExecutionId, createdAt]
       properties:
         deliveryId:
           type: string
@@ -2284,6 +2287,9 @@ components:
         attempts:
           type: integer
           minimum: 1
+        lastExecutionId:
+          type: [string, "null"]
+          description: The last recorded Execution, or null when Execution recording itself failed.
         createdAt:
           type: string
           format: date-time

@@ -932,6 +932,8 @@ export interface components {
             completedAt?: string | null;
             /** @description Ticket #59: the id of the Event that caused this Execution (0007_inbox_execution_ledger.sql `input_event_id`). Optional so a client relying on the pre-#59 shape still validates. */
             inputEventId?: string;
+            /** @description Whether this Execution was explicitly created by a Dead Letter replay. */
+            replayed: boolean;
             /** @description Ticket #59: the correlationId of this Execution's input Event, so a client can attach the Execution to its Event without guessing from timestamps or Module Instance. Optional for the same reason `inputEventId` is. */
             correlationId?: string;
         };
@@ -1136,6 +1138,8 @@ export interface components {
             code: string;
             message?: string;
             attempts: number;
+            /** @description The last recorded Execution, or null when Execution recording itself failed. */
+            lastExecutionId: string | null;
             /** Format: date-time */
             createdAt: string;
         };

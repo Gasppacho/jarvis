@@ -702,6 +702,56 @@ describe("DeliveryConsumer", () => {
     expect(firstEvent.id).not.toBe(secondEvent.id);
   });
 
+  it("does not let an expired worker commit a terminal outcome", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const handler = async () => {
+      calls += 1;
+      await gate;
+      return { accepted: true };
+    };
+    const harnessState = harness(() => handler);
+    const { db: database, clock, store, publisher, dispatcher, consumer } = harnessState;
+    activate(store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+    const event = publisher.publish(pingInput("project-a"));
+    dispatcher.dispatchPending();
+
+    const first = claimDueDeliveries(database, clock)[0]!;
+    const stalePending = consumer.consumeAsync(first);
+    expect(calls).toBe(1);
+    clock.advance(DEFAULT_DELIVERY_LEASE_MS + 1);
+    const second = claimDueDeliveries(database, clock)[0]!;
+    const winnerPending = consumer.consumeAsync(second);
+    expect(calls).toBe(2);
+
+    release();
+    const [stale, winner] = await Promise.all([stalePending, winnerPending]);
+
+    expect(stale).toMatchObject({
+      status: "failed",
+      redelivered: true,
+      executionId: null,
+      result: { error: { code: "system.delivery-lease-lost" } },
+    });
+    expect(winner).toMatchObject({ status: "completed", executionId: expect.any(String) });
+    expect(
+      database.prepare("SELECT COUNT(*) AS n FROM inbox WHERE event_id = ?").get(event.id),
+    ).toEqual({
+      n: 1,
+    });
+    expect(
+      database.prepare("SELECT status, COUNT(*) AS n FROM executions GROUP BY status").all(),
+    ).toEqual([
+      { status: "completed", n: 1 },
+      { status: "running", n: 1 },
+    ]);
+  });
+
   it("dead-letters a retryable Delivery exactly once when its attempts are exhausted", () => {
     let database!: Database.Database;
     let calls = 0;
@@ -836,6 +886,64 @@ describe("DeliveryConsumer", () => {
     expect(calls).toBe(2);
   });
 
+  it("allows only one live replay and lets the event loop reclaim an expired replay lease", async () => {
+    let allowSuccess = false;
+    let started = false;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const handler = async () => {
+      if (!allowSuccess) {
+        throw Object.assign(new Error("provider rejected"), {
+          code: "provider.invalid",
+          retryable: false,
+        });
+      }
+      started = true;
+      await gate;
+      return { accepted: true };
+    };
+    const harnessState = harness(() => handler);
+    const { db: database, clock, store, publisher, dispatcher, consumer } = harnessState;
+    activate(store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+    const event = publisher.publish(pingInput("project-a"));
+    dispatcher.dispatchPending();
+    const delivery = {
+      projectId: "project-a",
+      moduleInstanceId: "probe-1",
+      moduleId: SAMPLE_PROBE_MODULE_ID,
+      eventId: event.id,
+    };
+    await consumer.consumeAsync(delivery);
+    const deliveryId = (database.prepare("SELECT id FROM deliveries").get() as { id: string }).id;
+
+    allowSuccess = true;
+    const replay = consumer.replayDeadLetter(deliveryId);
+    expect(started).toBe(true);
+    await expect(consumer.replayDeadLetter(deliveryId)).rejects.toMatchObject({
+      code: "delivery.not-found",
+    });
+    release();
+    await replay;
+    expect(database.prepare("SELECT COUNT(*) AS n FROM dead_letters").get()).toEqual({ n: 0 });
+
+    // A replay that crashed after claiming would retain its Dead Letter; the
+    // normal event-loop claim marks it as replayed again after lease expiry.
+    database.exec(
+      "INSERT INTO dead_letters (delivery_id, project_id, event_id, module_instance_id, code, message, attempts, last_execution_id, created_at) " +
+        "SELECT id, project_id, event_id, module_instance_id, 'provider.invalid', 'recovered', 1, " +
+        "(SELECT id FROM executions ORDER BY created_at DESC LIMIT 1), '2026-09-06T08:00:00.000Z' FROM deliveries",
+    );
+    database.exec(
+      "UPDATE deliveries SET consumed_at = NULL, lease_owner = 'replay-crashed', lease_expires_at = '2026-09-06T07:59:59.000Z'",
+    );
+    const reclaimed = claimDueDeliveries(database, clock);
+    expect(reclaimed).toMatchObject([{ replayed: true }]);
+  });
+
   it("returns a failed replay to the normal dead-letter path", async () => {
     const handler = () => {
       throw Object.assign(new Error("still unavailable"), {
@@ -844,7 +952,7 @@ describe("DeliveryConsumer", () => {
       });
     };
     const harnessState = harness(() => handler);
-    const { db: database, store, publisher, dispatcher, consumer } = harnessState;
+    const { db: database, clock, store, publisher, dispatcher, consumer } = harnessState;
     activate(store, "project-a", [
       { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
     ]);
@@ -1001,6 +1109,62 @@ describe("DeliveryConsumer", () => {
       status: "failed",
     });
     expect(calls).toBe(DEFAULT_MAX_ATTEMPTS);
+  });
+
+  it("dead-letters when the failed Execution INSERT itself is unavailable", () => {
+    const handler = () => {
+      throw Object.assign(new Error("provider rejected"), {
+        code: "provider.invalid",
+        retryable: false,
+      });
+    };
+    const harnessState = harness(() => handler);
+    const { db: database, clock, store, publisher, dispatcher, consumer } = harnessState;
+    activate(store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+    const event = publisher.publish(pingInput("project-a"));
+    dispatcher.dispatchPending();
+    database.exec(
+      "CREATE TRIGGER fail_failed_execution BEFORE INSERT ON executions " +
+        "WHEN NEW.status = 'failed' BEGIN SELECT RAISE(ABORT, 'execution ledger unavailable'); END",
+    );
+
+    const delivery = {
+      projectId: "project-a",
+      moduleInstanceId: "probe-1",
+      moduleId: SAMPLE_PROBE_MODULE_ID,
+      eventId: event.id,
+    };
+    let outcome: ConsumeResult | undefined;
+    for (let attempt = 1; attempt <= DEFAULT_MAX_ATTEMPTS; attempt += 1) {
+      if (attempt > 1) {
+        const nextAttempt = database.prepare("SELECT next_attempt_at FROM deliveries").get() as {
+          next_attempt_at: string;
+        };
+        clock.advance(Date.parse(nextAttempt.next_attempt_at) - clock.now().getTime() + 1);
+      }
+      try {
+        outcome = consumer.consume(delivery);
+      } catch (error) {
+        expect(error).toBeInstanceOf(EngineError);
+        expect(attempt).toBeLessThan(DEFAULT_MAX_ATTEMPTS);
+      }
+    }
+
+    expect(outcome).toMatchObject({
+      status: "failed",
+      executionId: null,
+      executionSummary: null,
+    });
+    expect(database.prepare("SELECT COUNT(*) AS n FROM executions").get()).toEqual({ n: 0 });
+    expect(database.prepare("SELECT code, last_execution_id FROM dead_letters").get()).toEqual({
+      code: "system.internal-error",
+      last_execution_id: null,
+    });
+    expect(database.prepare("SELECT consumed_at FROM deliveries").get()).toMatchObject({
+      consumed_at: expect.any(String),
+    });
   });
 
   it("rejects a ClaimedDelivery naming another Project's id instead of silently consuming across Projects (AGENTS.md invariant 9)", () => {

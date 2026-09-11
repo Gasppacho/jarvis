@@ -23,6 +23,7 @@ export interface LedgerExecutionSummary {
    * #59). The Ledger owns this column directly: no cross-context read is
    * needed to produce it. */
   readonly inputEventId: string;
+  readonly replayed: boolean;
 }
 
 interface ExecutionRow {
@@ -34,6 +35,7 @@ interface ExecutionRow {
   readonly created_at: string;
   readonly completed_at: string | null;
   readonly input_event_id: string;
+  readonly replayed: number;
 }
 
 /** 0007_inbox_execution_ledger.sql's CHECK spells this state `timed_out`;
@@ -71,7 +73,7 @@ export class ExecutionLedgerReader {
   public list(projectId: string, query: ListExecutionsQuery): LedgerExecutionSummary[] {
     const rows = this.db
       .prepare(
-        `SELECT id, project_id, module_instance_id, status, attempt, created_at, completed_at, input_event_id
+        `SELECT id, project_id, module_instance_id, status, attempt, created_at, completed_at, input_event_id, replayed
          FROM executions
          WHERE project_id = @projectId
          ORDER BY created_at DESC, id DESC
@@ -96,5 +98,6 @@ function toSummary(row: ExecutionRow): LedgerExecutionSummary {
     createdAt: row.created_at,
     completedAt: row.completed_at,
     inputEventId: row.input_event_id,
+    replayed: row.replayed === 1,
   };
 }

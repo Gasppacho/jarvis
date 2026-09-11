@@ -52,4 +52,18 @@ describe("classifyHandlerFailure", () => {
     expect(classified.message).toContain("<redacted>");
     expect(classified.message).toContain("<path>");
   });
+
+  it("preserves JSON pointers while redacting single-component absolute paths", () => {
+    const classified = classifyHandlerFailure(new Error("failed at /tmp and schema /payload/file"));
+
+    expect(classified.message).toBe("failed at <path> and schema /payload/file");
+  });
+
+  it("does not persist arbitrary failure codes", () => {
+    expect(
+      classifyHandlerFailure(
+        Object.assign(new Error("bad"), { code: "token=secret", retryable: false }),
+      ).code,
+    ).toBe("system.internal-error");
+  });
 });
