@@ -42,6 +42,7 @@ import {
   ProjectWorkspaceCapabilityResolver,
 } from "./executions/capabilities.js";
 import { ExternalMappingStore } from "./executions/external-mappings.js";
+import { PollCursorStore } from "./executions/poll-cursors.js";
 import { loadBundledModuleHost } from "./modules/bundled-module-registry.js";
 import { EventPublisher } from "./events/publisher.js";
 import {
@@ -368,6 +369,7 @@ async function main(): Promise<void> {
     });
     const publisher = new EventPublisher(database.db, clock, ids, envelopes);
     const externalMappings = new ExternalMappingStore(database.db, clock);
+    const pollCursors = new PollCursorStore(database.db, clock);
     const fixtures = testFixtures;
     const sampleProbeHandler = fixtures?.createSampleProbeHandler(database.db);
     const openSubscriptions: OpenSubscriptionsPort = (projectId) =>
@@ -459,6 +461,7 @@ async function main(): Promise<void> {
       githubCredentials,
       githubApiBaseUrl,
       externalMappings,
+      pollCursors,
     );
     const consumer = new DeliveryConsumer(
       database.db,

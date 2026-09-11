@@ -23,7 +23,7 @@ La base est physiquement partagée, mais chaque table a un owner :
 | `artifacts` | Artifact Store |
 | `workspace_leases` | Workspace |
 | `connections`, `runtime_descriptors` | Registries; secrets remain in Keychain |
-| `github_cursors`, `github_external_mappings` | GitHub Module |
+| `github_cursors`, `external_mappings` | GitHub Module |
 | module-specific tables | The owning module only |
 
 Aucun module ne requête les tables d'un autre owner.

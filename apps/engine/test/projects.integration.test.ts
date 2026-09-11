@@ -2580,9 +2580,10 @@ capabilities:
         // events, outbox), the Inbox/Execution Ledger tables ticket #57 adds
         // (inbox, executions, execution_checkpoints), the Workspace table ticket
         // #68 adds (workspace_leases), and the global Connection Registry table
-        // #110 adds (connections), and the External Mapping table ticket #122
-        // adds (external_mappings) exist but stay empty — activation alone
-        // never inserts a row into any of them.
+        // #110 adds (connections), the External Mapping table ticket #122
+        // adds (external_mappings), and the GitHub Cursor table ticket #130
+        // adds (github_cursors) exist but stay empty — activation alone never
+        // inserts a row into any of them.
         expect(tableNames(dataRoot)).toEqual([
           "connections",
           "deliveries",
@@ -2591,6 +2592,7 @@ capabilities:
           "execution_checkpoints",
           "executions",
           "external_mappings",
+          "github_cursors",
           "inbox",
           "outbox",
           "project_bindings",
@@ -2818,6 +2820,7 @@ capabilities:
             "execution_checkpoints",
             "executions",
             "external_mappings",
+            "github_cursors",
             "inbox",
             "outbox",
             "project_bindings",
