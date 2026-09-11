@@ -17,7 +17,11 @@ import { ProjectStore, type ResolvedProjectSnapshot } from "../projects/store.js
 import { OutboxDispatcher, type OpenSubscriptionsPort } from "../events/dispatcher.js";
 import { EventPublisher } from "../events/publisher.js";
 import { ControllableClock, DeterministicIdGenerator } from "../events/test-doubles.js";
-import { tickEventLoop } from "../events/dispatch-loop.js";
+import {
+  claimDueDeliveries,
+  DEFAULT_DELIVERY_LEASE_MS,
+  tickEventLoop,
+} from "../events/dispatch-loop.js";
 import {
   type ConsumeResult,
   DeliveryConsumer,
@@ -657,6 +661,45 @@ describe("DeliveryConsumer", () => {
       attempt_count: 2,
       next_attempt_at: null,
     });
+  });
+
+  it("claims a Delivery once, releases its lease on completion, and reclaims an expired lease", () => {
+    let calls = 0;
+    const handler = () => {
+      calls += 1;
+      return { accepted: true };
+    };
+    const harnessState = harness(() => handler);
+    const { db: database, clock, store, publisher, dispatcher, consumer } = harnessState;
+    activate(store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+    const firstEvent = publisher.publish(pingInput("project-a"));
+    dispatcher.dispatchPending();
+
+    const firstClaims = claimDueDeliveries(database, clock);
+    expect(firstClaims).toHaveLength(1);
+    expect(claimDueDeliveries(database, clock)).toEqual([]);
+    expect(consumer.consume(firstClaims[0]!).status).toBe("completed");
+    expect(database.prepare("SELECT lease_owner, lease_expires_at FROM deliveries").get()).toEqual({
+      lease_owner: null,
+      lease_expires_at: null,
+    });
+
+    const secondEvent = publisher.publish(
+      pingInput("project-a", { subject: { type: "work-item", ref: "second" } }),
+    );
+    dispatcher.dispatchPending();
+    const held = claimDueDeliveries(database, clock);
+    expect(held).toHaveLength(1);
+    clock.advance(DEFAULT_DELIVERY_LEASE_MS + 1);
+    const reclaimed = claimDueDeliveries(database, clock);
+    expect(reclaimed).toHaveLength(1);
+    expect(reclaimed[0]!.eventId).toBe(secondEvent.id);
+    expect(reclaimed[0]!.leaseOwner).not.toBe(held[0]!.leaseOwner);
+    expect(consumer.consume(reclaimed[0]!).status).toBe("completed");
+    expect(calls).toBe(2);
+    expect(firstEvent.id).not.toBe(secondEvent.id);
   });
 
   it("dead-letters a retryable Delivery exactly once when its attempts are exhausted", () => {

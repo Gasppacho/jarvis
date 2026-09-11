@@ -158,7 +158,11 @@ describe("durability: crash recovery across the Outbox/Delivery/Execution pipeli
       const crashed = await startEngine({
         dataRoot,
         enginePath: testBundlePath,
-        env: { JARVIS_ENABLE_TEST_HOOKS: "1", JARVIS_FAILPOINT: "before-handler-commit" },
+        env: {
+          JARVIS_ENABLE_TEST_HOOKS: "1",
+          JARVIS_FAILPOINT: "before-handler-commit",
+          JARVIS_DELIVERY_LEASE_MS: "200",
+        },
       });
       await seedProject(crashed, "proj-1");
       // This publish is unaffected by this failpoint and completes normally;
@@ -187,7 +191,7 @@ describe("durability: crash recovery across the Outbox/Delivery/Execution pipeli
       const restarted = await startEngine({
         dataRoot,
         enginePath: testBundlePath,
-        env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
+        env: { JARVIS_ENABLE_TEST_HOOKS: "1", JARVIS_DELIVERY_LEASE_MS: "200" },
       });
       try {
         await restarted.waitForStderr("delivery consumed");

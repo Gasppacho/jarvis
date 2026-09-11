@@ -63,6 +63,11 @@ l'essai est marquée `failed`, la Delivery avance son compteur et son
 La boucle ne repropose cette Delivery qu'une fois cette date atteinte. Une
 erreur terminale suit la séquence complète ci-dessus.
 
+Avant l'invocation, la boucle réclame chaque Delivery par un lease court et
+atomique. Un lease vivant la masque aux autres workers ; sa date d'expiration
+permet la reprise après crash. Une réussite, une dead letter ou une nouvelle
+planification libère le lease.
+
 ### External side effect
 
 Le handler enregistre une tentative idempotente, effectue l'appel externe hors transaction longue, puis ouvre une transaction courte pour stocker le mapping, l'output fact et la fin d'exécution. Le side effect doit être récupérable après crash via l'idempotency key et une lookup externe.

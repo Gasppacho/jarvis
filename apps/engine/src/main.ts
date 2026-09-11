@@ -57,7 +57,7 @@ import {
   type RequestConsumerResolver,
   type OpenSubscriptionsPort,
 } from "./events/dispatcher.js";
-import { startEventLoop } from "./events/dispatch-loop.js";
+import { DEFAULT_DELIVERY_LEASE_MS, startEventLoop } from "./events/dispatch-loop.js";
 import { GitHubPollingScheduler } from "./events/github-polling.js";
 import {
   DeliveryConsumer,
@@ -503,7 +503,16 @@ async function main(): Promise<void> {
       capabilities.resolve.bind(capabilities),
     );
     executionCancellation = consumer;
-    stopEventLoop = startEventLoop({ db: database.db, clock, dispatcher, consumer, liveUpdates });
+    const deliveryLeaseMs =
+      parseLeaseMs(process.env["JARVIS_DELIVERY_LEASE_MS"]) ?? DEFAULT_DELIVERY_LEASE_MS;
+    stopEventLoop = startEventLoop({
+      db: database.db,
+      clock,
+      dispatcher,
+      consumer,
+      deliveryLeaseMs,
+      liveUpdates,
+    });
     stopGitHubPolling = new GitHubPollingScheduler({
       projects: projectStore,
       modules,

@@ -92,6 +92,7 @@ export interface ClaimedDelivery {
   readonly moduleInstanceId: string;
   readonly moduleId: string;
   readonly eventId: string;
+  readonly leaseOwner?: string;
 }
 
 export interface ConsumeResult {
@@ -1060,8 +1061,11 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
   private markDeliveryConsumed(delivery: ClaimedDelivery, attempt = 1): void {
     this.db
       .prepare(
-        `UPDATE deliveries SET consumed_at = @now, attempt_count = @attempt, next_attempt_at = NULL
-         WHERE project_id = @projectId AND module_instance_id = @moduleInstanceId AND event_id = @eventId`,
+        `UPDATE deliveries
+         SET consumed_at = @now, attempt_count = @attempt, next_attempt_at = NULL,
+             lease_owner = NULL, lease_expires_at = NULL
+         WHERE project_id = @projectId AND module_instance_id = @moduleInstanceId AND event_id = @eventId
+           AND (@leaseOwner IS NULL OR lease_owner = @leaseOwner)`,
       )
       .run({
         projectId: delivery.projectId,
@@ -1069,6 +1073,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
         eventId: delivery.eventId,
         attempt,
         now: this.clock.now().toISOString(),
+        leaseOwner: delivery.leaseOwner ?? null,
       });
   }
 
@@ -1091,9 +1096,11 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     this.db
       .prepare(
         `UPDATE deliveries
-         SET attempt_count = @attempt, next_attempt_at = @nextAttemptAt
+         SET attempt_count = @attempt, next_attempt_at = @nextAttemptAt,
+             lease_owner = NULL, lease_expires_at = NULL
          WHERE project_id = @projectId AND module_instance_id = @moduleInstanceId AND event_id = @eventId
-           AND consumed_at IS NULL`,
+           AND consumed_at IS NULL
+           AND (@leaseOwner IS NULL OR lease_owner = @leaseOwner)`,
       )
       .run({
         projectId: delivery.projectId,
@@ -1101,6 +1108,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
         eventId: delivery.eventId,
         attempt,
         nextAttemptAt,
+        leaseOwner: delivery.leaseOwner ?? null,
       });
   }
 
