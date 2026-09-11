@@ -52,6 +52,7 @@ import {
   type OpenSubscriptionsPort,
 } from "./events/dispatcher.js";
 import { startEventLoop } from "./events/dispatch-loop.js";
+import { GitHubPollingScheduler } from "./events/github-polling.js";
 import {
   DeliveryConsumer,
   type ExecutionCancellationPort,
@@ -146,6 +147,7 @@ async function main(): Promise<void> {
   let shuttingDown = false;
   let announced = false;
   let stopEventLoop: (() => void) | undefined;
+  let stopGitHubPolling: (() => void) | undefined;
   let workspaceManager: WorkspaceManager | undefined;
 
   /** Returns false when the WAL could not be checkpointed. */
@@ -178,6 +180,7 @@ async function main(): Promise<void> {
     try {
       // Stopped before the database closes: a tick that started while the
       // engine listened must not run against a handle that has since closed.
+      stopGitHubPolling?.();
       stopEventLoop?.();
       // Ticket #60: Fastify's default `forceCloseConnections: "idle"` does
       // not consider an open SSE response idle (it is a request Fastify is
@@ -354,6 +357,10 @@ async function main(): Promise<void> {
   }
   let durabilityTestHooks: DurabilityTestHooks | undefined;
   let executionCancellation: ExecutionCancellationPort | undefined;
+  const githubPollIntervalMs =
+    typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__
+      ? parsePositiveMilliseconds(process.env["JARVIS_GITHUB_POLL_INTERVAL_MS"])
+      : undefined;
   if (database !== undefined && projectStore !== undefined) {
     const clock = new SystemClock();
     const ids = new SystemIdGenerator();
@@ -476,6 +483,12 @@ async function main(): Promise<void> {
     );
     executionCancellation = consumer;
     stopEventLoop = startEventLoop({ db: database.db, dispatcher, consumer, liveUpdates });
+    stopGitHubPolling = new GitHubPollingScheduler({
+      projects: projectStore,
+      modules,
+      capabilities,
+      ...(githubPollIntervalMs === undefined ? {} : { pollIntervalMs: githubPollIntervalMs }),
+    }).start();
     if (testHooksEnabled && projects !== undefined && workspaceManager !== undefined) {
       durabilityTestHooks = {
         db: database.db,
@@ -551,6 +564,11 @@ function loadEventPayloadContracts(runtimeRoot: string): readonly EventPayloadCo
 function parseLeaseMs(raw: string | undefined): number | undefined {
   if (raw === undefined || raw === "" || !/^\d+$/.test(raw)) return undefined;
   return Number(raw);
+}
+
+function parsePositiveMilliseconds(raw: string | undefined): number | undefined {
+  const value = parseLeaseMs(raw);
+  return value !== undefined && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
 main().catch((error: unknown) => {
