@@ -840,6 +840,168 @@ esac
       database.close();
     }
   });
+
+  it("proves the GitHub label slice through one fact, one request, and one execution", async () => {
+    const fakeGitHub = await startFakeGitHubApi();
+    servers.push(fakeGitHub);
+    const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-polling-e2e-"));
+    roots.push(dataRoot);
+    const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-polling-e2e-gh-"));
+    roots.push(executableRoot);
+    const executable = join(executableRoot, "gh");
+    writeFileSync(executable, "#!/bin/sh\necho ghs_polling_e2e_credential\n", "utf8");
+    chmodSync(executable, 0o755);
+    const environment = {
+      JARVIS_ENABLE_TEST_HOOKS: "1",
+      JARVIS_GH_EXECUTABLE: executable,
+      JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+      JARVIS_GITHUB_POLL_INTERVAL_MS: "25",
+    };
+
+    const engine = await startEngine({ dataRoot, enginePath: TEST_BUNDLE, env: environment });
+    engines.push(engine);
+    await registerConnection(engine);
+    const project = await createProject(engine, false, "ignore-existing", endToEndConfig());
+    await bindAndActivate(engine, project.id, project.path);
+    await waitForRequest(fakeGitHub, "/repos/Gasppacho/jarvis/issues/events");
+    await waitForCursor(dataRoot, "bootstrap-empty", project.id);
+
+    const first = fakeGitHub.appendLabeledIssueEvent({
+      owner: "Gasppacho",
+      repository: "jarvis",
+      issueNumber: 21,
+      issueTitle: "End to end label",
+      label: "agent:ready",
+      actor: "octocat",
+      createdAt: "2026-09-11T10:08:00.000Z",
+    });
+    await waitForFactCount(engine, project.id, 1);
+    await waitForEventTypeCount(engine, project.id, "development.implementation.requested", 1);
+    await waitForExecutionCount(engine, project.id, 1);
+
+    const firstDatabase = new Database(`${dataRoot}/jarvis.sqlite`);
+    try {
+      const rows = firstDatabase
+        .prepare(
+          `SELECT id, type, kind, envelope
+           FROM events WHERE project_id = ? ORDER BY rowid`,
+        )
+        .all(project.id) as {
+        readonly id: string;
+        readonly type: string;
+        readonly kind: string;
+        readonly envelope: string;
+      }[];
+      const fact = rows.find((row) => row.type === "scm.work-item.tag-added");
+      const request = rows.find((row) => row.type === "development.implementation.requested");
+      expect(fact).toBeDefined();
+      expect(request).toBeDefined();
+      const factEnvelope = JSON.parse(fact?.envelope ?? "{}") as Record<string, unknown>;
+      const requestEnvelope = JSON.parse(request?.envelope ?? "{}") as Record<string, unknown>;
+      expect(factEnvelope).toMatchObject({
+        projectId: project.id,
+        repositoryId: "main",
+        payload: { tag: "agent:ready" },
+      });
+      expect(requestEnvelope).toMatchObject({
+        projectId: project.id,
+        correlationId: factEnvelope["correlationId"],
+        causationId: fact?.id,
+        target: { moduleInstanceId: "development" },
+        payload: {
+          workItemRef: `github://Gasppacho/jarvis/issues/${first.issue.number}`,
+          repositoryId: "main",
+        },
+      });
+      expect(rows.filter((row) => row.type === "scm.work-item.tag-added")).toHaveLength(1);
+      expect(
+        rows.filter((row) => row.type === "development.implementation.requested"),
+      ).toHaveLength(1);
+      expect(
+        firstDatabase
+          .prepare(
+            "SELECT COUNT(*) AS count FROM executions WHERE project_id = ? AND module_instance_id = 'development'",
+          )
+          .get(project.id),
+      ).toEqual({ count: 1 });
+    } finally {
+      firstDatabase.close();
+    }
+
+    expect(engine.stderr()).not.toContain("ghs_polling_e2e_credential");
+    const recoveryPath = "/repos/Gasppacho/jarvis/issues/events?per_page=100&page=1";
+    const recoveryRequestsBeforeRestart = fakeGitHub.requests.filter(
+      (request) => request.path === recoveryPath,
+    ).length;
+    expect(recoveryRequestsBeforeRestart).toBeGreaterThan(0);
+    await engine.dispose();
+    const restarted = await startEngine({ dataRoot, enginePath: TEST_BUNDLE, env: environment });
+    engines.push(restarted);
+    await waitForRequestCount(fakeGitHub, recoveryPath, recoveryRequestsBeforeRestart + 1);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    const afterRestartEvents = await waitForEventTypeCount(
+      restarted,
+      project.id,
+      "development.implementation.requested",
+      1,
+    );
+    expect(afterRestartEvents).toHaveLength(1);
+    await waitForExecutionCount(restarted, project.id, 1);
+
+    const second = fakeGitHub.appendLabeledIssueEvent({
+      owner: "Gasppacho",
+      repository: "jarvis",
+      issueNumber: 21,
+      issueTitle: "End to end label",
+      label: "agent:ready",
+      actor: "octocat",
+      createdAt: "2026-09-11T10:09:00.000Z",
+    });
+    await waitForFactCount(restarted, project.id, 2);
+    await waitForEventTypeCount(restarted, project.id, "development.implementation.requested", 2);
+    await waitForExecutionCount(restarted, project.id, 2);
+    const finalDatabase = new Database(`${dataRoot}/jarvis.sqlite`);
+    try {
+      expect(
+        finalDatabase
+          .prepare(
+            `SELECT type, COUNT(*) AS count
+             FROM events
+             WHERE project_id = ? AND type IN ('scm.work-item.tag-added', 'development.implementation.requested')
+             GROUP BY type ORDER BY type`,
+          )
+          .all(project.id),
+      ).toEqual([
+        { type: "development.implementation.requested", count: 2 },
+        { type: "scm.work-item.tag-added", count: 2 },
+      ]);
+      expect(
+        finalDatabase
+          .prepare(
+            "SELECT COUNT(*) AS count FROM executions WHERE project_id = ? AND module_instance_id = 'development'",
+          )
+          .get(project.id),
+      ).toEqual({ count: 2 });
+      expect(finalDatabase.prepare("SELECT COUNT(*) AS count FROM github_cursors").get()).toEqual({
+        count: 1,
+      });
+      expect(
+        finalDatabase.prepare("SELECT COUNT(*) AS count FROM external_mappings").get(),
+      ).toEqual({
+        count: 2,
+      });
+    } finally {
+      finalDatabase.close();
+    }
+    const eventsResponse = await restarted.call(`/v1/projects/${project.id}/events`);
+    const executionsResponse = await restarted.call(`/v1/projects/${project.id}/executions`);
+    expect(JSON.stringify(await eventsResponse.json())).not.toContain("ghs_polling_e2e_credential");
+    expect(JSON.stringify(await executionsResponse.json())).not.toContain(
+      "ghs_polling_e2e_credential",
+    );
+    expect(restarted.stderr()).not.toContain("ghs_polling_e2e_credential");
+  });
 });
 
 async function registerConnection(
@@ -1021,6 +1183,31 @@ function multiRepositoryConfig(githubRepositories: readonly string[]): Record<st
   return configuration;
 }
 
+function endToEndConfig(): Record<string, unknown> {
+  const configuration = projectConfig(true, "ignore-existing", "polling-project", [
+    "Gasppacho/jarvis",
+  ]);
+  const modules = configuration["modules"] as Record<string, unknown>[];
+  const automationRules = modules.find((module) => module["instanceId"] === "automation-rules");
+  if (automationRules === undefined) throw new Error("automation-rules module is missing");
+  automationRules["configuration"] = {
+    rules: [
+      {
+        id: "ready-label-starts-development",
+        when: {
+          eventType: "scm.work-item.tag-added",
+          equals: { "payload.tag": "agent:ready" },
+        },
+        emit: {
+          type: "development.implementation.requested",
+          target: { moduleInstanceId: "development" },
+        },
+      },
+    ],
+  };
+  return configuration;
+}
+
 async function waitForFactCount(
   engine: Harness,
   projectId: string,
@@ -1045,6 +1232,53 @@ async function waitForFactCount(
     if (facts.length >= count) return facts;
     if (Date.now() >= deadline) {
       throw new Error(`project ${projectId} did not reach ${count} facts\n${engine.stderr()}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function waitForEventTypeCount(
+  engine: Harness,
+  projectId: string,
+  type: string,
+  count: number,
+): Promise<readonly Record<string, unknown>[]> {
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    const response = await engine.call(`/v1/projects/${projectId}/events`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { readonly items: readonly Record<string, unknown>[] };
+    const events = body.items.filter((event) => event["type"] === type);
+    if (events.length >= count) return events;
+    if (Date.now() >= deadline) {
+      throw new Error(`project ${projectId} did not reach ${count} events of type ${type}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function waitForExecutionCount(
+  engine: Harness,
+  projectId: string,
+  count: number,
+): Promise<readonly Record<string, unknown>[]> {
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    const response = await engine.call(`/v1/projects/${projectId}/executions`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { readonly items: readonly Record<string, unknown>[] };
+    const executions = body.items.filter(
+      (execution) => execution["moduleInstanceId"] === "development",
+    );
+    if (
+      executions.length >= count &&
+      executions.every((execution) =>
+        ["completed", "failed", "cancelled", "timed-out"].includes(String(execution["status"])),
+      )
+    )
+      return executions;
+    if (Date.now() >= deadline) {
+      throw new Error(`project ${projectId} did not reach ${count} executions`);
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
@@ -1083,6 +1317,19 @@ async function waitForRequest(fakeGitHub: FakeGitHubApi, path: string): Promise<
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error(`Fake GitHub did not receive ${path}.`);
+}
+
+async function waitForRequestCount(
+  fakeGitHub: FakeGitHubApi,
+  path: string,
+  count: number,
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (fakeGitHub.requests.filter((request) => request.path === path).length >= count) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Fake GitHub did not receive ${count} requests for ${path}.`);
 }
 
 function issueEventRequests(
