@@ -5,6 +5,7 @@ import type {
   ModuleHandlerCapabilities,
   ModuleShellCommandInput,
   ModuleShellCommandResult,
+  PollCursorCapability,
   ModuleWorkspace,
   ProjectCommandName,
   ProjectCommandsCapability,
@@ -46,6 +47,10 @@ export interface ProjectConnectionResolver {
 
 export interface ExternalMappingCapabilityResolver {
   bind(projectId: string, moduleInstanceId: string): ExternalMappingCapability;
+}
+
+export interface PollCursorCapabilityResolver {
+  bind(projectId: string, moduleInstanceId: string): PollCursorCapability;
 }
 
 /** Binds the existing workspace manager to one frozen Project snapshot. */
@@ -98,6 +103,7 @@ export class ProjectModuleCapabilityResolver {
     private readonly githubCredentials?: GitHubCredentialResolutionPort,
     private readonly githubApiBaseUrl?: string,
     private readonly externalMappings?: ExternalMappingCapabilityResolver,
+    private readonly pollCursors?: PollCursorCapabilityResolver,
   ) {}
 
   public resolve(
@@ -117,7 +123,8 @@ export class ProjectModuleCapabilityResolver {
       !workspaceRequired &&
       !projectCommandsRequired &&
       githubRequirement === undefined &&
-      this.externalMappings === undefined
+      this.externalMappings === undefined &&
+      this.pollCursors === undefined
     ) {
       return {};
     }
@@ -128,7 +135,8 @@ export class ProjectModuleCapabilityResolver {
       agentRequirement === undefined &&
       !workspaceRequired &&
       githubRequirement === undefined &&
-      this.externalMappings === undefined
+      this.externalMappings === undefined &&
+      this.pollCursors === undefined
     ) {
       return {};
     }
@@ -151,6 +159,9 @@ export class ProjectModuleCapabilityResolver {
       ...(this.externalMappings === undefined
         ? {}
         : { externalMappings: this.externalMappings.bind(projectId, moduleInstanceId) }),
+      ...(this.pollCursors === undefined
+        ? {}
+        : { pollCursor: this.pollCursors.bind(projectId, moduleInstanceId) }),
     };
     let resolved: ModuleHandlerCapabilities = capabilities;
     if (agentRequirement !== undefined) {

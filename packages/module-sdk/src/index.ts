@@ -85,10 +85,26 @@ export interface ExternalMappingCapability {
   readonly flushPending?: () => void;
 }
 
+export interface PollCursorRecord {
+  readonly externalEventId: string;
+  readonly eventTimestamp: string;
+  readonly updatedAt: string;
+}
+
+export interface PollCursorCapability {
+  readonly read: (repositoryId: string) => PollCursorRecord | undefined;
+  readonly write: (input: {
+    readonly repositoryId: string;
+    readonly externalEventId: string;
+    readonly eventTimestamp: string;
+  }) => void;
+}
+
 /** Capabilities resolved for one Project and Module Instance only. */
 export interface ModuleHandlerCapabilities {
   readonly agentRuntime?: AgentRuntime;
   readonly externalMappings?: ExternalMappingCapability;
+  readonly pollCursor?: PollCursorCapability;
   readonly githubApi?: GitHubApi;
   readonly projectBindings?: AgentProjectBindings;
   readonly projectCommands?: ProjectCommandsCapability;
