@@ -1366,7 +1366,7 @@ function cleanHandlerFailureMessage(message: string): string {
       /\b(?:gh[opsru]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|sk-[A-Za-z0-9_-]+)\b/g,
       "<redacted>",
     )
-    .replace(/(^|[\s("'`=:])\/(?!\/)[^\s"'`<>]+/g, "$1<path>")
+    .replace(/(^|[\s("'`=:])\/(?!\/)(?!payload(?:\/|\b))(?=[^\s"'`<>]*\/)[^\s"'`<>]+/g, "$1<path>")
     .replace(/(^|[\s("'`=:])(?:[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+/g, "$1<path>");
 }
 

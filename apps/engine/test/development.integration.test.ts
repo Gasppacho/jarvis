@@ -473,12 +473,16 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
 
     const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
     try {
-      const inbox = database
-        .prepare("SELECT result FROM inbox WHERE module_instance_id = 'development'")
-        .get() as { result: string };
-      expect(JSON.parse(inbox.result)).toEqual({
-        error: { code: "git.no-changes", message: expect.any(String), retryable: false },
-      });
+      expect(
+        database
+          .prepare(
+            "SELECT code, message, attempts FROM dead_letters WHERE module_instance_id = 'development'",
+          )
+          .get(),
+      ).toEqual({ code: "git.no-changes", message: expect.any(String), attempts: 1 });
+      expect(
+        database.prepare("SELECT 1 FROM inbox WHERE module_instance_id = 'development'").get(),
+      ).toBeUndefined();
       expect(
         database
           .prepare(
@@ -555,12 +559,16 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
 
     const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
     try {
-      const inbox = database
-        .prepare("SELECT result FROM inbox WHERE module_instance_id = 'development'")
-        .get() as { result: string };
-      expect(JSON.parse(inbox.result)).toEqual({
-        error: { code: "git.push-failed", message: expect.any(String), retryable: true },
-      });
+      expect(
+        database.prepare("SELECT 1 FROM inbox WHERE module_instance_id = 'development'").get(),
+      ).toBeUndefined();
+      expect(
+        database
+          .prepare(
+            "SELECT attempt_count, next_attempt_at FROM deliveries WHERE module_instance_id = 'development'",
+          )
+          .get(),
+      ).toMatchObject({ attempt_count: expect.any(Number), next_attempt_at: expect.any(String) });
       expect(readFailureEvent(database, projectId)).toMatchObject({
         type: "development.implementation.failed",
         payload: {
@@ -867,12 +875,16 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
 
     const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
     try {
-      const inbox = database
-        .prepare("SELECT result FROM inbox WHERE module_instance_id = 'development'")
-        .get() as { result: string };
-      expect(JSON.parse(inbox.result)).toEqual({
-        error: { code: "git.validation-failed", message: expect.any(String), retryable: false },
-      });
+      expect(
+        database
+          .prepare(
+            "SELECT code, message, attempts FROM dead_letters WHERE module_instance_id = 'development'",
+          )
+          .get(),
+      ).toEqual({ code: "git.validation-failed", message: expect.any(String), attempts: 1 });
+      expect(
+        database.prepare("SELECT 1 FROM inbox WHERE module_instance_id = 'development'").get(),
+      ).toBeUndefined();
       expect(readFailureEvent(database, projectId)).toMatchObject({
         type: "development.implementation.failed",
         payload: {
@@ -1028,16 +1040,15 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
     const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
     try {
       expect(
-        JSON.parse(
-          (
-            database
-              .prepare("SELECT result FROM inbox WHERE module_instance_id = 'development'")
-              .get() as { result: string }
-          ).result,
-        ),
-      ).toEqual({
-        error: { code: "git.validation-failed", message: expect.any(String), retryable: false },
-      });
+        database
+          .prepare(
+            "SELECT code, message, attempts FROM dead_letters WHERE module_instance_id = 'development'",
+          )
+          .get(),
+      ).toEqual({ code: "git.validation-failed", message: expect.any(String), attempts: 1 });
+      expect(
+        database.prepare("SELECT 1 FROM inbox WHERE module_instance_id = 'development'").get(),
+      ).toBeUndefined();
       const checkpoints = database
         .prepare(
           "SELECT type, payload FROM execution_checkpoints WHERE execution_id = ? ORDER BY sequence",
@@ -1195,12 +1206,16 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
 
     const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
     try {
-      const inbox = database
-        .prepare("SELECT result FROM inbox WHERE module_instance_id = 'development'")
-        .get() as { result: string };
-      expect(JSON.parse(inbox.result)).toEqual({
-        error: { code: "project.config-invalid", message: expect.any(String), retryable: false },
-      });
+      expect(
+        database
+          .prepare(
+            "SELECT code, message, attempts FROM dead_letters WHERE module_instance_id = 'development'",
+          )
+          .get(),
+      ).toEqual({ code: "project.config-invalid", message: expect.any(String), attempts: 1 });
+      expect(
+        database.prepare("SELECT 1 FROM inbox WHERE module_instance_id = 'development'").get(),
+      ).toBeUndefined();
       expect(readFailureEvent(database, projectId)).toMatchObject({
         type: "development.implementation.failed",
         payload: {

@@ -58,7 +58,7 @@ describe("runtime isolation acceptance", () => {
     const fixtureB = makeRealGitRepositoryFixture();
     roots.push(fixtureA.root, fixtureA.remoteRoot, fixtureB.root, fixtureB.remoteRoot);
 
-    const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-runtime-isolation-"));
+    const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-ri-"));
     roots.push(dataRoot);
     const fakeCodexPath = join(dataRoot, "fake-codex");
     writeFakeCodex(fakeCodexPath);

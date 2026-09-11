@@ -2579,13 +2579,15 @@ capabilities:
         // Project table; the Eventing tables ticket #56 adds (deliveries,
         // events, outbox), the Inbox/Execution Ledger tables ticket #57 adds
         // (inbox, executions, execution_checkpoints), the Workspace table ticket
-        // #68 adds (workspace_leases), and the global Connection Registry table
+        // #68 adds (workspace_leases), the dead-letter table from issue #17,
+        // and the global Connection Registry table
         // #110 adds (connections), the External Mapping table ticket #122
         // adds (external_mappings), and the GitHub Cursor table ticket #130
         // adds (github_cursors) exist but stay empty — activation alone never
         // inserts a row into any of them.
         expect(tableNames(dataRoot)).toEqual([
           "connections",
+          "dead_letters",
           "deliveries",
           "engine_metadata",
           "events",
@@ -2814,6 +2816,7 @@ capabilities:
           await engine.dispose();
           expect(tableNames(dataRoot)).toEqual([
             "connections",
+            "dead_letters",
             "deliveries",
             "engine_metadata",
             "events",

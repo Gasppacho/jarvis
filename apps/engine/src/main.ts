@@ -505,8 +505,13 @@ async function main(): Promise<void> {
     );
     executionCancellation = consumer;
     deadLetterReplay = consumer;
+    // Test bundles use a short default so a restarted process can reclaim a
+    // lease from a deliberately crashed test without waiting for production's
+    // 30-second safety window. Production keeps the longer default unless an
+    // explicit override is supplied.
     const deliveryLeaseMs =
-      parseLeaseMs(process.env["JARVIS_DELIVERY_LEASE_MS"]) ?? DEFAULT_DELIVERY_LEASE_MS;
+      parseLeaseMs(process.env["JARVIS_DELIVERY_LEASE_MS"]) ??
+      (testHooksEnabled ? 200 : DEFAULT_DELIVERY_LEASE_MS);
     stopEventLoop = startEventLoop({
       db: database.db,
       clock,

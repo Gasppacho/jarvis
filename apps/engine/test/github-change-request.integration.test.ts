@@ -606,12 +606,17 @@ esac
       );
       expect(JSON.stringify(failurePayloads)).not.toContain(credential);
       expect(JSON.stringify(failurePayloads)).not.toContain("opaque provider detail");
-      expect(inbox).toHaveLength(6);
+      // Permanent provider failures are dead-lettered; retryable failures are
+      // retried and the eventual successful attempt is the only Inbox row.
+      expect(inbox).toHaveLength(1);
+      expect(inbox.some(({ event_id }) => failedEvents.includes(event_id))).toBe(false);
       expect(
-        inbox
-          .filter(({ event_id }) => failedEvents.includes(event_id))
-          .map(({ result }) => JSON.parse(result) as { error: { code: string } }),
-      ).toEqual(failureCases.map(({ code }) => ({ error: expect.objectContaining({ code }) })));
+        database.prepare("SELECT code, attempts FROM dead_letters ORDER BY rowid").all(),
+      ).toEqual([
+        { code: "github.unauthorized", attempts: 1 },
+        { code: "github.branch-not-found", attempts: 1 },
+        { code: "github.change-request-invalid", attempts: 1 },
+      ]);
       expect(
         database
           .prepare(

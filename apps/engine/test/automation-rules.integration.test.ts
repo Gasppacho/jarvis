@@ -504,18 +504,22 @@ describe("Automation Rules Rule Set semantics", () => {
       expect(unresolved.status).toBe("failed");
       expect(unresolved.error).toContain("baseBranch");
       // The third recorded shape: a failure, distinct from both a Rule Match
-      // and a clean no-match.
+      // and a clean no-match. This unclassified module failure remains
+      // retryable, so it is not delivered to the Inbox before exhaustion.
       expect(
-        JSON.parse(
-          (
-            database
-              .prepare(
-                "SELECT result FROM inbox WHERE project_id = ? AND module_instance_id = 'automation-rules'",
-              )
-              .get("unknown-repo") as { readonly result: string }
-          ).result,
-        ),
-      ).toEqual({ error: expect.stringContaining("baseBranch") });
+        database
+          .prepare(
+            "SELECT 1 FROM inbox WHERE project_id = ? AND module_instance_id = 'automation-rules'",
+          )
+          .get("unknown-repo"),
+      ).toBeUndefined();
+      expect(
+        database
+          .prepare(
+            "SELECT attempt_count, next_attempt_at FROM deliveries WHERE project_id = ? AND module_instance_id = 'automation-rules'",
+          )
+          .get("unknown-repo"),
+      ).toMatchObject({ attempt_count: 1, next_attempt_at: expect.any(String) });
       expect(
         database.prepare("SELECT id FROM events WHERE id = ?").get(unknownRepoFact.id),
       ).toBeDefined();
