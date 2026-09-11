@@ -68,6 +68,59 @@ describe("Development Work Item context", () => {
     expect(prompt).toContain(WORK_ITEM_REF);
     expect(prompt).not.toContain("Title:");
   });
+
+  it("uses the Issue number and title for branch, commit, and PR names", async () => {
+    const result = await runDevelopment({
+      runtime: new CapturingRuntime(),
+      executionId: "exec_named",
+      workItem: {
+        ref: WORK_ITEM_REF,
+        number: 16,
+        title: "Add a Health Endpoint",
+        body: "Body",
+        state: "open",
+      },
+    });
+
+    expect(result.branchContext).toEqual({
+      workItemId: "16",
+      slug: "add-a-health-endpoint-exec-named",
+    });
+    expect(result.commitSubject).toBe("feat: implement add-a-health-endpoint");
+    expect(result.published.find(({ type }) => type === "scm.change-request.creation-requested"))
+      .toMatchObject({
+        payload: {
+          title: "Implement Add a Health Endpoint",
+          description: `Implements Work Item ${WORK_ITEM_REF}.`,
+        },
+      });
+  });
+
+  it("keeps non-GitHub references and makes repeated Issue runs distinct", async () => {
+    const first = await runDevelopment({
+      runtime: new CapturingRuntime(),
+      executionId: "exec_first",
+      workItemRef: "fixture://project/first",
+    });
+    const second = await runDevelopment({
+      runtime: new CapturingRuntime(),
+      executionId: "exec_second",
+      workItem: {
+        ref: WORK_ITEM_REF,
+        number: 16,
+        title: "Add a Health Endpoint",
+        body: "Body",
+        state: "open",
+      },
+    });
+
+    expect(first.branchContext).toEqual({
+      workItemId: "fixture-project-first",
+      slug: "implementation-exec-first",
+    });
+    expect(first.commitSubject).toBe("feat: implement fixture-project-first");
+    expect(first.branchContext.slug).not.toBe(second.branchContext.slug);
+  });
 });
 
 const WORK_ITEM_REF = "github://Gasppacho/jarvis/issues/16";
@@ -107,17 +160,25 @@ class CapturingRuntime implements AgentRuntime {
 async function runDevelopment(input: {
   readonly runtime: CapturingRuntime;
   readonly workItem?: WorkItem;
+  readonly workItemRef?: string;
+  readonly executionId?: string;
   readonly workItems?: ModuleHandlerContext["capabilities"]["workItems"];
   readonly checkpoints?: string[];
-}): Promise<void> {
+}): Promise<{
+  readonly published: readonly ModuleHandlerPublishInput[];
+  readonly branchContext: { readonly workItemId: string; readonly slug: string };
+  readonly commitSubject: string;
+}> {
   const repository = makeRealGitRepositoryFixture();
   repositories.push(repository);
-  const branch = "agent/work-item-test";
-  execFileSync("git", ["switch", "--create", branch], { cwd: repository.root });
   const baseRevisionSha = execFileSync("git", ["rev-parse", "main"], {
     cwd: repository.root,
     encoding: "utf8",
   }).trim();
+  const workItemRef = input.workItem?.ref ?? input.workItemRef ?? WORK_ITEM_REF;
+  const executionId = input.executionId ?? "exec_work_item";
+  let branchContext: { readonly workItemId: string; readonly slug: string } | undefined;
+  let branch: string | undefined;
   const event = {
     specVersion: "1.0",
     id: "evt_work_item",
@@ -128,12 +189,12 @@ async function runDevelopment(input: {
     projectId: "work-item-test",
     repositoryId: "main",
     producer: { moduleId: "jarvis.module.automation-rules", moduleInstanceId: "rules" },
-    subject: { type: "work-item", ref: WORK_ITEM_REF },
+    subject: { type: "work-item", ref: workItemRef },
     correlationId: "corr_work_item",
     causationId: null,
     target: { moduleInstanceId: "development" },
     idempotencyKey: "work-item-test:request",
-    payload: { workItemRef: WORK_ITEM_REF, repositoryId: "main", baseBranch: "main" },
+    payload: { workItemRef, repositoryId: "main", baseBranch: "main" },
   } satisfies EventEnvelope;
   const published: ModuleHandlerPublishInput[] = [];
   const publish = (value: ModuleHandlerPublishInput): EventEnvelope => {
@@ -142,7 +203,7 @@ async function runDevelopment(input: {
   };
   const ctx: ModuleHandlerContext = {
     projectId: event.projectId,
-    executionId: "exec_work_item",
+    executionId,
     moduleInstanceId: "development",
     repositoryId: event.repositoryId,
     repositoryDefaultBranch: "main",
@@ -177,11 +238,17 @@ async function runDevelopment(input: {
         }),
       },
       workspace: {
-        allocate: async () => ({
-          path: repository.root,
-          workingBranch: branch,
-          baseRevisionSha,
-        }),
+        allocate: async (allocation) => {
+          branchContext = allocation.branchContext;
+          const branchName = `agent/${allocation.branchContext.workItemId}-${allocation.branchContext.slug}`;
+          branch = branchName;
+          execFileSync("git", ["switch", "--create", branchName], { cwd: repository.root });
+          return {
+            path: repository.root,
+            workingBranch: branchName,
+            baseRevisionSha,
+          };
+        },
         release: async () => {},
       },
       ...(input.workItems !== undefined
@@ -197,4 +264,15 @@ async function runDevelopment(input: {
     publishFailure: publish,
   };
   await handleImplementationRequested(ctx);
+  if (branchContext === undefined || branch === undefined) {
+    throw new Error("Development did not allocate a branch.");
+  }
+  return {
+    published,
+    branchContext,
+    commitSubject: execFileSync("git", ["log", "-1", "--format=%s"], {
+      cwd: repository.root,
+      encoding: "utf8",
+    }).trim(),
+  };
 }
