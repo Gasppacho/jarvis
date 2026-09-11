@@ -42,6 +42,7 @@ import type {
   ProjectCompositionChoices,
   ProjectCompositionGraph,
   ProjectCompositionReview,
+  ProjectGraph,
   PortableProjectConfiguration,
   ProjectBindings,
   ProjectIneligibleResource,
@@ -331,6 +332,16 @@ export class ProjectService implements ProjectRegistry<
       slotBindings: project.slotBindings,
       validation,
     });
+  }
+
+  /**
+   * The emergent graph is empty until activation freezes a Resolved Project.
+   * Node and edge projection is added by the subsequent graph slices; this
+   * endpoint still goes through the normal Project lookup for its 404 contract.
+   */
+  getProjectGraph(id: unknown): ProjectGraph {
+    this.requireProject(id);
+    return { nodes: [], edges: [], valid: true, issues: [] };
   }
 
   /**

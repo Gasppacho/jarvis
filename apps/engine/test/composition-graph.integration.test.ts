@@ -22,9 +22,11 @@ describe("project composition graph", () => {
   const repositories: string[] = [];
   const runtimeRoots: string[] = [];
   let validateGraph: ReturnType<typeof localApiValidator>;
+  let validateProjectGraph: ReturnType<typeof localApiValidator>;
 
   beforeAll(() => {
     validateGraph = localApiValidator("ProjectCompositionGraphV1");
+    validateProjectGraph = localApiValidator("ProjectGraph");
   });
 
   afterEach(async () => {
@@ -85,6 +87,45 @@ describe("project composition graph", () => {
       beforeBindings,
     );
   }
+
+  describe("GET /v1/projects/:projectId/graph", () => {
+    it("returns the typed empty graph before the Project is activated", async () => {
+      const { engine, project } = await setupCanonicalProject();
+
+      const response = await engine.call(`/v1/projects/${project.id}/graph`);
+      expect(response.status, await response.clone().text()).toBe(200);
+      const body = (await response.json()) as Record<string, unknown>;
+
+      expect(validateProjectGraph(body), explain(validateProjectGraph)).toBe(true);
+      expect(body).toEqual({ nodes: [], edges: [], valid: true, issues: [] });
+    });
+
+    it("preserves the project 404 and loopback/bearer refusal contracts", async () => {
+      const engine = await startEngine();
+      engines.push(engine);
+
+      const unauthenticated = await engine.callUnauthenticated("/v1/projects/does-not-exist/graph");
+      expect(unauthenticated.status).toBe(401);
+      expect((await unauthenticated.json()) as unknown).toMatchObject({
+        error: { code: "api.unauthorized" },
+      });
+
+      const nonLoopback = await engine.callRaw("/v1/projects/does-not-exist/graph", {
+        host: "jarvis.example.com",
+        authorization: `Bearer ${engine.token}`,
+      });
+      expect(nonLoopback.status).toBe(403);
+      expect(JSON.parse(nonLoopback.body) as unknown).toMatchObject({
+        error: { code: "api.host-not-allowed" },
+      });
+
+      const unknown = await engine.call("/v1/projects/does-not-exist/graph");
+      expect(unknown.status).toBe(404);
+      expect((await unknown.json()) as unknown).toMatchObject({
+        error: { code: "project.not-found" },
+      });
+    });
+  });
 
   it("projects an incomplete saved composition: unbound rail, direct-target and broadcast edges", async () => {
     const { engine, project } = await setupCanonicalProject();

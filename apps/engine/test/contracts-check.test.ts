@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const checker = join(repoRoot, "scripts", "contracts-check.mjs");
@@ -62,6 +63,28 @@ afterEach(() => {
 describe("pnpm contracts:check", () => {
   it("accepts the contract surface as committed", async () => {
     await expect(runChecker(fixtureRoot())).resolves.toMatchObject({ code: 0 });
+  });
+
+  it("keeps ProjectGraph nodes, edges and issues on named composition schemas", () => {
+    const document = parseYaml(
+      readFileSync(join(repoRoot, "contracts/openapi/local-api.v1.yaml"), "utf8"),
+    ) as {
+      components: {
+        schemas: Record<string, { properties?: Record<string, { items?: { $ref?: string } }> }>;
+      };
+    };
+    const graph = document.components.schemas["ProjectGraph"];
+    if (graph === undefined) throw new Error("ProjectGraph schema is missing");
+
+    expect(graph.properties?.["nodes"]?.items).toEqual({
+      $ref: "#/components/schemas/ProjectCompositionGraphNodeV1",
+    });
+    expect(graph.properties?.["edges"]?.items).toEqual({
+      $ref: "#/components/schemas/ProjectCompositionGraphEdgeV1",
+    });
+    expect(graph.properties?.["issues"]?.items).toEqual({
+      $ref: "#/components/schemas/ProjectCompositionGraphFindingV1",
+    });
   });
 
   it("rejects an event example that breaks the envelope", async () => {

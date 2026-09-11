@@ -88,6 +88,17 @@ export interface ProjectCompositionGraph {
   readonly findings: readonly (ProjectValidationFinding & { readonly id: string })[];
 }
 
+/**
+ * The emergent graph uses the same node, edge and finding vocabulary as the
+ * composition graph; only its source is the frozen Resolved Project.
+ */
+export interface ProjectGraph {
+  readonly nodes: ProjectCompositionGraph["nodes"];
+  readonly edges: ProjectCompositionGraph["edges"];
+  readonly valid: boolean;
+  readonly issues: ProjectCompositionGraph["findings"];
+}
+
 /** Manifest metadata the graph needs beyond the validation report. */
 export interface ProjectCompositionGraphPackagePort {
   package(moduleId: string): { readonly version: string; readonly displayName: string } | undefined;

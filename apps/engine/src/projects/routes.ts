@@ -10,6 +10,7 @@ import type {
   ProjectCompositionChoices,
   ProjectCompositionGraph,
   ProjectCompositionReview,
+  ProjectGraph,
   ProjectDetail,
   ProjectResourceCandidateRegistry,
   ProjectSummary,
@@ -36,6 +37,7 @@ export type LocalProjectRegistry = ProjectRegistry<
     ): ProjectCompositionChoices;
     compositionReview(id: unknown, proposedConfiguration: unknown): ProjectCompositionReview;
     compositionGraph(id: unknown, proposedConfiguration: unknown): ProjectCompositionGraph;
+    getProjectGraph(id: unknown): ProjectGraph;
     listProjectSubscriptions(id: unknown): ProjectSubscriptions;
     listProjectEvents(id: unknown, query: ListEventsQuery): { readonly items: EventSummary[] };
     listProjectExecutions(
@@ -169,6 +171,12 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
     const params = request.params as { projectId?: unknown } | undefined;
     const body = request.body as { portableConfig?: unknown } | undefined;
     return reply.code(200).send(service.compositionGraph(params?.projectId, body?.portableConfig));
+  });
+
+  app.get("/v1/projects/:projectId/graph", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    return reply.code(200).send(service.getProjectGraph(params?.projectId));
   });
 
   app.delete("/v1/projects/:projectId", async (request, reply) => {

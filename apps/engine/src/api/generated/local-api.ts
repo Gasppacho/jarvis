@@ -1127,10 +1127,10 @@ export interface components {
             };
         };
         ProjectGraph: {
-            nodes: Record<string, never>[];
-            edges: Record<string, never>[];
+            nodes: components["schemas"]["ProjectCompositionGraphNodeV1"][];
+            edges: components["schemas"]["ProjectCompositionGraphEdgeV1"][];
             valid: boolean;
-            issues: Record<string, never>[];
+            issues: components["schemas"]["ProjectCompositionGraphFindingV1"][];
         };
         DeadLetter: {
             deliveryId: string;
