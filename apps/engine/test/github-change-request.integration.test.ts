@@ -366,6 +366,209 @@ esac
       ),
     ).toHaveLength(0);
     expect(fakeGitHub.requests.some((request) => request.credential === credential)).toBe(true);
+
+    const recovered = new Database(join(dataRoot, "jarvis.sqlite"));
+    try {
+      expect(
+        recovered
+          .prepare(
+            `SELECT COUNT(*) AS count FROM inbox
+             WHERE project_id = ? AND module_instance_id = ? AND event_id = ?`,
+          )
+          .get(project.id, "github", published.id),
+      ).toEqual({ count: 1 });
+      expect(recovered.prepare("SELECT COUNT(*) AS count FROM dead_letters").get()).toEqual({
+        count: 0,
+      });
+      expect(
+        recovered.prepare("SELECT attempt, status FROM executions ORDER BY attempt").all(),
+      ).toEqual([{ attempt: 1, status: "completed" }]);
+      expect(
+        recovered
+          .prepare("SELECT attempt, COUNT(*) AS count FROM executions GROUP BY attempt")
+          .all(),
+      ).toEqual([{ attempt: 1, count: 1 }]);
+    } finally {
+      recovered.close();
+    }
+  });
+
+  it("reclaims a leased retry after restart without repeating the attempt or external resource", async () => {
+    const fakeGitHub = await startFakeGitHubApi();
+    servers.push(fakeGitHub);
+    const credential = "ghs_delivery_lease_recovery_sentinel";
+    const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-gh-credentials-"));
+    roots.push(executableRoot);
+    const executable = join(executableRoot, "gh");
+    writeFileSync(executable, `#!/bin/sh\nprintf '%s\\n' '${credential}'\n`, "utf8");
+    chmodSync(executable, 0o755);
+
+    const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-delivery-lease-recovery-"));
+    roots.push(dataRoot);
+    const leaseMs = "3000";
+    const first = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_DELIVERY_LEASE_MS: leaseMs,
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+      },
+    });
+    engines.push(first);
+
+    await registerGitHubConnection(first, "connection/github", "Account");
+    const project = await createGitHubProject(first, "project-delivery-lease-recovery");
+    await bindAndActivate(first, project, "connection/github");
+    const failFirstAttempt = fakeGitHub.scriptRoute("POST", "/repos/QServices/repo/pulls", {
+      status: 500,
+      body: { message: "transient provider failure" },
+    });
+    const published = await publishCreationRequest(
+      first,
+      project.id,
+      "github://QServices/repo/issues/47",
+    );
+    await waitForExecution(first, project.id, published.id, "failed");
+
+    const afterRetry = new Database(join(dataRoot, "jarvis.sqlite"));
+    try {
+      expect(
+        afterRetry
+          .prepare(
+            `SELECT attempt_count, consumed_at, next_attempt_at
+             FROM deliveries WHERE event_id = ?`,
+          )
+          .get(published.id),
+      ).toMatchObject({ attempt_count: 1, consumed_at: null });
+      expect(afterRetry.prepare("SELECT COUNT(*) AS count FROM dead_letters").get()).toEqual({
+        count: 0,
+      });
+    } finally {
+      afterRetry.close();
+    }
+    await first.dispose();
+    engines.splice(engines.indexOf(first), 1);
+    failFirstAttempt();
+
+    const crashed = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_FAILPOINT: "after-external-mapping-before-fact",
+        JARVIS_DELIVERY_LEASE_MS: leaseMs,
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+      },
+    });
+    engines.push(crashed);
+    const crashExitCode = await crashed.waitForExit();
+    expect(crashExitCode).not.toBe(0);
+    await crashed.dispose();
+    engines.splice(engines.indexOf(crashed), 1);
+
+    const leaseHeld = new Database(join(dataRoot, "jarvis.sqlite"));
+    let leaseOwner: string;
+    try {
+      const delivery = leaseHeld
+        .prepare(
+          `SELECT attempt_count, consumed_at, lease_owner, lease_expires_at
+           FROM deliveries WHERE event_id = ?`,
+        )
+        .get(published.id) as {
+        attempt_count: number;
+        consumed_at: string | null;
+        lease_owner: string | null;
+        lease_expires_at: string | null;
+      };
+      expect(delivery).toMatchObject({ attempt_count: 1, consumed_at: null });
+      expect(delivery.lease_owner).toEqual(expect.stringMatching(/^delivery-/));
+      expect(delivery.lease_expires_at).not.toBeNull();
+      expect(Date.parse(delivery.lease_expires_at!)).toBeGreaterThan(Date.now());
+      leaseOwner = delivery.lease_owner!;
+      expect(
+        leaseHeld.prepare("SELECT attempt, status FROM executions ORDER BY attempt, id").all(),
+      ).toEqual([
+        { attempt: 1, status: "failed" },
+        { attempt: 2, status: "running" },
+      ]);
+    } finally {
+      leaseHeld.close();
+    }
+
+    const restarted = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_DELIVERY_LEASE_MS: leaseMs,
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+      },
+    });
+    engines.push(restarted);
+
+    const whileLeaseIsLive = new Database(join(dataRoot, "jarvis.sqlite"));
+    try {
+      expect(whileLeaseIsLive.prepare("SELECT lease_owner FROM deliveries").get()).toEqual({
+        lease_owner: leaseOwner,
+      });
+      expect(whileLeaseIsLive.prepare("SELECT COUNT(*) AS count FROM executions").get()).toEqual({
+        count: 2,
+      });
+    } finally {
+      whileLeaseIsLive.close();
+    }
+
+    await waitForExecution(restarted, project.id, published.id, "completed", 10_000);
+    await waitForEvents(restarted, project.id, 2);
+
+    const recovered = new Database(join(dataRoot, "jarvis.sqlite"));
+    try {
+      expect(
+        recovered.prepare("SELECT attempt, status FROM executions ORDER BY attempt, id").all(),
+      ).toEqual([
+        { attempt: 1, status: "failed" },
+        { attempt: 2, status: "completed" },
+      ]);
+      expect(
+        recovered
+          .prepare("SELECT attempt, COUNT(*) AS count FROM executions GROUP BY attempt")
+          .all(),
+      ).toEqual([
+        { attempt: 1, count: 1 },
+        { attempt: 2, count: 1 },
+      ]);
+      expect(
+        recovered
+          .prepare(
+            `SELECT COUNT(*) AS count FROM inbox
+             WHERE project_id = ? AND module_instance_id = ? AND event_id = ?`,
+          )
+          .get(project.id, "github", published.id),
+      ).toEqual({ count: 1 });
+      expect(recovered.prepare("SELECT COUNT(*) AS count FROM dead_letters").get()).toEqual({
+        count: 0,
+      });
+      expect(
+        recovered
+          .prepare(
+            `SELECT attempt_count, consumed_at, lease_owner, lease_expires_at
+             FROM deliveries WHERE event_id = ?`,
+          )
+          .get(published.id),
+      ).toMatchObject({ attempt_count: 2, consumed_at: expect.any(String) });
+    } finally {
+      recovered.close();
+    }
+    expect(fakeGitHub.pullRequests).toHaveLength(1);
+    expect(
+      fakeGitHub.requests.filter(
+        (request) => request.method === "POST" && request.path.endsWith("/pulls"),
+      ),
+    ).toHaveLength(2); // one transient failure, then the one successful creation
   });
 
   it("adopts a pull request after creation crashes before mapping", async () => {

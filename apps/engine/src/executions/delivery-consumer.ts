@@ -300,7 +300,8 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
     }
     const attempt = this.readDeliveryAttempt(delivery);
     const handler = this.handlers(delivery.moduleId);
-    const executionId = `exec_${this.ids.next()}`;
+    const recoveredExecution = this.findRecoverableExecution(delivery, attempt);
+    const executionId = recoveredExecution?.id ?? `exec_${this.ids.next()}`;
     const startedAt = this.clock.now().toISOString();
     const bufferedPublications: EventEnvelope[] = [];
     const failurePublications: EventEnvelope[] = [];
@@ -314,13 +315,14 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
         new Error(`No handler registered for Module ${delivery.moduleId}.`),
         failurePublications,
         attempt,
+        recoveredExecution !== undefined,
       );
     }
 
     const controller = new AbortController();
     let transactionOpen = true;
     let promiseResult: PromiseLike<unknown> | undefined;
-    let runningExecutionCommitted = false;
+    let runningExecutionCommitted = recoveredExecution !== undefined;
     let handlerCapabilities: ModuleHandlerCapabilities | undefined;
 
     try {
@@ -328,7 +330,17 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
         // Create the running Ledger row before invoking the handler so a
         // synchronous Module can record durable checkpoints too. Async
         // handlers use the same row after this transaction commits.
-        this.insertExecution(executionId, delivery, envelope, "running", startedAt, null, attempt);
+        if (recoveredExecution === undefined) {
+          this.insertExecution(
+            executionId,
+            delivery,
+            envelope,
+            "running",
+            startedAt,
+            null,
+            attempt,
+          );
+        }
         handlerCapabilities = this.capabilities(
           delivery.projectId,
           delivery.moduleInstanceId,
@@ -1258,6 +1270,24 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
       );
     }
     return row.attempt_count + 1;
+  }
+
+  private findRecoverableExecution(
+    delivery: ClaimedDelivery,
+    attempt: number,
+  ): Pick<ExecutionRow, "id"> | undefined {
+    return this.db
+      .prepare(
+        `SELECT id FROM executions
+         WHERE project_id = @projectId
+           AND module_instance_id = @moduleInstanceId
+           AND input_event_id = @eventId
+           AND attempt = @attempt
+           AND status IN ('running', 'cancelling')
+         ORDER BY created_at, id
+         LIMIT 1`,
+      )
+      .get({ ...delivery, attempt }) as Pick<ExecutionRow, "id"> | undefined;
   }
 
   private scheduleRetry(delivery: ClaimedDelivery, attempt: number, nextAttemptAt: string): void {

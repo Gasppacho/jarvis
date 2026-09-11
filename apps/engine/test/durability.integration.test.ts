@@ -130,15 +130,27 @@ describe("durability: crash recovery across the Outbox/Delivery/Execution pipeli
           status: "dispatched",
         });
         expect(afterRestart.prepare("SELECT COUNT(*) AS n FROM events").get()).toEqual({ n: 1 });
+        expect(afterRestart.prepare("SELECT COUNT(*) AS n FROM deliveries").get()).toEqual({
+          n: 1,
+        });
         expect(afterRestart.prepare("SELECT consumed_at FROM deliveries").get()).not.toEqual({
           consumed_at: null,
+        });
+        expect(afterRestart.prepare("SELECT COUNT(*) AS n FROM inbox").get()).toEqual({ n: 1 });
+        expect(afterRestart.prepare("SELECT COUNT(*) AS n FROM dead_letters").get()).toEqual({
+          n: 0,
         });
         expect(afterRestart.prepare("SELECT status FROM inbox").get()).toEqual({
           status: "completed",
         });
-        expect(afterRestart.prepare("SELECT status FROM executions").get()).toEqual({
-          status: "completed",
-        });
+        expect(
+          afterRestart.prepare("SELECT attempt, status FROM executions ORDER BY attempt").all(),
+        ).toEqual([{ attempt: 1, status: "completed" }]);
+        expect(
+          afterRestart
+            .prepare("SELECT attempt, COUNT(*) AS count FROM executions GROUP BY attempt")
+            .all(),
+        ).toEqual([{ attempt: 1, count: 1 }]);
         expect(afterRestart.prepare("SELECT ping_count FROM sample_probe_state").get()).toEqual({
           ping_count: 1,
         });
@@ -205,6 +217,15 @@ describe("durability: crash recovery across the Outbox/Delivery/Execution pipeli
         expect(afterRestart.prepare("SELECT COUNT(*) AS n FROM executions").get()).toEqual({
           n: 1,
         });
+        expect(afterRestart.prepare("SELECT COUNT(*) AS n FROM inbox").get()).toEqual({ n: 1 });
+        expect(afterRestart.prepare("SELECT COUNT(*) AS n FROM dead_letters").get()).toEqual({
+          n: 0,
+        });
+        expect(
+          afterRestart
+            .prepare("SELECT attempt, COUNT(*) AS count FROM executions GROUP BY attempt")
+            .all(),
+        ).toEqual([{ attempt: 1, count: 1 }]);
         expect(afterRestart.prepare("SELECT status FROM executions").get()).toEqual({
           status: "completed",
         });
