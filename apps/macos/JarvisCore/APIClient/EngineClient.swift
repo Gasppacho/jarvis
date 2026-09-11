@@ -304,6 +304,22 @@ public struct EngineClient: Sendable {
         }
     }
 
+    public func cancelExecution(executionId: String) async throws -> TimelineExecution {
+        let operation = "POST /v1/executions/\(executionId)/cancel"
+        let output = try await underlying.cancelExecution(
+            .init(path: .init(executionId: executionId)))
+        switch output {
+        case .accepted(let accepted):
+            return TimelineExecution(payload: try accepted.body.json)
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
     public func listProjectDeadLetters(projectId: String) async throws -> [DeadLetter] {
         let operation = "GET /v1/projects/\(projectId)/dead-letters"
         let output = try await underlying.listProjectDeadLetters(
@@ -408,6 +424,24 @@ public struct EngineClient: Sendable {
         switch output {
         case .ok(let ok):
             return ProjectCompositionGraph(payload: try ok.body.json)
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
+    /// Reads the Engine's emergent Project graph. The response is already the
+    /// resolved project snapshot; the shell only maps it to display data.
+    public func fetchProjectGraph(projectId: String) async throws -> ProjectGraph {
+        let operation = "GET /v1/projects/\(projectId)/graph"
+        let output = try await underlying.getProjectGraph(
+            .init(path: .init(projectId: projectId)))
+        switch output {
+        case .ok(let ok):
+            return ProjectGraph(projectId: projectId, payload: try ok.body.json)
         case .unauthorized:
             throw EngineClientError.unauthorized(operation: operation)
         case .forbidden:

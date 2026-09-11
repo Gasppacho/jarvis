@@ -6,9 +6,11 @@ import SwiftUI
 /// catalogue, configuration schemas, Project slots and eligible candidate arrays.
 public struct ProjectDetailView: View {
     /// Ticket #61: the Project detail's first sub-navigation — Composition
-    /// (everything this screen showed before) beside the new Timeline.
+    /// (everything this screen showed before) beside the read-only graph and
+    /// Timeline.
     private enum Tab: Hashable {
         case composition
+        case graph
         case timeline
         case deadLetters
     }
@@ -17,6 +19,7 @@ public struct ProjectDetailView: View {
     let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
     let timeline: ProjectTimelineModel
+    let projectGraph: ProjectGraphModel
     let deadLetters: ProjectDeadLettersModel
     let project: Project
 
@@ -34,6 +37,7 @@ public struct ProjectDetailView: View {
         projectConfiguration: ProjectConfigurationModel,
         moduleCatalog: ModuleCatalogModel,
         timeline: ProjectTimelineModel,
+        projectGraph: ProjectGraphModel,
         deadLetters: ProjectDeadLettersModel,
         project: Project
     ) {
@@ -41,6 +45,7 @@ public struct ProjectDetailView: View {
         self.projectConfiguration = projectConfiguration
         self.moduleCatalog = moduleCatalog
         self.timeline = timeline
+        self.projectGraph = projectGraph
         self.deadLetters = deadLetters
         self.project = project
     }
@@ -49,6 +54,7 @@ public struct ProjectDetailView: View {
         VStack(spacing: 0) {
             Picker("View", selection: $selectedTab) {
                 Text("Composition").tag(Tab.composition)
+                Text("Graph").tag(Tab.graph)
                 Text("Timeline").tag(Tab.timeline)
                 Text("Dead Letters").tag(Tab.deadLetters)
             }
@@ -60,6 +66,8 @@ public struct ProjectDetailView: View {
             switch selectedTab {
             case .composition:
                 compositionTab
+            case .graph:
+                ProjectGraphView(model: projectGraph, projectId: project.id)
             case .timeline:
                 // Timeline's own project-scoped state means switching to a
                 // different Project can never show this Project's rows for

@@ -2260,17 +2260,17 @@ components:
         nodes:
           type: array
           items:
-            type: object
+            $ref: "#/components/schemas/ProjectCompositionGraphNodeV1"
         edges:
           type: array
           items:
-            type: object
+            $ref: "#/components/schemas/ProjectCompositionGraphEdgeV1"
         valid:
           type: boolean
         issues:
           type: array
           items:
-            type: object
+            $ref: "#/components/schemas/ProjectCompositionGraphFindingV1"
     DeadLetter:
       type: object
       required: [deliveryId, projectId, eventId, moduleInstanceId, code, attempts, lastExecutionId, createdAt]

@@ -2455,6 +2455,362 @@ capabilities:
       }
     });
 
+    it("projects enabled instances from the frozen composition and updates only after reactivation", async () => {
+      const { engine, projectId, report } = await setupGreenProject();
+      expect(
+        (
+          await activate(engine, projectId, {
+            compositionFingerprint: report.compositionFingerprint,
+          })
+        ).status,
+      ).toBe(200);
+
+      const otherRoot = fixture(() => makeNodeRepositoryFixture());
+      const other = (await (
+        await importProject(engine, {
+          repositoryPath: otherRoot,
+          portableConfig: embeddedPortableConfig([
+            automationInstance({ moduleInstanceId: "other-worker" }),
+            workerInstance("other-worker"),
+          ]),
+        })
+      ).json()) as { id: string };
+      const otherReport = (await (
+        await engine.call(`/v1/projects/${other.id}/validation-report`, { method: "POST" })
+      ).json()) as { valid: boolean; compositionFingerprint: string; findings: unknown[] };
+      expect(otherReport.valid, JSON.stringify(otherReport.findings)).toBe(true);
+      expect(
+        (
+          await activate(engine, other.id, {
+            compositionFingerprint: otherReport.compositionFingerprint,
+          })
+        ).status,
+      ).toBe(200);
+
+      const graph = async (id: string) => {
+        const response = await engine.call(`/v1/projects/${id}/graph`);
+        expect(response.status, await response.clone().text()).toBe(200);
+        return (await response.json()) as {
+          nodes: {
+            instanceId: string;
+            moduleId: string;
+            enabled: boolean;
+            moduleVersion: string | null;
+            displayName: string | null;
+            findings: string[];
+          }[];
+          edges: unknown[];
+          valid: boolean;
+          issues: unknown[];
+        };
+      };
+
+      const firstGraph = await graph(projectId);
+      expect(firstGraph).toMatchObject({ valid: true, issues: [] });
+      expect(firstGraph.edges).toHaveLength(1);
+      expect(firstGraph.edges[0]).toMatchObject({
+        kind: "request",
+        from: { instanceId: "automation-rules" },
+        to: { instanceId: "request-worker" },
+        routing: { status: "resolved" },
+      });
+      expect(firstGraph.nodes).toEqual([
+        {
+          instanceId: "automation-rules",
+          moduleId: "jarvis.module.automation-rules",
+          enabled: true,
+          moduleVersion: "1.0.0",
+          displayName: "Automation Rules",
+          findings: [],
+        },
+        {
+          instanceId: "request-worker",
+          moduleId: "jarvis.module.change-request-review",
+          enabled: true,
+          moduleVersion: "1.0.0",
+          displayName: "Request Worker",
+          findings: [],
+        },
+      ]);
+
+      const secondGraph = await graph(other.id);
+      expect(secondGraph.nodes.map((node) => node.instanceId)).toEqual([
+        "automation-rules",
+        "other-worker",
+      ]);
+      expect(firstGraph.nodes.map((node) => node.instanceId)).not.toContain("other-worker");
+
+      const beforeConfig = (await (await engine.call(`/v1/projects/${projectId}`)).json()) as {
+        portableConfig: Record<string, unknown>;
+      };
+      const proposed = structuredClone(beforeConfig.portableConfig);
+      (proposed["modules"] as Record<string, unknown>[]).push(
+        structuredClone(workerInstance("later-worker")),
+      );
+      const saved = await engine.call(`/v1/projects/${projectId}/configuration`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ portableConfig: proposed, writeToRepository: false }),
+      });
+      expect(saved.status).toBe(200);
+      expect((await graph(projectId)).nodes).toEqual(firstGraph.nodes);
+
+      const updatedReport = (await (
+        await engine.call(`/v1/projects/${projectId}/validation-report`, { method: "POST" })
+      ).json()) as { valid: boolean; compositionFingerprint: string; findings: unknown[] };
+      expect(updatedReport.valid, JSON.stringify(updatedReport.findings)).toBe(true);
+      expect(
+        (
+          await activate(engine, projectId, {
+            compositionFingerprint: updatedReport.compositionFingerprint,
+          })
+        ).status,
+      ).toBe(200);
+      expect((await graph(projectId)).nodes.map((node) => node.instanceId)).toEqual([
+        "automation-rules",
+        "later-worker",
+        "request-worker",
+      ]);
+    });
+
+    it("broadcasts fact edges to enabled compatible consumers and keeps unconsumed facts auditable", async () => {
+      const runtimeRoot = runtimeWithEmbeddedValidComposition();
+      const producerManifest = join(runtimeRoot, "modules/automation-rules/module.manifest.yaml");
+      writeFileSync(
+        producerManifest,
+        asUntargetedFactProducer(readFileSync(producerManifest, "utf8")),
+        "utf8",
+      );
+      const workerManifest = join(
+        runtimeRoot,
+        "modules/change-request-review/module.manifest.yaml",
+      );
+      writeFileSync(
+        workerManifest,
+        readFileSync(workerManifest, "utf8")
+          .replace("      kind: request", "      kind: fact")
+          .replace(
+            "  produces: []",
+            `  produces:
+    - type: scm.change-request.created
+      version: 1
+      kind: fact
+      schemaRef: contracts/events/scm.change-request.created.v1.schema.json`,
+          ),
+        "utf8",
+      );
+      const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+      const root = fixture(() => makeNodeRepositoryFixture());
+      const created = (await (
+        await importProject(engine, {
+          repositoryPath: root,
+          portableConfig: embeddedPortableConfig([
+            automationInstance(),
+            workerInstance(),
+            { ...workerInstance("disabled-worker"), enabled: false },
+          ]),
+        })
+      ).json()) as { id: string };
+      const report = (await (
+        await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+      ).json()) as { valid: boolean; compositionFingerprint: string; findings: unknown[] };
+      expect(report.valid, JSON.stringify(report.findings)).toBe(true);
+      expect(
+        (
+          await activate(engine, created.id, {
+            compositionFingerprint: report.compositionFingerprint,
+          })
+        ).status,
+      ).toBe(200);
+
+      const response = await engine.call(`/v1/projects/${created.id}/graph`);
+      expect(response.status, await response.clone().text()).toBe(200);
+      const graph = (await response.json()) as {
+        edges: {
+          kind: string;
+          contract: { type: string; version: number; kind: string };
+          from: { instanceId: string; moduleId: string };
+          to?: { instanceId: string; moduleId: string };
+          findings: string[];
+        }[];
+      };
+      expect(graph.edges).toEqual([
+        {
+          kind: "fact",
+          contract: {
+            type: "development.implementation.requested",
+            version: 1,
+            kind: "fact",
+          },
+          from: {
+            instanceId: "automation-rules",
+            moduleId: "jarvis.module.automation-rules",
+          },
+          to: {
+            instanceId: "request-worker",
+            moduleId: "jarvis.module.change-request-review",
+          },
+          findings: [],
+        },
+        {
+          kind: "fact",
+          contract: { type: "scm.change-request.created", version: 1, kind: "fact" },
+          from: {
+            instanceId: "request-worker",
+            moduleId: "jarvis.module.change-request-review",
+          },
+          findings: [],
+        },
+      ]);
+      expect(JSON.stringify(graph.edges)).not.toContain("disabled-worker");
+    });
+
+    it("marks a frozen request route orphaned when its active consumer disappears", async () => {
+      const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-project-graph-orphaned-"));
+      let restarted: Harness | undefined;
+      try {
+        const { engine, projectId, report } = await setupGreenProject(dataRoot);
+        expect(
+          (
+            await activate(engine, projectId, {
+              compositionFingerprint: report.compositionFingerprint,
+            })
+          ).status,
+        ).toBe(200);
+        await engine.dispose();
+
+        const database = new Database(join(dataRoot, "jarvis.sqlite"));
+        const row = database
+          .prepare(
+            "SELECT resolved_project FROM project_resolved_compositions WHERE project_id = ?",
+          )
+          .get(projectId) as { resolved_project: string };
+        const snapshot = JSON.parse(row.resolved_project) as { requestRoutes: unknown[] };
+        snapshot.requestRoutes = [];
+        database
+          .prepare(
+            "UPDATE project_resolved_compositions SET resolved_project = ? WHERE project_id = ?",
+          )
+          .run(JSON.stringify(snapshot), projectId);
+        database.close();
+
+        restarted = await start({ dataRoot });
+        const response = await restarted.call(`/v1/projects/${projectId}/graph`);
+        expect(response.status).toBe(200);
+        const graph = (await response.json()) as {
+          valid: boolean;
+          edges: { kind: string; routing?: { status: string }; findings: string[] }[];
+          issues: { id: string; code: string }[];
+        };
+        expect(graph.valid).toBe(false);
+        expect(graph.edges).toContainEqual(
+          expect.objectContaining({
+            kind: "request",
+            routing: { status: "orphaned" },
+            findings: ["project.request-orphaned"],
+          }),
+        );
+        expect(graph.issues).toContainEqual(
+          expect.objectContaining({ id: "f1", code: "project.request-orphaned" }),
+        );
+      } finally {
+        await restarted?.dispose();
+        await rm(dataRoot, { recursive: true, force: true });
+      }
+    });
+
+    it("marks a frozen request route ambiguous and names every active candidate", async () => {
+      const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-project-graph-ambiguous-"));
+      let restarted: Harness | undefined;
+      try {
+        const { engine, projectId, report } = await setupGreenProject(dataRoot);
+        expect(
+          (
+            await activate(engine, projectId, {
+              compositionFingerprint: report.compositionFingerprint,
+            })
+          ).status,
+        ).toBe(200);
+        await engine.dispose();
+
+        const database = new Database(join(dataRoot, "jarvis.sqlite"));
+        const row = database
+          .prepare(
+            "SELECT resolved_project FROM project_resolved_compositions WHERE project_id = ?",
+          )
+          .get(projectId) as { resolved_project: string };
+        const snapshot = JSON.parse(row.resolved_project) as {
+          moduleInstances: {
+            instanceId: string;
+            moduleId: string;
+            enabled: boolean;
+            bindings?: Record<string, string>;
+            configuration?: Record<string, unknown>;
+          }[];
+          bindings: { slots: Record<string, unknown> };
+          requestRoutes: Record<string, unknown>[];
+        };
+        const producer = snapshot.moduleInstances.find(
+          (instance) => instance.instanceId === "automation-rules",
+        )!;
+        const rules = producer.configuration!["rules"] as Record<string, unknown>[];
+        const emit = rules[0]!["emit"] as Record<string, unknown>;
+        emit["target"] = { binding: "tickets" };
+        snapshot.bindings.slots["tickets"] = { kind: "connection", ref: "tickets" };
+        const requestWorker = snapshot.moduleInstances.find(
+          (instance) => instance.instanceId === "request-worker",
+        )!;
+        requestWorker.bindings = { tickets: "tickets" };
+        snapshot.moduleInstances.push({
+          instanceId: "other-worker",
+          moduleId: "jarvis.module.change-request-review",
+          enabled: true,
+          bindings: { tickets: "tickets" },
+        });
+        snapshot.requestRoutes.push({
+          ...structuredClone(snapshot.requestRoutes[0]),
+          consumer: {
+            instanceId: "other-worker",
+            moduleId: "jarvis.module.change-request-review",
+          },
+        });
+        database
+          .prepare(
+            "UPDATE project_resolved_compositions SET resolved_project = ? WHERE project_id = ?",
+          )
+          .run(JSON.stringify(snapshot), projectId);
+        database.close();
+
+        restarted = await start({ dataRoot });
+        const response = await restarted.call(`/v1/projects/${projectId}/graph`);
+        expect(response.status).toBe(200);
+        const graph = (await response.json()) as {
+          valid: boolean;
+          edges: {
+            kind: string;
+            routing?: { status: string; candidates?: { instanceId: string }[] };
+            findings: string[];
+          }[];
+          issues: { id: string; code: string }[];
+        };
+        const requestEdge = graph.edges.find((edge) => edge.kind === "request");
+        expect(graph.valid).toBe(false);
+        expect(requestEdge).toMatchObject({
+          routing: {
+            status: "ambiguous",
+            candidates: [{ instanceId: "other-worker" }, { instanceId: "request-worker" }],
+          },
+          findings: ["project.request-ambiguous"],
+        });
+        expect(graph.issues).toContainEqual(
+          expect.objectContaining({ id: "f1", code: "project.request-ambiguous" }),
+        );
+      } finally {
+        await restarted?.dispose();
+        await rm(dataRoot, { recursive: true, force: true });
+      }
+    });
+
     it("is idempotent: repeated activation of an unchanged composition writes no second Resolved Project", async () => {
       const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-project-activate-idempotent-"));
       try {

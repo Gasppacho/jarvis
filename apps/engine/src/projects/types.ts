@@ -11,7 +11,10 @@ import type {
   StoredPortableProjectConfiguration,
   SuggestedProjectConfig,
 } from "../../../../packages/project-runtime/src/project-types.js";
-import type { ProjectCompositionGraph } from "../../../../packages/project-runtime/src/composition-graph.js";
+import type {
+  ProjectCompositionGraph,
+  ProjectGraph,
+} from "../../../../packages/project-runtime/src/composition-graph.js";
 import type { ProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
 import type { ExecutionApiStatus } from "../executions/ledger.js";
 
@@ -66,6 +69,13 @@ export type LocalApiProjectCompositionGraphContractParity = Assert<
   MutuallyAssignable<Mutable<ProjectCompositionGraph>, ApiCompositionGraph>
 >;
 
+type ApiProjectGraph = components["schemas"]["ProjectGraph"];
+
+/** Emergent graph nodes, edges and issues reuse the composition graph grammar. */
+export type LocalApiProjectGraphContractParity = Assert<
+  MutuallyAssignable<Mutable<ProjectGraph>, ApiProjectGraph>
+>;
+
 type ApiSubscriptions = components["schemas"]["ProjectSubscriptionsV1"];
 
 /** Ticket #54's derived read model must stay isomorphic with the wire schema. */
@@ -109,7 +119,10 @@ export type {
   StoredPortableProjectConfiguration,
   SuggestedProjectConfig,
 } from "../../../../packages/project-runtime/src/project-types.js";
-export type { ProjectCompositionGraph } from "../../../../packages/project-runtime/src/composition-graph.js";
+export type {
+  ProjectCompositionGraph,
+  ProjectGraph,
+} from "../../../../packages/project-runtime/src/composition-graph.js";
 export type {
   ProjectOpenSubscription,
   ProjectSubscriptions,

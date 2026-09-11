@@ -9,6 +9,7 @@ struct RootView: View {
     let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
     let timeline: ProjectTimelineModel
+    let projectGraph: ProjectGraphModel
     let deadLetters: ProjectDeadLettersModel
     let connections: ConnectionsModel
 
@@ -122,6 +123,7 @@ struct RootView: View {
                     projectConfiguration: projectConfiguration,
                     moduleCatalog: moduleCatalog,
                     timeline: timeline,
+                    projectGraph: projectGraph,
                     deadLetters: deadLetters,
                     project: project)
             } else {

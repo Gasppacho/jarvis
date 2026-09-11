@@ -99,8 +99,9 @@ courants. L'opération est read-only : elle ne sauvegarde ni Draft, ni relation 
 état de Review. Le shell invalide l'état Ready dès qu'un Draft sauvegardé est modifié et ne
 le rétablit qu'après une nouvelle réponse Engine.
 
-`POST /v1/projects/{projectId}/composition-graph` projette, sans mutation, le graphe de
-composition `ProjectCompositionGraphV1` de la configuration sauvegardée ou d'une
+La projection de composition sert à prévisualiser la configuration sauvegardée ou une
+proposition avant activation. `POST /v1/projects/{projectId}/composition-graph` projette,
+sans mutation, le graphe de composition `ProjectCompositionGraphV1` de cette configuration ou d'une
 `portableConfig` proposée évaluée avec les Local Bindings courants. `nodes` porte
 l'identité stable de chaque Module Instance (module package, version, display name,
 état enabled/disabled). `edges` porte l'id et la version du contrat d'Event, sa
@@ -114,6 +115,12 @@ inventé. Le graphe est entièrement dérivé du `ProjectValidationReport` de l'
 des Manifests des Module Packages : l'Engine ne recalcule aucune résolution de routing,
 il projette celle déjà calculée par le validateur. La réponse est déterministe pour une
 entrée inchangée et triée par identités contractuelles stables.
+
+La lecture émergente sert à observer le runtime effectivement activé. `GET /v1/projects/{projectId}/graph`
+expose le graphe émergent du Resolved Project figé à l'activation. Il réutilise les mêmes types de nœud, d'edge et de finding que
+`ProjectCompositionGraphV1`; avant toute activation réussie, aucun Resolved Project
+n'existe et la réponse est `{nodes: [], edges: [], valid: true, issues: []}`. La lecture
+reste dérivée à la demande et ne persiste pas un workflow.
 
 `GET /v1/projects/{projectId}/binding-candidates` retourne les choix de la configuration sauvegardée; `POST` prévisualise les mêmes choix pour une `portableConfig` proposée sans la persister. Chaque réponse contient l'union dédupliquée des ressources éligibles et une ligne par Slot. L'Engine intersecte les grants explicites du Project, la capability du Slot et les requirements des Module Instances qui ciblent ce Slot. Les statuts `bound`, `available`, `missing`, `inaccessible` et `incompatible`, ainsi que l'impact et l'action de réparation, appartiennent au contrat; le shell ne reconstruit pas cette politique.
 

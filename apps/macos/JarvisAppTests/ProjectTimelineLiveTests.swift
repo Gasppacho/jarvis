@@ -54,6 +54,121 @@ final class ProjectTimelineLiveTests: XCTestCase {
         XCTAssertEqual(harness.model.state(for: "proj-a").executions.first?.status, .running)
     }
 
+    func testRunningExecutionCancellationUsesOnlyTheProviderAndStreamUpdatesWithoutRefresh() async throws {
+        let running = makeExecution(id: "exe-cancel", correlationId: "corr-1")
+        let harness = Harness(initialEvents: [], initialExecutions: [running])
+        let watch = harness.startWatching(projectId: "proj-a")
+        await harness.waitUntilLive()
+
+        let didCancel = await harness.model.cancelExecution(
+            projectId: "proj-a", executionId: running.id)
+        XCTAssertTrue(didCancel)
+        let cancellationExecutionIDs = await harness.cancellationExecutionIDs
+        XCTAssertEqual(cancellationExecutionIDs, [running.id])
+        let refreshCountBeforeStream = await harness.refreshCount
+        XCTAssertEqual(refreshCountBeforeStream, 2, "cancellation must not refresh the Timeline")
+        XCTAssertEqual(
+            harness.model.state(for: "proj-a").executions.first?.status, .running,
+            "the POST response must not optimistically write the Timeline status")
+
+        await harness.emit(
+            harness.message(
+                sequence: 1, projectId: "proj-a",
+                execution: makeExecution(id: running.id, correlationId: "corr-1", status: .cancelling)))
+        await harness.waitUntil {
+            harness.model.state(for: "proj-a").executions.first?.status == .cancelling
+        }
+        await harness.emit(
+            harness.message(
+                sequence: 2, projectId: "proj-a",
+                execution: makeExecution(id: running.id, correlationId: "corr-1", status: .cancelled)))
+        await harness.waitUntil {
+            harness.model.state(for: "proj-a").executions.first?.status == .cancelled
+        }
+
+        let refreshCountAfterStream = await harness.refreshCount
+        XCTAssertEqual(refreshCountAfterStream, 2)
+        XCTAssertTrue(harness.model.state(for: "proj-a").pendingCancellationIDs.isEmpty)
+        await harness.finishCurrentStream()
+        watch.cancel()
+        _ = await watch.result
+    }
+
+    func testOnlyRunningExecutionCanBeCancelled() async throws {
+        for status in [
+            TimelineExecution.Status.queued, .cancelling, .completed, .failed, .cancelled, .timedOut
+        ] {
+            let execution = makeExecution(
+                id: "exe-\(status.displayLabel)", correlationId: "corr-1", status: status)
+            let harness = Harness(initialEvents: [], initialExecutions: [execution])
+            await harness.model.refresh(projectId: "proj-a")
+
+            let didCancel = await harness.model.cancelExecution(
+                projectId: "proj-a", executionId: execution.id)
+            XCTAssertFalse(didCancel, "\(status.displayLabel) must not offer cancellation")
+            let cancellationExecutionIDs = await harness.cancellationExecutionIDs
+            XCTAssertTrue(cancellationExecutionIDs.isEmpty)
+        }
+    }
+
+    func testEngineRefusalAndDatabaseUnavailabilityAreSurfaced() async throws {
+        let errors: [(EngineClientError, String)] = [
+            (
+                .engineError(
+                    operation: "POST /v1/executions/exe-cancel/cancel",
+                    code: "execution.not-cancellable",
+                    message: "The Execution is no longer running."),
+                "The Execution is no longer running. (execution.not-cancellable)"),
+            (
+                .engineError(
+                    operation: "POST /v1/executions/exe-cancel/cancel",
+                    code: "engine.database-unavailable",
+                    message: "The local database is unavailable."),
+                "The local database is unavailable. (engine.database-unavailable)")
+        ]
+
+        for (error, expectedMessage) in errors {
+            let execution = makeExecution(id: "exe-cancel", correlationId: "corr-1")
+            let harness = Harness(
+                initialEvents: [], initialExecutions: [execution], cancellationError: error)
+            await harness.model.refresh(projectId: "proj-a")
+
+            let didCancel = await harness.model.cancelExecution(
+                projectId: "proj-a", executionId: execution.id)
+            XCTAssertFalse(didCancel)
+            XCTAssertEqual(
+                harness.model.state(for: "proj-a").cancellationErrorMessages[execution.id],
+                expectedMessage)
+            XCTAssertTrue(harness.model.state(for: "proj-a").pendingCancellationIDs.isEmpty)
+        }
+    }
+
+    func testChangingProjectClearsPendingCancellation() async throws {
+        let running = makeExecution(id: "exe-cancel", correlationId: "corr-1")
+        let harness = Harness(initialEvents: [], initialExecutions: [running])
+        let firstWatch = harness.startWatching(projectId: "proj-a")
+        await harness.waitUntilLive()
+        let didCancel = await harness.model.cancelExecution(
+            projectId: "proj-a", executionId: running.id)
+        XCTAssertTrue(didCancel)
+        XCTAssertEqual(
+            harness.model.state(for: "proj-a").pendingCancellationIDs, Set([running.id]))
+
+        firstWatch.cancel()
+        _ = await firstWatch.result
+        let secondWatch = harness.startWatching(projectId: "proj-b")
+        await harness.waitUntilLive()
+        await harness.waitUntil {
+            harness.model.state(for: "proj-a").pendingCancellationIDs.isEmpty
+        }
+
+        XCTAssertTrue(harness.model.state(for: "proj-a").pendingCancellationIDs.isEmpty)
+        XCTAssertTrue(harness.model.state(for: "proj-b").pendingCancellationIDs.isEmpty)
+        await harness.finishCurrentStream()
+        secondWatch.cancel()
+        _ = await secondWatch.result
+    }
+
     func testUpdatesForAnotherProjectNeverAppearInTheDisplayedProjectsTimeline() async throws {
         let harness = Harness(initialEvents: [], initialExecutions: [])
         let otherProjectEvent = makeEvent(id: "evt-other", correlationId: "corr-x")
@@ -476,6 +591,7 @@ private final class Harness {
     private actor Box {
         var refreshCount = 0
         var connectAttempts = 0
+        var cancellationExecutionIDs: [String] = []
         var durable: [TimelineEvent] = []
         var openGates: Set<String> = []
         var gateWaiters: [String: CheckedContinuation<Void, Never>] = [:]
@@ -493,6 +609,10 @@ private final class Harness {
         func recordConnectAttempt() -> Int {
             connectAttempts += 1
             return connectAttempts
+        }
+
+        func recordCancellation(_ executionId: String) {
+            cancellationExecutionIDs.append(executionId)
         }
 
         func setContinuation(
@@ -563,6 +683,7 @@ private final class Harness {
         /// in-flight snapshot (the findings-review #62-6 entry-window test
         /// observes the badge during this sleep).
         refreshDelay: Duration = .zero,
+        cancellationError: (any Error & Sendable)? = nil,
         reconnectDelay: Duration = .zero
     ) {
         self.reconnectDelay = reconnectDelay
@@ -589,6 +710,11 @@ private final class Harness {
             }
             return (events: events, executions: initialExecutions)
         }
+        let cancellationProvider: ProjectTimelineModel.CancellationProvider = { executionId in
+            await box.recordCancellation(executionId)
+            if let cancellationError { throw cancellationError }
+            return initialExecutions.first { $0.id == executionId }!
+        }
         let connector: ProjectTimelineModel.StreamConnector = {
             let attempt = await box.recordConnectAttempt()
             if let gateConnectAttempt, attempt == gateConnectAttempt {
@@ -611,7 +737,8 @@ private final class Harness {
         }
 
         model = ProjectTimelineModel(
-            session: session, provider: provider, streamConnector: connector)
+            session: session, provider: provider, streamConnector: connector,
+            cancellationProvider: cancellationProvider)
     }
 
     var refreshCount: Int {
@@ -620,6 +747,10 @@ private final class Harness {
 
     var connectAttempts: Int {
         get async { await box.connectAttempts }
+    }
+
+    var cancellationExecutionIDs: [String] {
+        get async { await box.cancellationExecutionIDs }
     }
 
     func startWatching(projectId: String) -> Task<Void, Never> {
