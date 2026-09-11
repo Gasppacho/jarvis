@@ -1,4 +1,4 @@
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync, realpathSync, rmSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -61,7 +61,7 @@ describe("project runtime bindings", () => {
     const second = await createProject(engine);
     const choices = await json<ResourceChoicesBody>(
       engine,
-      `/v1/projects/${first}/binding-candidates`,
+      `/v1/projects/${first.id}/binding-candidates`,
     );
     expect(choices.slots.find((slot) => slot.slotId === "agentRuntime")).toMatchObject({
       candidates: expect.arrayContaining([
@@ -70,12 +70,12 @@ describe("project runtime bindings", () => {
       ]),
     });
 
-    await replaceBinding(engine, first, "/private/fake/codex", "runtime/codex-default");
-    await replaceBinding(engine, second, "/private/fake/fake", "runtime/fake-test");
-    expect((await json<BindingsBody>(engine, `/v1/projects/${first}/bindings`)).slots).toEqual({
+    await replaceBinding(engine, first.id, first.repositoryPath, "runtime/codex-default");
+    await replaceBinding(engine, second.id, second.repositoryPath, "runtime/fake-test");
+    expect((await json<BindingsBody>(engine, `/v1/projects/${first.id}/bindings`)).slots).toEqual({
       agentRuntime: { kind: "runtime", ref: "runtime/codex-default" },
     });
-    expect((await json<BindingsBody>(engine, `/v1/projects/${second}/bindings`)).slots).toEqual({
+    expect((await json<BindingsBody>(engine, `/v1/projects/${second.id}/bindings`)).slots).toEqual({
       agentRuntime: { kind: "runtime", ref: "runtime/fake-test" },
     });
 
@@ -93,7 +93,7 @@ describe("project runtime bindings", () => {
 
     const unavailable = await json<ResourceChoicesBody>(
       engine,
-      `/v1/projects/${first}/binding-candidates`,
+      `/v1/projects/${first.id}/binding-candidates`,
     );
     const agentRuntime = unavailable.slots.find((slot) => slot.slotId === "agentRuntime");
     expect(agentRuntime).toMatchObject({
@@ -104,7 +104,7 @@ describe("project runtime bindings", () => {
     expect(JSON.stringify(agentRuntime)).not.toContain("/private/fake/codex");
     const report = await json<ValidationBody>(
       engine,
-      `/v1/projects/${first}/validation-report`,
+      `/v1/projects/${first.id}/validation-report`,
       "POST",
     );
     expect(report.valid).toBe(false);
@@ -112,7 +112,7 @@ describe("project runtime bindings", () => {
       expect.objectContaining({ code: "project.capability-unresolved" }),
     );
 
-    const missing = await replaceBindingResponse(engine, second, "runtime/absent");
+    const missing = await replaceBindingResponse(engine, second.id, "runtime/absent");
     expect(missing.status).toBe(400);
     expect(((await missing.json()) as { error: { code: string } }).error.code).toBe(
       "project.bindings-invalid",
@@ -120,8 +120,8 @@ describe("project runtime bindings", () => {
   });
 });
 
-async function createProject(engine: Harness): Promise<string> {
-  const repositoryPath = makeNodeRepositoryFixture();
+async function createProject(engine: Harness): Promise<{ id: string; repositoryPath: string }> {
+  const repositoryPath = realpathSync(makeNodeRepositoryFixture());
   projectRepositories.push(repositoryPath);
   const response = await engine.call("/v1/projects", {
     method: "POST",
@@ -130,7 +130,7 @@ async function createProject(engine: Harness): Promise<string> {
   });
   const body = (await response.json()) as { id?: string; error?: unknown };
   expect(response.status, JSON.stringify(body)).toBe(201);
-  return body.id!;
+  return { id: body.id!, repositoryPath };
 }
 
 async function replaceBinding(

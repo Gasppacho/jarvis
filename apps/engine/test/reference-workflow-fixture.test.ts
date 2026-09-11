@@ -42,7 +42,10 @@ describe("reference workflow Application Harness", () => {
     );
     expect(automation?.configuration?.["rules"]).toEqual([
       expect.objectContaining({
-        emit: { type: "development.implementation.requested", target: { moduleInstanceId: "development" } },
+        emit: {
+          type: "development.implementation.requested",
+          target: { moduleInstanceId: "development" },
+        },
       }),
     ]);
     expect(configuration.modules.map(({ instanceId }) => instanceId)).toEqual([

@@ -62,8 +62,10 @@ describe("project-bound Work Items capability", () => {
     const workItems = resolver.resolve("project-a", "reader", "work-items-reader").workItems!;
     const ref = "github://Gasppacho/jarvis/issues/16";
 
-    await expect(workItems.read("fixture://not-github"))
-      .rejects.toMatchObject({ code: "github.change-request-invalid", retryable: false });
+    await expect(workItems.read("fixture://not-github")).rejects.toMatchObject({
+      code: "github.change-request-invalid",
+      retryable: false,
+    });
 
     const restoreUnauthorized = fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis/issues/16", {
       status: 401,
@@ -98,9 +100,7 @@ function resolverFor(
       composition: (moduleId) =>
         moduleId === "work-items-reader"
           ? {
-              requires: [
-                { id: "work-items.read", binding: "tickets", optional: true },
-              ],
+              requires: [{ id: "work-items.read", binding: "tickets", optional: true }],
             }
           : { requires: [] },
     },
@@ -131,7 +131,8 @@ function snapshot(projectId: string, connectionRef?: string): ResolvedProjectSna
     moduleInstances: [{ instanceId: "reader", moduleId: "work-items-reader", enabled: true }],
     bindings: {
       repository: { path: "/tmp/project", bookmarkRef: null },
-      slots: connectionRef === undefined ? {} : { tickets: { kind: "connection", ref: connectionRef } },
+      slots:
+        connectionRef === undefined ? {} : { tickets: { kind: "connection", ref: connectionRef } },
     },
     requestRoutes: [],
   };

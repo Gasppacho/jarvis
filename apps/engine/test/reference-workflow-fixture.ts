@@ -4,14 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
-import {
-  startEngine,
-  startFakeGitHubApi,
-  type FakeGitHubApi,
-  type Harness,
-} from "./harness.js";
+import { startEngine, startFakeGitHubApi, type FakeGitHubApi, type Harness } from "./harness.js";
 import { makeRealGitRepositoryFixture } from "./repository-fixture.js";
-import type { PortableProjectConfiguration, ProjectBindings } from "../../../packages/project-runtime/src/project-types.js";
+import type {
+  PortableProjectConfiguration,
+  ProjectBindings,
+} from "../../../packages/project-runtime/src/project-types.js";
 
 const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const TEST_BUNDLE = fileURLToPath(
@@ -48,9 +46,13 @@ export async function startReferenceWorkflowFixture(
       "utf8",
     );
     execFileSync("git", ["add", ".jarvis/project.yaml"], { cwd: repository.root });
-    execFileSync("git", ["commit", "--quiet", "--no-gpg-sign", "-m", "Reference workflow configuration"], {
-      cwd: repository.root,
-    });
+    execFileSync(
+      "git",
+      ["commit", "--quiet", "--no-gpg-sign", "-m", "Reference workflow configuration"],
+      {
+        cwd: repository.root,
+      },
+    );
     const initialCommitSha = git(repository.root, ["rev-parse", "HEAD"]);
     execFileSync("git", ["push", repository.remoteName, repository.branch], {
       cwd: repository.root,
@@ -75,7 +77,8 @@ export async function startReferenceWorkflowFixture(
     await waitFor(
       () =>
         fakeGitHub.requests.some(
-          (request) => request.method === "GET" && request.path === "/repos/Gasppacho/jarvis/issues/events",
+          (request) =>
+            request.method === "GET" && request.path === "/repos/Gasppacho/jarvis/issues/events",
         ),
       "GitHub polling request",
     );
@@ -239,7 +242,11 @@ async function bindAndActivate(
   await requireStatus(activated, 200, "activate reference project");
 }
 
-async function requireStatus(response: Response, expected: number, operation: string): Promise<void> {
+async function requireStatus(
+  response: Response,
+  expected: number,
+  operation: string,
+): Promise<void> {
   if (response.status !== expected) {
     throw new Error(`${operation} failed: ${response.status} ${await response.text()}`);
   }

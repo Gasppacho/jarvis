@@ -238,7 +238,13 @@ export class ProjectModuleCapabilityResolver {
       };
     }
     if (githubRequirement !== undefined) {
-      const githubApi = this.resolveGitHubApi(projectId, moduleInstanceId, snapshot, githubRequirement, "github.api");
+      const githubApi = this.resolveGitHubApi(
+        projectId,
+        moduleInstanceId,
+        snapshot,
+        githubRequirement,
+        "github.api",
+      );
       if (githubApi !== undefined) resolved = { ...resolved, githubApi };
     }
     if (workItemsRequirement !== undefined) {

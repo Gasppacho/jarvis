@@ -229,7 +229,9 @@ async function runImplementationRequested(
     baseRevision: request.baseBranch,
     branchContext: {
       workItemId:
-        workItem === undefined ? branchValue(request.workItemRef) : branchValue(String(workItem.number)),
+        workItem === undefined
+          ? branchValue(request.workItemRef)
+          : branchValue(String(workItem.number)),
       slug:
         workItem === undefined
           ? branchValue(`implementation-${ctx.executionId}`)
@@ -239,10 +241,10 @@ async function runImplementationRequested(
   state.workspaceAllocated = true;
   let releaseOutcome: "success" | "failure" | "cancelled" = "failure";
   let run: AgentRun | undefined;
-    try {
-      const repositoryInstructionText = await repositoryInstructions(allocation.path);
-      const ticketContent = workItemContent(request.workItemRef, workItem);
-      const executeAgent = async (input: {
+  try {
+    const repositoryInstructionText = await repositoryInstructions(allocation.path);
+    const ticketContent = workItemContent(request.workItemRef, workItem);
+    const executeAgent = async (input: {
       readonly objective: string;
       readonly moduleContract: string;
       readonly ticketContent: string;

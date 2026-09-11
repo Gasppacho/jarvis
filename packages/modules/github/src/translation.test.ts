@@ -286,8 +286,9 @@ describe("GitHub Work Item translation", () => {
   });
 
   it("rejects malformed references and unusable Issue payloads", () => {
-    expect(() => translateGitHubWorkItemResponse({ status: 200, body: {} }, "fixture://item"))
-      .toThrowError(expect.objectContaining({ retryable: false }));
+    expect(() =>
+      translateGitHubWorkItemResponse({ status: 200, body: {} }, "fixture://item"),
+    ).toThrowError(expect.objectContaining({ retryable: false }));
     expect(() =>
       translateGitHubWorkItemResponse(
         { status: 200, body: { number: 42, title: "Title", body: null, state: "closed" } },

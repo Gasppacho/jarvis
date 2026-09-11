@@ -62,9 +62,12 @@ async function waitForEvent(fixture: ReferenceWorkflowFixture, type: string): Pr
   const deadline = Date.now() + 15_000;
   for (;;) {
     const response = await fixture.engine.call(`/v1/projects/${fixture.projectId}/events`);
-    const body = (await response.json()) as { readonly items: readonly { readonly type: string }[] };
+    const body = (await response.json()) as {
+      readonly items: readonly { readonly type: string }[];
+    };
     if (body.items.some((event) => event.type === type)) return;
-    if (Date.now() >= deadline) throw new Error(`event ${type} timed out\n${fixture.engine.stderr()}`);
+    if (Date.now() >= deadline)
+      throw new Error(`event ${type} timed out\n${fixture.engine.stderr()}`);
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }

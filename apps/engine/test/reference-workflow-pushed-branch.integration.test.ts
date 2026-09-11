@@ -46,7 +46,9 @@ describe("reference workflow pushed branch", () => {
            ORDER BY rowid`,
         )
         .all(fixture.projectId) as { readonly envelope: string }[];
-      const persistedEvents = storedEvents.map(({ envelope }) => JSON.parse(envelope) as ProjectEvent);
+      const persistedEvents = storedEvents.map(
+        ({ envelope }) => JSON.parse(envelope) as ProjectEvent,
+      );
       const completed = oneEvent(persistedEvents, "development.implementation.completed");
       const creationRequested = oneEvent(persistedEvents, "scm.change-request.creation-requested");
       const completedPayload = completed.payload as {
@@ -60,7 +62,9 @@ describe("reference workflow pushed branch", () => {
       expect(creationPayload.headBranch).toBe(completedPayload.headBranch);
       expect(creationPayload.headCommit).toBe(completedPayload.headCommit);
       expect(repositoryState(fixture.repositoryRoot)).toEqual(before);
-      expect(executions.filter((execution) => execution.moduleInstanceId === "development")).toHaveLength(1);
+      expect(
+        executions.filter((execution) => execution.moduleInstanceId === "development"),
+      ).toHaveLength(1);
       expect(executions.every((execution) => execution.status === "completed")).toBe(true);
       const branches = gitDir(fixture.bareRemoteRoot, [
         "for-each-ref",
@@ -70,14 +74,19 @@ describe("reference workflow pushed branch", () => {
         .split("\n")
         .filter((branch) => branch.startsWith("agent/"));
       expect(branches).toEqual([completedPayload.headBranch]);
-      expect(gitDir(fixture.bareRemoteRoot, ["rev-parse", `refs/heads/${completedPayload.headBranch}`])).toBe(
-        completedPayload.headCommit,
+      expect(
+        gitDir(fixture.bareRemoteRoot, ["rev-parse", `refs/heads/${completedPayload.headBranch}`]),
+      ).toBe(completedPayload.headCommit);
+      expect(gitDir(fixture.bareRemoteRoot, ["rev-parse", `${completedPayload.headCommit}^`])).toBe(
+        fixture.initialCommitSha,
       );
       expect(
-        gitDir(fixture.bareRemoteRoot, ["rev-parse", `${completedPayload.headCommit}^`]),
-      ).toBe(fixture.initialCommitSha);
-      expect(
-        gitDir(fixture.bareRemoteRoot, ["ls-tree", "-r", "--name-only", completedPayload.headCommit]),
+        gitDir(fixture.bareRemoteRoot, [
+          "ls-tree",
+          "-r",
+          "--name-only",
+          completedPayload.headCommit,
+        ]),
       ).toContain("fake-runtime-change.txt");
       expect(
         database
@@ -115,7 +124,8 @@ async function waitForEvents(fixture: ReferenceWorkflowFixture): Promise<readonl
     const body = (await response.json()) as { readonly items: readonly ProjectEvent[] };
     const observed = new Set(body.items.map((event) => event.type));
     if ([...expected].every((type) => observed.has(type))) return body.items;
-    if (Date.now() >= deadline) throw new Error(`reference workflow events timed out\n${fixture.engine.stderr()}`);
+    if (Date.now() >= deadline)
+      throw new Error(`reference workflow events timed out\n${fixture.engine.stderr()}`);
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }
@@ -132,7 +142,8 @@ async function waitForCompletedExecutions(
       body.items.every((execution) => execution.status === "completed")
     )
       return body.items;
-    if (Date.now() >= deadline) throw new Error(`reference workflow executions timed out\n${fixture.engine.stderr()}`);
+    if (Date.now() >= deadline)
+      throw new Error(`reference workflow executions timed out\n${fixture.engine.stderr()}`);
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }

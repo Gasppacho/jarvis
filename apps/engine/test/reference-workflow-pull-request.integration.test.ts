@@ -131,17 +131,18 @@ async function waitForEventTypes(
   const deadline = Date.now() + 15_000;
   for (;;) {
     const response = await fixture.engine.call(`/v1/projects/${fixture.projectId}/events`);
-    const body = (await response.json()) as { readonly items: readonly { readonly type: string }[] };
+    const body = (await response.json()) as {
+      readonly items: readonly { readonly type: string }[];
+    };
     const observed = new Set(body.items.map((event) => event.type));
     if (expectedTypes.every((type) => observed.has(type))) return body.items;
-    if (Date.now() >= deadline) throw new Error(`reference PR events timed out\n${fixture.engine.stderr()}`);
+    if (Date.now() >= deadline)
+      throw new Error(`reference PR events timed out\n${fixture.engine.stderr()}`);
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }
 
-async function waitForExecutions(
-  fixture: ReferenceWorkflowFixture,
-): Promise<readonly Execution[]> {
+async function waitForExecutions(fixture: ReferenceWorkflowFixture): Promise<readonly Execution[]> {
   const deadline = Date.now() + 15_000;
   for (;;) {
     const response = await fixture.engine.call(`/v1/projects/${fixture.projectId}/executions`);
