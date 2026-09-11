@@ -141,6 +141,83 @@ describe("fake GitHub API", () => {
     });
   });
 
+  it("reads seeded labelled issues and allows body overrides without an event", async () => {
+    const github = await startFakeGitHubApi();
+    servers.push(github);
+    const credential = "ghs_issue_sentinel";
+    github.appendLabeledIssueEvent({
+      owner: "Gasppacho",
+      repository: "jarvis",
+      issueNumber: 42,
+      issueTitle: "Read the issue",
+      issueBody: "Initial body",
+      issueState: "open",
+      label: "agent:ready",
+      actor: "octocat",
+      createdAt: "2026-09-11T10:00:00.000Z",
+    });
+
+    const path = "/repos/Gasppacho/jarvis/issues/42";
+    const initial = await fetch(`${github.baseUrl}${path}`, {
+      headers: { authorization: `Bearer ${credential}` },
+    });
+    expect(initial.status).toBe(200);
+    expect(await initial.json()).toEqual({
+      number: 42,
+      title: "Read the issue",
+      body: "Initial body",
+      state: "open",
+      labels: [{ name: "agent:ready" }],
+    });
+
+    github.seedIssue({
+      owner: "Gasppacho",
+      repository: "jarvis",
+      issue: {
+        number: 42,
+        title: "Read the issue",
+        body: "Overridden body",
+        state: "open",
+        labels: [{ name: "agent:ready" }],
+      },
+    });
+    const overridden = await fetch(`${github.baseUrl}${path}`, {
+      headers: { authorization: `Bearer ${credential}` },
+    });
+    expect(overridden.status).toBe(200);
+    expect(await overridden.json()).toMatchObject({ body: "Overridden body" });
+    expect(github.requests).toEqual([
+      { method: "GET", path, credential },
+      { method: "GET", path, credential },
+    ]);
+  });
+
+  it("returns a GitHub-shaped 404 and supports scripted issue responses", async () => {
+    const github = await startFakeGitHubApi();
+    servers.push(github);
+    const path = "/repos/Gasppacho/jarvis/issues/404";
+    const missing = await fetch(`${github.baseUrl}${path}`);
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toEqual({ message: "Not Found" });
+
+    const restore = github.scriptRoute("GET", path, {
+      status: 401,
+      body: { message: "Requires authentication" },
+    });
+    const unauthorized = await fetch(`${github.baseUrl}${path}`);
+    expect(unauthorized.status).toBe(401);
+    expect(await unauthorized.json()).toEqual({ message: "Requires authentication" });
+    restore();
+
+    const restored = await fetch(`${github.baseUrl}${path}`);
+    expect(restored.status).toBe(404);
+    expect(github.requests).toEqual([
+      { method: "GET", path, credential: undefined },
+      { method: "GET", path, credential: undefined },
+      { method: "GET", path, credential: undefined },
+    ]);
+  });
+
   it("scripts and restores the issue events route", async () => {
     const github = await startFakeGitHubApi();
     servers.push(github);
