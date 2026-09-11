@@ -289,6 +289,137 @@ esac
       }
     },
   );
+
+  it.each(["after-github-poll-read", "after-github-poll-mapping"] as const)(
+    "recovers one label after %s without a duplicate or partial cursor",
+    async (armedFailpoint) => {
+      const fakeGitHub = await startFakeGitHubApi();
+      servers.push(fakeGitHub);
+      const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-polling-crash-"));
+      roots.push(dataRoot);
+      const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-polling-crash-gh-"));
+      roots.push(executableRoot);
+      const executable = join(executableRoot, "gh");
+      writeFileSync(executable, "#!/bin/sh\necho ghs_polling_crash_sentinel\n", "utf8");
+      chmodSync(executable, 0o755);
+      const baseEnv = {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+        JARVIS_GITHUB_POLL_INTERVAL_MS: "25",
+      };
+
+      const initial = await startEngine({ dataRoot, enginePath: TEST_BUNDLE, env: baseEnv });
+      engines.push(initial);
+      await registerConnection(initial);
+      const project = await createProject(initial);
+      await bindAndActivate(initial, project.id, project.path);
+      await waitForRequest(fakeGitHub, "/repos/Gasppacho/jarvis/issues/events");
+      await waitForCursor(dataRoot, "bootstrap-empty");
+
+      const drafted = await initial.call(`/v1/projects/${project.id}/configuration`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          portableConfig: projectConfig(),
+          writeToRepository: false,
+        }),
+      });
+      expect(drafted.status, await drafted.clone().text()).toBe(200);
+      await initial.dispose();
+
+      const event = fakeGitHub.appendLabeledIssueEvent({
+        owner: "Gasppacho",
+        repository: "jarvis",
+        issueNumber: 15,
+        issueTitle: "Crash recovery",
+        label: "agent:ready",
+        actor: "octocat",
+        createdAt: "2026-09-11T10:01:00.000Z",
+      });
+
+      const crashing = await startEngine({
+        dataRoot,
+        enginePath: TEST_BUNDLE,
+        env: { ...baseEnv, JARVIS_FAILPOINT: armedFailpoint },
+      });
+      engines.push(crashing);
+      await bindAndActivate(crashing, project.id, project.path);
+      const exitCode = await crashing.waitForExit();
+      expect(exitCode).not.toBe(0);
+      await crashing.dispose();
+
+      const beforeRestart = new Database(`${dataRoot}/jarvis.sqlite`);
+      try {
+        expect(
+          beforeRestart
+            .prepare(
+              `SELECT external_event_id, event_timestamp
+               FROM github_cursors
+               WHERE project_id = ? AND module_instance_id = ? AND repository_id = ?`,
+            )
+            .get(project.id, "github", "main"),
+        ).toEqual({
+          external_event_id: "bootstrap-empty",
+          event_timestamp: "1970-01-01T00:00:00.000Z",
+        });
+        expect(
+          beforeRestart
+            .prepare("SELECT COUNT(*) AS count FROM external_mappings WHERE project_id = ?")
+            .get(project.id),
+        ).toEqual({ count: 0 });
+        expect(
+          beforeRestart
+            .prepare("SELECT COUNT(*) AS count FROM outbox WHERE project_id = ?")
+            .get(project.id),
+        ).toEqual({ count: 0 });
+      } finally {
+        beforeRestart.close();
+      }
+
+      const restarted = await startEngine({ dataRoot, enginePath: TEST_BUNDLE, env: baseEnv });
+      engines.push(restarted);
+      await waitForFactCount(restarted, project.id, 1);
+
+      const afterRestart = new Database(`${dataRoot}/jarvis.sqlite`);
+      try {
+        expect(
+          afterRestart
+            .prepare(
+              `SELECT COUNT(*) AS count
+               FROM events WHERE project_id = ? AND type = 'scm.work-item.tag-added'`,
+            )
+            .get(project.id),
+        ).toEqual({ count: 1 });
+        expect(
+          afterRestart
+            .prepare(
+              `SELECT idempotency_key, resource_ref
+               FROM external_mappings
+               WHERE project_id = ? AND module_instance_id = ?`,
+            )
+            .get(project.id, "github"),
+        ).toEqual({
+          idempotency_key: String(event.id),
+          resource_ref: expect.stringMatching(/^evt_/),
+        });
+        expect(
+          afterRestart
+            .prepare(
+              `SELECT external_event_id, event_timestamp
+               FROM github_cursors
+               WHERE project_id = ? AND module_instance_id = ? AND repository_id = ?`,
+            )
+            .get(project.id, "github", "main"),
+        ).toEqual({
+          external_event_id: String(event.id),
+          event_timestamp: event.created_at,
+        });
+      } finally {
+        afterRestart.close();
+      }
+    },
+  );
 });
 
 async function registerConnection(engine: Harness): Promise<void> {
@@ -469,6 +600,27 @@ async function waitForFactCount(
     if (Date.now() >= deadline) {
       throw new Error(`project ${projectId} did not reach ${count} facts\n${engine.stderr()}`);
     }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function waitForCursor(dataRoot: string, externalEventId: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    const database = new Database(`${dataRoot}/jarvis.sqlite`);
+    try {
+      const row = database
+        .prepare(
+          `SELECT external_event_id
+           FROM github_cursors
+           WHERE project_id = 'polling-project' AND module_instance_id = 'github' AND repository_id = 'main'`,
+        )
+        .get() as { readonly external_event_id?: string } | undefined;
+      if (row?.external_event_id === externalEventId) return;
+    } finally {
+      database.close();
+    }
+    if (Date.now() >= deadline) throw new Error(`cursor did not reach ${externalEventId}`);
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }

@@ -15,6 +15,9 @@ import {
 import type { ProjectModuleInstanceConfiguration } from "../../../../packages/project-runtime/src/project-types.js";
 import type { ProjectStore, ResolvedProjectSnapshot } from "../projects/store.js";
 import type { EventPublisher } from "./publisher.js";
+import { failpoint } from "../test-support/failpoint.js";
+
+declare const __JARVIS_TEST_HOOKS__: boolean | undefined;
 
 const GITHUB_MODULE_ID = "jarvis.module.github";
 const DEFAULT_POLL_INTERVAL_SECONDS = 60;
@@ -169,6 +172,9 @@ export class GitHubPollingScheduler {
         repository,
         cursor,
       );
+      if (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) {
+        failpoint("after-github-poll-read");
+      }
       const translated = observed.events.sort(compareEvents);
       if (cursor !== undefined) {
         const recoveryBoundary = Date.parse(cursor.eventTimestamp) - RECOVERY_WINDOW_MS;
@@ -333,6 +339,9 @@ function publishAndAdvance(
         idempotencyKey: event.externalEventId,
         resourceRef: envelope.id,
       });
+      if (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) {
+        failpoint("after-github-poll-mapping");
+      }
     }
     pollCursor.write({
       repositoryId,

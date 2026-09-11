@@ -43,6 +43,8 @@ const FORBIDDEN_STRINGS = [
   "after-worktree-create-before-lease-commit",
   "after-github-create-before-external-mapping",
   "after-external-mapping-before-fact",
+  "after-github-poll-read",
+  "after-github-poll-mapping",
   "after-lease-commit-before-response",
   "jarvis.module.sample-probe",
   "jarvis.module.test-request-worker",
