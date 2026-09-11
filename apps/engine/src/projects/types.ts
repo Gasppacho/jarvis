@@ -117,6 +117,7 @@ export type {
 export type { EventSummary, ListEventsQuery } from "../events/timeline.js";
 export type { ListExecutionsQuery } from "../executions/ledger.js";
 export type { ExecutionApiStatus };
+export type DeadLetterSummary = components["schemas"]["DeadLetter"];
 
 /**
  * `ExecutionSummary` (contracts/openapi/local-api.v1.yaml) extended with the

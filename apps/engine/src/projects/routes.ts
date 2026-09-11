@@ -17,6 +17,7 @@ import type {
   RepositoryDiscovery,
   EventSummary,
   ExecutionSummary,
+  DeadLetterSummary,
   ListEventsQuery,
   ListExecutionsQuery,
 } from "./types.js";
@@ -41,6 +42,7 @@ export type LocalProjectRegistry = ProjectRegistry<
       id: unknown,
       query: ListExecutionsQuery,
     ): { readonly items: ExecutionSummary[] };
+    listProjectDeadLetters(id: unknown): { readonly items: DeadLetterSummary[] };
   };
 export type LocalRepositoryDiscovery = RepositoryDiscoveryPort<RepositoryDiscovery>;
 
@@ -138,6 +140,12 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
     return reply
       .code(200)
       .send(service.listProjectExecutions(params?.projectId, parseListExecutionsQuery(query)));
+  });
+
+  app.get("/v1/projects/:projectId/dead-letters", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    return reply.code(200).send(service.listProjectDeadLetters(params?.projectId));
   });
 
   app.post("/v1/projects/:projectId/composition-choices", async (request, reply) => {

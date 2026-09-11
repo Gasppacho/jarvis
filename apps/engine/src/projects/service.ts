@@ -54,6 +54,7 @@ import type {
   RepositoryDiscovery,
   EventSummary,
   ExecutionSummary,
+  DeadLetterSummary,
 } from "./types.js";
 import type { ProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
 import type { ProjectResourceGrant, ProjectResourceGrantDetailsPort } from "./resource-grants.js";
@@ -279,6 +280,11 @@ export class ProjectService implements ProjectRegistry<
         return { ...execution, ...(correlationId === undefined ? {} : { correlationId }) };
       }),
     };
+  }
+
+  listProjectDeadLetters(id: unknown): { readonly items: DeadLetterSummary[] } {
+    const project = this.requireProject(id);
+    return { items: this.store.listDeadLetters(project.id) };
   }
 
   previewCompositionChoices(

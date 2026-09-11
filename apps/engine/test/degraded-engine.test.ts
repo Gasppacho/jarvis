@@ -69,6 +69,12 @@ describe("engine with an unavailable database", () => {
     expect(((await detailResponse.json()) as { error: { code: string } }).error.code).toBe(
       "engine.database-unavailable",
     );
+
+    const deadLettersResponse = await engine.call("/v1/projects/some-project/dead-letters");
+    expect(deadLettersResponse.status).toBe(503);
+    expect(((await deadLettersResponse.json()) as { error: { code: string } }).error.code).toBe(
+      "engine.database-unavailable",
+    );
   });
 
   it("keeps discovery working: it inspects the filesystem, not the database", async () => {
