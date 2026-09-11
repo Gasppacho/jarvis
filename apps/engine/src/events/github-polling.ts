@@ -3,6 +3,7 @@ import type {
   ModuleHandlerCapabilities,
   PollCursorCapability,
 } from "../../../../packages/module-sdk/src/index.js";
+import type { Clock } from "../../../../packages/kernel/src/clock.js";
 import type { ModuleHost } from "../../../../packages/kernel/src/module-host.js";
 import type { IdGenerator } from "../../../../packages/kernel/src/id-generator.js";
 import {
@@ -18,6 +19,11 @@ import type { EventPublisher } from "./publisher.js";
 const GITHUB_MODULE_ID = "jarvis.module.github";
 const DEFAULT_POLL_INTERVAL_SECONDS = 60;
 const DEFAULT_TICK_INTERVAL_MS = 1_000;
+/** Re-read this much history on every poll after the durable cursor. */
+const RECOVERY_WINDOW_MS = 5 * 60 * 1_000;
+/** GitHub allows 100 events per page; this caps one poll at ten requests. */
+const RECOVERY_PAGE_SIZE = 100;
+const RECOVERY_MAX_PAGES = 10;
 const EMPTY_BOOTSTRAP_POSITION = {
   externalEventId: "bootstrap-empty",
   happenedAt: "1970-01-01T00:00:00.000Z",
@@ -36,6 +42,7 @@ export interface GitHubPollingDependencies {
   readonly publisher: Pick<EventPublisher, "publish">;
   readonly transaction: <Result>(operation: () => Result) => Result;
   readonly ids: Pick<IdGenerator, "next">;
+  readonly clock: Pick<Clock, "now">;
   readonly pollIntervalMs?: number;
 }
 
@@ -54,7 +61,7 @@ export class GitHubPollingScheduler {
   }
 
   public async tick(): Promise<void> {
-    const now = Date.now();
+    const now = this.dependencies.clock.now().getTime();
     for (const project of this.dependencies.projects.list()) {
       if (project.status !== "active") continue;
       const snapshot = this.dependencies.projects.getResolvedProject(project.id);
@@ -150,22 +157,34 @@ export class GitHubPollingScheduler {
       }
       const [owner, repository] = repositoryParts;
       if (owner === undefined || repository === undefined) throw new Error("invalid repository");
-      const response = await githubApi.get(issueEventsPath(githubRepositoryId));
-      if (repositoryId === undefined) return;
+      if (repositoryId === undefined) {
+        await githubApi.get(issueEventsPath(githubRepositoryId));
+        return;
+      }
       const cursor = pollCursor.read(repositoryId);
-      const newest = latestGitHubIssueEvent(response);
-      const translated = translateGitHubIssueEvents(response, owner, repository).sort(
-        compareEvents,
+      const observed = await readIssueEvents(
+        githubApi,
+        githubRepositoryId,
+        owner,
+        repository,
+        cursor,
       );
+      const translated = observed.events.sort(compareEvents);
       if (cursor !== undefined) {
-        const afterCursor = translated.filter((event) => isAfterCursor(event, cursor));
-        if (afterCursor.length === 0) return;
-        const pending = afterCursor.filter(
+        const recoveryBoundary = Date.parse(cursor.eventTimestamp) - RECOVERY_WINDOW_MS;
+        const inWindow = translated.filter(
+          (event) => Date.parse(event.happenedAt) >= recoveryBoundary,
+        );
+        const pending = inWindow.filter(
           (event) => externalMappings.read(event.externalEventId) === undefined,
         );
+        const newestAfterCursor =
+          observed.newest !== undefined && isAfterCursor(observed.newest, cursor);
+        const position = newestAfterCursor ? observed.newest! : cursorPosition(cursor);
+        if (pending.length === 0 && !newestAfterCursor) return;
         publishAndAdvance(
           pending,
-          afterCursor[afterCursor.length - 1]!,
+          position,
           projectId,
           moduleInstanceId,
           repositoryId,
@@ -185,7 +204,7 @@ export class GitHubPollingScheduler {
       );
       publishAndAdvance(
         pending,
-        newest ?? EMPTY_BOOTSTRAP_POSITION,
+        observed.newest ?? EMPTY_BOOTSTRAP_POSITION,
         projectId,
         moduleInstanceId,
         repositoryId,
@@ -197,6 +216,46 @@ export class GitHubPollingScheduler {
       logPollingFailure(projectId, moduleInstanceId, githubRepositoryId, "provider-call-failed");
     }
   }
+}
+
+interface ObservedIssueEvents {
+  readonly events: GitHubIssueEventTranslation[];
+  readonly newest: GitHubIssueEventPosition | undefined;
+}
+
+async function readIssueEvents(
+  githubApi: GitHubApi,
+  githubRepositoryId: string,
+  owner: string,
+  repository: string,
+  cursor: ReturnType<PollCursorCapability["read"]>,
+): Promise<ObservedIssueEvents> {
+  if (cursor === undefined) {
+    const response = await githubApi.get(issueEventsPath(githubRepositoryId));
+    return {
+      events: translateGitHubIssueEvents(response, owner, repository),
+      newest: latestGitHubIssueEvent(response),
+    };
+  }
+
+  const events: GitHubIssueEventTranslation[] = [];
+  let newest: GitHubIssueEventPosition | undefined;
+  const recoveryBoundary = Date.parse(cursor.eventTimestamp) - RECOVERY_WINDOW_MS;
+  for (let page = 1; page <= RECOVERY_MAX_PAGES; page += 1) {
+    const response = await githubApi.get(issueEventsPath(githubRepositoryId, page));
+    const pageEvents = translateGitHubIssueEvents(response, owner, repository);
+    if (page === 1) newest = latestGitHubIssueEvent(response);
+    events.push(...pageEvents);
+
+    const oldestTimestamp = oldestEventTimestamp(response);
+    if (
+      eventPageSize(response) < RECOVERY_PAGE_SIZE ||
+      (oldestTimestamp !== undefined && oldestTimestamp <= recoveryBoundary)
+    ) {
+      break;
+    }
+  }
+  return { events, newest };
 }
 
 function configuredRepositories(
@@ -294,10 +353,47 @@ function effectivePollIntervalMs(
     : DEFAULT_POLL_INTERVAL_SECONDS * 1_000;
 }
 
-function issueEventsPath(repositoryId: string): string {
+function issueEventsPath(repositoryId: string, page?: number): string {
   const segments = repositoryId.split("/").filter((segment) => segment !== "");
   const encoded = segments.map((segment) => encodeURIComponent(segment));
-  return `/repos/${encoded.join("/")}/issues/events`;
+  const path = `/repos/${encoded.join("/")}/issues/events`;
+  return page === undefined ? path : `${path}?per_page=${RECOVERY_PAGE_SIZE}&page=${page}`;
+}
+
+function eventPageSize(response: unknown): number {
+  if (typeof response !== "object" || response === null || Array.isArray(response)) {
+    throw new Error("invalid GitHub issue event response");
+  }
+  const body = (response as { readonly body?: unknown }).body;
+  if (!Array.isArray(body)) throw new Error("invalid GitHub issue event response");
+  return body.length;
+}
+
+function oldestEventTimestamp(response: unknown): number | undefined {
+  if (typeof response !== "object" || response === null || Array.isArray(response)) {
+    throw new Error("invalid GitHub issue event response");
+  }
+  const body = (response as { readonly body?: unknown }).body;
+  if (!Array.isArray(body)) throw new Error("invalid GitHub issue event response");
+  const oldest = body[body.length - 1];
+  if (oldest === undefined) return undefined;
+  if (typeof oldest !== "object" || oldest === null || Array.isArray(oldest)) {
+    throw new Error("invalid GitHub issue event response");
+  }
+  const createdAt = (oldest as { readonly created_at?: unknown }).created_at;
+  if (typeof createdAt !== "string") throw new Error("invalid GitHub issue event response");
+  const timestamp = Date.parse(createdAt);
+  if (Number.isNaN(timestamp)) throw new Error("invalid GitHub issue event response");
+  return timestamp;
+}
+
+function cursorPosition(
+  cursor: NonNullable<ReturnType<PollCursorCapability["read"]>>,
+): GitHubIssueEventPosition {
+  return {
+    externalEventId: cursor.externalEventId,
+    happenedAt: cursor.eventTimestamp,
+  };
 }
 
 function isAfterCursor(
