@@ -2455,6 +2455,117 @@ capabilities:
       }
     });
 
+    it("projects enabled instances from the frozen composition and updates only after reactivation", async () => {
+      const { engine, projectId, report } = await setupGreenProject();
+      expect(
+        (
+          await activate(engine, projectId, {
+            compositionFingerprint: report.compositionFingerprint,
+          })
+        ).status,
+      ).toBe(200);
+
+      const otherRoot = fixture(() => makeNodeRepositoryFixture());
+      const other = (await (
+        await importProject(engine, {
+          repositoryPath: otherRoot,
+          portableConfig: embeddedPortableConfig([
+            automationInstance({ moduleInstanceId: "other-worker" }),
+            workerInstance("other-worker"),
+          ]),
+        })
+      ).json()) as { id: string };
+      const otherReport = (await (
+        await engine.call(`/v1/projects/${other.id}/validation-report`, { method: "POST" })
+      ).json()) as { valid: boolean; compositionFingerprint: string; findings: unknown[] };
+      expect(otherReport.valid, JSON.stringify(otherReport.findings)).toBe(true);
+      expect(
+        (
+          await activate(engine, other.id, {
+            compositionFingerprint: otherReport.compositionFingerprint,
+          })
+        ).status,
+      ).toBe(200);
+
+      const graph = async (id: string) => {
+        const response = await engine.call(`/v1/projects/${id}/graph`);
+        expect(response.status, await response.clone().text()).toBe(200);
+        return (await response.json()) as {
+          nodes: {
+            instanceId: string;
+            moduleId: string;
+            enabled: boolean;
+            moduleVersion: string | null;
+            displayName: string | null;
+            findings: string[];
+          }[];
+          edges: unknown[];
+          valid: boolean;
+          issues: unknown[];
+        };
+      };
+
+      const firstGraph = await graph(projectId);
+      expect(firstGraph).toMatchObject({ edges: [], valid: true, issues: [] });
+      expect(firstGraph.nodes).toEqual([
+        {
+          instanceId: "automation-rules",
+          moduleId: "jarvis.module.automation-rules",
+          enabled: true,
+          moduleVersion: "1.0.0",
+          displayName: "Automation Rules",
+          findings: [],
+        },
+        {
+          instanceId: "request-worker",
+          moduleId: "jarvis.module.change-request-review",
+          enabled: true,
+          moduleVersion: "1.0.0",
+          displayName: "Request Worker",
+          findings: [],
+        },
+      ]);
+
+      const secondGraph = await graph(other.id);
+      expect(secondGraph.nodes.map((node) => node.instanceId)).toEqual([
+        "automation-rules",
+        "other-worker",
+      ]);
+      expect(firstGraph.nodes.map((node) => node.instanceId)).not.toContain("other-worker");
+
+      const beforeConfig = (await (await engine.call(`/v1/projects/${projectId}`)).json()) as {
+        portableConfig: Record<string, unknown>;
+      };
+      const proposed = structuredClone(beforeConfig.portableConfig);
+      (proposed["modules"] as Record<string, unknown>[]).push(
+        structuredClone(workerInstance("later-worker")),
+      );
+      const saved = await engine.call(`/v1/projects/${projectId}/configuration`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ portableConfig: proposed, writeToRepository: false }),
+      });
+      expect(saved.status).toBe(200);
+      expect((await graph(projectId)).nodes).toEqual(firstGraph.nodes);
+
+      const updatedReport = (await (
+        await engine.call(`/v1/projects/${projectId}/validation-report`, { method: "POST" })
+      ).json()) as { valid: boolean; compositionFingerprint: string; findings: unknown[] };
+      expect(updatedReport.valid, JSON.stringify(updatedReport.findings)).toBe(true);
+      expect(
+        (
+          await activate(engine, projectId, {
+            compositionFingerprint: updatedReport.compositionFingerprint,
+          })
+        ).status,
+      ).toBe(200);
+      expect((await graph(projectId)).nodes.map((node) => node.instanceId)).toEqual([
+        "automation-rules",
+        "later-worker",
+        "request-worker",
+      ]);
+    });
+
     it("is idempotent: repeated activation of an unchanged composition writes no second Resolved Project", async () => {
       const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-project-activate-idempotent-"));
       try {

@@ -340,8 +340,24 @@ export class ProjectService implements ProjectRegistry<
    * endpoint still goes through the normal Project lookup for its 404 contract.
    */
   getProjectGraph(id: unknown): ProjectGraph {
-    this.requireProject(id);
-    return { nodes: [], edges: [], valid: true, issues: [] };
+    const project = this.requireProject(id);
+    const resolved = this.store.getResolvedProject(project.id);
+    const nodes = (resolved?.moduleInstances ?? [])
+      .filter((instance) => instance.enabled)
+      .map((instance) => {
+        const packageEntry = this.modules.package(instance.moduleId);
+        return {
+          instanceId: instance.instanceId,
+          moduleId: instance.moduleId,
+          enabled: instance.enabled,
+          moduleVersion: packageEntry?.version ?? null,
+          displayName: packageEntry?.displayName ?? null,
+          findings: [],
+        };
+      })
+      .sort((left, right) => left.instanceId.localeCompare(right.instanceId));
+
+    return { nodes, edges: [], valid: true, issues: [] };
   }
 
   /**
