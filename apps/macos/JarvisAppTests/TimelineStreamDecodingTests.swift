@@ -67,6 +67,7 @@ final class TimelineStreamDecodingTests: XCTestCase {
                 "moduleInstanceId": "development",
                 "status": "running",
                 "attempt": 2,
+                "replayed": false,
                 "createdAt": "2026-09-07T10:15:35.456Z"
               }
             }
