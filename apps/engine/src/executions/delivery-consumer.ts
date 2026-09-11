@@ -17,11 +17,40 @@ export type ModulePublishedContract = Pick<ModuleHandlerPublishInput, "type" | "
 export type ModulePublishedContractsLookup = (
   moduleId: string,
 ) => readonly ModulePublishedContract[] | undefined;
+
 import { EventPublisher, type PublishEventInput } from "../events/publisher.js";
 import { EngineError } from "../errors.js";
 import { failpoint } from "../test-support/failpoint.js";
 import { ExecutionCheckpointStore } from "./checkpoints.js";
 import { STATUS_TO_API, type LedgerExecutionSummary } from "./ledger.js";
+
+export interface HandlerFailureClassification {
+  readonly code: string;
+  readonly retryable: boolean;
+  readonly message: string;
+}
+
+const INTERNAL_HANDLER_FAILURE_CODE = "system.internal-error";
+
+/**
+ * Pure failure seam for the retry/dead-letter work under #17. The consumer
+ * still records its existing terminal result; later orchestration can use
+ * this classification without giving the classifier access to runtime state.
+ */
+export function classifyHandlerFailure(error: unknown): HandlerFailureClassification {
+  const message = cleanHandlerFailureMessage(readFailureMessage(error));
+  const structuredFailure = readStructuredFailure(error);
+  if (structuredFailure !== undefined) {
+    return { ...structuredFailure, message };
+  }
+
+  const code = error instanceof EngineError ? readErrorCode(error) : undefined;
+  return {
+    code: code ?? INTERNAL_HANDLER_FAILURE_CODE,
+    retryable: inferredRetryability(code, message),
+    message,
+  };
+}
 
 /** See apps/engine/src/events/dispatcher.ts's identical declaration for why
  * this exists and how tsup.config.ts's `define` makes it eliminate the
@@ -924,6 +953,51 @@ function readStructuredFailure(
   return typeof candidate.code === "string" && typeof candidate.retryable === "boolean"
     ? { code: candidate.code, retryable: candidate.retryable }
     : undefined;
+}
+
+function readFailureMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error !== null) {
+    const message = (error as { readonly message?: unknown }).message;
+    if (typeof message === "string") return message;
+  }
+  return String(error);
+}
+
+function readErrorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const code = (error as { readonly code?: unknown }).code;
+  return typeof code === "string" && code.length > 0 ? code : undefined;
+}
+
+function inferredRetryability(code: string | undefined, message: string): boolean {
+  const value = `${code ?? ""} ${message}`;
+  if (
+    /(?:validation|invalid|permission|forbidden|unauthori[sz]ed|access[- ]denied|not[- ]allowed|not[- ]found|missing|conflict|already[- ](?:exists|imported)|cancelled|canceled)/i.test(
+      value,
+    )
+  ) {
+    return false;
+  }
+  // Unknown failures stay retryable; a bounded retry budget is safer than
+  // permanently dropping an unclassified transient outage.
+  return true;
+}
+
+function cleanHandlerFailureMessage(message: string): string {
+  return message
+    .replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, "$1<redacted>@")
+    .replace(/((?:authorization|proxy-authorization)\s*[:=]\s*bearer\s+)[^\s,;]+/gi, "$1<redacted>")
+    .replace(
+      /((?:token|secret|password|passwd|authorization|credential|api[_-]?key|access[_-]?(?:key|token)|private[_-]?key|cookie|session)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      "$1<redacted>",
+    )
+    .replace(
+      /\b(?:gh[opsru]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|sk-[A-Za-z0-9_-]+)\b/g,
+      "<redacted>",
+    )
+    .replace(/(^|[\s("'`=:])\/(?!\/)[^\s"'`<>]+/g, "$1<path>")
+    .replace(/(^|[\s("'`=:])(?:[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+/g, "$1<path>");
 }
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
