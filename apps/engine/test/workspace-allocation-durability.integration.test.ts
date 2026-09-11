@@ -44,18 +44,19 @@ describe("Workspace allocation durability", () => {
     expect(readLease(dataRoot, projectId, executionId)).toBeUndefined();
     expect(worktreePaths(fixture.root)).not.toContain(workspacePath);
 
+    await stopEngine(restarted);
     const idempotentRestart = await startWith(dataRoot);
     await idempotentRestart.waitForStderr("code=workspace.reconciliation.completed");
     expect(existsSync(workspacePath)).toBe(false);
     expect(readLease(dataRoot, projectId, executionId)).toBeUndefined();
     expect(worktreePaths(fixture.root)).not.toContain(workspacePath);
-    await stopEngine(idempotentRestart);
 
-    const allocation = await allocate(restarted, projectId, executionId, fixture);
-    await expectAllocation(allocation, restarted, fixture);
+    const allocation = await allocate(idempotentRestart, projectId, executionId, fixture);
+    await expectAllocation(allocation, idempotentRestart, fixture);
     expect(existsSync(workspacePath)).toBe(true);
 
-    await release(restarted, projectId, executionId, fixture.root);
+    await release(idempotentRestart, projectId, executionId, fixture.root);
+    await stopEngine(idempotentRestart);
     const secondRestart = await startWith(dataRoot);
     await secondRestart.waitForStderr("code=workspace.reconciliation.completed");
     expect(existsSync(workspacePath)).toBe(false);
@@ -83,19 +84,20 @@ describe("Workspace allocation durability", () => {
     expect(readLease(dataRoot, projectId, executionId)?.status).toBe("released");
     expect(worktreePaths(fixture.root)).not.toContain(workspacePath);
 
+    await stopEngine(restarted);
     const idempotentRestart = await startWith(dataRoot);
     await idempotentRestart.waitForStderr("code=workspace.reconciliation.completed");
     expect(existsSync(workspacePath)).toBe(false);
     expect(readLease(dataRoot, projectId, executionId)?.status).toBe("released");
     expect(worktreePaths(fixture.root)).not.toContain(workspacePath);
-    await stopEngine(idempotentRestart);
 
     await expectAllocation(
-      await allocate(restarted, projectId, executionId, fixture),
-      restarted,
+      await allocate(idempotentRestart, projectId, executionId, fixture),
+      idempotentRestart,
       fixture,
     );
-    await release(restarted, projectId, executionId, fixture.root);
+    await release(idempotentRestart, projectId, executionId, fixture.root);
+    await stopEngine(idempotentRestart);
 
     const secondRestart = await startWith(dataRoot);
     await secondRestart.waitForStderr("code=workspace.reconciliation.completed");
