@@ -58,6 +58,8 @@ public struct ProjectTimelinePresentation: Sendable, Equatable {
         public let completedAt: Date?
         public let executionStatus: TimelineExecution.Status?
         public let attempt: Int?
+        public let isCancellationPending: Bool
+        public let cancellationErrorMessage: String?
         /// Set only for an Execution row: the Event that caused it.
         public let causingEvent: EventReference?
         /// Set only for an Event row caused by another: its parent.
@@ -83,7 +85,9 @@ public struct ProjectTimelinePresentation: Sendable, Equatable {
         events: [TimelineEvent],
         executions: [TimelineExecution],
         isLoading: Bool,
-        errorMessage: String?
+        errorMessage: String?,
+        pendingCancellationIDs: Set<String> = [],
+        cancellationErrorMessages: [String: String] = [:]
     ) {
         if isLoading {
             // A refresh over an already-loaded Timeline still carries its
@@ -97,7 +101,10 @@ public struct ProjectTimelinePresentation: Sendable, Equatable {
                 groups = []
                 return
             }
-            groups = Self.buildGroups(events: events, executions: executions)
+            groups = Self.buildGroups(
+                events: events, executions: executions,
+                pendingCancellationIDs: pendingCancellationIDs,
+                cancellationErrorMessages: cancellationErrorMessages)
             status = .refreshing
             return
         }
@@ -107,19 +114,27 @@ public struct ProjectTimelinePresentation: Sendable, Equatable {
             // (`.stale`, findings-review #62-4). Only a state with nothing
             // loaded — a first load that never succeeded — gets the full-pane
             // `.failed`.
-            let built = Self.buildGroups(events: events, executions: executions)
+            let built = Self.buildGroups(
+                events: events, executions: executions,
+                pendingCancellationIDs: pendingCancellationIDs,
+                cancellationErrorMessages: cancellationErrorMessages)
             groups = built
             status = built.isEmpty ? .failed(errorMessage) : .stale(errorMessage)
             return
         }
-        let built = Self.buildGroups(events: events, executions: executions)
+        let built = Self.buildGroups(
+            events: events, executions: executions,
+            pendingCancellationIDs: pendingCancellationIDs,
+            cancellationErrorMessages: cancellationErrorMessages)
         groups = built
         status = built.isEmpty ? .empty : .loaded
     }
 
     private static func buildGroups(
         events: [TimelineEvent],
-        executions: [TimelineExecution]
+        executions: [TimelineExecution],
+        pendingCancellationIDs: Set<String>,
+        cancellationErrorMessages: [String: String]
     ) -> [Group] {
         let eventsById = Dictionary(events.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
@@ -143,6 +158,8 @@ public struct ProjectTimelinePresentation: Sendable, Equatable {
                     completedAt: nil,
                     executionStatus: nil,
                     attempt: nil,
+                    isCancellationPending: false,
+                    cancellationErrorMessage: nil,
                     causingEvent: nil,
                     parentEvent: parent,
                     accessibilityLabel: accessibilityLabel(
@@ -153,6 +170,7 @@ public struct ProjectTimelinePresentation: Sendable, Equatable {
                         occurredAt: event.occurredAt,
                         completedAt: nil,
                         executionDetail: nil,
+                        cancellationError: nil,
                         relatedEvent: parent.map { ("caused by", $0) })
                 ))
         }
@@ -175,6 +193,8 @@ public struct ProjectTimelinePresentation: Sendable, Equatable {
                     completedAt: execution.completedAt,
                     executionStatus: execution.status,
                     attempt: execution.attempt,
+                    isCancellationPending: pendingCancellationIDs.contains(execution.id),
+                    cancellationErrorMessage: cancellationErrorMessages[execution.id],
                     causingEvent: causing,
                     parentEvent: nil,
                     accessibilityLabel: accessibilityLabel(
@@ -185,6 +205,7 @@ public struct ProjectTimelinePresentation: Sendable, Equatable {
                         occurredAt: execution.createdAt,
                         completedAt: execution.completedAt,
                         executionDetail: (statusLabel, execution.attempt),
+                        cancellationError: cancellationErrorMessages[execution.id],
                         relatedEvent: causing.map { ("caused by", $0) })
                 ))
         }
@@ -251,6 +272,7 @@ public struct ProjectTimelinePresentation: Sendable, Equatable {
         occurredAt: Date,
         completedAt: Date?,
         executionDetail: (status: String, attempt: Int)?,
+        cancellationError: String?,
         relatedEvent: (relation: String, event: EventReference)?
     ) -> String {
         var parts = ["\(kindLabel) \(title)", "by \(moduleInstance)"]
@@ -268,6 +290,9 @@ public struct ProjectTimelinePresentation: Sendable, Equatable {
         parts.append("at \(occurredAt.formatted(.dateTime))")
         if let completedAt {
             parts.append("completed at \(completedAt.formatted(.dateTime))")
+        }
+        if let cancellationError {
+            parts.append("cancellation error: \(cancellationError)")
         }
         if let relatedEvent {
             parts.append("\(relatedEvent.relation) \(relatedEvent.event.type)")

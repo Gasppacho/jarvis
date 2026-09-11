@@ -9,6 +9,8 @@ public struct ProjectTimelineState: Sendable, Equatable {
     public var executions: [TimelineExecution] = []
     public var isLoading = false
     public var errorMessage: String?
+    public var pendingCancellationIDs: Set<String> = []
+    public var cancellationErrorMessages: [String: String] = [:]
 }
 
 @MainActor
@@ -36,26 +38,34 @@ public final class ProjectTimelineModel {
         TimelineStreamMessage, Error
     >
 
+    typealias CancellationProvider = @Sendable (String) async throws -> TimelineExecution
+
     private let session: EngineSessionModel
     private let provider: TimelineProvider?
     private let streamConnector: StreamConnector?
+    private let cancellationProvider: CancellationProvider?
     /// Guards against a slow, stale request for a Project overwriting a
     /// newer one's result after the user has already moved on and back.
     private var revisions: [String: Int] = [:]
+    private var activeProjectId: String?
+    private var cancellationGenerations: [String: Int] = [:]
 
     public init(session: EngineSessionModel) {
         self.session = session
         provider = nil
         streamConnector = nil
+        cancellationProvider = nil
     }
 
     init(
         session: EngineSessionModel, provider: TimelineProvider? = nil,
-        streamConnector: StreamConnector? = nil
+        streamConnector: StreamConnector? = nil,
+        cancellationProvider: CancellationProvider? = nil
     ) {
         self.session = session
         self.provider = provider
         self.streamConnector = streamConnector
+        self.cancellationProvider = cancellationProvider
     }
 
     public func state(for projectId: String) -> ProjectTimelineState {
@@ -114,6 +124,52 @@ public final class ProjectTimelineModel {
         }
     }
 
+    @discardableResult
+    public func cancelExecution(projectId: String, executionId: String) async -> Bool {
+        guard let execution = states[projectId]?.executions.first(where: { $0.id == executionId }),
+            execution.status == .running,
+            states[projectId]?.pendingCancellationIDs.contains(executionId) != true
+        else { return false }
+
+        let provider: CancellationProvider
+        if let cancellationProvider {
+            provider = cancellationProvider
+        } else if let client = session.client {
+            provider = { try await client.cancelExecution(executionId: $0) }
+        } else {
+            setCancellationError(Self.engineUnavailable, projectId: projectId, executionId: executionId)
+            return false
+        }
+
+        let generation = cancellationGenerations[projectId, default: 0]
+        var state = states[projectId] ?? ProjectTimelineState()
+        state.pendingCancellationIDs.insert(executionId)
+        state.cancellationErrorMessages.removeValue(forKey: executionId)
+        states[projectId] = state
+
+        do {
+            // The stream remains the only source of the displayed status. The
+            // response is deliberately ignored: it is an acknowledgement,
+            // not a second Timeline write.
+            _ = try await provider(executionId)
+            return true
+        } catch is CancellationError {
+            guard canUpdateCancellation(projectId: projectId, generation: generation) else {
+                return false
+            }
+            states[projectId]?.pendingCancellationIDs.remove(executionId)
+            return false
+        } catch {
+            guard canUpdateCancellation(projectId: projectId, generation: generation) else {
+                return false
+            }
+            states[projectId]?.pendingCancellationIDs.remove(executionId)
+            states[projectId]?.cancellationErrorMessages[executionId] =
+                Self.describeCancellation(error)
+            return false
+        }
+    }
+
     /// Ticket #62: fetches the initial snapshot, then subscribes to the
     /// Engine's live channel and applies updates for `projectId` as they
     /// arrive. Runs until its Task is cancelled (SwiftUI's `.task(id:)`
@@ -128,6 +184,7 @@ public final class ProjectTimelineModel {
     /// result can never duplicate a row or show one the durable API would
     /// not also return.
     public func watchLive(projectId: String, reconnectDelay: Duration = .seconds(1)) async {
+        selectProject(projectId)
         // Never begin from a stale state: a Project switch cancels the
         // previous watch without resetting `connectionState` (cancellation is
         // not a state change), so this one must claim ".reconnecting" up
@@ -259,7 +316,42 @@ public final class ProjectTimelineModel {
             } else {
                 state.executions.append(execution)
             }
+            if execution.status != .running {
+                state.pendingCancellationIDs.remove(execution.id)
+            }
+            if execution.status == .cancelling || execution.status == .cancelled {
+                state.cancellationErrorMessages.removeValue(forKey: execution.id)
+            }
         }
+        states[projectId] = state
+    }
+
+    private func selectProject(_ projectId: String) {
+        guard activeProjectId != projectId else { return }
+        if let previousProjectId = activeProjectId {
+            invalidateCancellationState(for: previousProjectId)
+        }
+        invalidateCancellationState(for: projectId)
+        activeProjectId = projectId
+    }
+
+    private func invalidateCancellationState(for projectId: String) {
+        cancellationGenerations[projectId, default: 0] += 1
+        states[projectId]?.pendingCancellationIDs.removeAll()
+        states[projectId]?.cancellationErrorMessages.removeAll()
+    }
+
+    private func canUpdateCancellation(projectId: String, generation: Int) -> Bool {
+        cancellationGenerations[projectId, default: 0] == generation
+            && (activeProjectId == nil || activeProjectId == projectId)
+    }
+
+    private func setCancellationError(
+        _ message: String, projectId: String, executionId: String
+    ) {
+        var state = states[projectId] ?? ProjectTimelineState()
+        state.pendingCancellationIDs.remove(executionId)
+        state.cancellationErrorMessages[executionId] = message
         states[projectId] = state
     }
 
@@ -294,6 +386,22 @@ public final class ProjectTimelineModel {
             "\(message) (\(code)) The Timeline cannot be loaded. Try again; if it repeats, restart Jarvis."
         case .unexpectedResponse(let message):
             "\(message). The Timeline cannot be loaded. Try again; if it repeats, restart Jarvis."
+        }
+    }
+
+    private static func describeCancellation(_ error: Error) -> String {
+        guard let error = error as? EngineClientError else {
+            return "The engine could not be reached. Restart Jarvis."
+        }
+        return switch error {
+        case .unauthorized(let operation):
+            "The engine rejected the session token (\(operation)). Restart Jarvis."
+        case .hostNotAllowed(let operation):
+            "The engine refused a non-loopback request (\(operation)). Restart Jarvis."
+        case .engineError(_, let code, let message):
+            "\(message) (\(code))"
+        case .unexpectedResponse(let message):
+            message
         }
     }
 }

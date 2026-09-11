@@ -142,7 +142,9 @@ struct ProjectTimelineView: View {
             events: state.events,
             executions: state.executions,
             isLoading: state.isLoading,
-            errorMessage: state.errorMessage)
+            errorMessage: state.errorMessage,
+            pendingCancellationIDs: state.pendingCancellationIDs,
+            cancellationErrorMessages: state.cancellationErrorMessages)
     }
 
     private func groupCard(_ group: ProjectTimelinePresentation.Group) -> some View {
@@ -205,12 +207,31 @@ struct ProjectTimelineView: View {
                 Text(row.occurredAt, format: .dateTime)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                if let cancellationErrorMessage = row.cancellationErrorMessage {
+                    Label(cancellationErrorMessage, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(row.accessibilityLabel)
+            if row.executionStatus == .running {
+                Button(row.isCancellationPending ? "Cancelling…" : "Cancel") {
+                    Task {
+                        _ = await timeline.cancelExecution(
+                            projectId: projectId,
+                            executionId: String(row.id.dropFirst("execution:".count)))
+                    }
+                }
+                .disabled(row.isCancellationPending)
+                .accessibilityLabel(
+                    row.isCancellationPending
+                        ? "Cancelling \(row.title) for \(row.moduleInstance)"
+                        : "Cancel \(row.title) for \(row.moduleInstance)")
             }
             Spacer()
         }
         .padding(8)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(row.accessibilityLabel)
     }
 
     private func symbol(for kind: ProjectTimelinePresentation.Row.Kind) -> String {
