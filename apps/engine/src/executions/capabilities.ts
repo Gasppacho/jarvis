@@ -9,11 +9,16 @@ import type {
   ModuleWorkspace,
   ProjectCommandName,
   ProjectCommandsCapability,
+  WorkItemsCapability,
 } from "../../../../packages/module-sdk/src/index.js";
 import type { AgentRuntime } from "../../../../packages/agent-runtime/src/index.js";
 import {
   GitHubApiClient,
+  GitHubApiError,
+  GitHubTranslationError,
   type GitHubCredentialResolutionPort,
+  parseGitHubWorkItemRef,
+  translateGitHubWorkItemResponse,
 } from "../../../../packages/modules/github/src/index.js";
 import { runBoundedProcess } from "../../../../packages/workspace/src/bounded-process-runner.js";
 import type { ResolvedProjectSnapshot } from "../projects/store.js";
@@ -118,11 +123,15 @@ export class ProjectModuleCapabilityResolver {
       (candidate) => candidate.id === "shell.execute",
     );
     const githubRequirement = requirements.find((candidate) => candidate.id === "github.api");
+    const workItemsRequirement = requirements.find(
+      (candidate) => candidate.id === "work-items.read",
+    );
     if (
       agentRequirement === undefined &&
       !workspaceRequired &&
       !projectCommandsRequired &&
       githubRequirement === undefined &&
+      workItemsRequirement === undefined &&
       this.externalMappings === undefined &&
       this.pollCursors === undefined
     ) {
@@ -135,6 +144,7 @@ export class ProjectModuleCapabilityResolver {
       agentRequirement === undefined &&
       !workspaceRequired &&
       githubRequirement === undefined &&
+      workItemsRequirement === undefined &&
       this.externalMappings === undefined &&
       this.pollCursors === undefined
     ) {
@@ -144,7 +154,7 @@ export class ProjectModuleCapabilityResolver {
       (candidate) => candidate.instanceId === moduleInstanceId,
     );
     if (snapshot === undefined || instance === undefined) {
-      const requirement = agentRequirement ?? githubRequirement;
+      const requirement = agentRequirement ?? githubRequirement ?? workItemsRequirement;
       throw unresolvedCapability(
         projectId,
         moduleInstanceId,
@@ -228,91 +238,145 @@ export class ProjectModuleCapabilityResolver {
       };
     }
     if (githubRequirement !== undefined) {
-      const slot = capabilitySlot(githubRequirement, undefined);
-      if (slot === undefined) {
-        throw unresolvedCapability(
-          projectId,
-          moduleInstanceId,
-          "github.api",
-          "sourceControl",
-          "has no bound connection slot",
-        );
+      const githubApi = this.resolveGitHubApi(projectId, moduleInstanceId, snapshot, githubRequirement, "github.api");
+      if (githubApi !== undefined) resolved = { ...resolved, githubApi };
+    }
+    if (workItemsRequirement !== undefined) {
+      const githubApi = this.resolveGitHubApi(
+        projectId,
+        moduleInstanceId,
+        snapshot,
+        workItemsRequirement,
+        "work-items.read",
+      );
+      if (githubApi !== undefined) {
+        const workItems: WorkItemsCapability = {
+          read: async (ref) => {
+            parseGitHubWorkItemRef(ref);
+            let response;
+            try {
+              const reference = parseGitHubWorkItemRef(ref);
+              response = await githubApi.get(
+                `/repos/${reference.owner}/${reference.repository}/issues/${reference.number}`,
+              );
+            } catch (error: unknown) {
+              if (error instanceof GitHubApiError) {
+                throw new GitHubTranslationError(
+                  error.status === "unavailable"
+                    ? "github.work-item-unavailable"
+                    : "github.work-item-unauthorized",
+                  error.status === "unavailable"
+                    ? "GitHub Work Item service is temporarily unavailable; retry later."
+                    : "GitHub cannot access the requested Work Item.",
+                  true,
+                );
+              }
+              throw error;
+            }
+            return translateGitHubWorkItemResponse(response, ref);
+          },
+        };
+        resolved = { ...resolved, workItems };
       }
-      const binding = snapshot.bindings.slots[slot];
-      if (binding === undefined) {
-        throw unresolvedCapability(
-          projectId,
-          moduleInstanceId,
-          "github.api",
-          slot,
-          "has no Local Binding",
-        );
-      }
-      if (binding.kind !== "connection") {
-        throw unresolvedCapability(
-          projectId,
-          moduleInstanceId,
-          "github.api",
-          slot,
-          `is bound to ${binding.kind}/${binding.ref}, not a connection`,
-        );
-      }
-      const connection = this.connections?.find(binding.ref);
-      if (connection === undefined) {
-        throw unresolvedCapability(
-          projectId,
-          moduleInstanceId,
-          "github.api",
-          slot,
-          `connection ${binding.ref} is unavailable`,
-        );
-      }
-      if (connection.provider !== "github") {
-        throw unresolvedCapability(
-          projectId,
-          moduleInstanceId,
-          "github.api",
-          slot,
-          `connection ${binding.ref} is provided by ${connection.provider}, not GitHub`,
-        );
-      }
-      if (connection.status !== "available") {
-        throw unresolvedCapability(
-          projectId,
-          moduleInstanceId,
-          "github.api",
-          slot,
-          `connection ${binding.ref} is ${connection.status}`,
-        );
-      }
-      if (!connection.capabilities.includes("github.api")) {
-        throw unresolvedCapability(
-          projectId,
-          moduleInstanceId,
-          "github.api",
-          slot,
-          `connection ${binding.ref} does not provide github.api`,
-        );
-      }
-      if (this.githubCredentials === undefined) {
-        throw unresolvedCapability(
-          projectId,
-          moduleInstanceId,
-          "github.api",
-          slot,
-          "the GitHub credential resolver is unavailable",
-        );
-      }
-      resolved = {
-        ...resolved,
-        githubApi: new GitHubApiClient({
-          secretRef: connection.secretRef,
-          credentialResolver: this.githubCredentials,
-          ...(this.githubApiBaseUrl === undefined ? {} : { apiBaseUrl: this.githubApiBaseUrl }),
-        }),
-      };
     }
     return resolved;
+  }
+
+  private resolveGitHubApi(
+    projectId: string,
+    moduleInstanceId: string,
+    snapshot: ResolvedProjectSnapshot,
+    requirement: ModuleCapabilityRequirement,
+    capability: "github.api" | "work-items.read",
+  ): GitHubApiClient | undefined {
+    const slot = capabilitySlot(requirement, undefined);
+    if (slot === undefined) {
+      return unresolvedOrAbsent(
+        requirement,
+        projectId,
+        moduleInstanceId,
+        capability,
+        "sourceControl",
+        "has no bound connection slot",
+      );
+    }
+    const binding = snapshot.bindings.slots[slot];
+    if (binding === undefined) {
+      return unresolvedOrAbsent(
+        requirement,
+        projectId,
+        moduleInstanceId,
+        capability,
+        slot,
+        "has no Local Binding",
+      );
+    }
+    if (binding.kind !== "connection") {
+      return unresolvedOrAbsent(
+        requirement,
+        projectId,
+        moduleInstanceId,
+        capability,
+        slot,
+        `is bound to ${binding.kind}/${binding.ref}, not a connection`,
+      );
+    }
+    const connection = this.connections?.find(binding.ref);
+    if (connection === undefined) {
+      return unresolvedOrAbsent(
+        requirement,
+        projectId,
+        moduleInstanceId,
+        capability,
+        slot,
+        `connection ${binding.ref} is unavailable`,
+      );
+    }
+    if (connection.provider !== "github") {
+      return unresolvedOrAbsent(
+        requirement,
+        projectId,
+        moduleInstanceId,
+        capability,
+        slot,
+        `connection ${binding.ref} is provided by ${connection.provider}, not GitHub`,
+      );
+    }
+    if (connection.status !== "available") {
+      return unresolvedOrAbsent(
+        requirement,
+        projectId,
+        moduleInstanceId,
+        capability,
+        slot,
+        `connection ${binding.ref} is ${connection.status}`,
+      );
+    }
+    if (!connection.capabilities.includes(capability)) {
+      return unresolvedOrAbsent(
+        requirement,
+        projectId,
+        moduleInstanceId,
+        capability,
+        slot,
+        `connection ${binding.ref} does not provide ${capability}`,
+      );
+    }
+    if (this.githubCredentials === undefined) {
+      return unresolvedOrAbsent(
+        requirement,
+        projectId,
+        moduleInstanceId,
+        capability,
+        slot,
+        "the GitHub credential resolver is unavailable",
+      );
+    }
+    return new GitHubApiClient({
+      secretRef: connection.secretRef,
+      credentialResolver: this.githubCredentials,
+      ...(this.githubApiBaseUrl === undefined ? {} : { apiBaseUrl: this.githubApiBaseUrl }),
+    });
   }
 }
 
@@ -376,4 +440,16 @@ function unresolvedCapability(
     `Project ${projectId} cannot resolve ${capability} for Module Instance ${moduleInstanceId} at Slot ${slot}: ${reason}.`,
     { projectId, moduleInstanceId, slot, capability },
   );
+}
+
+function unresolvedOrAbsent(
+  requirement: ModuleCapabilityRequirement,
+  projectId: string,
+  moduleInstanceId: string,
+  capability: string,
+  slot: string,
+  reason: string,
+): undefined {
+  if (requirement.optional) return undefined;
+  throw unresolvedCapability(projectId, moduleInstanceId, capability, slot, reason);
 }

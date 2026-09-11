@@ -37,6 +37,7 @@ export {
   latestGitHubIssueEvent,
   parseGitHubWorkItemRef,
   translateGitHubIssueEvents,
+  translateGitHubWorkItemResponse,
   translateGitHubPullRequestMapping,
   translateGitHubPullRequestLookupResponse,
   translateGitHubPullRequestResponse,
