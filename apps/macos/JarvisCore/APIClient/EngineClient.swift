@@ -433,6 +433,24 @@ public struct EngineClient: Sendable {
         }
     }
 
+    /// Reads the Engine's emergent Project graph. The response is already the
+    /// resolved project snapshot; the shell only maps it to display data.
+    public func fetchProjectGraph(projectId: String) async throws -> ProjectGraph {
+        let operation = "GET /v1/projects/\(projectId)/graph"
+        let output = try await underlying.getProjectGraph(
+            .init(path: .init(projectId: projectId)))
+        switch output {
+        case .ok(let ok):
+            return ProjectGraph(projectId: projectId, payload: try ok.body.json)
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
     public func generateProjectValidationReport(projectId: String) async throws
         -> ProjectValidationReport
     {
