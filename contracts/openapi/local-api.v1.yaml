@@ -1758,7 +1758,7 @@ components:
           type: string
     ExecutionSummary:
       type: object
-      required: [id, projectId, moduleInstanceId, status, attempt, createdAt, replayed]
+      required: [id, projectId, moduleInstanceId, status, attempt, createdAt, error, replayed]
       properties:
         id:
           type: string
@@ -1775,6 +1775,9 @@ components:
         createdAt:
           type: string
           format: date-time
+        error:
+          type: [string, "null"]
+          description: Cleaned terminal error message, or null when the Execution has no error.
         completedAt:
           type: [string, "null"]
           format: date-time

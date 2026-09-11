@@ -59,7 +59,9 @@ final class ProjectDeadLettersModelTests: XCTestCase {
         let model = ProjectDeadLettersModel(
             api: FakeDeadLettersAPI(
                 lists: ["project-1": [deadLetter]],
-                replayResult: makeExecution(status: .failed)))
+                replayResult: makeExecution(
+                    status: .failed,
+                    error: "The replayed handler rejected the event.")))
         await model.refresh(projectId: "project-1")
 
         let replayed = await model.replay(projectId: "project-1", deliveryId: deadLetter.deliveryId)
@@ -68,17 +70,41 @@ final class ProjectDeadLettersModelTests: XCTestCase {
         XCTAssertEqual(model.state(for: "project-1").deadLetters, [deadLetter])
         XCTAssertEqual(
             model.state(for: "project-1").replayErrorMessages[deadLetter.deliveryId],
-            "Replay execution execution-replay failed.")
+            "Replay execution execution-replay ended with failed: The replayed handler rejected the event.")
     }
 
-    private func makeExecution(status: TimelineExecution.Status) -> TimelineExecution {
+    func testCancelledAndTimedOutReplayKeepTheRowAndUseTheDeadLetterMessage() async {
+        for status in [TimelineExecution.Status.cancelled, .timedOut] {
+            let deadLetter = makeDeadLetter(deliveryId: "delivery-\(status)", projectId: "project-1")
+            let model = ProjectDeadLettersModel(
+                api: FakeDeadLettersAPI(
+                    lists: ["project-1": [deadLetter]],
+                    replayResult: makeExecution(status: status)))
+            await model.refresh(projectId: "project-1")
+
+            let replayed = await model.replay(
+                projectId: "project-1", deliveryId: deadLetter.deliveryId)
+
+            XCTAssertFalse(replayed)
+            XCTAssertEqual(model.state(for: "project-1").deadLetters, [deadLetter])
+            XCTAssertEqual(
+                model.state(for: "project-1").replayErrorMessages[deadLetter.deliveryId],
+                "Replay execution execution-replay ended with \(status.displayLabel.lowercased()): The provider did not answer.")
+        }
+    }
+
+    private func makeExecution(
+        status: TimelineExecution.Status,
+        error: String? = nil
+    ) -> TimelineExecution {
         TimelineExecution(
             id: "execution-replay",
             projectId: "project-1",
             moduleInstanceId: "development",
             status: status,
             attempt: 4,
-            createdAt: createdAt)
+            createdAt: createdAt,
+            error: error)
     }
 
     private func makeDeadLetter(deliveryId: String, projectId: String) -> DeadLetter {

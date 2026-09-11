@@ -17,6 +17,7 @@ export interface LedgerExecutionSummary {
   readonly status: ExecutionApiStatus;
   readonly attempt: number;
   readonly createdAt: string;
+  readonly error: string | null;
   readonly completedAt: string | null;
   /** The input Event's id (0007_inbox_execution_ledger.sql `input_event_id`),
    * so a client can attach this Execution to the Event that caused it (issue
@@ -33,6 +34,7 @@ interface ExecutionRow {
   readonly status: string;
   readonly attempt: number;
   readonly created_at: string;
+  readonly error: string | null;
   readonly completed_at: string | null;
   readonly input_event_id: string;
   readonly replayed: number;
@@ -73,7 +75,7 @@ export class ExecutionLedgerReader {
   public list(projectId: string, query: ListExecutionsQuery): LedgerExecutionSummary[] {
     const rows = this.db
       .prepare(
-        `SELECT id, project_id, module_instance_id, status, attempt, created_at, completed_at, input_event_id, replayed
+        `SELECT id, project_id, module_instance_id, status, attempt, created_at, error, completed_at, input_event_id, replayed
          FROM executions
          WHERE project_id = @projectId
          ORDER BY created_at DESC, id DESC
@@ -96,6 +98,7 @@ function toSummary(row: ExecutionRow): LedgerExecutionSummary {
     status,
     attempt: row.attempt,
     createdAt: row.created_at,
+    error: row.error,
     completedAt: row.completed_at,
     inputEventId: row.input_event_id,
     replayed: row.replayed === 1,

@@ -75,6 +75,35 @@ final class EngineClientTransportTests: XCTestCase {
         XCTAssertEqual(first.correlationId, "corr-1")
         XCTAssertEqual(first.occurredAt.timeIntervalSince1970, 1_788_776_130.123, accuracy: 0.001)
     }
+
+    func testReplayDecodingPreservesTheExecutionError() async throws {
+        let responseJSON = """
+            {
+              "id": "execution-replay",
+              "projectId": "project-1",
+              "moduleInstanceId": "development",
+              "status": "failed",
+              "attempt": 4,
+              "createdAt": "2026-09-07T10:15:35.456Z",
+              "completedAt": "2026-09-07T10:15:36.456Z",
+              "inputEventId": "event-1",
+              "error": "The replayed handler rejected the event.",
+              "replayed": true
+            }
+            """
+
+        let client = EngineClient(
+            serverURL: URL(string: "http://127.0.0.1:1")!,
+            transport: CannedTransport(
+                status: .accepted,
+                contentType: "application/json",
+                body: HTTPBody(Array(responseJSON.utf8))))
+
+        let execution = try await client.replayDeadLetter(deliveryId: "delivery-1")
+
+        XCTAssertEqual(execution.status, .failed)
+        XCTAssertEqual(execution.error, "The replayed handler rejected the event.")
+    }
 }
 
 /// A canned Local API answer: the exact bytes the engine would write, with

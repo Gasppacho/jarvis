@@ -152,6 +152,7 @@ interface ExecutionRow {
   readonly status: string;
   readonly attempt: number;
   readonly created_at: string;
+  readonly error: string | null;
   readonly completed_at: string | null;
   readonly input_event_id: string;
   readonly replayed: number;
@@ -232,7 +233,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
            SET status = 'cancelling'
            WHERE id = @id AND status = 'running'
            RETURNING id, project_id, module_instance_id, status, attempt, created_at,
-                     completed_at, input_event_id, replayed`,
+                     error, completed_at, input_event_id, replayed`,
         )
         .get({ id: executionId }) as ExecutionRow | undefined;
       if (written === undefined) {
@@ -1195,6 +1196,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
       status: status === "timed_out" ? "timed-out" : status,
       attempt,
       createdAt: startedAt,
+      error,
       completedAt,
       inputEventId: envelope.id,
       replayed: delivery.replayed === true,
@@ -1213,7 +1215,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
          SET status = @status, error = @error, completed_at = @completedAt
          WHERE id = @id AND status IN ('running', 'cancelling')
          RETURNING id, project_id, module_instance_id, status, attempt, created_at,
-                   completed_at, input_event_id, replayed`,
+                   error, completed_at, input_event_id, replayed`,
       )
       .get({ id: executionId, status, error, completedAt }) as ExecutionRow | undefined;
     if (row === undefined) {
@@ -1508,7 +1510,7 @@ function readExecutionSummary(
   const row = db
     .prepare(
       `SELECT id, project_id, module_instance_id, status, attempt, created_at, completed_at,
-              input_event_id, replayed
+              error, input_event_id, replayed
        FROM executions WHERE id = @executionId`,
     )
     .get({ executionId }) as ExecutionRow | undefined;
@@ -1528,6 +1530,7 @@ function toExecutionSummary(row: ExecutionRow): LedgerExecutionSummary {
     status,
     attempt: row.attempt,
     createdAt: row.created_at,
+    error: row.error,
     completedAt: row.completed_at,
     inputEventId: row.input_event_id,
     replayed: row.replayed === 1,

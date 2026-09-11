@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { explain, localApiValidator } from "./contract.js";
 import { startEngine, type Harness } from "./harness.js";
 
 const testBundlePath = fileURLToPath(
@@ -12,6 +13,12 @@ afterEach(async () => {
 });
 
 describe("dead-letter Local API", () => {
+  let validateExecution: ReturnType<typeof localApiValidator>;
+
+  beforeAll(() => {
+    validateExecution = localApiValidator("ExecutionSummary");
+  });
+
   it("lists only the requested Project's dead letters newest first", async () => {
     const engine = await startEngine({
       enginePath: testBundlePath,
@@ -90,10 +97,13 @@ describe("dead-letter Local API", () => {
       method: "POST",
     });
     expect(replay.status, await replay.clone().text()).toBe(202);
-    expect(await replay.json()).toMatchObject({
+    const replayBody = await replay.json();
+    expect(validateExecution(replayBody), explain(validateExecution)).toBe(true);
+    expect(replayBody).toMatchObject({
       status: "failed",
       attempt: 2,
       inputEventId: body.items[0]!.eventId,
+      error: "sample-probe: deterministic failure requested by payload.shouldFail",
     });
 
     const afterReplay = await engine.call("/v1/projects/replay-project/dead-letters");

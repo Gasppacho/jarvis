@@ -928,6 +928,8 @@ export interface components {
             attempt: number;
             /** Format: date-time */
             createdAt: string;
+            /** @description Cleaned terminal error message, or null when the Execution has no error. */
+            error: string | null;
             /** Format: date-time */
             completedAt?: string | null;
             /** @description Ticket #59: the id of the Event that caused this Execution (0007_inbox_execution_ledger.sql `input_event_id`). Optional so a client relying on the pre-#59 shape still validates. */

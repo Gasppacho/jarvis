@@ -133,6 +133,7 @@ export interface ExecutionSummary {
   readonly status: ExecutionApiStatus;
   readonly attempt: number;
   readonly createdAt: string;
+  readonly error: string | null;
   readonly completedAt: string | null;
   readonly inputEventId: string;
   readonly replayed: boolean;

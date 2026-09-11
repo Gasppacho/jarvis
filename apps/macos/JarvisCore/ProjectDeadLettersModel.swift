@@ -72,7 +72,9 @@ public final class ProjectDeadLettersModel {
 
     @discardableResult
     public func replay(projectId: String, deliveryId: String) async -> Bool {
-        guard states[projectId]?.deadLetters.contains(where: { $0.deliveryId == deliveryId }) == true,
+        guard let deadLetter = states[projectId]?.deadLetters.first(where: {
+            $0.deliveryId == deliveryId
+        }),
             states[projectId]?.replayingDeliveryIDs.contains(deliveryId) != true
         else { return false }
         guard let api else {
@@ -89,9 +91,8 @@ public final class ProjectDeadLettersModel {
         defer { states[projectId]?.replayingDeliveryIDs.remove(deliveryId) }
         do {
             let execution = try await api.replayDeadLetter(deliveryId: deliveryId)
-            guard execution.status != .failed else {
-                setReplayError(
-                    "Replay execution \(execution.id) failed.",
+            guard execution.status == .completed else {
+                setReplayError(Self.replayFailureMessage(execution, deadLetter: deadLetter),
                     projectId: projectId,
                     deliveryId: deliveryId)
                 return false
@@ -122,6 +123,20 @@ public final class ProjectDeadLettersModel {
 
     private func setReplayError(_ message: String, projectId: String, deliveryId: String) {
         update(projectId) { $0.replayErrorMessages[deliveryId] = message }
+    }
+
+    private static func replayFailureMessage(
+        _ execution: TimelineExecution,
+        deadLetter: DeadLetter
+    ) -> String {
+        let detail = [execution.error, deadLetter.message]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+        let status = execution.status.displayLabel.lowercased()
+        if let detail {
+            return "Replay execution \(execution.id) ended with \(status): \(detail)"
+        }
+        return "Replay execution \(execution.id) ended with \(status)."
     }
 
     public static func describe(_ error: Error) -> String {

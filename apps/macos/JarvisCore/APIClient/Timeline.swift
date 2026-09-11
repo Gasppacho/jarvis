@@ -82,6 +82,7 @@ public struct TimelineExecution: Identifiable, Sendable, Equatable, Hashable {
     public let status: Status
     public let attempt: Int
     public let createdAt: Date
+    public let error: String?
     public let completedAt: Date?
     /// Ticket #59: the Event that caused this Execution. Optional so a client
     /// relying on the pre-#59 shape still validates.
@@ -98,6 +99,7 @@ public struct TimelineExecution: Identifiable, Sendable, Equatable, Hashable {
         status: Status,
         attempt: Int,
         createdAt: Date,
+        error: String? = nil,
         completedAt: Date? = nil,
         inputEventId: String? = nil,
         correlationId: String? = nil
@@ -108,6 +110,7 @@ public struct TimelineExecution: Identifiable, Sendable, Equatable, Hashable {
         self.status = status
         self.attempt = attempt
         self.createdAt = createdAt
+        self.error = error
         self.completedAt = completedAt
         self.inputEventId = inputEventId
         self.correlationId = correlationId
@@ -120,6 +123,7 @@ public struct TimelineExecution: Identifiable, Sendable, Equatable, Hashable {
         status = Status(payload: payload.status)
         attempt = payload.attempt
         createdAt = payload.createdAt
+        error = payload.error
         completedAt = payload.completedAt
         inputEventId = payload.inputEventId
         correlationId = payload.correlationId
