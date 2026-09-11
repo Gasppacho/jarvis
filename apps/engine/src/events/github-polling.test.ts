@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { GitHubApi } from "../../../../packages/module-sdk/src/index.js";
 import type { ModuleCompositionMetadata } from "../../../../packages/kernel/src/module-host.js";
+import type { EventEnvelope } from "../../../../packages/eventing/src/envelope.js";
 import type { ProjectModuleInstanceConfiguration } from "../../../../packages/project-runtime/src/project-types.js";
 import type { ProjectRow, ResolvedProjectSnapshot } from "../projects/store.js";
 import { GitHubPollingScheduler } from "./github-polling.js";
@@ -24,7 +25,10 @@ const project = {
   updatedAt: "2026-09-11T00:00:00.000Z",
 } satisfies ProjectRow;
 
-const snapshot = { moduleInstances: [instance] } as unknown as ResolvedProjectSnapshot;
+const snapshot = {
+  moduleInstances: [instance],
+  composition: { repositories: [{ id: "main" }] },
+} as unknown as ResolvedProjectSnapshot;
 const composition = {} as ModuleCompositionMetadata;
 
 describe("GitHubPollingScheduler", () => {
@@ -84,7 +88,15 @@ function schedulerFor(api: GitHubApi, pollIntervalMs: number): GitHubPollingSche
       getResolvedProject: () => snapshot,
     },
     modules: { composition: () => composition },
-    capabilities: { resolve: () => ({ githubApi: api }) },
+    capabilities: {
+      resolve: () => ({
+        githubApi: api,
+        pollCursor: { read: () => undefined, write: () => undefined },
+      }),
+    },
+    publisher: { publish: () => null as unknown as EventEnvelope },
+    transaction: (operation) => operation(),
+    ids: { next: () => "id" },
     pollIntervalMs,
   });
 }

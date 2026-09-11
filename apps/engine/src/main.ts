@@ -487,6 +487,9 @@ async function main(): Promise<void> {
       projects: projectStore,
       modules,
       capabilities,
+      publisher,
+      transaction: (operation) => database.db.transaction(operation)(),
+      ids,
       ...(githubPollIntervalMs === undefined ? {} : { pollIntervalMs: githubPollIntervalMs }),
     }).start();
     if (testHooksEnabled && projects !== undefined && workspaceManager !== undefined) {
