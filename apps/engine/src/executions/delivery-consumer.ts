@@ -288,7 +288,9 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
 
     const envelope = this.requireEnvelope(delivery);
     const existingDeadLetter =
-      delivery.replayed === true ? undefined : this.readDeadLetter(delivery);
+      delivery.replayed === true || delivery.leaseOwner !== undefined
+        ? undefined
+        : this.readDeadLetter(delivery);
     if (existingDeadLetter !== undefined) {
       return {
         executionId: null,
@@ -301,6 +303,13 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
     const attempt = this.readDeliveryAttempt(delivery);
     const handler = this.handlers(delivery.moduleId);
     const recoveredExecution = this.findRecoverableExecution(delivery, attempt);
+    if (recoveredExecution !== undefined && this.activeExecutions.has(recoveredExecution.id)) {
+      // The same process still owns the old handler. Abort its cooperative
+      // work and let the expired lease be reclaimed after it has unwound;
+      // starting a second handler here would duplicate side effects.
+      this.activeExecutions.get(recoveredExecution.id)?.controller.abort();
+      return this.leaseLostResult();
+    }
     const executionId = recoveredExecution?.id ?? `exec_${this.ids.next()}`;
     const startedAt = this.clock.now().toISOString();
     const bufferedPublications: EventEnvelope[] = [];
@@ -490,7 +499,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
     const claimed = this.db
       .prepare(
         `UPDATE deliveries
-         SET consumed_at = NULL, next_attempt_at = NULL,
+         SET consumed_at = NULL, next_attempt_at = NULL, replay_requested = 1,
              lease_owner = @leaseOwner, lease_expires_at = @leaseExpiresAt
          WHERE id = @deliveryId
            AND (consumed_at IS NOT NULL OR lease_expires_at IS NULL OR lease_expires_at <= @now)`,
@@ -595,7 +604,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
       const row = this.updateExecution(executionId, "completed", null);
       this.insertInbox(delivery, "completed", result, attempt);
       this.markDeliveryConsumed(delivery, attempt);
-      this.deleteReplayedDeadLetter(delivery);
+      this.deleteDeadLetter(delivery);
       return { executionRow: row };
     })();
     this.failAfterHandlerCommit();
@@ -628,7 +637,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
     const executionRow = this.updateExecution(executionId, "completed", null);
     this.insertInbox(delivery, "completed", handlerResult, attempt);
     this.markDeliveryConsumed(delivery, attempt);
-    this.deleteReplayedDeadLetter(delivery);
+    this.deleteDeadLetter(delivery);
     return { handlerResult, executionRow };
   }
 
@@ -1240,7 +1249,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
       .prepare(
         `UPDATE deliveries
          SET consumed_at = @now, attempt_count = @attempt, next_attempt_at = NULL,
-             lease_owner = NULL, lease_expires_at = NULL
+             lease_owner = NULL, lease_expires_at = NULL, replay_requested = 0
          WHERE project_id = @projectId AND module_instance_id = @moduleInstanceId AND event_id = @eventId
            AND (@leaseOwner IS NULL OR lease_owner = @leaseOwner)`,
       )
@@ -1295,7 +1304,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
       .prepare(
         `UPDATE deliveries
          SET attempt_count = @attempt, next_attempt_at = @nextAttemptAt,
-             lease_owner = NULL, lease_expires_at = NULL
+             lease_owner = NULL, lease_expires_at = NULL, replay_requested = 0
          WHERE project_id = @projectId AND module_instance_id = @moduleInstanceId AND event_id = @eventId
            AND consumed_at IS NULL
            AND (@leaseOwner IS NULL OR lease_owner = @leaseOwner)`,
@@ -1313,8 +1322,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
     }
   }
 
-  private deleteReplayedDeadLetter(delivery: ClaimedDelivery): void {
-    if (delivery.replayed !== true) return;
+  private deleteDeadLetter(delivery: ClaimedDelivery): void {
     this.db
       .prepare(
         `DELETE FROM dead_letters
@@ -1459,10 +1467,7 @@ function cleanHandlerFailureMessage(message: string): string {
       /\b(?:gh[opsru]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|sk-[A-Za-z0-9_-]+)\b/g,
       "<redacted>",
     )
-    .replace(
-      /(^|[\s("'`=:])\/(?!\/)(?!payload(?:\/|\b))(?:(?:Users|private|tmp|var|home|opt|etc|Volumes|Applications|Library|System)(?:\/[^\s"'`<>]*)?|(?:[^/\s"'`<>]+\/)+[^\s"'`<>]*)/g,
-      "$1<path>",
-    )
+    .replace(/(^|[\s("'`=:])\/(?!\/)(?!payload(?:\/|\b))[^\s"'`<>]+/g, "$1<path>")
     .replace(/(^|[\s("'`=:])(?:[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+/g, "$1<path>");
 }
 

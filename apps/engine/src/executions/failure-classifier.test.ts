@@ -59,6 +59,16 @@ describe("classifyHandlerFailure", () => {
     expect(classified.message).toBe("failed at <path> and schema /payload/file");
   });
 
+  it.each(["/srv", "/foo", "/usr", "/var/log"])(
+    "redacts the complete POSIX path token %s",
+    (path) => {
+      const classified = classifyHandlerFailure(new Error(`failed at ${path}`));
+
+      expect(classified.message).toBe("failed at <path>");
+      expect(classified.message).not.toContain(path);
+    },
+  );
+
   it("does not persist arbitrary failure codes", () => {
     expect(
       classifyHandlerFailure(

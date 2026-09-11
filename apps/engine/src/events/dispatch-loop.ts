@@ -158,9 +158,8 @@ export function claimDueDeliveries(
         `SELECT deliveries.id, deliveries.project_id AS projectId,
                 deliveries.module_instance_id AS moduleInstanceId,
                 deliveries.module_id AS moduleId, deliveries.event_id AS eventId,
-                dead_letters.delivery_id IS NOT NULL AS replayed
+                deliveries.replay_requested AS replayed
          FROM deliveries
-         LEFT JOIN dead_letters ON dead_letters.delivery_id = deliveries.id
          WHERE deliveries.consumed_at IS NULL
            AND (deliveries.next_attempt_at IS NULL OR deliveries.next_attempt_at <= @now)
            AND (deliveries.lease_expires_at IS NULL OR deliveries.lease_expires_at <= @now)

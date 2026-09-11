@@ -708,9 +708,13 @@ describe("DeliveryConsumer", () => {
       release = resolve;
     });
     let calls = 0;
-    const handler = async () => {
+    let sideEffects = 0;
+    let firstSignal!: AbortSignal;
+    const handler = async (context: ModuleHandlerContext) => {
       calls += 1;
+      if (calls === 1) firstSignal = context.signal;
       await gate;
+      if (!context.signal.aborted) sideEffects += 1;
       return { accepted: true };
     };
     const harnessState = harness(() => handler);
@@ -727,7 +731,6 @@ describe("DeliveryConsumer", () => {
     clock.advance(DEFAULT_DELIVERY_LEASE_MS + 1);
     const second = claimDueDeliveries(database, clock)[0]!;
     const winnerPending = consumer.consumeAsync(second);
-    expect(calls).toBe(2);
 
     release();
     const [stale, winner] = await Promise.all([stalePending, winnerPending]);
@@ -738,15 +741,32 @@ describe("DeliveryConsumer", () => {
       executionId: null,
       result: { error: { code: "system.delivery-lease-lost" } },
     });
-    expect(winner).toMatchObject({ status: "completed", executionId: expect.any(String) });
+    expect(winner).toMatchObject({
+      status: "failed",
+      redelivered: true,
+      executionId: null,
+      result: { error: { code: "system.delivery-lease-lost" } },
+    });
+    expect(calls).toBe(1);
+    expect(firstSignal.aborted).toBe(true);
+    expect(sideEffects).toBe(0);
     expect(
       database.prepare("SELECT COUNT(*) AS n FROM inbox WHERE event_id = ?").get(event.id),
     ).toEqual({
-      n: 1,
+      n: 0,
     });
     expect(
       database.prepare("SELECT status, COUNT(*) AS n FROM executions GROUP BY status").all(),
-    ).toEqual([{ status: "completed", n: 1 }]);
+    ).toEqual([{ status: "running", n: 1 }]);
+
+    clock.advance(DEFAULT_DELIVERY_LEASE_MS + 1);
+    const recovered = claimDueDeliveries(database, clock)[0]!;
+    expect(await consumer.consumeAsync(recovered)).toMatchObject({
+      status: "completed",
+      executionId: expect.any(String),
+    });
+    expect(calls).toBe(2);
+    expect(sideEffects).toBe(1);
     expect(database.prepare("SELECT attempt FROM executions").all()).toEqual([{ attempt: 1 }]);
   });
 
@@ -936,7 +956,7 @@ describe("DeliveryConsumer", () => {
         "(SELECT id FROM executions ORDER BY created_at DESC LIMIT 1), '2026-09-06T08:00:00.000Z' FROM deliveries",
     );
     database.exec(
-      "UPDATE deliveries SET consumed_at = NULL, lease_owner = 'replay-crashed', lease_expires_at = '2026-09-06T07:59:59.000Z'",
+      "UPDATE deliveries SET consumed_at = NULL, replay_requested = 1, lease_owner = 'replay-crashed', lease_expires_at = '2026-09-06T07:59:59.000Z'",
     );
     const reclaimed = claimDueDeliveries(database, clock);
     expect(reclaimed).toMatchObject([{ replayed: true }]);
@@ -978,6 +998,65 @@ describe("DeliveryConsumer", () => {
     await expect(consumer.replayDeadLetter("missing-delivery")).rejects.toMatchObject({
       code: "delivery.not-found",
     });
+  });
+
+  it("does not mark an automatic retry after a failed replay as replayed", async () => {
+    let calls = 0;
+    const handler = () => {
+      calls += 1;
+      if (calls === 1) {
+        throw Object.assign(new Error("first permanent failure"), {
+          code: "provider.invalid",
+          retryable: false,
+        });
+      }
+      if (calls === 2) {
+        throw Object.assign(new Error("replay temporarily unavailable"), {
+          code: "provider.unavailable",
+          retryable: true,
+        });
+      }
+      return { accepted: true };
+    };
+    const harnessState = harness(() => handler);
+    const { db: database, clock, store, publisher, dispatcher, consumer } = harnessState;
+    activate(store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+    const event = publisher.publish(pingInput("project-a"));
+    dispatcher.dispatchPending();
+    const delivery = {
+      projectId: "project-a",
+      moduleInstanceId: "probe-1",
+      moduleId: SAMPLE_PROBE_MODULE_ID,
+      eventId: event.id,
+    };
+    const deliveryId = (database.prepare("SELECT id FROM deliveries").get() as { id: string }).id;
+
+    expect(consumer.consume(delivery).status).toBe("failed");
+    const failedReplay = await consumer.replayDeadLetter(deliveryId);
+    expect(failedReplay).toMatchObject({ attempt: 2, replayed: true, status: "failed" });
+
+    const nextAttemptAt = database.prepare("SELECT next_attempt_at FROM deliveries").get() as {
+      next_attempt_at: string;
+    };
+    clock.advance(Date.parse(nextAttemptAt.next_attempt_at) - clock.now().getTime() + 1);
+    const automaticRetry = claimDueDeliveries(database, clock)[0]!;
+    expect(automaticRetry.replayed).toBe(false);
+
+    const completed = consumer.consume(automaticRetry);
+    expect(completed).toMatchObject({
+      status: "completed",
+      executionSummary: { attempt: 3, replayed: false },
+    });
+    expect(
+      database.prepare("SELECT attempt, replayed, status FROM executions ORDER BY attempt").all(),
+    ).toEqual([
+      { attempt: 1, replayed: 0, status: "failed" },
+      { attempt: 2, replayed: 1, status: "failed" },
+      { attempt: 3, replayed: 0, status: "completed" },
+    ]);
+    expect(database.prepare("SELECT COUNT(*) AS n FROM dead_letters").get()).toEqual({ n: 0 });
   });
 
   it("a failure while recording a handler failure surfaces as a labeled EngineError instead of the raw constraint error, and does not lose the original handler failure", () => {
