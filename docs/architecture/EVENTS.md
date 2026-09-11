@@ -111,7 +111,7 @@ L'Inbox possède une contrainte unique `(consumer_instance_id, event_id)`. Une r
 - Erreurs de validation ou permission : non retryables.
 - Erreurs réseau/transitoires : retryables.
 - Après épuisement : dead letter avec erreur nettoyée, tentative, timestamps et lien d'exécution.
-- Le replay est une action explicite, auditée et réutilise l'idempotency key.
+- Le replay est une action explicite, auditée par une Execution marquée `replayed`, et réutilise l'idempotency key de l'Event original.
 
 La politique pure est portée par `packages/eventing/src/retry-policy.ts` :
 

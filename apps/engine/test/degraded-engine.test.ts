@@ -75,6 +75,14 @@ describe("engine with an unavailable database", () => {
     expect(((await deadLettersResponse.json()) as { error: { code: string } }).error.code).toBe(
       "engine.database-unavailable",
     );
+
+    const replayResponse = await engine.call("/v1/dead-letters/delivery-a/replay", {
+      method: "POST",
+    });
+    expect(replayResponse.status).toBe(503);
+    expect(((await replayResponse.json()) as { error: { code: string } }).error.code).toBe(
+      "engine.database-unavailable",
+    );
   });
 
   it("keeps discovery working: it inspects the filesystem, not the database", async () => {

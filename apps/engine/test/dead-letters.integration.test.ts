@@ -73,6 +73,47 @@ describe("dead-letter Local API", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ items: [] });
   });
+
+  it("replays a listed Dead Letter through the authenticated Local API", async () => {
+    const engine = await startEngine({
+      enginePath: testBundlePath,
+      env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
+    });
+    engines.push(engine);
+    await createProject(engine, "replay-project");
+    await failEvent(engine, "replay-project", "replay-me");
+
+    const listed = await engine.call("/v1/projects/replay-project/dead-letters");
+    const body = (await listed.json()) as { readonly items: readonly DeadLetterItem[] };
+    const deliveryId = body.items[0]!.deliveryId;
+    const replay = await engine.call(`/v1/dead-letters/${encodeURIComponent(deliveryId)}/replay`, {
+      method: "POST",
+    });
+    expect(replay.status, await replay.clone().text()).toBe(202);
+    expect(await replay.json()).toMatchObject({
+      status: "failed",
+      attempt: 2,
+      inputEventId: body.items[0]!.eventId,
+    });
+
+    const afterReplay = await engine.call("/v1/projects/replay-project/dead-letters");
+    expect((await afterReplay.json()) as { items: readonly DeadLetterItem[] }).toMatchObject({
+      items: [expect.objectContaining({ attempts: 2 })],
+    });
+
+    const unknown = await engine.call("/v1/dead-letters/missing-delivery/replay", {
+      method: "POST",
+    });
+    expect(unknown.status).toBe(404);
+    expect(((await unknown.json()) as { error: { code: string } }).error.code).toBe(
+      "delivery.not-found",
+    );
+    const unauthenticated = await engine.callUnauthenticated(
+      `/v1/dead-letters/${encodeURIComponent(deliveryId)}/replay`,
+      { method: "POST" },
+    );
+    expect(unauthenticated.status).toBe(401);
+  });
 });
 
 async function createProject(engine: Harness, id: string): Promise<void> {

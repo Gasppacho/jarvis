@@ -781,6 +781,99 @@ describe("DeliveryConsumer", () => {
     expect(database.prepare("SELECT COUNT(*) AS n FROM dead_letters").get()).toEqual({ n: 1 });
   });
 
+  it("replays a dead letter with the same event and a marked next attempt", async () => {
+    let calls = 0;
+    let allowSuccess = false;
+    const seenEventIds: string[] = [];
+    const handler = (context: ModuleHandlerContext) => {
+      calls += 1;
+      seenEventIds.push(context.event.id);
+      if (!allowSuccess) {
+        throw Object.assign(new Error("provider rejected the request"), {
+          code: "provider.invalid",
+          retryable: false,
+        });
+      }
+      return { accepted: true };
+    };
+    const harnessState = harness(() => handler);
+    const { db: database, store, publisher, dispatcher, consumer } = harnessState;
+    activate(store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+    const event = publisher.publish(pingInput("project-a"));
+    dispatcher.dispatchPending();
+    const delivery = {
+      projectId: "project-a",
+      moduleInstanceId: "probe-1",
+      moduleId: SAMPLE_PROBE_MODULE_ID,
+      eventId: event.id,
+    };
+    const deliveryId = (
+      database.prepare("SELECT id FROM deliveries WHERE event_id = ?").get(event.id) as {
+        id: string;
+      }
+    ).id;
+
+    expect(consumer.consume(delivery).status).toBe("failed");
+    allowSuccess = true;
+    const replay = await consumer.replayDeadLetter(deliveryId);
+
+    expect(replay).toMatchObject({ attempt: 2, status: "completed", inputEventId: event.id });
+    expect(seenEventIds).toEqual([event.id, event.id]);
+    expect(calls).toBe(2);
+    expect(
+      database.prepare("SELECT attempt, replayed, status FROM executions ORDER BY attempt").all(),
+    ).toEqual([
+      { attempt: 1, replayed: 0, status: "failed" },
+      { attempt: 2, replayed: 1, status: "completed" },
+    ]);
+    expect(database.prepare("SELECT attempt FROM inbox").get()).toEqual({ attempt: 2 });
+    expect(database.prepare("SELECT COUNT(*) AS n FROM dead_letters").get()).toEqual({ n: 0 });
+    await expect(consumer.replayDeadLetter(deliveryId)).rejects.toMatchObject({
+      code: "delivery.not-found",
+    });
+    expect(calls).toBe(2);
+  });
+
+  it("returns a failed replay to the normal dead-letter path", async () => {
+    const handler = () => {
+      throw Object.assign(new Error("still unavailable"), {
+        code: "provider.unavailable",
+        retryable: false,
+      });
+    };
+    const harnessState = harness(() => handler);
+    const { db: database, store, publisher, dispatcher, consumer } = harnessState;
+    activate(store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+    const event = publisher.publish(pingInput("project-a"));
+    dispatcher.dispatchPending();
+    const delivery = {
+      projectId: "project-a",
+      moduleInstanceId: "probe-1",
+      moduleId: SAMPLE_PROBE_MODULE_ID,
+      eventId: event.id,
+    };
+    const deliveryId = (
+      database.prepare("SELECT id FROM deliveries WHERE event_id = ?").get(event.id) as {
+        id: string;
+      }
+    ).id;
+    consumer.consume(delivery);
+
+    const replay = await consumer.replayDeadLetter(deliveryId);
+    expect(replay).toMatchObject({ attempt: 2, status: "failed" });
+    expect(database.prepare("SELECT attempts FROM dead_letters").get()).toEqual({ attempts: 2 });
+    expect(database.prepare("SELECT replayed FROM executions WHERE attempt = 2").get()).toEqual({
+      replayed: 1,
+    });
+    await expect(consumer.replayDeadLetter("missing-delivery")).rejects.toMatchObject({
+      code: "delivery.not-found",
+    });
+  });
+
   it("a failure while recording a handler failure surfaces as a labeled EngineError instead of the raw constraint error, and does not lose the original handler failure", () => {
     const { db: database, store, publisher, dispatcher, consumer } = harness();
     activate(store, "project-a", [

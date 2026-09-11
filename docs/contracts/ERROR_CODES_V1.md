@@ -57,6 +57,7 @@ Errors crossing the Local API or stored as terminal Execution errors use stable 
 | `event.payload-invalid` | No | Payload contract validation failed |
 | `event.type-not-declared` | No | Module attempted an undeclared publication |
 | `delivery.handler-failed` | Depends | Handler failed before terminal classification |
+| `delivery.not-found` | No | No Dead Letter exists with the requested Delivery ID |
 | `delivery.retry-exhausted` | No | Retry limit reached; delivery is dead-lettered |
 | `delivery.partition-busy` | Yes | Another worker holds the partition lease |
 

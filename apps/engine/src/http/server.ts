@@ -19,7 +19,10 @@ import {
 } from "../test-support/durability-test-routes.js";
 import { registerStreamRoutes } from "../stream/routes.js";
 import type { LiveUpdateHub } from "../stream/hub.js";
-import type { ExecutionCancellationPort } from "../executions/delivery-consumer.js";
+import type {
+  DeadLetterReplayPort,
+  ExecutionCancellationPort,
+} from "../executions/delivery-consumer.js";
 import { CORRELATION_HEADER } from "./correlation.js";
 import { registerRuntimeRoutes, type LocalRuntimeRegistry } from "../runtimes/routes.js";
 import {
@@ -53,6 +56,7 @@ export interface ServerDependencies {
   readonly onShutdownRequested: () => void;
   /** Engine-owned execution control; HTTP does not depend on ProjectService. */
   readonly executionCancellation: ExecutionCancellationPort | undefined;
+  readonly deadLetterReplay: DeadLetterReplayPort | undefined;
   /** Ticket #60: one per Engine Session, fed by the dispatch loop after a
    * commit. Registered unconditionally — `GET /v1/stream` exists even while
    * the engine runs degraded, the same as `/v1/health` — but it only ever
@@ -170,6 +174,18 @@ export function buildServer(deps: ServerDependencies): FastifyInstance {
     }
     const params = request.params as { executionId?: unknown } | undefined;
     return reply.code(202).send(deps.executionCancellation.cancelExecution(params?.executionId));
+  });
+
+  app.post("/v1/dead-letters/:deliveryId/replay", async (request, reply) => {
+    if (deps.databaseState() !== "ready" || deps.deadLetterReplay === undefined) {
+      throw new EngineError(
+        "engine.database-unavailable",
+        503,
+        "The local database is unavailable; execution operations are suspended until it recovers.",
+      );
+    }
+    const params = request.params as { deliveryId?: unknown } | undefined;
+    return reply.code(202).send(await deps.deadLetterReplay.replayDeadLetter(params?.deliveryId));
   });
 
   registerStreamRoutes(app, deps.liveUpdates);

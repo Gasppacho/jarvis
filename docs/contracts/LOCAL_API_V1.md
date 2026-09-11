@@ -159,8 +159,9 @@ lit `events`, l'Execution Ledger lit `executions`, et ni l'une ni l'autre opéra
 la table de l'autre contexte directement — la corrélation d'une Execution est obtenue en
 demandant à Eventing, jamais en lisant `events` depuis l'Execution Ledger.
 
-La cancellation, les dead letters et le replay ne sont pas introduits par ce ticket
-(#17, #18).
+La cancellation, les dead letters et le replay sont exposés par les opérations
+déclarées dans OpenAPI : `GET /v1/projects/{projectId}/dead-letters` et
+`POST /v1/dead-letters/{deliveryId}/replay`.
 
 ### Stream
 

@@ -24,6 +24,7 @@ export type ErrorCode =
   | "execution.not-found"
   | "execution.not-cancellable"
   | "event.envelope-invalid"
+  | "delivery.not-found"
   | "system.internal-error"
   | "system.storage-unavailable";
 

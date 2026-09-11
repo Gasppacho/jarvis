@@ -93,6 +93,7 @@ export interface ClaimedDelivery {
   readonly moduleId: string;
   readonly eventId: string;
   readonly leaseOwner?: string;
+  readonly replayed?: boolean;
 }
 
 export interface ConsumeResult {
@@ -125,6 +126,12 @@ export interface ExecutionCancellationPort {
   cancelExecution(executionId: unknown): LedgerExecutionSummary;
 }
 
+export interface DeadLetterReplayPort {
+  replayDeadLetter(
+    deliveryId: unknown,
+  ): Promise<LedgerExecutionSummary & { readonly correlationId: string }>;
+}
+
 interface ActiveExecution {
   readonly projectId: string;
   readonly controller: AbortController;
@@ -141,12 +148,28 @@ interface ExecutionRow {
   readonly input_event_id: string;
 }
 
+interface ReplayDeadLetterRow {
+  readonly deliveryId: string;
+  readonly projectId: string;
+  readonly eventId: string;
+  readonly moduleInstanceId: string;
+  readonly moduleId: string;
+  readonly attempts: number;
+  readonly code: string;
+  readonly message: string;
+  readonly lastExecutionId: string;
+  readonly createdAt: string;
+  readonly consumedAt: string | null;
+  readonly nextAttemptAt: string | null;
+  readonly attemptCount: number;
+}
+
 /**
  * Ticket #57: one claimed Delivery in, one terminal Execution and Inbox
  * record out. The handler's own state changes and published Outbox rows share
  * the same transaction as the terminal Inbox and Execution records.
  */
-export class DeliveryConsumer implements ExecutionCancellationPort {
+export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterReplayPort {
   private readonly activeExecutions = new Map<string, ActiveExecution>();
   private readonly checkpointStore: ExecutionCheckpointStore;
 
@@ -402,6 +425,112 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     return this.consume(delivery);
   }
 
+  public async replayDeadLetter(
+    deliveryId: unknown,
+  ): Promise<LedgerExecutionSummary & { readonly correlationId: string }> {
+    if (typeof deliveryId !== "string" || deliveryId.length === 0) {
+      throw new EngineError(
+        "delivery.not-found",
+        404,
+        "No Dead Letter with the requested ID exists.",
+      );
+    }
+    const row = this.db
+      .prepare(
+        "SELECT dead_letters.delivery_id AS deliveryId, dead_letters.project_id AS projectId, " +
+          "dead_letters.event_id AS eventId, dead_letters.module_instance_id AS moduleInstanceId, " +
+          "deliveries.module_id AS moduleId, dead_letters.attempts, dead_letters.code, " +
+          "dead_letters.message, dead_letters.last_execution_id AS lastExecutionId, " +
+          "dead_letters.created_at AS createdAt, deliveries.consumed_at AS consumedAt, " +
+          "deliveries.next_attempt_at AS nextAttemptAt, deliveries.attempt_count AS attemptCount " +
+          "FROM dead_letters INNER JOIN deliveries ON deliveries.id = dead_letters.delivery_id " +
+          "WHERE dead_letters.delivery_id = @deliveryId",
+      )
+      .get({ deliveryId }) as ReplayDeadLetterRow | undefined;
+    if (row === undefined) {
+      throw new EngineError(
+        "delivery.not-found",
+        404,
+        "No Dead Letter with the requested ID exists.",
+      );
+    }
+
+    this.db.transaction(() => {
+      this.db
+        .prepare("DELETE FROM dead_letters WHERE delivery_id = @deliveryId")
+        .run({ deliveryId });
+      this.db
+        .prepare(
+          "UPDATE deliveries SET consumed_at = NULL, next_attempt_at = NULL, lease_owner = NULL, lease_expires_at = NULL WHERE id = @deliveryId AND consumed_at IS NOT NULL",
+        )
+        .run({ deliveryId });
+    })();
+
+    const delivery: ClaimedDelivery = {
+      projectId: row.projectId,
+      moduleInstanceId: row.moduleInstanceId,
+      moduleId: row.moduleId,
+      eventId: row.eventId,
+      replayed: true,
+    };
+    try {
+      const outcome = await this.consumeAsync(delivery);
+      if (outcome.executionSummary === null) {
+        throw new EngineError(
+          "system.internal-error",
+          500,
+          "Dead Letter replay did not create a new Execution.",
+        );
+      }
+      return outcome.executionSummary;
+    } catch (error) {
+      const currentDelivery = this.db
+        .prepare(
+          "SELECT consumed_at AS consumedAt, next_attempt_at AS nextAttemptAt FROM deliveries WHERE id = @deliveryId",
+        )
+        .get({ deliveryId: row.deliveryId }) as
+        { readonly consumedAt: string | null; readonly nextAttemptAt: string | null } | undefined;
+      if (
+        this.readDeadLetter(delivery) === undefined &&
+        currentDelivery?.consumedAt === null &&
+        currentDelivery.nextAttemptAt === null
+      ) {
+        this.db.transaction(() => {
+          this.db
+            .prepare(
+              "INSERT INTO dead_letters " +
+                "(delivery_id, project_id, event_id, module_instance_id, code, message, attempts, last_execution_id, created_at) " +
+                "VALUES (@deliveryId, @projectId, @eventId, @moduleInstanceId, @code, @message, @attempts, @lastExecutionId, @createdAt) " +
+                "ON CONFLICT (delivery_id) DO NOTHING",
+            )
+            .run({
+              deliveryId: row.deliveryId,
+              projectId: row.projectId,
+              eventId: row.eventId,
+              moduleInstanceId: row.moduleInstanceId,
+              code: row.code,
+              message: row.message,
+              attempts: row.attempts,
+              lastExecutionId: row.lastExecutionId,
+              createdAt: row.createdAt,
+            });
+          this.db
+            .prepare(
+              "UPDATE deliveries SET consumed_at = @consumedAt, next_attempt_at = @nextAttemptAt, attempt_count = @attemptCount " +
+                "WHERE id = @deliveryId AND consumed_at IS NULL AND next_attempt_at IS NULL",
+            )
+            .run({
+              deliveryId: row.deliveryId,
+              consumedAt: row.consumedAt,
+              nextAttemptAt: row.nextAttemptAt,
+              attemptCount: row.attemptCount,
+            });
+        })();
+      }
+      throw error;
+    }
+  }
+
   private commitAsyncSuccess(
     delivery: ClaimedDelivery,
     envelope: EventEnvelope,
@@ -576,7 +705,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
           this.insertDeadLetter(delivery, "delivery.retry-exhausted", message, attempt, row.id);
           this.markDeliveryConsumed(delivery, attempt);
         } else {
-          this.insertDeadLetter(delivery, classification.code, message, 1, row.id);
+          this.insertDeadLetter(delivery, classification.code, message, attempt, row.id);
           this.markDeliveryConsumed(delivery, attempt);
         }
         return row;
@@ -987,9 +1116,9 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
     this.db
       .prepare(
         `INSERT INTO executions
-           (id, project_id, module_instance_id, module_id, input_event_id, attempt, status, error, started_at, completed_at, created_at)
+           (id, project_id, module_instance_id, module_id, input_event_id, attempt, replayed, status, error, started_at, completed_at, created_at)
          VALUES
-           (@id, @projectId, @moduleInstanceId, @moduleId, @inputEventId, @attempt, @status, @error, @startedAt, @completedAt, @startedAt)`,
+           (@id, @projectId, @moduleInstanceId, @moduleId, @inputEventId, @attempt, @replayed, @status, @error, @startedAt, @completedAt, @startedAt)`,
       )
       .run({
         id,
@@ -998,6 +1127,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort {
         moduleId: delivery.moduleId,
         inputEventId: envelope.id,
         attempt,
+        replayed: delivery.replayed === true ? 1 : 0,
         status,
         error,
         startedAt,

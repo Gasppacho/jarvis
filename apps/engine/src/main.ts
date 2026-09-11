@@ -378,6 +378,7 @@ async function main(): Promise<void> {
   }
   let durabilityTestHooks: DurabilityTestHooks | undefined;
   let executionCancellation: ExecutionCancellationPort | undefined;
+  let deadLetterReplay: DeliveryConsumer | undefined;
   const githubPollIntervalMs =
     typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__
       ? parsePositiveMilliseconds(process.env["JARVIS_GITHUB_POLL_INTERVAL_MS"])
@@ -503,6 +504,7 @@ async function main(): Promise<void> {
       capabilities.resolve.bind(capabilities),
     );
     executionCancellation = consumer;
+    deadLetterReplay = consumer;
     const deliveryLeaseMs =
       parseLeaseMs(process.env["JARVIS_DELIVERY_LEASE_MS"]) ?? DEFAULT_DELIVERY_LEASE_MS;
     stopEventLoop = startEventLoop({
@@ -546,6 +548,7 @@ async function main(): Promise<void> {
     modules,
     isShuttingDown: () => shuttingDown,
     executionCancellation,
+    deadLetterReplay,
     onShutdownRequested: () => {
       void shutdown(0);
     },
