@@ -746,10 +746,8 @@ describe("DeliveryConsumer", () => {
     });
     expect(
       database.prepare("SELECT status, COUNT(*) AS n FROM executions GROUP BY status").all(),
-    ).toEqual([
-      { status: "completed", n: 1 },
-      { status: "running", n: 1 },
-    ]);
+    ).toEqual([{ status: "completed", n: 1 }]);
+    expect(database.prepare("SELECT attempt FROM executions").all()).toEqual([{ attempt: 1 }]);
   });
 
   it("dead-letters a retryable Delivery exactly once when its attempts are exhausted", () => {
