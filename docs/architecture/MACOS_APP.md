@@ -62,6 +62,7 @@ Jarvis.app/Contents/
 │   ├── modules/
 │   ├── contracts/
 │   └── migrations/
+├── Resources/build-manifest.json
 └── Frameworks/
 ```
 
@@ -118,18 +119,30 @@ Elles contiennent projet et résumé, jamais ticket privé complet, diff ou secr
 ## Packaging pipeline
 
 Le bundle est assemblé par `scripts/build-app.sh` depuis le binaire SwiftPM et
-`dist/engine/` (ADR 0013). Le script assemble et ne signe pas ; la signature et
-la notarisation appartiennent au ticket 19.
+`dist/engine/` (ADR 0013). Le script écrit aussi
+`Contents/Resources/build-manifest.json` depuis l'artefact assemblé : versions
+UI/Engine/API/schema/Node et commit de build, sans chemin absolu ni secret. Le
+format est défini par `contracts/schemas/build-manifest.v1.schema.json`.
+script assemble et ne signe pas. La chaîne du ticket 19 est portée par les
+scripts suivants ; `scripts/release.sh` les orchestre dans cet ordre :
 
+1. `pnpm run build:app` appelle [`scripts/build-app.sh`](../../scripts/build-app.sh) en profil production.
+2. [`scripts/sign-app.sh`](../../scripts/sign-app.sh) signe les Mach-O imbriqués, puis `Jarvis.app`, avec hardened runtime.
+3. [`scripts/smoke-bundle.sh`](../../scripts/smoke-bundle.sh) exécute `--step launch`, `--step import` et `--step recovery`.
+4. [`scripts/build-dmg.sh`](../../scripts/build-dmg.sh) produit une DMG UDZO signée et vérifie son contenu monté en lecture seule.
+5. [`scripts/notarize-dmg.sh`](../../scripts/notarize-dmg.sh) soumet la DMG, attend le verdict Apple, agrafe puis valide le ticket.
+6. [`scripts/release.sh`](../../scripts/release.sh) compose les étapes précédentes et s'arrête au premier échec.
+7. La validation Gatekeeper et l'installation restent manuelles sur un compte/machine propre après obtention d'une DMG notariée et agrafée.
 
-1. Build Swift Release arm64.
-2. Bundle Node LTS officiel, engine JS, schemas, migrations et modules.
-3. Rebuild/package native addons pour la cible.
-4. Sign nested code puis `Jarvis.app` avec hardened runtime.
-5. Exécuter smoke tests du bundle.
-6. Créer DMG signé.
-7. Soumettre à notarisation et stapler le ticket.
-8. Vérifier Gatekeeper sur une machine propre.
+Les preuves locales sont ad hoc : la signature actuelle est vérifiable avec
+`codesign`, et les tests [`scripts/build-dmg.test.sh`](../../scripts/build-dmg.test.sh),
+[`scripts/notarize-dmg.test.sh`](../../scripts/notarize-dmg.test.sh) et
+[`scripts/release.test.sh`](../../scripts/release.test.sh) passent avec leurs
+seams de test. La notarisation Apple réelle, le ticket agrafé et Gatekeeper ne
+sont pas prouvés : le poste n'a ni identité Developer ID/credentials de
+notarisation ni compte/machine propre. La production est donc bloquée jusqu'à
+la soumission Apple acceptée, la validation `xcrun stapler validate` et le
+smoke complet après installation propre.
 
 ## Update strategy
 

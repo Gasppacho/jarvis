@@ -22,7 +22,7 @@ No third-party state-management framework is required for the MVP. Feature-scope
 
 | Need | Baseline |
 |---|---|
-| Runtime | Bundled Node.js 24 LTS |
+| Runtime | Bundled Node.js 24 LTS; the exact patch is declared in `apps/engine/scripts/bundle-runtime.mjs` |
 | Package manager | pnpm workspace with committed lockfile |
 | Language | TypeScript strict, ESM |
 | HTTP | Fastify 5, loopback only |
@@ -67,8 +67,10 @@ Use the system Git executable through a safe adapter and absolute path detection
 
 ```text
 dist/engine/engine.bundle.mjs
+dist/engine/engine.bundle.mjs.map
 dist/engine/node
 dist/engine/native/better_sqlite3.node
+dist/engine/module-registry.json
 dist/engine/modules/*
 dist/engine/contracts/*
 dist/engine/migrations/*

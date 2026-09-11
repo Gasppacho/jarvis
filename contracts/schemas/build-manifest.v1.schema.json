@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jarvis.dev/schemas/build-manifest.v1.schema.json",
+  "title": "Jarvis Build Manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "appVersion",
+    "engineVersion",
+    "apiVersion",
+    "schemaVersion",
+    "nodeVersion",
+    "buildCommit"
+  ],
+  "properties": {
+    "appVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"
+    },
+    "engineVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"
+    },
+    "apiVersion": {
+      "type": "string",
+      "pattern": "^v[0-9]+$"
+    },
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^[0-9]{4}_[a-z0-9-]+$"
+    },
+    "nodeVersion": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "buildCommit": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    }
+  }
+}

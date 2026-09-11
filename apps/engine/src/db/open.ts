@@ -4,6 +4,7 @@ import {
   chmodSync,
   closeSync,
   constants as fsConstants,
+  existsSync,
   fchmodSync,
   fstatSync,
   lstatSync,
@@ -37,6 +38,18 @@ export interface OpenedDatabase {
  * from the current working directory.
  */
 const MIGRATIONS_DIR = fileURLToPath(new URL("./migrations/", import.meta.url));
+const SQLITE_NATIVE_BINDING_PATH = fileURLToPath(
+  new URL("./native/better_sqlite3.node", import.meta.url),
+);
+
+/**
+ * Vitest imports this module from TypeScript, where the installed package is
+ * the test fixture. The assembled Engine is an `.mjs` bundle and must load the
+ * signed addon beside that bundle instead of asking Node to search.
+ */
+const IS_BUNDLED_RUNTIME = import.meta.url.endsWith(".mjs");
+
+declare const __JARVIS_TEST_HOOKS__: boolean | undefined;
 
 export function openDatabase(databasePath: string, preparedDataRoot?: string): OpenedDatabase {
   // Order matters: the data root is made private to this user first, so nothing
@@ -50,8 +63,12 @@ export function openDatabase(databasePath: string, preparedDataRoot?: string): O
 
   // TECHNOLOGY_STACK.md: the persistence layer accepts an explicit addon path,
   // because the packaged app signs and relocates the native binding.
-  const nativeBinding = process.env["JARVIS_SQLITE_ADDON"];
-  const db = new Database(canonicalPath, nativeBinding === undefined ? {} : { nativeBinding });
+  const nativeBinding = IS_BUNDLED_RUNTIME
+    ? SQLITE_NATIVE_BINDING_PATH
+    : typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__
+      ? process.env["JARVIS_SQLITE_ADDON"]
+      : undefined;
+  const db = openSqliteDatabase(canonicalPath, nativeBinding);
   try {
     return { ...prepare(db, canonicalPath), dataRoot };
   } catch (error) {
@@ -65,6 +82,25 @@ export function openDatabase(databasePath: string, preparedDataRoot?: string): O
       /* the original error below is the useful one */
     }
     throw error;
+  }
+}
+
+function openSqliteDatabase(
+  databasePath: string,
+  nativeBinding: string | undefined,
+): Database.Database {
+  if (nativeBinding !== undefined && !existsSync(nativeBinding)) {
+    throw new Error(`The SQLite native addon is missing. Expected it at ${nativeBinding}.`);
+  }
+
+  try {
+    return new Database(databasePath, nativeBinding === undefined ? {} : { nativeBinding });
+  } catch (error) {
+    if (nativeBinding === undefined) throw error;
+    throw new Error(
+      `The SQLite native addon could not be loaded from ${nativeBinding}: ${String(error)}`,
+      { cause: error },
+    );
   }
 }
 

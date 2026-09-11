@@ -121,6 +121,13 @@ export class ProjectService implements ProjectRegistry<
     }
 
     const discovery = discoverRepository(repositoryPath);
+    if (!discovery.isGitRepository) {
+      throw new EngineError(
+        "repository.not-git",
+        400,
+        `The directory "${repositoryPath}" is not a Git repository.`,
+      );
+    }
     const resolved = resolvePortableConfig(repositoryPath, request.portableConfig, discovery);
     const portableConfig = resolved.configuration;
     if (!resolved.isDiscoveredDraft) {

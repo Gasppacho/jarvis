@@ -18,7 +18,7 @@
     "test": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
     "build:engine": "pnpm --filter @jarvis/engine run build",
-    "build:app": "pnpm build:engine && bash scripts/build-app.sh",
+    "build:app": "JARVIS_BUILD_PROFILE=production pnpm build:engine && bash scripts/build-app.sh release && pnpm build:engine",
     "test:swift": "swift test --package-path apps/macos",
     "verify": "pnpm generate:check && pnpm contracts:check && pnpm lint && pnpm typecheck && pnpm arch:check && pnpm build:engine && pnpm test && pnpm test:integration && pnpm build:app && pnpm test:swift"
   },

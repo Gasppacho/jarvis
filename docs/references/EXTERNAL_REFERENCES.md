@@ -25,7 +25,7 @@ The pack follows their current conventions: per-repo setup, concise context poin
 - [Node.js release schedule](https://nodejs.org/en/about/previous-releases)
 - [Official MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
 
-The chosen baseline is Node.js 24 LTS embedded in the app. Pin the exact patch version in build tooling and update it through the release process.
+The chosen baseline is Node.js 24 LTS embedded in the app. The exact patch version is declared in `apps/engine/scripts/bundle-runtime.mjs` and updated through the release process.
 
 ## API contract
 

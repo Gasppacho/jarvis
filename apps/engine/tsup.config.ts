@@ -1,18 +1,26 @@
 import { rmSync } from "node:fs";
 import { createRequire } from "node:module";
+import { join } from "node:path";
 import { defineConfig, type Options } from "tsup";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const manifest = require("./package.json") as { version: string };
 const bundledModules = require("./bundled-modules.json") as Readonly<Record<string, string>>;
+const productionBuild = process.env["JARVIS_BUILD_PROFILE"] === "production";
+const distEngine = fileURLToPath(new URL("../../dist/engine/", import.meta.url));
 
 // tsup's shared outDir also carries build-time registered official packages.
 // Clear only their generated code before entry discovery so removed packages
 // cannot survive in a later bundle.
-rmSync("../../dist/engine/modules", { recursive: true, force: true });
+rmSync(join(distEngine, "modules"), { recursive: true, force: true });
+if (productionBuild) {
+  rmSync(join(distEngine, "engine.test-bundle.mjs"), { force: true });
+  rmSync(join(distEngine, "engine.test-bundle.mjs.map"), { force: true });
+}
 
-// TECHNOLOGY_STACK.md: deterministic bundle, native addon kept external so the
-// release pipeline can sign `better_sqlite3.node` on its own.
+// TECHNOLOGY_STACK.md: deterministic bundle, driver JavaScript bundled while
+// the native addon is copied separately so the release pipeline can sign it.
 const shared: Options = {
   outDir: "../../dist/engine",
   format: ["esm"],
@@ -22,11 +30,9 @@ const shared: Options = {
   splitting: false,
   sourcemap: true,
   clean: false,
-  // Everything is bundled except the native SQLite addon, so `dist/engine/`
-  // needs no pnpm store at runtime. `noExternal` wins over `external` in tsup,
-  // so the driver is excluded by the pattern itself.
-  noExternal: [/^(?!better-sqlite3).+/],
-  external: ["better-sqlite3"],
+  // Bundle the driver JavaScript; only its native addon is copied separately
+  // into dist/engine/native by bundle-runtime.mjs.
+  noExternal: [/./],
   define: { __ENGINE_VERSION__: JSON.stringify(manifest.version) },
   // Bundled CommonJS dependencies call `require` for Node builtins. An ESM
   // bundle has none, so give them a real one instead of esbuild's throwing shim.
@@ -64,14 +70,18 @@ export default defineConfig([
     // The artifact scripts/build-app.sh packages into Jarvis.app. Never true.
     define: { ...shared.define, __JARVIS_TEST_HOOKS__: "false" },
   },
-  {
-    ...shared,
-    // Ticket #58 review fix: the Application Harness (apps/engine/test/
-    // harness.ts) needs a build that genuinely has the failpoint/test-hooks
-    // code, since the production entry above no longer does. Lands beside
-    // the production entry in dist/engine/, so scripts/build-app.sh must
-    // (and does) strip this file explicitly before assembling Jarvis.app.
-    entry: { "engine.test-bundle": "src/main.ts" },
-    define: { ...shared.define, __JARVIS_TEST_HOOKS__: "true" },
-  },
+  ...(!productionBuild
+    ? [
+        {
+          ...shared,
+          // Ticket #58 review fix: the Application Harness (apps/engine/test/
+          // harness.ts) needs a build that genuinely has the failpoint/test-hooks
+          // code, since the production entry above no longer does. Lands beside
+          // the production entry in dist/engine/, so scripts/build-app.sh must
+          // (and does) strip this file explicitly before assembling Jarvis.app.
+          entry: { "engine.test-bundle": "src/main.ts" },
+          define: { ...shared.define, __JARVIS_TEST_HOOKS__: "true" },
+        },
+      ]
+    : []),
 ]);
