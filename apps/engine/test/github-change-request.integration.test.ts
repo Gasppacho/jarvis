@@ -297,6 +297,16 @@ esac
     try {
       expect(
         beforeRestart
+          .prepare("SELECT COUNT(*) AS count FROM events WHERE project_id = ?")
+          .get(project.id),
+      ).toEqual({ count: 1 });
+      expect(
+        beforeRestart
+          .prepare("SELECT COUNT(*) AS count FROM deliveries WHERE project_id = ? AND event_id = ?")
+          .get(project.id, published.id),
+      ).toEqual({ count: 1 });
+      expect(
+        beforeRestart
           .prepare(
             `SELECT status, resource_ref FROM external_mappings
              WHERE project_id = 'project-recovery' AND module_instance_id = 'github'`,
@@ -314,8 +324,14 @@ esac
       expect(beforeRestart.prepare("SELECT status FROM executions").get()).toEqual({
         status: "running",
       });
-      expect(beforeRestart.prepare("SELECT consumed_at FROM deliveries").get()).toEqual({
+      expect(
+        beforeRestart
+          .prepare("SELECT consumed_at, lease_owner, lease_expires_at FROM deliveries")
+          .get(),
+      ).toMatchObject({
         consumed_at: null,
+        lease_owner: expect.any(String),
+        lease_expires_at: expect.any(String),
       });
     } finally {
       beforeRestart.close();
@@ -388,6 +404,16 @@ esac
           .prepare("SELECT attempt, COUNT(*) AS count FROM executions GROUP BY attempt")
           .all(),
       ).toEqual([{ attempt: 1, count: 1 }]);
+      expect(
+        recovered
+          .prepare("SELECT COUNT(*) AS count FROM events WHERE project_id = ?")
+          .get(project.id),
+      ).toEqual({ count: 2 });
+      expect(
+        recovered
+          .prepare("SELECT COUNT(*) AS count FROM deliveries WHERE project_id = ? AND event_id = ?")
+          .get(project.id, published.id),
+      ).toEqual({ count: 1 });
     } finally {
       recovered.close();
     }
@@ -471,6 +497,7 @@ esac
 
     const leaseHeld = new Database(join(dataRoot, "jarvis.sqlite"));
     let leaseOwner: string;
+    let leaseExpiresAt: string;
     try {
       const delivery = leaseHeld
         .prepare(
@@ -488,6 +515,7 @@ esac
       expect(delivery.lease_expires_at).not.toBeNull();
       expect(Date.parse(delivery.lease_expires_at!)).toBeGreaterThan(Date.now());
       leaseOwner = delivery.lease_owner!;
+      leaseExpiresAt = delivery.lease_expires_at!;
       expect(
         leaseHeld.prepare("SELECT attempt, status FROM executions ORDER BY attempt, id").all(),
       ).toEqual([
@@ -510,13 +538,29 @@ esac
     });
     engines.push(restarted);
 
+    // The restarted loop ticks every 200ms, but the killed worker's Delivery
+    // lease is still live. Several ticks must observe the same owner before
+    // expiry; claiming it here would create a second worker for attempt 2.
+    await new Promise((resolve) => setTimeout(resolve, 400));
     const whileLeaseIsLive = new Database(join(dataRoot, "jarvis.sqlite"));
     try {
-      expect(whileLeaseIsLive.prepare("SELECT lease_owner FROM deliveries").get()).toEqual({
+      expect(
+        whileLeaseIsLive
+          .prepare(
+            "SELECT attempt_count, consumed_at, lease_owner, lease_expires_at FROM deliveries",
+          )
+          .get(),
+      ).toEqual({
+        attempt_count: 1,
+        consumed_at: null,
         lease_owner: leaseOwner,
+        lease_expires_at: leaseExpiresAt,
       });
       expect(whileLeaseIsLive.prepare("SELECT COUNT(*) AS count FROM executions").get()).toEqual({
         count: 2,
+      });
+      expect(whileLeaseIsLive.prepare("SELECT COUNT(*) AS count FROM inbox").get()).toEqual({
+        count: 0,
       });
     } finally {
       whileLeaseIsLive.close();
@@ -560,6 +604,16 @@ esac
           )
           .get(published.id),
       ).toMatchObject({ attempt_count: 2, consumed_at: expect.any(String) });
+      expect(
+        recovered
+          .prepare("SELECT COUNT(*) AS count FROM events WHERE project_id = ?")
+          .get(project.id),
+      ).toEqual({ count: 2 });
+      expect(
+        recovered
+          .prepare("SELECT COUNT(*) AS count FROM deliveries WHERE project_id = ? AND event_id = ?")
+          .get(project.id, published.id),
+      ).toEqual({ count: 1 });
     } finally {
       recovered.close();
     }
