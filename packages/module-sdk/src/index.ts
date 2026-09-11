@@ -69,6 +69,19 @@ export interface GitHubApi {
   get(path: string): Promise<GitHubApiResponse>;
 }
 
+/** Provider-neutral Work Item details exposed through a project-bound adapter. */
+export interface WorkItem {
+  readonly ref: string;
+  readonly number: number;
+  readonly title: string;
+  readonly body: string;
+  readonly state: "open" | "closed";
+}
+
+export interface WorkItemsCapability {
+  read(ref: string): Promise<WorkItem>;
+}
+
 export interface ExternalMappingRecord {
   readonly status: "attempted" | "completed";
   readonly resourceRef?: string;
@@ -106,6 +119,7 @@ export interface ModuleHandlerCapabilities {
   readonly externalMappings?: ExternalMappingCapability;
   readonly pollCursor?: PollCursorCapability;
   readonly githubApi?: GitHubApi;
+  readonly workItems?: WorkItemsCapability;
   readonly projectBindings?: AgentProjectBindings;
   readonly projectCommands?: ProjectCommandsCapability;
   readonly shell?: ModuleShell;

@@ -8,6 +8,7 @@ import {
   mapGitHubPullRequestError,
   parseGitHubWorkItemRef,
   translateGitHubIssueEvents,
+  translateGitHubWorkItemResponse,
   translateGitHubPullRequestMapping,
   translateGitHubPullRequestLookupResponse,
   translateGitHubPullRequestResponse,
@@ -234,6 +235,72 @@ describe("GitHub change-request translation", () => {
     expect(
       JSON.stringify(mapGitHubPullRequestError({ status: 401, body: { message: "token secret" } })),
     ).not.toContain("token secret");
+  });
+});
+
+describe("GitHub Work Item translation", () => {
+  const ref = "github://QServices/token-warehouse/issues/42";
+
+  it("returns only canonical Issue fields", () => {
+    expect(
+      translateGitHubWorkItemResponse(
+        {
+          status: 200,
+          body: {
+            number: 42,
+            title: "Add a health endpoint",
+            body: "Implement the endpoint.",
+            state: "open",
+            labels: [{ name: "agent:ready" }],
+            providerSecret: "must-not-cross-the-boundary",
+          },
+        },
+        ref,
+      ),
+    ).toEqual({
+      ref,
+      number: 42,
+      title: "Add a health endpoint",
+      body: "Implement the endpoint.",
+      state: "open",
+    });
+  });
+
+  it("classifies safe retryable provider failures", () => {
+    for (const [status, code] of [
+      [401, "github.work-item-unauthorized"],
+      [503, "github.work-item-unavailable"],
+    ] as const) {
+      let error: unknown;
+      try {
+        translateGitHubWorkItemResponse(
+          { status, body: { message: "provider token secret" } },
+          ref,
+        );
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).toMatchObject({ code, retryable: true });
+      expect(JSON.stringify(error)).not.toContain("provider token secret");
+    }
+  });
+
+  it("rejects malformed references and unusable Issue payloads", () => {
+    expect(() =>
+      translateGitHubWorkItemResponse({ status: 200, body: {} }, "fixture://item"),
+    ).toThrowError(expect.objectContaining({ retryable: false }));
+    expect(() =>
+      translateGitHubWorkItemResponse(
+        { status: 200, body: { number: 42, title: "Title", body: null, state: "closed" } },
+        ref,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      translateGitHubWorkItemResponse(
+        { status: 200, body: { number: 42, title: "Title", body: 7, state: "closed" } },
+        ref,
+      ),
+    ).toThrowError(expect.objectContaining({ retryable: false }));
   });
 });
 

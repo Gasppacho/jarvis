@@ -13,18 +13,20 @@
 
 Sur un repository sandbox GitHub et un ticket de fonctionnalité simple :
 
-- [ ] Ajouter `agent:ready` produit exactement un fact `scm.work-item.tag-added` logique.
-- [ ] Automation Rules produit une seule request `development.implementation.requested`.
-- [ ] Development alloue un worktree distinct et crée une branche conforme au pattern.
-- [ ] Le runtime agentique implémente le ticket dans ce worktree.
-- [ ] Les commandes requises du projet passent.
-- [ ] Development crée un commit non vide et pousse la branche.
-- [ ] Development termine sans attendre la Pull Request.
-- [ ] Development publie `scm.change-request.creation-requested` avec une idempotency key stable.
-- [ ] GitHub crée une Pull Request depuis la branche existante.
-- [ ] GitHub publie `scm.change-request.created` avec URL et numéro.
-- [ ] Une redélivrance ne crée pas une seconde Pull Request.
-- [ ] La timeline relie tous les événements/exécutions par correlation/causation.
+La preuve manuelle complémentaire est enregistrée dans [l’issue #150](https://github.com/Gasppacho/jarvis/issues/150#issuecomment-5633535201). Les autres lignes citent le test Application Harness qui les démontre.
+
+- [x] Ajouter `agent:ready` produit exactement un fact `scm.work-item.tag-added` logique ([pushed branch](../../apps/engine/test/reference-workflow-pushed-branch.integration.test.ts)).
+- [x] Automation Rules produit une seule request `development.implementation.requested` ([correlation](../../apps/engine/test/reference-workflow-correlation.integration.test.ts)).
+- [x] Development alloue un worktree distinct et crée une branche conforme au pattern ([pushed branch](../../apps/engine/test/reference-workflow-pushed-branch.integration.test.ts), [naming](../../apps/engine/test/reference-workflow-naming.integration.test.ts)).
+- [x] Le runtime agentique implémente le ticket dans ce worktree ([pushed branch](../../apps/engine/test/reference-workflow-pushed-branch.integration.test.ts)).
+- [x] Les commandes requises du projet passent ([pushed branch](../../apps/engine/test/reference-workflow-pushed-branch.integration.test.ts)).
+- [x] Development crée un commit non vide et pousse la branche ([pushed branch](../../apps/engine/test/reference-workflow-pushed-branch.integration.test.ts)).
+- [x] Development termine sans attendre la Pull Request ([pushed branch](../../apps/engine/test/reference-workflow-pushed-branch.integration.test.ts), [pull request](../../apps/engine/test/reference-workflow-pull-request.integration.test.ts)).
+- [x] Development publie `scm.change-request.creation-requested` avec une idempotency key stable ([pull request](../../apps/engine/test/reference-workflow-pull-request.integration.test.ts), [redelivery](../../apps/engine/test/reference-workflow-redelivery.integration.test.ts)).
+- [x] GitHub crée une Pull Request depuis la branche existante ([pull request](../../apps/engine/test/reference-workflow-pull-request.integration.test.ts)).
+- [x] GitHub publie `scm.change-request.created` avec URL et numéro ([pull request](../../apps/engine/test/reference-workflow-pull-request.integration.test.ts)).
+- [x] Une redélivrance ne crée pas une seconde Pull Request ([redelivery](../../apps/engine/test/reference-workflow-redelivery.integration.test.ts)).
+- [x] La timeline relie tous les événements/exécutions par correlation/causation ([correlation](../../apps/engine/test/reference-workflow-correlation.integration.test.ts)).
 
 ## Reliability acceptance
 

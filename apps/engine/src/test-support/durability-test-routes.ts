@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type Database from "better-sqlite3";
 import type { FastifyInstance } from "fastify";
@@ -77,8 +77,9 @@ export function registerDurabilityTestRoutes(
     const repositoryPath =
       body.repositoryPath ?? join(hooks.testRepositoryRoot, "repositories", body.id);
     mkdirSync(repositoryPath, { recursive: true });
+    const canonicalRepositoryPath = realpathSync(repositoryPath);
     const created = hooks.projects.importProject({
-      repositoryPath,
+      repositoryPath: canonicalRepositoryPath,
       portableConfig: config,
     });
     if (automation) {
@@ -88,7 +89,7 @@ export function registerDurabilityTestRoutes(
           apiVersion: "jarvis.dev/project-bindings/v1",
           kind: "ProjectBindings",
           projectId: created.id,
-          repositories: { main: { path: repositoryPath, bookmarkRef: null } },
+          repositories: { main: { path: canonicalRepositoryPath, bookmarkRef: null } },
           slots: {
             [AUTOMATION_RULE_SLOT]: {
               kind: "module-instance",

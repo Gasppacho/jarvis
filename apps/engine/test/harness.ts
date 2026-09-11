@@ -42,6 +42,8 @@ export interface FakeGitHubIssueEvent {
     readonly number: number;
     readonly title: string;
     readonly state?: "open" | "closed";
+    readonly body?: string;
+    readonly labels?: readonly { readonly name: string }[];
   };
   readonly actor: { readonly login: string };
   readonly [key: string]: unknown;
@@ -56,6 +58,21 @@ export interface FakeGitHubLabeledIssueEventInput {
   readonly actor: string;
   readonly createdAt: string;
   readonly issueState?: "open" | "closed";
+  readonly issueBody?: string;
+}
+
+export interface FakeGitHubIssue {
+  readonly number: number;
+  readonly title: string;
+  readonly body: string;
+  readonly state: "open" | "closed";
+  readonly labels: readonly { readonly name: string }[];
+}
+
+export interface FakeGitHubIssueSeed {
+  readonly owner: string;
+  readonly repository: string;
+  readonly issue: FakeGitHubIssue;
 }
 
 export interface FakeGitHubIssueEventSeed {
@@ -75,6 +92,7 @@ export interface FakeGitHubApi {
   readonly pullRequests: readonly FakeGitHubPullRequest[];
   appendLabeledIssueEvent(input: FakeGitHubLabeledIssueEventInput): FakeGitHubIssueEvent;
   seedIssueEvent(seed: FakeGitHubIssueEventSeed): FakeGitHubIssueEvent;
+  seedIssue(seed: FakeGitHubIssueSeed): FakeGitHubIssue;
   /** Temporarily overrides one method/path and returns its restoration function. */
   scriptRoute(method: string, path: string, response: FakeGitHubRouteResponse): () => void;
   close(): Promise<void>;
@@ -268,6 +286,7 @@ export async function startFakeGitHubApi(): Promise<FakeGitHubApi> {
   const requests: FakeGitHubRequest[] = [];
   const pullRequests: FakeGitHubPullRequest[] = [];
   const issueEvents: StoredFakeGitHubIssueEvent[] = [];
+  const issues = new Map<string, FakeGitHubIssue>();
   const routes = new Map<string, FakeGitHubRouteResponse>();
   let nextPullRequestNumber = 1;
   let nextIssueEventId = 1;
@@ -284,6 +303,7 @@ export async function startFakeGitHubApi(): Promise<FakeGitHubApi> {
       routes,
       pullRequests,
       issueEvents,
+      issues,
       () => nextPullRequestNumber++,
     ).catch(() => {
       if (!response.headersSent) writeJson(response, 500, { message: "Fake GitHub failure" });
@@ -311,16 +331,26 @@ export async function startFakeGitHubApi(): Promise<FakeGitHubApi> {
         number: input.issueNumber,
         title: input.issueTitle,
         ...(input.issueState === undefined ? {} : { state: input.issueState }),
+        ...(input.issueBody === undefined ? {} : { body: input.issueBody }),
       },
       actor: { login: input.actor },
     };
     issueEvents.push({ owner: input.owner, repository: input.repository, event });
+    upsertIssueFromEvent(issues, input.owner, input.repository, event);
     return event;
   };
   const seedIssueEvent = ({ owner, repository, event }: FakeGitHubIssueEventSeed) => {
     issueEvents.push({ owner, repository, event });
     nextIssueEventId = Math.max(nextIssueEventId, event.id + 1);
+    upsertIssueFromEvent(issues, owner, repository, event);
     return event;
+  };
+  const seedIssue = ({ owner, repository, issue }: FakeGitHubIssueSeed) => {
+    issues.set(issueKey(owner, repository, issue.number), {
+      ...issue,
+      labels: issue.labels.map(({ name }) => ({ name })),
+    });
+    return issue;
   };
 
   return {
@@ -329,6 +359,7 @@ export async function startFakeGitHubApi(): Promise<FakeGitHubApi> {
     pullRequests,
     appendLabeledIssueEvent,
     seedIssueEvent,
+    seedIssue,
     scriptRoute: (method, path, response) => {
       const key = routeKey(method, path);
       const previous = routes.get(key);
@@ -351,6 +382,7 @@ async function handleFakeGitHubRequest(
   routes: Map<string, FakeGitHubRouteResponse>,
   pullRequests: FakeGitHubPullRequest[],
   issueEvents: StoredFakeGitHubIssueEvent[],
+  issues: Map<string, FakeGitHubIssue>,
   nextPullRequestNumber: () => number,
 ): Promise<void> {
   const scripted = routes.get(routeKey(method, path));
@@ -360,6 +392,18 @@ async function handleFakeGitHubRequest(
   }
 
   const url = new URL(path, `http://${request.headers.host ?? "127.0.0.1"}`);
+  const issueMatch = /^\/repos\/([^/]+)\/([^/]+)\/issues\/([1-9]\d*)$/.exec(url.pathname);
+  if (method === "GET" && issueMatch !== null) {
+    const owner = issueMatch[1];
+    const repository = issueMatch[2];
+    const number = Number(issueMatch[3]);
+    const issue =
+      owner === undefined || repository === undefined
+        ? undefined
+        : issues.get(issueKey(owner, repository, number));
+    writeJson(response, issue === undefined ? 404 : 200, issue ?? { message: "Not Found" });
+    return;
+  }
   if (method === "GET" && url.pathname.endsWith("/pulls")) {
     const requestedHead = url.searchParams.get("head");
     const matches = pullRequests.filter(
@@ -424,6 +468,30 @@ interface StoredFakeGitHubIssueEvent {
   readonly owner: string;
   readonly repository: string;
   readonly event: FakeGitHubIssueEvent;
+}
+
+function issueKey(owner: string, repository: string, number: number): string {
+  return `${owner}/${repository}/${number}`;
+}
+
+function upsertIssueFromEvent(
+  issues: Map<string, FakeGitHubIssue>,
+  owner: string,
+  repository: string,
+  event: FakeGitHubIssueEvent,
+): void {
+  if (event.event !== "labeled") return;
+  const existing = issues.get(issueKey(owner, repository, event.issue.number));
+  const labels = new Map((existing?.labels ?? []).map(({ name }) => [name, { name }]));
+  if (event.label?.name !== undefined) labels.set(event.label.name, { name: event.label.name });
+  const body = event.issue.body ?? existing?.body ?? "";
+  issues.set(issueKey(owner, repository, event.issue.number), {
+    number: event.issue.number,
+    title: event.issue.title,
+    body,
+    state: event.issue.state ?? existing?.state ?? "open",
+    labels: [...labels.values()],
+  });
 }
 
 function positiveQueryInteger(value: string | null, fallback: number): number {

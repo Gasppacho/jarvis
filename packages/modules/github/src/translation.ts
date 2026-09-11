@@ -1,9 +1,14 @@
+import type { WorkItem } from "../../../module-sdk/src/index.js";
+
 export type GitHubTranslationErrorCode =
   | "github.unauthorized"
   | "github.rate-limited"
   | "github.branch-not-found"
   | "github.change-request-invalid"
-  | "github.change-request-create-failed";
+  | "github.change-request-create-failed"
+  | "github.work-item-unauthorized"
+  | "github.work-item-unavailable"
+  | "github.work-item-read-failed";
 
 export interface GitHubTranslationFailure {
   readonly code: GitHubTranslationErrorCode;
@@ -102,6 +107,34 @@ export function parseGitHubWorkItemRef(ref: string): GitHubWorkItemReference {
   if (owner === undefined || repository === undefined) throw invalidReference();
 
   return { ref, owner, repository, number };
+}
+
+/** Translates one GitHub Issue response into provider-neutral Work Item data. */
+export function translateGitHubWorkItemResponse(response: unknown, ref: string): WorkItem {
+  const reference = parseGitHubWorkItemRef(ref);
+  const providerResponse = asProviderResponse(response);
+  const status = providerResponse.status;
+  if (status !== undefined && !isSuccessful(status)) {
+    throw failureAsError(mapGitHubWorkItemError(status, providerResponse.headers));
+  }
+
+  const body = providerResponse.body;
+  if (!isRecord(body)) throw invalidWorkItem();
+  const number = body["number"];
+  const title = readNonBlankString(body["title"]);
+  const state = body["state"];
+  const issueBody = body["body"];
+  if (
+    number !== reference.number ||
+    !Number.isSafeInteger(number) ||
+    title === undefined ||
+    (state !== "open" && state !== "closed") ||
+    (issueBody !== null && typeof issueBody !== "string")
+  ) {
+    throw invalidWorkItem();
+  }
+
+  return { ref, number, title, body: issueBody ?? "", state };
 }
 
 /** Translates the labelled entries from a repository issue-event response. */
@@ -310,6 +343,34 @@ export function mapGitHubPullRequestError(
   );
 }
 
+function mapGitHubWorkItemError(
+  status: number,
+  headers: GitHubResponseHeaders | undefined,
+): GitHubTranslationFailure {
+  if (isRateLimited(status, headers, "")) {
+    return failure(
+      "github.rate-limited",
+      "GitHub rate limit prevents this Work Item read; retry later.",
+      true,
+    );
+  }
+  if (status === 401 || status === 403) {
+    return failure(
+      "github.work-item-unauthorized",
+      "GitHub cannot access the requested Work Item.",
+      true,
+    );
+  }
+  if (retryableStatus(status)) {
+    return failure(
+      "github.work-item-unavailable",
+      "GitHub Work Item service is temporarily unavailable; retry later.",
+      true,
+    );
+  }
+  return failure("github.work-item-read-failed", "GitHub Work Item read failed.", false);
+}
+
 function asProviderResponse(value: unknown): {
   readonly status: number | undefined;
   readonly body: unknown;
@@ -443,6 +504,14 @@ function creationFailed(): GitHubTranslationError {
   return new GitHubTranslationError(
     "github.change-request-create-failed",
     "GitHub pull request creation returned an unusable response.",
+    false,
+  );
+}
+
+function invalidWorkItem(): GitHubTranslationError {
+  return new GitHubTranslationError(
+    "github.work-item-read-failed",
+    "GitHub returned an unusable Work Item.",
     false,
   );
 }

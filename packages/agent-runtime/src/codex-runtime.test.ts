@@ -196,6 +196,8 @@ describe("CodexRuntime", () => {
         "--ephemeral",
         "--ignore-user-config",
         "--ignore-rules",
+        "--sandbox",
+        "workspace-write",
         "--skip-git-repo-check",
         "--cd",
         root,
@@ -744,7 +746,8 @@ case "$1" in
   --version)
     ${options.version}
     ;;
-  login-status)
+  login)
+    [ "$2" = status ] || exit 2
     ${options.auth}
     ;;
   exec)

@@ -21,8 +21,8 @@ const CODEX_ID = "runtime/codex-default";
 const CODEX_DISPLAY_NAME = "Codex — default";
 const CODEX_CAPABILITIES = ["agent.execute"] as const;
 const VERSION_ARGS = ["--version"] as const;
-const LOGIN_STATUS_ARGS = ["login-status"] as const;
-const DEFAULT_TIMEOUT_MS = 1_000;
+const LOGIN_STATUS_ARGS = ["login", "status"] as const;
+const DEFAULT_TIMEOUT_MS = 2_000;
 const MAX_TIMEOUT_MS = 30_000;
 const DEFAULT_OUTPUT_LIMIT_BYTES = 4_096;
 const MAX_OUTPUT_LIMIT_BYTES = 64 * 1024;
@@ -33,6 +33,8 @@ const CODEX_EXEC_ARGS = [
   "--ephemeral",
   "--ignore-user-config",
   "--ignore-rules",
+  "--sandbox",
+  "workspace-write",
   "--skip-git-repo-check",
 ] as const;
 const LOGGED_IN_OUTPUT = /^\s*Logged in using ChatGPT\s*$/m;

@@ -90,7 +90,10 @@ describe("RuntimeDescriptorStore", () => {
       `#!/bin/sh
 case "$1" in
   --version) printf 'codex-cli 0.153.4\\n' ;;
-  login-status) printf 'Logged in using ChatGPT\\n' ;;
+  login)
+    [ "$2" = status ] || exit 2
+    printf 'Logged in using ChatGPT\\n'
+    ;;
 esac
 `,
       "utf8",
