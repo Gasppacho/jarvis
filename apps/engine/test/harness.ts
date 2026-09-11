@@ -33,6 +33,32 @@ export interface FakeGitHubPullRequest {
   readonly draft: boolean;
 }
 
+export interface FakeGitHubIssueEvent {
+  readonly id: number;
+  readonly created_at: string;
+  readonly event: string;
+  readonly label?: { readonly name: string };
+  readonly issue: { readonly number: number; readonly title: string };
+  readonly actor: { readonly login: string };
+  readonly [key: string]: unknown;
+}
+
+export interface FakeGitHubLabeledIssueEventInput {
+  readonly owner: string;
+  readonly repository: string;
+  readonly issueNumber: number;
+  readonly issueTitle: string;
+  readonly label: string;
+  readonly actor: string;
+  readonly createdAt: string;
+}
+
+export interface FakeGitHubIssueEventSeed {
+  readonly owner: string;
+  readonly repository: string;
+  readonly event: FakeGitHubIssueEvent;
+}
+
 export interface FakeGitHubRouteResponse {
   readonly status: number;
   readonly body: unknown;
@@ -42,6 +68,8 @@ export interface FakeGitHubApi {
   readonly baseUrl: string;
   readonly requests: readonly FakeGitHubRequest[];
   readonly pullRequests: readonly FakeGitHubPullRequest[];
+  appendLabeledIssueEvent(input: FakeGitHubLabeledIssueEventInput): FakeGitHubIssueEvent;
+  seedIssueEvent(seed: FakeGitHubIssueEventSeed): FakeGitHubIssueEvent;
   /** Temporarily overrides one method/path and returns its restoration function. */
   scriptRoute(method: string, path: string, response: FakeGitHubRouteResponse): () => void;
   close(): Promise<void>;
@@ -234,8 +262,10 @@ export async function startEngine(options: StartEngineOptions = {}): Promise<Har
 export async function startFakeGitHubApi(): Promise<FakeGitHubApi> {
   const requests: FakeGitHubRequest[] = [];
   const pullRequests: FakeGitHubPullRequest[] = [];
+  const issueEvents: StoredFakeGitHubIssueEvent[] = [];
   const routes = new Map<string, FakeGitHubRouteResponse>();
   let nextPullRequestNumber = 1;
+  let nextIssueEventId = 1;
 
   const server = createServer((request, response) => {
     const method = request.method ?? "GET";
@@ -248,6 +278,7 @@ export async function startFakeGitHubApi(): Promise<FakeGitHubApi> {
       path,
       routes,
       pullRequests,
+      issueEvents,
       () => nextPullRequestNumber++,
     ).catch(() => {
       if (!response.headersSent) writeJson(response, 500, { message: "Fake GitHub failure" });
@@ -263,10 +294,32 @@ export async function startFakeGitHubApi(): Promise<FakeGitHubApi> {
 
   const baseUrl = `http://127.0.0.1:${address.port}`;
   let closePromise: Promise<void> | undefined;
+  const appendLabeledIssueEvent = (
+    input: FakeGitHubLabeledIssueEventInput,
+  ): FakeGitHubIssueEvent => {
+    const event: FakeGitHubIssueEvent = {
+      id: nextIssueEventId++,
+      created_at: input.createdAt,
+      event: "labeled",
+      label: { name: input.label },
+      issue: { number: input.issueNumber, title: input.issueTitle },
+      actor: { login: input.actor },
+    };
+    issueEvents.push({ owner: input.owner, repository: input.repository, event });
+    return event;
+  };
+  const seedIssueEvent = ({ owner, repository, event }: FakeGitHubIssueEventSeed) => {
+    issueEvents.push({ owner, repository, event });
+    nextIssueEventId = Math.max(nextIssueEventId, event.id + 1);
+    return event;
+  };
+
   return {
     baseUrl,
     requests,
     pullRequests,
+    appendLabeledIssueEvent,
+    seedIssueEvent,
     scriptRoute: (method, path, response) => {
       const key = routeKey(method, path);
       const previous = routes.get(key);
@@ -288,6 +341,7 @@ async function handleFakeGitHubRequest(
   path: string,
   routes: Map<string, FakeGitHubRouteResponse>,
   pullRequests: FakeGitHubPullRequest[],
+  issueEvents: StoredFakeGitHubIssueEvent[],
   nextPullRequestNumber: () => number,
 ): Promise<void> {
   const scripted = routes.get(routeKey(method, path));
@@ -326,12 +380,56 @@ async function handleFakeGitHubRequest(
     return;
   }
 
+  const issueEventsPath = /^\/repos\/([^/]+)\/([^/]+)\/issues\/events$/;
+  const issueEventsMatch = issueEventsPath.exec(url.pathname);
+  if (method === "GET" && issueEventsMatch !== null) {
+    const owner = issueEventsMatch[1];
+    const repository = issueEventsMatch[2];
+    if (owner === undefined || repository === undefined) {
+      writeJson(response, 404, { message: "Not Found" });
+      return;
+    }
+    const page = positiveQueryInteger(url.searchParams.get("page"), 1);
+    const perPage = positiveQueryInteger(url.searchParams.get("per_page"), 30);
+    const start = (page - 1) * perPage;
+    const matches = issueEvents
+      .filter((record) => record.owner === owner && record.repository === repository)
+      .sort(compareFakeGitHubIssueEvents);
+    writeJson(
+      response,
+      200,
+      matches.slice(start, start + perPage).map(({ event }) => event),
+    );
+    return;
+  }
+
   if (method === "GET" && url.pathname === "/user") {
     writeJson(response, 200, { login: "FakeGitHub" });
     return;
   }
 
   writeJson(response, 404, { message: "Not Found" });
+}
+
+interface StoredFakeGitHubIssueEvent {
+  readonly owner: string;
+  readonly repository: string;
+  readonly event: FakeGitHubIssueEvent;
+}
+
+function positiveQueryInteger(value: string | null, fallback: number): number {
+  const parsed = value === null ? Number.NaN : Number.parseInt(value, 10);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function compareFakeGitHubIssueEvents(
+  left: StoredFakeGitHubIssueEvent,
+  right: StoredFakeGitHubIssueEvent,
+): number {
+  const byCreatedAt = Date.parse(right.event.created_at) - Date.parse(left.event.created_at);
+  return Number.isNaN(byCreatedAt) || byCreatedAt === 0
+    ? right.event.id - left.event.id
+    : byCreatedAt;
 }
 
 function routeKey(method: string, path: string): string {
