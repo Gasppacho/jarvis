@@ -53,17 +53,22 @@ export class GitHubApiClient implements GitHubApi {
     if (resolution.status !== "available") throw new GitHubApiError(resolution.status);
 
     const url = apiUrl(this.apiBaseUrl, input.path);
-    const response = await fetch(url, {
-      method: input.method ?? "GET",
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${resolution.credential}`,
-        ...(input.body === undefined ? {} : { "content-type": "application/json" }),
-      },
-      ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),
-      redirect: "error",
-      signal: AbortSignal.timeout(this.timeoutMs),
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: input.method ?? "GET",
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${resolution.credential}`,
+          ...(input.body === undefined ? {} : { "content-type": "application/json" }),
+        },
+        ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),
+        redirect: "error",
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch {
+      throw new GitHubApiError("unavailable");
+    }
     const body = parseResponse(await response.text());
     const headers = readRateLimitHeaders(response.headers);
     return {

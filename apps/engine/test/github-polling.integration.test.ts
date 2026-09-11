@@ -420,6 +420,127 @@ esac
       }
     },
   );
+
+  it.each([
+    ["server-error", { status: 500, body: { message: "opaque provider failure" } }, "unavailable"],
+    ["rate-limit", { status: 429, body: { message: "rate limit" } }, "rate-limited"],
+    [
+      "credential-refused",
+      { status: 401, body: { message: "ghs_polling_failure_secret" } },
+      "credential-refused",
+    ],
+    ["malformed", { status: 200, body: { message: "raw provider secret" } }, "unclassified"],
+  ] as const)(
+    "classifies %s without moving the cursor or leaking provider details",
+    async (_caseName, response, reason) => {
+      const fakeGitHub = await startFakeGitHubApi();
+      servers.push(fakeGitHub);
+      const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-polling-failure-gh-"));
+      roots.push(executableRoot);
+      const executable = join(executableRoot, "gh");
+      writeFileSync(executable, "#!/bin/sh\necho ghs_polling_failure_credential\n", "utf8");
+      chmodSync(executable, 0o755);
+
+      const engine = await startEngine({
+        enginePath: TEST_BUNDLE,
+        env: {
+          JARVIS_ENABLE_TEST_HOOKS: "1",
+          JARVIS_GH_EXECUTABLE: executable,
+          JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+          JARVIS_GITHUB_POLL_INTERVAL_MS: "25",
+        },
+      });
+      engines.push(engine);
+      await registerConnection(engine);
+      const project = await createProject(engine);
+      await bindAndActivate(engine, project.id, project.path);
+      await waitForRequest(fakeGitHub, "/repos/Gasppacho/jarvis/issues/events");
+      await waitForCursor(engine.dataRoot, "bootstrap-empty");
+
+      const event = fakeGitHub.appendLabeledIssueEvent({
+        owner: "Gasppacho",
+        repository: "jarvis",
+        issueNumber: 15,
+        issueTitle: "Polling failure",
+        label: "agent:ready",
+        actor: "octocat",
+        createdAt: "2026-09-11T10:01:00.000Z",
+      });
+      const scriptedPath = "/repos/Gasppacho/jarvis/issues/events?per_page=100&page=1";
+      const restore = fakeGitHub.scriptRoute("GET", scriptedPath, response);
+      try {
+        await engine.waitForStderr(
+          `jarvis-engine: GitHub polling failed project=${project.id} moduleInstance=github repository=Gasppacho/jarvis reason=${reason}`,
+        );
+        expect(
+          issueEventRequests(fakeGitHub).filter((request) => request.path === scriptedPath),
+        ).toHaveLength(1);
+        expect(engine.stderr()).not.toContain("ghs_polling_failure_secret");
+        expect(engine.stderr()).not.toContain("raw provider secret");
+
+        const health = await engine.call("/v1/health");
+        expect(health.status).toBe(200);
+        expect(await health.json()).toMatchObject({ status: "ready" });
+
+        const database = new Database(`${engine.dataRoot}/jarvis.sqlite`);
+        try {
+          expect(
+            database
+              .prepare(
+                `SELECT external_event_id, event_timestamp
+                 FROM github_cursors
+                 WHERE project_id = ? AND module_instance_id = ? AND repository_id = ?`,
+              )
+              .get(project.id, "github", "main"),
+          ).toEqual({
+            external_event_id: "bootstrap-empty",
+            event_timestamp: "1970-01-01T00:00:00.000Z",
+          });
+          expect(
+            database
+              .prepare("SELECT COUNT(*) AS count FROM external_mappings WHERE project_id = ?")
+              .get(project.id),
+          ).toEqual({ count: 0 });
+          expect(
+            database
+              .prepare("SELECT COUNT(*) AS count FROM events WHERE project_id = ?")
+              .get(project.id),
+          ).toEqual({ count: 0 });
+        } finally {
+          database.close();
+        }
+      } finally {
+        restore();
+      }
+
+      await waitForFactCount(engine, project.id, 1);
+      const database = new Database(`${engine.dataRoot}/jarvis.sqlite`);
+      try {
+        expect(
+          database
+            .prepare(
+              `SELECT COUNT(*) AS count
+               FROM events WHERE project_id = ? AND type = 'scm.work-item.tag-added'`,
+            )
+            .get(project.id),
+        ).toEqual({ count: 1 });
+        expect(
+          database
+            .prepare(
+              `SELECT external_event_id, event_timestamp
+               FROM github_cursors
+               WHERE project_id = ? AND module_instance_id = ? AND repository_id = ?`,
+            )
+            .get(project.id, "github", "main"),
+        ).toEqual({
+          external_event_id: String(event.id),
+          event_timestamp: event.created_at,
+        });
+      } finally {
+        database.close();
+      }
+    },
+  );
 });
 
 async function registerConnection(engine: Harness): Promise<void> {

@@ -6,7 +6,9 @@ import type {
 import type { Clock } from "../../../../packages/kernel/src/clock.js";
 import type { ModuleHost } from "../../../../packages/kernel/src/module-host.js";
 import type { IdGenerator } from "../../../../packages/kernel/src/id-generator.js";
+import { GitHubApiError } from "../../../../packages/modules/github/src/api-client.js";
 import {
+  GitHubTranslationError,
   latestGitHubIssueEvent,
   translateGitHubIssueEvents,
   type GitHubIssueEventPosition,
@@ -218,8 +220,13 @@ export class GitHubPollingScheduler {
         externalMappings,
         this.dependencies,
       );
-    } catch {
-      logPollingFailure(projectId, moduleInstanceId, githubRepositoryId, "provider-call-failed");
+    } catch (error: unknown) {
+      logPollingFailure(
+        projectId,
+        moduleInstanceId,
+        githubRepositoryId,
+        classifyPollingFailure(error),
+      );
     }
   }
 }
@@ -432,6 +439,21 @@ function compareExternalEventIds(left: string, right: string): number {
     return leftNumber - rightNumber;
   }
   return left.localeCompare(right);
+}
+
+type PollingFailureReason = "credential-refused" | "rate-limited" | "unavailable" | "unclassified";
+
+function classifyPollingFailure(error: unknown): PollingFailureReason {
+  if (error instanceof GitHubApiError) {
+    return error.status === "unauthenticated" ? "credential-refused" : "unavailable";
+  }
+  if (error instanceof GitHubTranslationError) {
+    if (error.code === "github.rate-limited") return "rate-limited";
+    if (error.code === "github.unauthorized") return "credential-refused";
+    if (error.code === "github.change-request-create-failed") return "unavailable";
+    return "unclassified";
+  }
+  return "unclassified";
 }
 
 function logPollingFailure(
