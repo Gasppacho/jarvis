@@ -81,7 +81,7 @@ export class GitHubApiClient implements GitHubApi {
 
 function readRateLimitHeaders(headers: Headers): Readonly<Record<string, string>> {
   const selected: Record<string, string> = {};
-  for (const name of ["retry-after", "x-ratelimit-remaining"] as const) {
+  for (const name of ["link", "retry-after", "x-ratelimit-remaining"] as const) {
     const value = headers.get(name);
     if (value !== null) selected[name] = value;
   }

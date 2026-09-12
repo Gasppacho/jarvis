@@ -7,10 +7,12 @@ The Project enables three Module Instances:
 ```text
 github
   produces scm.work-item.tag-added
+  produces scm.work-item.ready
   consumes scm.change-request.creation-requested
 
 automation-rules
   consumes scm.work-item.tag-added
+  consumes scm.work-item.ready
   produces development.implementation.requested
 
 development

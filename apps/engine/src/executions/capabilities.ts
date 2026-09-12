@@ -7,6 +7,7 @@ import type {
   ModuleShellCommandInput,
   ModuleShellCommandResult,
   PollCursorCapability,
+  WorkItemReadinessCapability,
   ModuleWorkspace,
   ProjectCommandName,
   ProjectCommandsCapability,
@@ -63,6 +64,10 @@ export interface PollCursorCapabilityResolver {
   bind(projectId: string, moduleInstanceId: string): PollCursorCapability;
 }
 
+export interface WorkItemReadinessCapabilityResolver {
+  bind(projectId: string, moduleInstanceId: string): WorkItemReadinessCapability;
+}
+
 /** Binds the existing workspace manager to one frozen Project snapshot. */
 export class ProjectWorkspaceCapabilityResolver implements ProjectWorkspaceResolver {
   public constructor(
@@ -114,6 +119,7 @@ export class ProjectModuleCapabilityResolver {
     private readonly githubApiBaseUrl?: string,
     private readonly externalMappings?: ExternalMappingCapabilityResolver,
     private readonly pollCursors?: PollCursorCapabilityResolver,
+    private readonly workItemReadiness?: WorkItemReadinessCapabilityResolver,
   ) {}
 
   public resolve(
@@ -138,7 +144,8 @@ export class ProjectModuleCapabilityResolver {
       githubRequirement === undefined &&
       workItemsRequirement === undefined &&
       this.externalMappings === undefined &&
-      this.pollCursors === undefined
+      this.pollCursors === undefined &&
+      this.workItemReadiness === undefined
     ) {
       return {};
     }
@@ -151,7 +158,8 @@ export class ProjectModuleCapabilityResolver {
       githubRequirement === undefined &&
       workItemsRequirement === undefined &&
       this.externalMappings === undefined &&
-      this.pollCursors === undefined
+      this.pollCursors === undefined &&
+      this.workItemReadiness === undefined
     ) {
       return {};
     }
@@ -177,6 +185,9 @@ export class ProjectModuleCapabilityResolver {
       ...(this.pollCursors === undefined
         ? {}
         : { pollCursor: this.pollCursors.bind(projectId, moduleInstanceId) }),
+      ...(this.workItemReadiness === undefined
+        ? {}
+        : { workItemReadiness: this.workItemReadiness.bind(projectId, moduleInstanceId) }),
     };
     let resolved: ModuleHandlerCapabilities = capabilities;
     if (agentRequirement !== undefined) {

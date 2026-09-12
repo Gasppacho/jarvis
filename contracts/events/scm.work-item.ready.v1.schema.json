@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Work item ready",
+  "description": "A complete GitHub observation found an open labelled Issue with no open native blocker.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["repositoryId", "workItemRef", "issueProvider", "tag", "observedAt"],
+  "properties": {
+    "repositoryId": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "workItemRef": { "type": "string", "minLength": 1, "maxLength": 2048 },
+    "issueProvider": { "const": "github" },
+    "tag": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "observedAt": { "type": "string", "format": "date-time" }
+  }
+}

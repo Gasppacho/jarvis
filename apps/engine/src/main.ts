@@ -86,6 +86,7 @@ import {
   GitHubCliCredentialResolver,
   GitHubProviderCheckAdapter,
   handleChangeRequestCreationRequested,
+  WorkItemReadinessStore,
 } from "../../../packages/modules/github/src/index.js";
 
 /** See apps/engine/src/events/dispatcher.ts's identical declaration for why
@@ -411,6 +412,7 @@ async function main(): Promise<void> {
     const publisher = new EventPublisher(database.db, clock, ids, envelopes);
     const externalMappings = new ExternalMappingStore(database.db, clock);
     const pollCursors = new PollCursorStore(database.db, clock);
+    const workItemReadiness = new WorkItemReadinessStore(database.db, clock);
     const fixtures = testFixtures;
     const sampleProbeHandler = fixtures?.createSampleProbeHandler(database.db);
     const openSubscriptions: OpenSubscriptionsPort = (projectId) =>
@@ -509,6 +511,7 @@ async function main(): Promise<void> {
       githubApiBaseUrl,
       externalMappings,
       pollCursors,
+      workItemReadiness,
     );
     const consumer = new DeliveryConsumer(
       database.db,

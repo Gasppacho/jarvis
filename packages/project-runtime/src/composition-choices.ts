@@ -139,6 +139,7 @@ function githubDevelopmentTemplate(
           bootstrapLabelPolicy: "ignore-existing",
           pollIntervalSeconds: 60,
           repositories: ["main"],
+          readyLabel: "ready-for-agent",
         },
       },
       {
@@ -148,9 +149,9 @@ function githubDevelopmentTemplate(
         configuration: {
           rules: [
             {
-              id: "ready-label-starts-development",
+              id: "ready-work-item-starts-development",
               when: {
-                eventType: "scm.work-item.tag-added",
+                eventType: "scm.work-item.ready",
                 equals: { "payload.tag": "ready-for-agent" },
               },
               emit: {

@@ -1,0 +1,21 @@
+{
+  "specVersion": "1.0",
+  "version": 1,
+  "occurredAt": "2026-09-12T08:00:00.000Z",
+  "projectId": "token-warehouse",
+  "repositoryId": "main",
+  "correlationId": "corr_issue_42_ready",
+  "id": "evt_work_item_ready_001",
+  "type": "scm.work-item.ready",
+  "kind": "fact",
+  "producer": { "moduleId": "jarvis.module.github", "moduleInstanceId": "github" },
+  "subject": { "type": "work-item", "ref": "github://QServices/token-warehouse/issues/42" },
+  "causationId": null,
+  "payload": {
+    "repositoryId": "main",
+    "workItemRef": "github://QServices/token-warehouse/issues/42",
+    "issueProvider": "github",
+    "tag": "ready-for-agent",
+    "observedAt": "2026-09-12T08:00:00.000Z"
+  }
+}

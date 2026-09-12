@@ -121,6 +121,20 @@ export interface PollCursorCapability {
   }) => void;
 }
 
+export type WorkItemReadinessStatus = "ready" | "blocked" | "impossible";
+
+/** Durable current readiness and one-time admission for a GitHub work item. */
+export interface WorkItemReadinessCapability {
+  readonly observe: (input: {
+    readonly repositoryId: string;
+    readonly workItemRef: string;
+    readonly status: WorkItemReadinessStatus;
+    readonly reason: string;
+    readonly blockerRefs: readonly string[];
+    readonly observedAt: string;
+  }) => boolean;
+}
+
 /** Capabilities resolved for one Project and Module Instance only. */
 export interface ModuleHandlerCapabilities {
   readonly agentRuntime?: AgentRuntime;
@@ -128,6 +142,7 @@ export interface ModuleHandlerCapabilities {
   readonly revalidateAgentRuntime?: () => AgentRuntimeGrant | undefined;
   readonly externalMappings?: ExternalMappingCapability;
   readonly pollCursor?: PollCursorCapability;
+  readonly workItemReadiness?: WorkItemReadinessCapability;
   readonly githubApi?: GitHubApi;
   readonly workItems?: WorkItemsCapability;
   readonly projectBindings?: AgentProjectBindings;

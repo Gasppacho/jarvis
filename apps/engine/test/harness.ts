@@ -67,6 +67,8 @@ export interface FakeGitHubIssue {
   readonly body: string;
   readonly state: "open" | "closed";
   readonly labels: readonly { readonly name: string }[];
+  readonly pull_request?: Readonly<Record<string, unknown>>;
+  readonly blockedBy?: readonly FakeGitHubIssue[];
 }
 
 export interface FakeGitHubIssueSeed {
@@ -404,6 +406,26 @@ async function handleFakeGitHubRequest(
     writeJson(response, issue === undefined ? 404 : 200, issue ?? { message: "Not Found" });
     return;
   }
+  const dependenciesMatch =
+    /^\/repos\/([^/]+)\/([^/]+)\/issues\/([1-9]\d*)\/dependencies\/blocked_by$/.exec(url.pathname);
+  if (method === "GET" && dependenciesMatch !== null) {
+    const owner = dependenciesMatch[1];
+    const repository = dependenciesMatch[2];
+    const issue =
+      owner === undefined || repository === undefined
+        ? undefined
+        : issues.get(issueKey(owner, repository, Number(dependenciesMatch[3])));
+    const blockers = issue?.blockedBy ?? [];
+    const page = positiveQueryInteger(url.searchParams.get("page"), 1);
+    const perPage = positiveQueryInteger(url.searchParams.get("per_page"), 30);
+    if (page * perPage < blockers.length) response.setHeader("Link", '<next>; rel="next"');
+    writeJson(
+      response,
+      issue === undefined ? 404 : 200,
+      blockers.slice((page - 1) * perPage, page * perPage),
+    );
+    return;
+  }
   if (method === "GET" && url.pathname.endsWith("/pulls")) {
     const requestedHead = url.searchParams.get("head");
     const matches = pullRequests.filter(
@@ -453,6 +475,24 @@ async function handleFakeGitHubRequest(
       200,
       matches.slice(start, start + perPage).map(({ event }) => event),
     );
+    return;
+  }
+  const issuesMatch = /^\/repos\/([^/]+)\/([^/]+)\/issues$/.exec(url.pathname);
+  if (method === "GET" && issuesMatch !== null) {
+    const owner = issuesMatch[1];
+    const repository = issuesMatch[2];
+    if (owner === undefined || repository === undefined) {
+      writeJson(response, 404, { message: "Not Found" });
+      return;
+    }
+    const page = positiveQueryInteger(url.searchParams.get("page"), 1);
+    const perPage = positiveQueryInteger(url.searchParams.get("per_page"), 30);
+    const matches = [...issues.entries()]
+      .filter(([key, issue]) => key.startsWith(`${owner}/${repository}/`) && issue.state === "open")
+      .map(([, issue]) => issue)
+      .sort((left, right) => left.number - right.number);
+    if (page * perPage < matches.length) response.setHeader("Link", '<next>; rel="next"');
+    writeJson(response, 200, matches.slice((page - 1) * perPage, page * perPage));
     return;
   }
 

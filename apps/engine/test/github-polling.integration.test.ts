@@ -24,6 +24,203 @@ afterEach(async () => {
 });
 
 describe("GitHub polling Application Harness", () => {
+  it("admits one already-labelled open issue from its current GitHub state", async () => {
+    const fakeGitHub = await startFakeGitHubApi();
+    servers.push(fakeGitHub);
+    const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-readiness-gh-"));
+    roots.push(executableRoot);
+    const executable = join(executableRoot, "gh");
+    writeFileSync(executable, "#!/bin/sh\necho ghs_readiness_sentinel\n", "utf8");
+    chmodSync(executable, 0o755);
+    fakeGitHub.seedIssue({
+      owner: "Gasppacho",
+      repository: "jarvis",
+      issue: {
+        number: 193,
+        title: "Ready without a label event",
+        body: "",
+        state: "open",
+        labels: [{ name: "ready-for-agent" }],
+      },
+    });
+    fakeGitHub.seedIssue({
+      owner: "Gasppacho",
+      repository: "jarvis",
+      issue: {
+        number: 194,
+        title: "A pull request is not a work item candidate",
+        body: "",
+        state: "open",
+        labels: [{ name: "ready-for-agent" }],
+        pull_request: {},
+      },
+    });
+
+    const engine = await startEngine({
+      enginePath: TEST_BUNDLE,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+        JARVIS_GITHUB_POLL_INTERVAL_MS: "25",
+      },
+    });
+    engines.push(engine);
+    await registerConnection(engine);
+    const configuration = projectConfig(true);
+    const modules = configuration["modules"] as Record<string, unknown>[];
+    const rules = modules.find((module) => module["instanceId"] === "automation-rules");
+    if (rules === undefined) throw new Error("automation rules module is missing");
+    rules["configuration"] = {
+      rules: [
+        {
+          id: "ready-starts-development",
+          when: {
+            eventType: "scm.work-item.ready",
+            equals: { "payload.tag": "ready-for-agent" },
+          },
+          emit: {
+            type: "development.implementation.requested",
+            target: { moduleInstanceId: "development" },
+          },
+        },
+      ],
+    };
+    const project = await createProject(engine, false, "ignore-existing", configuration);
+    await bindAndActivate(engine, project.id, project.path);
+
+    await waitForEventTypeCount(engine, project.id, "scm.work-item.ready", 1);
+    const database = new Database(join(engine.dataRoot, "jarvis.sqlite"));
+    const row = database
+      .prepare("SELECT envelope FROM events WHERE project_id = ? AND type = 'scm.work-item.ready'")
+      .get(project.id) as { readonly envelope: string };
+    database.close();
+    expect(JSON.parse(row.envelope)).toMatchObject({
+      repositoryId: "main",
+      idempotencyKey: `${project.id}:github:main:github://Gasppacho/jarvis/issues/193:ready-v1`,
+      subject: { type: "work-item", ref: "github://Gasppacho/jarvis/issues/193" },
+      payload: {
+        repositoryId: "main",
+        workItemRef: "github://Gasppacho/jarvis/issues/193",
+        issueProvider: "github",
+        tag: "ready-for-agent",
+      },
+    });
+    await waitForEventTypeCount(engine, project.id, "development.implementation.requested", 1);
+    const countDatabase = new Database(join(engine.dataRoot, "jarvis.sqlite"));
+    const eventCount = countDatabase
+      .prepare(
+        "SELECT COUNT(*) AS count FROM events WHERE project_id = ? AND type = 'scm.work-item.ready'",
+      )
+      .get(project.id) as { readonly count: number };
+    countDatabase.close();
+    expect(eventCount).toEqual({ count: 1 });
+  });
+
+  it("waits for an open native blocker, then rechecks complete issue and dependency pages", async () => {
+    const fakeGitHub = await startFakeGitHubApi();
+    servers.push(fakeGitHub);
+    const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-readiness-pages-gh-"));
+    roots.push(executableRoot);
+    const executable = join(executableRoot, "gh");
+    writeFileSync(executable, "#!/bin/sh\necho ghs_readiness_pages\n", "utf8");
+    chmodSync(executable, 0o755);
+    const closedBlockers = Array.from({ length: 101 }, (_, index) => ({
+      number: index + 1,
+      title: `Closed blocker ${index + 1}`,
+      body: "",
+      state: "closed" as const,
+      labels: [],
+    }));
+    fakeGitHub.seedIssue({
+      owner: "Gasppacho",
+      repository: "jarvis",
+      issue: {
+        number: 200,
+        title: "Blocked then ready",
+        body: "",
+        state: "open",
+        labels: [{ name: "ready-for-agent" }],
+        blockedBy: [
+          {
+            number: 201,
+            title: "Open blocker",
+            body: "",
+            state: "open",
+            labels: [],
+          },
+        ],
+      },
+    });
+    for (let number = 1; number <= 101; number += 1) {
+      fakeGitHub.seedIssue({
+        owner: "Gasppacho",
+        repository: "jarvis",
+        issue: {
+          number: number + 300,
+          title: `Page ${number}`,
+          body: "",
+          state: "open",
+          labels: number === 101 ? [{ name: "ready-for-agent" }] : [],
+          ...(number === 101 ? { blockedBy: closedBlockers } : {}),
+        },
+      });
+    }
+    const engine = await startEngine({
+      enginePath: TEST_BUNDLE,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+        JARVIS_GITHUB_POLL_INTERVAL_MS: "25",
+      },
+    });
+    engines.push(engine);
+    await registerConnection(engine);
+    const project = await createProject(engine);
+    await bindAndActivate(engine, project.id, project.path);
+    await waitForRequest(
+      fakeGitHub,
+      "/repos/Gasppacho/jarvis/issues/200/dependencies/blocked_by?per_page=100&page=1",
+    );
+    await waitForReadiness(engine.dataRoot, "github://Gasppacho/jarvis/issues/200", "blocked");
+    const database = new Database(join(engine.dataRoot, "jarvis.sqlite"));
+    expect(
+      database
+        .prepare(
+          "SELECT status, blocker_refs FROM github_work_item_readiness WHERE work_item_ref LIKE '%/200'",
+        )
+        .get(),
+    ).toEqual({ status: "blocked", blocker_refs: '["github://Gasppacho/jarvis/issues/201"]' });
+    database.close();
+
+    fakeGitHub.seedIssue({
+      owner: "Gasppacho",
+      repository: "jarvis",
+      issue: {
+        number: 200,
+        title: "Blocked then ready",
+        body: "",
+        state: "open",
+        labels: [{ name: "ready-for-agent" }],
+        blockedBy: [
+          { number: 201, title: "Closed blocker", body: "", state: "closed", labels: [] },
+        ],
+      },
+    });
+    await waitForEventTypeCount(engine, project.id, "scm.work-item.ready", 2);
+    expect(fakeGitHub.requests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "/repos/Gasppacho/jarvis/issues?state=open&per_page=100&page=2",
+        }),
+        expect.objectContaining({
+          path: "/repos/Gasppacho/jarvis/issues/401/dependencies/blocked_by?per_page=100&page=2",
+        }),
+      ]),
+    );
+  });
+
   it("polls an active Project's repositories with its bound credential and emits no event", async () => {
     const fakeGitHub = await startFakeGitHubApi();
     servers.push(fakeGitHub);
@@ -1580,6 +1777,25 @@ async function waitForCursor(
       database.close();
     }
     if (Date.now() >= deadline) throw new Error(`cursor did not reach ${externalEventId}`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function waitForReadiness(
+  dataRoot: string,
+  workItemRef: string,
+  status: "ready" | "blocked" | "impossible",
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    const database = new Database(join(dataRoot, "jarvis.sqlite"));
+    const row = database
+      .prepare("SELECT status FROM github_work_item_readiness WHERE work_item_ref = ?")
+      .get(workItemRef) as { readonly status: string } | undefined;
+    database.close();
+    if (row?.status === status) return;
+    if (Date.now() >= deadline)
+      throw new Error(`readiness ${workItemRef} did not become ${status}`);
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }

@@ -43,7 +43,8 @@ describe("GitHubPollingScheduler", () => {
     const startedPromise = new Promise<void>((resolve) => (started = resolve));
     const response = new Promise<void>((resolve) => (release = resolve));
     const api: GitHubApi = {
-      get: async () => {
+      get: async (path) => {
+        if (path.includes("?state=open")) return { status: 200, body: [] };
         calls += 1;
         started();
         await response;
@@ -62,6 +63,7 @@ describe("GitHubPollingScheduler", () => {
     await response;
     await new Promise((resolve) => setTimeout(resolve, 5));
     await scheduler.tick();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(calls).toBe(2);
   });
 
@@ -80,8 +82,9 @@ describe("GitHubPollingScheduler", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     await new Promise((resolve) => setTimeout(resolve, 5));
     await scheduler.tick();
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(calls).toBe(2);
+    expect(calls).toBe(4);
   });
 
   it("re-reads a bounded recovery window and publishes a late event once", async () => {
@@ -119,6 +122,7 @@ describe("GitHubPollingScheduler", () => {
     const secondPollDone = new Promise<void>((resolve) => (secondPoll = resolve));
     const api: GitHubApi = {
       get: async (path) => {
+        if (path.includes("?state=open")) return { status: 200, body: [] };
         calls.push(path);
         if (calls.length === 2) firstPoll();
         if (calls.length === 4) secondPoll();
@@ -150,6 +154,7 @@ describe("GitHubPollingScheduler", () => {
             recordAttempt: () => undefined,
             recordResource: ({ idempotencyKey }) => mapped.add(idempotencyKey),
           },
+          workItemReadiness: { observe: () => false },
         }),
       },
       publisher: {
@@ -210,6 +215,7 @@ function schedulerFor(api: GitHubApi, pollIntervalMs: number): GitHubPollingSche
           recordAttempt: () => undefined,
           recordResource: () => undefined,
         },
+        workItemReadiness: { observe: () => false },
       }),
     },
     publisher: { publish: () => null as unknown as EventEnvelope },

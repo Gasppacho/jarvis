@@ -3,6 +3,7 @@ import type {
   ModuleHandlerCapabilities,
   ProjectRepositoryIdentity,
   PollCursorCapability,
+  WorkItemReadinessCapability,
 } from "../../../../packages/module-sdk/src/index.js";
 import type { Clock } from "../../../../packages/kernel/src/clock.js";
 import type { ModuleHost } from "../../../../packages/kernel/src/module-host.js";
@@ -35,6 +36,8 @@ const RECOVERY_WINDOW_MS = 5 * 60 * 1_000;
 /** GitHub allows 100 events per page; this caps one poll at ten requests. */
 const RECOVERY_PAGE_SIZE = 100;
 const RECOVERY_MAX_PAGES = 10;
+const READINESS_PAGE_SIZE = 100;
+const READINESS_MAX_PAGES = 100;
 const EMPTY_BOOTSTRAP_POSITION = {
   externalEventId: "bootstrap-empty",
   happenedAt: "1970-01-01T00:00:00.000Z",
@@ -133,6 +136,11 @@ export class GitHubPollingScheduler {
       logPollingFailure(projectId, instance.instanceId, "capability", "capability-unavailable");
       return;
     }
+    const workItemReadiness = capabilities.workItemReadiness;
+    if (workItemReadiness === undefined) {
+      logPollingFailure(projectId, instance.instanceId, "capability", "readiness-unavailable");
+      return;
+    }
 
     const repositories = configuredRepositoryReferences(instance.configuration);
     await Promise.all(
@@ -164,6 +172,7 @@ export class GitHubPollingScheduler {
           githubApi,
           pollCursor,
           externalMappings,
+          workItemReadiness,
           instance.configuration,
         );
       }),
@@ -177,10 +186,30 @@ export class GitHubPollingScheduler {
     githubApi: GitHubApi,
     pollCursor: PollCursorCapability,
     externalMappings: NonNullable<ModuleHandlerCapabilities["externalMappings"]>,
+    workItemReadiness: WorkItemReadinessCapability,
     configuration: Readonly<Record<string, unknown>> | undefined,
   ): Promise<void> {
     const repositoryId = repository.repositoryId;
     const githubRepositoryId = `${repository.owner}/${repository.name}`;
+    try {
+      await scanReadiness(
+        githubApi,
+        githubRepositoryId,
+        repository,
+        readyLabel(configuration),
+        projectId,
+        moduleInstanceId,
+        workItemReadiness,
+        this.dependencies,
+      );
+    } catch (error: unknown) {
+      logPollingFailure(
+        projectId,
+        moduleInstanceId,
+        githubRepositoryId,
+        `readiness-${classifyPollingFailure(error)}`,
+      );
+    }
     try {
       if (repository.provider !== "github") throw new Error("unsupported repository provider");
       const cursor = pollCursor.read(repositoryId);
@@ -246,6 +275,212 @@ export class GitHubPollingScheduler {
       );
     }
   }
+}
+
+interface CurrentGitHubIssue {
+  readonly number: number;
+  readonly title: string;
+  readonly labels: readonly string[];
+}
+
+interface ReadinessBlocker {
+  readonly number: number;
+  readonly state: "open" | "closed";
+}
+
+async function scanReadiness(
+  githubApi: GitHubApi,
+  githubRepositoryId: string,
+  repository: ProjectRepositoryIdentity,
+  tag: string,
+  projectId: string,
+  moduleInstanceId: string,
+  readiness: WorkItemReadinessCapability,
+  dependencies: Pick<GitHubPollingDependencies, "publisher" | "transaction" | "ids" | "clock">,
+): Promise<void> {
+  if (repository.provider !== "github") throw new Error("unsupported repository provider");
+  const candidates = await readCurrentIssues(githubApi, githubRepositoryId);
+  for (const candidate of candidates) {
+    if (!candidate.labels.includes(tag)) continue;
+    const workItemRef = `github://${repository.owner}/${repository.name}/issues/${candidate.number}`;
+    const observedAt = dependencies.clock.now().toISOString();
+    let blockerRefs: string[];
+    try {
+      blockerRefs = (await readBlockedBy(githubApi, githubRepositoryId, candidate.number))
+        .filter((blocker) => blocker.state === "open")
+        .map(
+          (blocker) => `github://${repository.owner}/${repository.name}/issues/${blocker.number}`,
+        );
+    } catch {
+      dependencies.transaction(() => {
+        readiness.observe({
+          repositoryId: repository.repositoryId,
+          workItemRef,
+          status: "impossible",
+          reason: "dependency-state-unavailable",
+          blockerRefs: [],
+          observedAt,
+        });
+      });
+      continue;
+    }
+    const status = blockerRefs.length === 0 ? "ready" : "blocked";
+    dependencies.transaction(() => {
+      const admitted = readiness.observe({
+        repositoryId: repository.repositoryId,
+        workItemRef,
+        status,
+        reason: status === "ready" ? "no-open-native-blockers" : "open-native-blockers",
+        blockerRefs,
+        observedAt,
+      });
+      if (!admitted) return;
+      dependencies.publisher.publish({
+        type: "scm.work-item.ready",
+        version: 1,
+        kind: "fact",
+        projectId,
+        repositoryId: repository.repositoryId,
+        producer: { moduleId: GITHUB_MODULE_ID, moduleInstanceId },
+        subject: { type: "work-item", ref: workItemRef },
+        correlationId: `corr_${dependencies.ids.next()}`,
+        causationId: null,
+        idempotencyKey: readinessIdentity(
+          projectId,
+          moduleInstanceId,
+          repository.repositoryId,
+          workItemRef,
+        ),
+        payload: {
+          repositoryId: repository.repositoryId,
+          workItemRef,
+          issueProvider: "github",
+          tag,
+          observedAt,
+        },
+      });
+    });
+  }
+}
+
+function readinessIdentity(
+  projectId: string,
+  moduleInstanceId: string,
+  repositoryId: string,
+  workItemRef: string,
+): string {
+  return `${projectId}:${moduleInstanceId}:${repositoryId}:${workItemRef}:ready-v1`;
+}
+
+async function readCurrentIssues(
+  githubApi: GitHubApi,
+  githubRepositoryId: string,
+): Promise<CurrentGitHubIssue[]> {
+  const issues: CurrentGitHubIssue[] = [];
+  for (let page = 1; page <= READINESS_MAX_PAGES; page += 1) {
+    const response = await githubApi.get(
+      `/repos/${githubRepositoryId}/issues?state=open&per_page=${READINESS_PAGE_SIZE}&page=${page}`,
+    );
+    const body = successfulArray(response, "issue list");
+    issues.push(
+      ...body.flatMap((candidate) => {
+        const issue = readCurrentIssue(candidate);
+        return issue === undefined ? [] : [issue];
+      }),
+    );
+    if (!hasNextPage(response)) return issues;
+  }
+  throw new Error("GitHub issue pagination is incomplete");
+}
+
+async function readBlockedBy(
+  githubApi: GitHubApi,
+  githubRepositoryId: string,
+  issueNumber: number,
+): Promise<ReadinessBlocker[]> {
+  const blockers: ReadinessBlocker[] = [];
+  for (let page = 1; page <= READINESS_MAX_PAGES; page += 1) {
+    const response = await githubApi.get(
+      `/repos/${githubRepositoryId}/issues/${issueNumber}/dependencies/blocked_by?per_page=${READINESS_PAGE_SIZE}&page=${page}`,
+    );
+    const body = successfulArray(response, "dependency list");
+    blockers.push(...body.map(readBlocker));
+    if (!hasNextPage(response)) return blockers;
+  }
+  throw new Error("GitHub dependency pagination is incomplete");
+}
+
+function successfulArray(response: unknown, label: string): unknown[] {
+  if (typeof response !== "object" || response === null || Array.isArray(response)) {
+    throw new Error(`invalid GitHub ${label} response`);
+  }
+  const value = response as { readonly status?: unknown; readonly body?: unknown };
+  if (typeof value.status !== "number" || value.status < 200 || value.status >= 300) {
+    throw new Error(`GitHub ${label} request failed`);
+  }
+  if (!Array.isArray(value.body)) throw new Error(`invalid GitHub ${label} response`);
+  return value.body;
+}
+
+function readCurrentIssue(value: unknown): CurrentGitHubIssue | undefined {
+  if (!isRecord(value)) {
+    throw new Error("invalid GitHub issue response");
+  }
+  if (Object.hasOwn(value, "pull_request")) return undefined;
+  const number = value["number"];
+  const title = value["title"];
+  const state = value["state"];
+  const labels = value["labels"];
+  if (
+    typeof number !== "number" ||
+    !Number.isSafeInteger(number) ||
+    number < 1 ||
+    typeof title !== "string" ||
+    title.trim() === "" ||
+    state !== "open" ||
+    !Array.isArray(labels)
+  ) {
+    throw new Error("invalid GitHub issue response");
+  }
+  const names = labels.map((label) => {
+    if (!isRecord(label) || typeof label["name"] !== "string" || label["name"].trim() === "") {
+      throw new Error("invalid GitHub issue response");
+    }
+    return label["name"];
+  });
+  return { number, title, labels: names };
+}
+
+function hasNextPage(response: unknown): boolean {
+  if (!isRecord(response)) throw new Error("invalid GitHub pagination response");
+  const headers = response["headers"];
+  if (!isRecord(headers)) return false;
+  const link = headers["link"];
+  return typeof link === "string" && /(?:^|,)\s*<[^>]+>;\s*rel="next"(?:,|$)/.test(link);
+}
+
+function readBlocker(value: unknown): ReadinessBlocker {
+  if (!isRecord(value)) throw new Error("invalid GitHub dependency response");
+  const number = value["number"];
+  const state = value["state"];
+  if (
+    typeof number !== "number" ||
+    !Number.isSafeInteger(number) ||
+    number < 1 ||
+    (state !== "open" && state !== "closed")
+  ) {
+    throw new Error("invalid GitHub dependency response");
+  }
+  return { number, state };
+}
+
+function readyLabel(configuration: Readonly<Record<string, unknown>> | undefined): string {
+  const value = configuration?.["readyLabel"];
+  return typeof value === "string" && value.trim() !== "" ? value : "ready-for-agent";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function resolveRepository(

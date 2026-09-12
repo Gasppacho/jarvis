@@ -2951,7 +2951,8 @@ capabilities:
         // and the global Connection Registry table
         // #110 adds (connections), the External Mapping table ticket #122
         // adds (external_mappings), and the GitHub Cursor table ticket #130
-        // adds (github_cursors) exist but stay empty — activation alone never
+        // adds (github_cursors); ticket #193 adds durable readiness observations.
+        // All exist but stay empty — activation alone never
         // inserts a row into any of them.
         expect(tableNames(dataRoot)).toEqual([
           "connections",
@@ -2963,6 +2964,7 @@ capabilities:
           "executions",
           "external_mappings",
           "github_cursors",
+          "github_work_item_readiness",
           "inbox",
           "outbox",
           "project_bindings",
@@ -3042,6 +3044,11 @@ capabilities:
           {
             instanceId: "automation-rules",
             moduleId: "jarvis.module.automation-rules",
+            contract: { type: "scm.work-item.ready", version: 1, kind: "fact" },
+          },
+          {
+            instanceId: "automation-rules",
+            moduleId: "jarvis.module.automation-rules",
             contract: { type: "scm.work-item.tag-added", version: 1, kind: "fact" },
           },
           {
@@ -3080,6 +3087,7 @@ capabilities:
 
         const body = await getSubscriptions(engine, created.id);
         expect(body.items.map((item) => item.instanceId).sort()).toEqual([
+          "automation-rules",
           "automation-rules",
           "request-worker",
         ]);
@@ -3153,6 +3161,7 @@ capabilities:
 
         expect(subsA.items.map((item) => item.instanceId).sort()).toEqual([
           "automation-rules",
+          "automation-rules",
           "request-worker",
         ]);
         expect(subsB.items.map((item) => item.instanceId)).toEqual(["request-worker"]);
@@ -3192,6 +3201,7 @@ capabilities:
             "executions",
             "external_mappings",
             "github_cursors",
+            "github_work_item_readiness",
             "inbox",
             "outbox",
             "project_bindings",

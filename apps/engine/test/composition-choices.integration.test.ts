@@ -153,6 +153,7 @@ describe("project composition choices", () => {
       bootstrapLabelPolicy: "ignore-existing",
       pollIntervalSeconds: 60,
       repositories: ["main"],
+      readyLabel: "ready-for-agent",
     });
     expect(template.modules[1]?.["configuration"]).toEqual({
       rules: [
@@ -323,6 +324,7 @@ describe("project composition choices", () => {
     };
     expect(disabled.choices.map((choice) => choice.type)).toEqual([
       "development.implementation.requested",
+      "scm.work-item.ready",
       "scm.work-item.tag-added",
     ]);
     expect(
@@ -347,6 +349,7 @@ describe("project composition choices", () => {
       "development.implementation.requested",
       "scm.change-request.created",
       "scm.change-request.creation-requested",
+      "scm.work-item.ready",
       "scm.work-item.tag-added",
     ]);
     expect(await (await engine.call(`/v1/projects/${project.id}`)).json()).toEqual(before);

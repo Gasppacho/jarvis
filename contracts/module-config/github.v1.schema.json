@@ -55,6 +55,15 @@
       "examples": [
         "ignore-existing"
       ]
+    },
+    "readyLabel": {
+      "title": "Ready label",
+      "description": "Label whose current presence starts one dependency-aware readiness observation.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "default": "ready-for-agent",
+      "examples": ["ready-for-agent"]
     }
   }
 }

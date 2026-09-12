@@ -23,6 +23,7 @@ Un fait qui s'est réellement produit :
 
 ```text
 scm.work-item.tag-added
+scm.work-item.ready
 development.implementation.completed
 scm.change-request.created
 scm.change-request.merged

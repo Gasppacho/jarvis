@@ -113,7 +113,7 @@ describe("bundled Module Package catalogue", () => {
         displayName: "Automation Rules",
         description: "Translates matching project Facts into targeted Requests.",
         categories: ["automation"],
-        consumes: ["scm.work-item.tag-added.v1"],
+        consumes: ["scm.work-item.ready.v1", "scm.work-item.tag-added.v1"],
         produces: ["development.implementation.requested.v1"],
         requires: [],
         provides: [],
@@ -166,6 +166,7 @@ describe("bundled Module Package catalogue", () => {
         categories: ["provider"],
         consumes: ["scm.change-request.creation-requested.v1"],
         produces: [
+          "scm.work-item.ready.v1",
           "scm.work-item.tag-added.v1",
           "scm.change-request.created.v1",
           "scm.change-request.creation-failed.v1",
@@ -284,7 +285,7 @@ describe("bundled Module Package catalogue", () => {
     await expectOnlyValidPackages(engine);
     await engine.waitForStderr("rejected bundled Module Package github");
     expect(engine.stderr()).toContain(
-      "/contracts/produces/0/schemaRef must identify contracts/events/scm.work-item.tag-removed.v1.schema.json",
+      "/contracts/produces/1/schemaRef must identify contracts/events/scm.work-item.tag-removed.v1.schema.json",
     );
   });
 

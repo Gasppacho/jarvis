@@ -24,5 +24,10 @@ The durable position or timestamp used by the inbound observer.
 ### Observed Fact
 A canonical Fact emitted after detecting GitHub state, regardless of who caused it.
 
+### Readiness Observation
+The durable complete assessment of one open labelled GitHub Issue and all its
+native `blocked_by` dependencies. It is `ready`, `blocked`, or `impossible to
+verify`; only the first ready observation is admitted and published.
+
 ### Provider Action
 An idempotent GitHub mutation performed only in response to a targeted Request.
