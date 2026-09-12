@@ -2,7 +2,7 @@ import { lstatSync, readdirSync, realpathSync, type Dirent } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { SystemClock, type Clock } from "../../kernel/src/clock.js";
 import { GitRunner } from "./git-runner.js";
-import { WorkspaceLeaseRepository, type WorkspaceLease } from "./lease-repository.js";
+import { WorkspaceLeaseRepository, ownerIsAlive, type WorkspaceLease } from "./lease-repository.js";
 import { WorkspaceManager, type WorkspaceManagerOptions } from "./workspace-manager.js";
 
 export interface WorkspaceReconciliationProject {
@@ -51,7 +51,11 @@ export class WorkspaceReconciler {
   private readonly clock: Clock;
   private readonly manager: WorkspaceManager;
 
-  public constructor(private readonly options: WorkspaceManagerOptions) {
+  public constructor(
+    private readonly options: WorkspaceManagerOptions & {
+      readonly preserveExecution?: (projectId: string, executionId: string) => boolean;
+    },
+  ) {
     this.clock = options.clock ?? new SystemClock();
     this.manager = new WorkspaceManager(options);
     this.dataRoot = realpathSync(resolve(options.dataRoot));
@@ -97,6 +101,21 @@ export class WorkspaceReconciler {
       increment(counts, "workspace.reconciliation.path-unsafe");
       return;
     }
+    // Pruning any worktree in this repository could erase a live owner's
+    // temporarily inaccessible Git registration. Defer this project's cleanup.
+    if (
+      leases.some(
+        (lease) =>
+          lease.status === "active" &&
+          ownerIsAlive(lease.ownerPid) &&
+          (!this.isExpired(lease) ||
+            this.options.preserveExecution?.(project.id, lease.executionId)) &&
+          safePath(workspaceRoot, lease.workspacePath) !== "present",
+      )
+    ) {
+      increment(counts, "workspace.reconciliation.active-lease-kept");
+      return;
+    }
 
     const expected = new Set<string>();
     for (const lease of leases) {
@@ -110,13 +129,18 @@ export class WorkspaceReconciler {
       const pathState =
         rootState === "missing" ? "missing" : safePath(workspaceRoot, workspacePath);
       const expired = lease.status === "retained" && this.isExpired(lease);
+      const preserve = this.options.preserveExecution?.(project.id, lease.executionId) === true;
       if (
         lease.status === "active" &&
-        !this.isExpired(lease) &&
-        pathState === "present" &&
+        (!this.isExpired(lease) || preserve) &&
         ownerIsAlive(lease.ownerPid)
       ) {
         increment(counts, "workspace.reconciliation.active-lease-kept");
+        continue;
+      }
+      if (preserve && pathState === "present") {
+        if (lease.status === "active") this.options.leases.markRetained(project.id, lease.id);
+        increment(counts, "workspace.reconciliation.retained-lease-kept");
         continue;
       }
       if (lease.status === "retained" && !expired && pathState === "present") {
@@ -207,16 +231,6 @@ export class WorkspaceReconciler {
     } catch {
       return [];
     }
-  }
-}
-
-function ownerIsAlive(pid: number | null): boolean {
-  if (pid === null) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error: unknown) {
-    return (error as NodeJS.ErrnoException).code !== "ESRCH";
   }
 }
 

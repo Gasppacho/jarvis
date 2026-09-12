@@ -192,6 +192,11 @@ export interface ModuleWorkspaceAllocation {
 }
 
 export interface ModuleWorkspace {
+  /** Inspects an existing lease without allocating or changing Git state. */
+  recover?(input: {
+    readonly executionId: string;
+    readonly repositoryId: string;
+  }): Promise<ModuleWorkspaceAllocation & { readonly retained: boolean }>;
   allocate(input: {
     readonly executionId: string;
     readonly repositoryId: string;
@@ -254,6 +259,8 @@ export type ModuleExecutionCheckpoint =
       readonly timestamp: string;
       readonly branch: string;
       readonly sha: string;
+      readonly validation?: ModuleValidationSnapshot;
+      readonly title?: string;
     }
   | {
       readonly type: "branch.pushed";
@@ -262,6 +269,16 @@ export type ModuleExecutionCheckpoint =
       readonly branch: string;
       readonly sha: string;
     };
+
+/** Successful checks bound to the configuration used before the external push. */
+export interface ModuleValidationSnapshot {
+  readonly planHash: string;
+  readonly commands: readonly {
+    readonly name: string;
+    readonly status: "passed";
+    readonly durationMs: number;
+  }[];
+}
 
 export interface ModuleHandlerPublishInput {
   readonly type: string;
@@ -290,6 +307,13 @@ export interface ModuleHandlerContext {
   readonly recordCheckpoint: (checkpoint: ModuleExecutionCheckpoint) => void;
   /** Reads durable progress for recovery without exposing another module's state. */
   readonly hasCheckpoint?: (type: ModuleExecutionCheckpoint["type"]) => boolean;
+  /** Reads this input Event's progress across retries, scoped to this Module Instance. */
+  readonly readCheckpoint?: (type: ModuleExecutionCheckpoint["type"]) =>
+    | {
+        readonly executionId: string;
+        readonly payload: Readonly<Record<string, unknown>>;
+      }
+    | undefined;
   /** Continues source checkpoint numbering after a reclaimed delivery. */
   readonly lastCheckpointSequence?: () => number;
   readonly publish: (input: ModuleHandlerPublishInput) => EventEnvelope;

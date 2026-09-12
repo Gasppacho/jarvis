@@ -190,3 +190,34 @@ manque, l'admission reste `impossible` (`ready-label-unknown`) ; aucun label par
 défaut n'est inventé. Une observation inéligible pendant une récupération déjà
 checkpointée conserve l'Execution et sa Delivery sous
 `work-item-recovery-required`, sans supprimer son progrès ni la déclarer terminée.
+
+## Recovery after a Development push
+
+Before pushing, Development persists `commit.created` with the expected branch
+and SHA, the successful Validation Plan snapshot (ordered check names, results,
+durations and a SHA-256 fingerprint of command configuration/push remote), and
+the sanitized Work Item title. No raw command environment or remote credentials
+are added to this snapshot. This additive checkpoint payload uses the existing
+Execution Ledger; it is not a new workflow journal or event contract.
+
+Recovery reads checkpoints for the original input Event, Project and Module
+Instance, including earlier failed attempts. It runs before allocation, work-item
+readiness or Agent Runtime invocation. It checks the original lease, local branch
+SHA, retained worktree HEAD/cleanliness and exact remote ref/SHA. An unambiguous
+match finalizes the existing pushed change and publishes the normal completed
+Fact and Change Request creation Request in the existing terminal Outbox
+transaction. Correlation, causation and the PR idempotency key remain unchanged.
+After cleanup but before that transaction, another crash can recover through
+the released lease and retained repository branch.
+
+A missing or mismatched validation snapshot, local changes or remote divergence
+stops recovery for operator inspection. An unavailable remote/branch follows the
+existing bounded Delivery retries; exhaustion allows explicit Dead Letter replay
+once access/evidence is restored. No recovery path calls the agent, pushes,
+resets, or creates a worktree. Failure messages remain visible through the
+Execution timeline, failure Fact and Dead Letter diagnostics.
+
+Startup retains workspaces with commit/push evidence, even beyond ordinary
+failure retention. A live foreign owner prevents recovery and release. If its
+directory is temporarily inaccessible, project cleanup/pruning waits too.
+Successful recovery releases the original lease; failure preserves its work.

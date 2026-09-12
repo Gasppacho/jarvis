@@ -4,6 +4,7 @@ import { SystemClock, type Clock } from "../../kernel/src/clock.js";
 import { GitRunner, type GitCommandResult } from "./git-runner.js";
 import {
   WorkspaceLeaseRepository,
+  ownerIsAlive,
   type WorkspaceLease,
   type WorkspaceLeaseClaim,
 } from "./lease-repository.js";
@@ -367,6 +368,50 @@ export class WorkspaceManager {
     );
   }
 
+  /** Reconciliation of a pushed effect is read-only until terminal cleanup. */
+  public async recover(input: {
+    readonly projectId: string;
+    readonly executionId: string;
+    readonly repositoryId: string;
+    readonly repositoryPath: string;
+  }): Promise<WorkspaceAllocation & { readonly retained: boolean }> {
+    const lease = this.options.leases.findByExecution(input.projectId, input.executionId);
+    if (lease === undefined || lease.repositoryId !== input.repositoryId) {
+      throw new WorkspaceReleaseError(
+        "workspace.lease-not-found",
+        "Recovery requires the original repository lease.",
+      );
+    }
+    assertLeaseOwner(lease);
+    const active = this.options.leases.findActiveByBranch(
+      input.projectId,
+      input.repositoryId,
+      lease.workingBranch,
+    );
+    if (active !== undefined && active.executionId !== input.executionId) {
+      throw new WorkspaceReleaseError(
+        "workspace.release-failed",
+        "Recovery is waiting for the branch's active workspace owner.",
+        { retryable: true },
+      );
+    }
+    const retained = lease.status !== "released";
+    if (
+      retained &&
+      !assertReleasePathIsSafe(this.workspaceRoot(input.projectId), lease.workspacePath)
+    ) {
+      throw new WorkspaceReleaseError(
+        "workspace.lease-not-found",
+        "The original recovery workspace is unavailable.",
+      );
+    }
+    return {
+      ...allocationFromLease(lease),
+      path: retained ? lease.workspacePath : input.repositoryPath,
+      retained,
+    };
+  }
+
   public async release(input: ReleaseWorkspaceInput): Promise<WorkspaceLease> {
     assertReleaseIdentifier(input.projectId, "project");
     assertReleaseIdentifier(input.executionId, "execution");
@@ -385,6 +430,7 @@ export class WorkspaceManager {
       );
     }
     if (lease.status === "released") return lease;
+    assertLeaseOwner(lease);
 
     if (input.outcome !== "success") {
       if (lease.status === "retained") return lease;
@@ -418,6 +464,7 @@ export class WorkspaceManager {
     assertReleaseIdentifier(lease.projectId, "project");
     assertReleaseIdentifier(lease.executionId, "execution");
     if (lease.status === "released") return lease;
+    assertLeaseOwner(lease);
 
     const workspaceRoot = this.workspaceRoot(lease.projectId);
     const workspacePath = resolve(lease.workspacePath);
@@ -517,6 +564,16 @@ function allocationFromLease(lease: WorkspaceLease): WorkspaceAllocation {
     baseRevisionSha: lease.baseRevisionSha,
     lease,
   };
+}
+
+function assertLeaseOwner(lease: WorkspaceLease): void {
+  if (lease.status === "active" && lease.ownerPid !== process.pid && ownerIsAlive(lease.ownerPid)) {
+    throw new WorkspaceReleaseError(
+      "workspace.release-failed",
+      "The workspace is still owned by a live process; recovery must wait.",
+      { retryable: true },
+    );
+  }
 }
 
 function assertReleaseIdentifier(value: string, subject: string): void {

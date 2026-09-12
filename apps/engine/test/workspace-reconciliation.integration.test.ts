@@ -85,6 +85,11 @@ describe("workspace reconciliation at engine startup", () => {
     const missing = await seeded.manager.allocate(
       allocationInput(projectId, "exec-missing", "missing", fixture, seeded.project),
     );
+    // A missing directory alone does not prove that its owner died. This
+    // cleanup fixture represents an abandoned lease, like exec-active above.
+    seeded.database
+      .prepare("UPDATE workspace_leases SET owner_pid = NULL WHERE id = ?")
+      .run(missing.lease.id);
     rmSync(missing.path, { recursive: true, force: true });
 
     const workspaceRoot = join(realpathSync(dataRoot), "projects", projectId, "workspaces");

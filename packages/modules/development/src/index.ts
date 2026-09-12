@@ -9,7 +9,6 @@ import {
 import { GitRunner, type GitCommandResult } from "../../../workspace/src/git-runner.js";
 import { ModuleDeliveryDeferredError } from "../../../module-sdk/src/index.js";
 import type {
-  ModuleHandler,
   ModuleHandlerContext,
   ModuleShell,
   ModuleShellCommandResult,
@@ -68,6 +67,9 @@ type DevelopmentFailureCode =
   | "git.no-changes"
   | "git.commit-failed"
   | "git.push-failed"
+  | "git.recovery-required"
+  | "git.recovery-unavailable"
+  | "git.recovery-validation-missing"
   | "agent.run-failed"
   | "agent.run-timed-out"
   | "agent.run-cancelled"
@@ -133,6 +135,7 @@ interface ImplementationRequest {
 
 interface DevelopmentExecutionState {
   workspaceAllocated: boolean;
+  workspaceExecutionId?: string;
 }
 
 export interface DevelopmentRunResult {
@@ -151,12 +154,15 @@ export interface DevelopmentRunResult {
 }
 
 /** Runs one deterministic implementation attempt in the Project's worktree. */
-export const handleImplementationRequested: ModuleHandler = async (
+declare const __JARVIS_TEST_HOOKS__: boolean;
+
+export const handleImplementationRequested = async (
   ctx: ModuleHandlerContext,
+  testFailpoint?: (id: string) => void,
 ): Promise<DevelopmentRunResult> => {
   const state: DevelopmentExecutionState = { workspaceAllocated: false };
   try {
-    const result = await runImplementationRequested(ctx, state);
+    const result = await runImplementationRequested(ctx, state, testFailpoint);
     if (result.status === "timed-out") {
       publishDevelopmentFailure(
         ctx,
@@ -196,6 +202,7 @@ export const handleImplementationRequested: ModuleHandler = async (
 async function runImplementationRequested(
   ctx: ModuleHandlerContext,
   state: DevelopmentExecutionState,
+  testFailpoint?: (id: string) => void,
 ): Promise<DevelopmentRunResult> {
   const request = readImplementationRequest(ctx.event.payload);
   if (ctx.repositoryId !== request.repositoryId) {
@@ -203,6 +210,13 @@ async function runImplementationRequested(
       "event.payload-invalid",
       "The implementation request repository does not match its Event repository.",
     );
+  }
+  const pushedIntent =
+    ctx.readCheckpoint?.("commit.created") ?? ctx.readCheckpoint?.("branch.pushed");
+  if (pushedIntent !== undefined) {
+    state.workspaceAllocated = true;
+    state.workspaceExecutionId = pushedIntent.executionId;
+    return recoverPushedChange(ctx, request, pushedIntent, testFailpoint);
   }
   const runtime = ctx.capabilities.agentRuntime;
   const workspace = ctx.capabilities.workspace;
@@ -495,6 +509,13 @@ async function runImplementationRequested(
       timestamp: new Date().toISOString(),
       branch: commit.branch,
       sha: commit.sha,
+      validation: {
+        planHash: validationPlanHash(validationOrder, projectCommands),
+        commands: validation,
+      },
+      ...(workItem === undefined
+        ? {}
+        : { title: safeFailureReference(workItem.title, undefined, "Work Item", 256) }),
     });
     await pushBranch({
       workspacePath: allocation.path,
@@ -513,6 +534,9 @@ async function runImplementationRequested(
         MAX_OUTPUT_LIMIT_BYTES,
       ),
     });
+    if (typeof __JARVIS_TEST_HOOKS__ !== "undefined" && __JARVIS_TEST_HOOKS__) {
+      testFailpoint?.("after-development-push-before-checkpoint");
+    }
     ctx.recordCheckpoint({
       type: "branch.pushed",
       sequence: ++checkpointSequence,
@@ -520,6 +544,9 @@ async function runImplementationRequested(
       branch: commit.branch,
       sha: commit.sha,
     });
+    if (typeof __JARVIS_TEST_HOOKS__ !== "undefined" && __JARVIS_TEST_HOOKS__) {
+      testFailpoint?.("after-development-checkpoint-before-terminal");
+    }
     publishDevelopmentOutputs(ctx, request, result, commit, validation, workItem?.title);
     releaseOutcome = "success";
     return {
@@ -545,6 +572,173 @@ async function runImplementationRequested(
   } finally {
     await workspace.release({ executionId: ctx.executionId, outcome: releaseOutcome });
   }
+}
+
+async function recoverPushedChange(
+  ctx: ModuleHandlerContext,
+  request: ImplementationRequest,
+  checkpoint: { readonly executionId: string; readonly payload: Readonly<Record<string, unknown>> },
+  testFailpoint?: (id: string) => void,
+): Promise<DevelopmentRunResult> {
+  const workspace = ctx.capabilities.workspace;
+  const commands = ctx.capabilities.projectCommands;
+  if (workspace?.recover === undefined || commands === undefined) {
+    throw new DevelopmentExecutionError(
+      "git.recovery-required",
+      "Recovery requires the original workspace and Project Commands; restore the Project bindings.",
+    );
+  }
+  const payload = checkpoint.payload;
+  const branch = payload["branch"];
+  const sha = payload["sha"];
+  const snapshot = payload["validation"];
+  const order = readValidationOrder(ctx.configuration["validationOrder"]);
+  if (
+    typeof branch !== "string" ||
+    branch === "" ||
+    typeof sha !== "string" ||
+    !/^[a-f0-9]{40,64}$/.test(sha) ||
+    !isRecord(snapshot) ||
+    snapshot["planHash"] !== validationPlanHash(order, commands) ||
+    !Array.isArray(snapshot["commands"]) ||
+    snapshot["commands"].length !== order.length ||
+    !snapshot["commands"].every(
+      (check: unknown, index: number) =>
+        isRecord(check) &&
+        check["name"] === order[index] &&
+        check["status"] === "passed" &&
+        typeof check["durationMs"] === "number" &&
+        Number.isFinite(check["durationMs"]) &&
+        check["durationMs"] >= 0,
+    )
+  ) {
+    throw new DevelopmentExecutionError(
+      "git.recovery-validation-missing",
+      "The pushed change has no complete validation snapshot for this Project configuration; inspect the retained evidence before replay.",
+    );
+  }
+  const validation = snapshot["commands"] as DevelopmentRunResult["validation"];
+  const allocation = await workspace.recover({
+    executionId: checkpoint.executionId,
+    repositoryId: request.repositoryId,
+  });
+  const git = new GitRunner({
+    cwd: allocation.path,
+    timeoutMs: boundedPositiveConfigNumber(
+      ctx.configuration["timeoutMs"],
+      DEFAULT_TIMEOUT_MS,
+      MAX_TIMEOUT_MS,
+    ),
+    outputLimitBytes: boundedPositiveConfigNumber(
+      ctx.configuration["outputLimitBytes"],
+      DEFAULT_OUTPUT_LIMIT_BYTES,
+      MAX_OUTPUT_LIMIT_BYTES,
+    ),
+  });
+  const options = { signal: ctx.signal };
+  const local = await git.run(
+    ["rev-parse", "--verify", "--end-of-options", `refs/heads/${branch}`],
+    options,
+  );
+  if (branch !== allocation.workingBranch || !local.ok || local.stdout.trim() !== sha) {
+    throw new DevelopmentExecutionError(
+      "git.recovery-required",
+      "The original local branch does not match the push intent; preserve the workspace and inspect its commit before replay.",
+    );
+  }
+  if (allocation.retained) {
+    const head = await git.run(["rev-parse", "HEAD"], options);
+    const clean = await git.run(["status", "--porcelain"], options);
+    if (!head.ok || head.stdout.trim() !== sha || !clean.ok || clean.stdout.trim() !== "") {
+      throw new DevelopmentExecutionError(
+        "git.recovery-required",
+        "The retained workspace changed after validation; preserve and inspect its work before replay.",
+      );
+    }
+  }
+  const remote = commands.git.pushRemote.trim();
+  if (remote === "" || remote.startsWith("-") || /\s/.test(remote)) {
+    throw new DevelopmentExecutionError(
+      "git.recovery-required",
+      "The configured push remote is invalid; correct it before replay.",
+    );
+  }
+  const remoteHead = await git.run(
+    ["ls-remote", "--heads", remote, `refs/heads/${branch}`],
+    options,
+  );
+  if (!remoteHead.ok || remoteHead.stdout.trim() === "") {
+    throw new DevelopmentExecutionError(
+      "git.recovery-unavailable",
+      "The pushed branch cannot currently be read from the remote; recovery will retry within the Delivery budget.",
+      true,
+    );
+  }
+  const [remoteSha, remoteRef, extra] = remoteHead.stdout.trim().split(/\s+/);
+  if (remoteSha !== sha || remoteRef !== `refs/heads/${branch}` || extra !== undefined) {
+    throw new DevelopmentExecutionError(
+      "git.recovery-required",
+      "The remote branch diverges from the recorded push intent; preserve both branches and resolve the divergence before replay.",
+    );
+  }
+  const changed = await git.run(
+    ["diff", "--name-only", "-z", `${allocation.baseRevisionSha}..${sha}`],
+    options,
+  );
+  if (!changed.ok)
+    throw new DevelopmentExecutionError(
+      "git.recovery-required",
+      "The original change cannot be inspected; restore the repository before replay.",
+    );
+  if (!ctx.hasCheckpoint?.("branch.pushed")) {
+    ctx.recordCheckpoint({
+      type: "branch.pushed",
+      sequence: (ctx.lastCheckpointSequence?.() ?? 0) + 1,
+      timestamp: new Date().toISOString(),
+      branch,
+      sha,
+    });
+  }
+  if (typeof __JARVIS_TEST_HOOKS__ !== "undefined" && __JARVIS_TEST_HOOKS__) {
+    testFailpoint?.("after-development-checkpoint-before-terminal");
+  }
+  const result: DevelopmentRunResult = {
+    status: "completed",
+    summary: "Recovered the validated pushed change without another Agent Run.",
+    changedFiles: changed.stdout.split("\0").filter(Boolean),
+    headBranch: branch,
+    headCommit: sha,
+    validation,
+    commands: commands.commands,
+    git: commands.git,
+  };
+  publishDevelopmentOutputs(
+    ctx,
+    request,
+    result,
+    { branch, sha },
+    validation,
+    typeof payload["title"] === "string" ? payload["title"] : undefined,
+  );
+  await workspace.release({ executionId: checkpoint.executionId, outcome: "success" });
+  if (typeof __JARVIS_TEST_HOOKS__ !== "undefined" && __JARVIS_TEST_HOOKS__) {
+    testFailpoint?.("after-development-cleanup-before-terminal");
+  }
+  return result;
+}
+
+function validationPlanHash(
+  order: readonly ValidationCheck[],
+  commands: ProjectCommandsCapability,
+): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        checks: order.map((name) => [name, commands.commands[name]]),
+        pushRemote: commands.git.pushRemote,
+      }),
+    )
+    .digest("hex");
 }
 
 function publishDevelopmentFailure(
@@ -575,7 +769,9 @@ function publishDevelopmentFailure(
       message: failureMessage(ctx, failure.code),
       retryable: failure.retryable,
       ...(state.workspaceAllocated
-        ? { workspaceRef: `workspace://${ctx.projectId}/${ctx.executionId}` }
+        ? {
+            workspaceRef: `workspace://${ctx.projectId}/${state.workspaceExecutionId ?? ctx.executionId}`,
+          }
         : {}),
     },
   });
@@ -665,6 +861,12 @@ function failureMessage(ctx: ModuleHandlerContext, code: DevelopmentFailureCode)
       return `${prefix} could not create a commit; inspect the retained workspace and retry.`;
     case "git.push-failed":
       return `${prefix} could not push the branch; verify the configured remote and retry.`;
+    case "git.recovery-required":
+      return `${prefix} cannot reconcile the pushed commit with its original workspace and remote; preserve the work, resolve the divergence or missing evidence, then replay.`;
+    case "git.recovery-unavailable":
+      return `${prefix} cannot read the pushed remote branch; bounded recovery retries preserve the work. Restore remote access or the branch, then replay if retries are exhausted.`;
+    case "git.recovery-validation-missing":
+      return `${prefix} has no complete validation snapshot matching the current configuration; no validated PR was requested. Inspect the retained evidence before replay.`;
     case "agent.run-failed":
       return `${prefix} agent run failed; inspect the retained workspace and retry.`;
     case "agent.run-timed-out":
@@ -707,7 +909,7 @@ function isMachineAbsolutePath(value: string): boolean {
 function publishDevelopmentOutputs(
   ctx: ModuleHandlerContext,
   request: ImplementationRequest,
-  result: AgentRunResult & { readonly summary: string },
+  result: { readonly summary: string },
   commit: { readonly branch: string; readonly sha: string },
   validation: DevelopmentRunResult["validation"],
   workItemTitle?: string,

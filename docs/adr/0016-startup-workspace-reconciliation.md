@@ -11,3 +11,9 @@ and occupies its project's capacity. Unknown or dead owners and expired leases
 follow the existing cleanup policy. An inaccessible process is conservatively
 treated as alive; a missing process is not. This preserves the admission
 exclusivity required by #194 when another owner is still working.
+
+Issue #191 adds preservation for leases with durable commit/push evidence. The
+Development handler owns reconciliation of that external effect; generic startup
+cleanup must keep its workspace until successful recovery. Live owners remain
+protected even when their directories are temporarily unavailable: cleanup and
+Git pruning for that project wait rather than erase the live worktree record.

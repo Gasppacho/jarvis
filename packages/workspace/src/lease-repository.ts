@@ -4,6 +4,16 @@ import type { IdGenerator } from "../../kernel/src/id-generator.js";
 
 export type WorkspaceLeaseStatus = "active" | "retained" | "released";
 
+export function ownerIsAlive(pid: number | null): boolean {
+  if (pid === null) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: unknown) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
 export interface CreateWorkspaceLeaseInput {
   readonly projectId: string;
   readonly executionId: string;

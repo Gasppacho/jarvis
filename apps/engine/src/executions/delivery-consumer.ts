@@ -1107,6 +1107,13 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
       signal,
       capabilities,
       hasCheckpoint: (type) => this.checkpointStore.has(delivery.projectId, executionId, type),
+      readCheckpoint: (type) =>
+        this.checkpointStore.readForInput(
+          delivery.projectId,
+          delivery.moduleInstanceId,
+          envelope.id,
+          type,
+        ),
       lastCheckpointSequence: () =>
         this.checkpointStore.lastSourceSequence(delivery.projectId, executionId),
       recordCheckpoint: (checkpoint) => {
@@ -1177,6 +1184,8 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
             occurredAt: checkpoint.timestamp,
             branch: checkpoint.branch,
             sha: checkpoint.sha,
+            ...(checkpoint.validation === undefined ? {} : { validation: checkpoint.validation }),
+            ...(checkpoint.title === undefined ? {} : { title: checkpoint.title }),
           });
           return;
         }

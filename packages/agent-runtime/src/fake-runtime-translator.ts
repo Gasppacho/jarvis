@@ -145,6 +145,8 @@ process.stdin.setEncoding("utf8");
 process.stdin.on("data", chunk => input += chunk);
 process.stdin.on("end", async () => {
   const request = JSON.parse(input || "{}");
+  const counterPath = process.env.JARVIS_FAKE_COUNTER_PATH;
+  if (counterPath) fs.appendFileSync(counterPath, String(process.pid) + "\n");
   const emit = record => process.stdout.write(JSON.stringify(record) + "\n");
   if (request.scenario === "await-signal") {
     await new Promise(resolve => {

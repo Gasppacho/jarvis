@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import type { ModuleValidationSnapshot } from "../../../../packages/module-sdk/src/index.js";
 
 export type ExecutionCheckpointInput =
   | {
@@ -56,6 +57,8 @@ export type ExecutionCheckpointInput =
       readonly occurredAt: string;
       readonly branch: string;
       readonly sha: string;
+      readonly validation?: ModuleValidationSnapshot;
+      readonly title?: string;
     }
   | {
       readonly projectId: string;
@@ -200,9 +203,46 @@ export class ExecutionCheckpointStore {
         .get({ projectId, executionId }) as { sequence: number }
     ).sequence;
   }
+
+  public readForInput(
+    projectId: string,
+    moduleInstanceId: string,
+    eventId: string,
+    type: ExecutionCheckpointInput["type"],
+  ): ExecutionCheckpoint | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT checkpoint.* FROM execution_checkpoints checkpoint
+       JOIN executions execution ON execution.id = checkpoint.execution_id
+         AND execution.project_id = checkpoint.project_id
+       WHERE execution.project_id = ? AND execution.module_instance_id = ?
+         AND execution.input_event_id = ? AND checkpoint.type = ?
+       ORDER BY execution.attempt DESC, checkpoint.sequence DESC LIMIT 1`,
+      )
+      .get(projectId, moduleInstanceId, eventId, type) as ExecutionCheckpointRow | undefined;
+    return row === undefined ? undefined : toCheckpoint(row);
+  }
 }
 
 function validateInput(input: ExecutionCheckpointInput): void {
+  if (input.type === "commit.created" && input.validation !== undefined) {
+    const snapshot = input.validation;
+    if (
+      !/^[a-f0-9]{64}$/.test(snapshot.planHash) ||
+      !Array.isArray(snapshot.commands) ||
+      snapshot.commands.length > 100 ||
+      !snapshot.commands.every(
+        (check) =>
+          typeof check.name === "string" &&
+          /^[a-z][a-z0-9.-]{0,99}$/.test(check.name) &&
+          check.status === "passed" &&
+          Number.isFinite(check.durationMs) &&
+          check.durationMs >= 0,
+      )
+    ) {
+      throw new Error("Execution validation snapshot is invalid.");
+    }
+  }
   if (
     !Number.isSafeInteger(input.sourceSequence) ||
     input.sourceSequence < 1 ||
@@ -255,6 +295,21 @@ function checkpointPayload(input: ExecutionCheckpointInput): Readonly<Record<str
     return {
       branch: sanitizeCheckpointMessage(input.branch),
       sha: input.sha,
+      ...(input.type === "commit.created" && input.validation !== undefined
+        ? {
+            validation: {
+              planHash: input.validation.planHash,
+              commands: input.validation.commands.map(({ name, status, durationMs }) => ({
+                name,
+                status,
+                durationMs,
+              })),
+            },
+          }
+        : {}),
+      ...(input.type === "commit.created" && input.title !== undefined
+        ? { title: sanitizeCheckpointMessage(input.title).slice(0, 256) }
+        : {}),
     };
   }
   return {};
@@ -264,10 +319,15 @@ function sanitizeCheckpointMessage(message: string): string {
   return message
     .replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, "$1<redacted>@")
     .replace(
-      /((?:token|secret|password|passwd|authorization|credential|api[_-]?key)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+      /((?:["']?)(?:token|secret|password|passwd|authorization|credential|api[_-]?key)(?:["']?)\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;{}]+)/gi,
       "$1<redacted>",
     )
-    .replace(/(?:\/Users|\/home|\/private\/var)\/[^\s"'`<>]+/g, "<path>");
+    .replace(
+      /\b(?:gh[opsru]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]+)\b/g,
+      "<redacted>",
+    )
+    .replace(/\bfile:\/\/[^\s"'<>;,)\]}]+/gi, "<path>")
+    .replace(/(^|[\s("'`=:])\/(?!\/)[^\s"'`<>]+/g, "$1<path>");
 }
 
 function toCheckpoint(row: ExecutionCheckpointRow): ExecutionCheckpoint {

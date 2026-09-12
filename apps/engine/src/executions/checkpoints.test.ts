@@ -8,6 +8,52 @@ let db: Database.Database | undefined;
 afterEach(() => db?.close());
 
 describe("ExecutionCheckpointStore", () => {
+  it("recovers a validation snapshot only for its Project, Module Instance and original input", () => {
+    db = seedDatabase();
+    const store = new ExecutionCheckpointStore(db);
+    const validation = {
+      planHash: "a".repeat(64),
+      commands: [{ name: "test", status: "passed" as const, durationMs: 12 }],
+    };
+    store.record({
+      projectId: "project-a",
+      executionId: "execution-a",
+      type: "commit.created",
+      sourceSequence: 1,
+      occurredAt: "2026-09-08T21:00:00.000Z",
+      branch: "agent/191",
+      sha: "b".repeat(40),
+      validation,
+      title: "Fix token=private-value",
+    });
+    expect(
+      store.readForInput("project-a", "development", "event-a", "commit.created"),
+    ).toMatchObject({
+      executionId: "execution-a",
+      payload: { validation, title: "Fix token=<redacted>" },
+    });
+    expect(
+      store.readForInput("project-b", "development", "event-a", "commit.created"),
+    ).toBeUndefined();
+    expect(
+      store.readForInput("project-a", "other-module", "event-a", "commit.created"),
+    ).toBeUndefined();
+    expect(
+      store.readForInput("project-a", "development", "other-event", "commit.created"),
+    ).toBeUndefined();
+    expect(() =>
+      store.record({
+        projectId: "project-a",
+        executionId: "execution-a",
+        type: "commit.created",
+        sourceSequence: 2,
+        occurredAt: "2026-09-08T21:00:00.000Z",
+        branch: "agent/191",
+        sha: "b".repeat(40),
+        validation: { ...validation, planHash: "token=private-value" },
+      }),
+    ).toThrow("validation snapshot is invalid");
+  });
   it("keeps agent checkpoints ordered and scoped even when timestamps tie", () => {
     db = seedDatabase();
     const store = new ExecutionCheckpointStore(db);
@@ -99,11 +145,12 @@ describe("ExecutionCheckpointStore", () => {
       type: "agent.message",
       sourceSequence: 1,
       occurredAt: "2026-09-08T21:00:00.000Z",
-      message: "token=super-secret cwd=/Users/quentin/private/repo",
+      message:
+        'token=super-secret cwd=/Users/quentin/private/repo {"token":"json-secret"} ghs_fixture_secret file:///tmp/private-repo',
     });
 
     expect(store.list("project-a", "execution-a")[0]?.payload).toEqual({
-      message: "token=<redacted> cwd=<path>",
+      message: 'token=<redacted> cwd=<path> {"token":<redacted>} <redacted> <path>',
     });
   });
 

@@ -88,6 +88,7 @@ export class ProjectWorkspaceCapabilityResolver implements ProjectWorkspaceResol
     };
     const repositoryPath = snapshot.bindings.repository.path;
     return {
+      recover: (input) => this.manager.recover({ ...input, projectId, repositoryPath }),
       allocate: (input) =>
         this.manager.allocate({
           ...input,

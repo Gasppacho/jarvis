@@ -338,6 +338,13 @@ async function main(): Promise<void> {
       const reconciliation = await new WorkspaceReconciler({
         dataRoot: database.dataRoot,
         leases,
+        preserveExecution: (projectId, executionId) =>
+          database.db
+            .prepare(
+              `SELECT 1 FROM execution_checkpoints WHERE project_id = ? AND execution_id = ?
+             AND type IN ('commit.created', 'branch.pushed') LIMIT 1`,
+            )
+            .get(projectId, executionId) !== undefined,
       }).reconcile(
         projectStore.list().map((project) => ({
           id: project.id,
@@ -486,7 +493,10 @@ async function main(): Promise<void> {
     );
     const handlers: ModuleHandlerLookup = (moduleId) => {
       if (moduleId === AUTOMATION_RULES_MODULE_ID) return handleWorkItemTagAdded;
-      if (moduleId === DEVELOPMENT_MODULE_ID) return handleImplementationRequested;
+      if (moduleId === DEVELOPMENT_MODULE_ID) {
+        if (__JARVIS_TEST_HOOKS__) return (ctx) => handleImplementationRequested(ctx, failpoint);
+        return handleImplementationRequested;
+      }
       if (moduleId === "jarvis.module.github") return handleChangeRequestCreationRequested;
       if (
         fixtures !== undefined &&

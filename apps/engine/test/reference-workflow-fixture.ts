@@ -24,12 +24,15 @@ export interface ReferenceWorkflowFixture {
   readonly projectId: string;
   readonly fakeGitHubBaseUrl: string;
   readonly initialCommitSha: string;
+  restart(env?: Readonly<Record<string, string>>): Promise<void>;
+  readonly runtimeCounterPath: string;
   dispose(): Promise<void>;
 }
 
 /** Builds and activates the reference workflow without injecting an event. */
 export async function startReferenceWorkflowFixture(
   projectId = "reference-workflow",
+  extraEnv: Readonly<Record<string, string>> = {},
 ): Promise<ReferenceWorkflowFixture> {
   const repository = makeRealGitRepositoryFixture({
     additionalRemotes: [{ name: "github", url: "git@github.com:Gasppacho/jarvis.git" }],
@@ -63,19 +66,22 @@ export async function startReferenceWorkflowFixture(
 
     writeFileSync(executable, "#!/bin/sh\nprintf '%s\\n' ghs_reference_fixture\n", "utf8");
     chmodSync(executable, 0o755);
-    engine = await startEngine({
-      enginePath: TEST_BUNDLE,
-      env: {
-        JARVIS_ENABLE_TEST_HOOKS: "1",
-        JARVIS_GH_EXECUTABLE: executable,
-        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
-        JARVIS_GITHUB_POLL_INTERVAL_MS: "25",
-      },
-    });
+    const runtimeCounterPath = join(executableRoot, "runtime-calls");
+    writeFileSync(runtimeCounterPath, "");
+    const dataRoot = join(executableRoot, "data");
+    const env = {
+      JARVIS_ENABLE_TEST_HOOKS: "1",
+      JARVIS_GH_EXECUTABLE: executable,
+      JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+      JARVIS_GITHUB_POLL_INTERVAL_MS: "25",
+      JARVIS_OUTBOX_LEASE_MS: "200",
+      JARVIS_FAKE_COUNTER_PATH: runtimeCounterPath,
+    };
+    engine = await startEngine({ enginePath: TEST_BUNDLE, dataRoot, env: { ...env, ...extraEnv } });
 
     await createConnection(engine);
     const project = await importProject(engine, repository.root);
-    await bindAndActivate(engine, project.id, repository.root);
+    await bindAndActivate(engine, project.id, repository.root, runtimeCounterPath);
     await waitFor(
       () =>
         fakeGitHub.requests.some(
@@ -86,7 +92,18 @@ export async function startReferenceWorkflowFixture(
     );
 
     return {
-      engine,
+      get engine() {
+        return engine!;
+      },
+      runtimeCounterPath,
+      async restart(extra = {}) {
+        await engine!.dispose();
+        engine = await startEngine({
+          enginePath: TEST_BUNDLE,
+          dataRoot,
+          env: { ...env, ...extra },
+        });
+      },
       fakeGitHub,
       repositoryRoot: repository.root,
       bareRemoteRoot: repository.remoteRoot,
@@ -142,6 +159,7 @@ function referenceProjectConfiguration(projectId: string): PortableProjectConfig
           validationOrder: ["test"],
           maxRepairCycles: 0,
           preparation: "none",
+          environmentAllowlist: ["JARVIS_FAKE_COUNTER_PATH"],
         },
       };
     }
@@ -196,6 +214,7 @@ async function bindAndActivate(
   engine: Harness,
   projectId: string,
   repositoryRoot: string,
+  runtimeCounterPath: string,
 ): Promise<void> {
   const repositoryBinding = await engine.call(
     `/v1/projects/${encodeURIComponent(projectId)}/repositories/main/binding`,
@@ -221,7 +240,11 @@ async function bindAndActivate(
         ...bindings.slots,
         sourceControl: { kind: "connection", ref: "connection/reference-github" },
         tickets: { kind: "connection", ref: "connection/reference-github" },
-        agentRuntime: { kind: "runtime", ref: "runtime/fake-test" },
+        agentRuntime: {
+          kind: "runtime",
+          ref: "runtime/fake-test",
+          environment: { JARVIS_FAKE_COUNTER_PATH: runtimeCounterPath },
+        },
       },
     }),
   });
