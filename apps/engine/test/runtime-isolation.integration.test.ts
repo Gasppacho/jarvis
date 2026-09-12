@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { RuntimeDescriptor } from "../../../packages/agent-runtime/src/index.js";
 import type { PortableProjectConfiguration } from "../../../packages/project-runtime/src/project-types.js";
 import { ExecutionCheckpointStore } from "../src/executions/checkpoints.js";
+import { ConnectionDescriptorStore } from "../src/connections/registry.js";
 import { RuntimeDescriptorStore } from "../src/runtimes/registry.js";
 import { startEngine, type Harness } from "./harness.js";
 import {
@@ -77,6 +78,7 @@ describe("runtime isolation acceptance", () => {
     });
     engines.push(engine);
     seedCodexRuntime(dataRoot, fakeCodexPath);
+    seedGitHubConnection(dataRoot);
 
     await activateProject(engine, projectA, fixtureA, FAKE_RUNTIME_REF, [
       "JARVIS_FAKE_SCENARIO",
@@ -212,7 +214,10 @@ async function activateProject(
     kind: "Project",
     metadata: { id: projectId, name: projectId },
     repositories: [{ id: "main", root: ".", defaultBranch: "main", remote: "origin" }],
-    slots: { agentRuntime: { requires: "agent.execute" } },
+    slots: {
+      agentRuntime: { requires: "agent.execute" },
+      tickets: { requires: "work-items.read" },
+    },
     commands: { test: "node --test" },
     git: {
       branchPattern: "agent/{workItemId}-{slug}",
@@ -251,7 +256,7 @@ async function activateProject(
         moduleId: "jarvis.module.development",
         enabled: true,
         runtimeSlot: "agentRuntime",
-        bindings: { repository: "main" },
+        bindings: { repository: "main", tickets: "tickets" },
         configuration: {
           validationOrder: ["test"],
           maxRepairCycles: 0,
@@ -298,7 +303,10 @@ async function activateProject(
       repositories: {
         main: { path: realpathSync(fixture.root), bookmarkRef: `bookmark/${projectId}` },
       },
-      slots: { agentRuntime: { kind: "runtime", ref: runtimeRef } },
+      slots: {
+        agentRuntime: { kind: "runtime", ref: runtimeRef },
+        tickets: { kind: "connection", ref: "connection/github-work-items" },
+      },
     }),
   });
   expect(bindings.status, await bindings.clone().text()).toBe(200);
@@ -468,6 +476,19 @@ function databaseText(database: Database.Database): string {
 
 function quoteIdentifier(value: string): string {
   return `"${value.replaceAll('"', '""')}"`;
+}
+
+function seedGitHubConnection(dataRoot: string): void {
+  const database = new Database(join(dataRoot, "jarvis.sqlite"));
+  new ConnectionDescriptorStore(database).upsert({
+    id: "connection/github-work-items",
+    provider: "github",
+    accountLabel: "Work Items",
+    capabilities: ["work-items.read"],
+    status: "available",
+    secretRef: "gh://WorkItems",
+  });
+  database.close();
 }
 
 function seedCodexRuntime(dataRoot: string, executablePath: string): void {

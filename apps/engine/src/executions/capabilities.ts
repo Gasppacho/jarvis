@@ -261,7 +261,7 @@ export class ProjectModuleCapabilityResolver {
             const reference = parseGitHubWorkItemRef(ref);
             if (!linkedRepository(snapshot, repositoryId, reference.owner, reference.repository)) {
               throw new GitHubTranslationError(
-                "github.change-request-invalid",
+                "github.work-item-read-failed",
                 "The requested Work Item repository is not linked to this Project repository.",
                 false,
               );
@@ -280,7 +280,7 @@ export class ProjectModuleCapabilityResolver {
                   error.status === "unavailable"
                     ? "GitHub Work Item service is temporarily unavailable; retry later."
                     : "GitHub cannot access the requested Work Item.",
-                  true,
+                  error.status === "unavailable",
                 );
               }
               throw error;

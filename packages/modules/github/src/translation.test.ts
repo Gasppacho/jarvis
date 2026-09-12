@@ -266,21 +266,62 @@ describe("GitHub Work Item translation", () => {
     });
   });
 
-  it("classifies safe retryable provider failures", () => {
-    for (const [status, code] of [
-      [401, "github.work-item-unauthorized"],
-      [503, "github.work-item-unavailable"],
+  it("classifies safe Work Item failures for the delivery retry policy", () => {
+    for (const [response, code, retryable, message] of [
+      [
+        { status: 401, body: { message: "provider token secret" } },
+        "github.work-item-unauthorized",
+        false,
+        "GitHub cannot access the requested Work Item.",
+      ],
+      [
+        { status: 403, body: { message: "permission denied" } },
+        "github.work-item-unauthorized",
+        false,
+        "GitHub cannot access the requested Work Item.",
+      ],
+      [
+        {
+          status: 403,
+          headers: { "x-ratelimit-remaining": "0" },
+          body: { message: "rate limited" },
+        },
+        "github.work-item-unavailable",
+        true,
+        "GitHub Work Item service is temporarily unavailable; retry later.",
+      ],
+      [
+        { status: 403, body: { message: "API rate limit exceeded" } },
+        "github.work-item-unavailable",
+        true,
+        "GitHub Work Item service is temporarily unavailable; retry later.",
+      ],
+      [
+        { status: 404, body: { message: "not found" } },
+        "github.work-item-read-failed",
+        false,
+        "GitHub Work Item read failed.",
+      ],
+      [
+        { status: 429, body: { message: "rate limited" } },
+        "github.work-item-unavailable",
+        true,
+        "GitHub Work Item service is temporarily unavailable; retry later.",
+      ],
+      [
+        { status: 503, body: { message: "provider token secret" } },
+        "github.work-item-unavailable",
+        true,
+        "GitHub Work Item service is temporarily unavailable; retry later.",
+      ],
     ] as const) {
       let error: unknown;
       try {
-        translateGitHubWorkItemResponse(
-          { status, body: { message: "provider token secret" } },
-          ref,
-        );
+        translateGitHubWorkItemResponse(response, ref);
       } catch (caught) {
         error = caught;
       }
-      expect(error).toMatchObject({ code, retryable: true });
+      expect(error).toMatchObject({ code, retryable, message });
       expect(JSON.stringify(error)).not.toContain("provider token secret");
     }
   });
@@ -301,6 +342,15 @@ describe("GitHub Work Item translation", () => {
         ref,
       ),
     ).toThrowError(expect.objectContaining({ retryable: false }));
+    expect(() =>
+      translateGitHubWorkItemResponse({ status: 200, body: "not JSON" }, ref),
+    ).toThrowError(
+      expect.objectContaining({
+        code: "github.work-item-read-failed",
+        retryable: false,
+        message: "GitHub returned an unusable Work Item.",
+      }),
+    );
   });
 });
 

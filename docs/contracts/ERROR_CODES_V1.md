@@ -123,6 +123,9 @@ this public v1 catalog.
 | `github.change-request-invalid` | No | Provider rejected PR input semantically |
 | `github.change-request-create-failed` | Depends | Creation failed without a more specific code |
 | `github.poll-failed` | Yes | Inbound observation failed transiently |
+| `github.work-item-unavailable` | Yes | GitHub could not temporarily serve the requested Work Item |
+| `github.work-item-unauthorized` | No | Project GitHub connection cannot read the requested Work Item; revalidate it |
+| `github.work-item-read-failed` | No | Requested Work Item is missing, malformed, mismatched, or closed |
 
 ## Error envelope rules
 

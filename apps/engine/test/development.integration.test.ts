@@ -11,8 +11,8 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
-import { startEngine, type Harness } from "./harness.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { startEngine, startFakeGitHubApi, type FakeGitHubApi, type Harness } from "./harness.js";
 import { ExecutionCheckpointStore } from "../src/executions/checkpoints.js";
 import type { PortableProjectConfiguration } from "../../../packages/project-runtime/src/project-types.js";
 import {
@@ -25,13 +25,221 @@ const testBundlePath = fileURLToPath(
 );
 const engines: Harness[] = [];
 const roots: string[] = [];
+const servers: FakeGitHubApi[] = [];
+const githubEnvironments: Array<{
+  readonly executable: string | undefined;
+  readonly apiBaseUrl: string | undefined;
+}> = [];
+
+beforeEach(async () => {
+  githubEnvironments.push({
+    executable: process.env["JARVIS_GH_EXECUTABLE"],
+    apiBaseUrl: process.env["JARVIS_GITHUB_API_BASE_URL"],
+  });
+  const root = mkdtempSync(join("/tmp", "jarvis-development-gh-"));
+  roots.push(root);
+  const executable = join(root, "gh");
+  writeFileSync(executable, "#!/bin/sh\nprintf '%s\\n' 'ghs_development_fixture'\n", "utf8");
+  chmodSync(executable, 0o755);
+  const server = await startFakeGitHubApi();
+  servers.push(server);
+  process.env["JARVIS_GH_EXECUTABLE"] = executable;
+  process.env["JARVIS_GITHUB_API_BASE_URL"] = server.baseUrl;
+});
 
 afterEach(async () => {
   await Promise.all(engines.splice(0).map((engine) => engine.dispose()));
+  await Promise.all(servers.splice(0).map((server) => server.close()));
+  const environment = githubEnvironments.pop()!;
+  if (environment.executable === undefined) delete process.env["JARVIS_GH_EXECUTABLE"];
+  else process.env["JARVIS_GH_EXECUTABLE"] = environment.executable;
+  if (environment.apiBaseUrl === undefined) delete process.env["JARVIS_GITHUB_API_BASE_URL"];
+  else process.env["JARVIS_GITHUB_API_BASE_URL"] = environment.apiBaseUrl;
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
 describe("Development Module tracer bullet", () => {
+  it("rejects a GitHub Issue closed after readiness without a worktree or agent", async () => {
+    const fixture = makeRealGitRepositoryFixture({
+      remoteUrl: "git@github.com:Gasppacho/jarvis.git",
+    });
+    roots.push(fixture.root, fixture.remoteRoot);
+    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-closed-work-item-"));
+    roots.push(dataRoot);
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
+    });
+    engines.push(engine);
+    const github = servers[0]!;
+    const workItemRef = "github://Gasppacho/jarvis/issues/43";
+    github.seedIssue({
+      owner: "Gasppacho",
+      repository: "jarvis",
+      issue: {
+        number: 43,
+        title: "Closed after readiness",
+        body: "External body must not be persisted.",
+        state: "closed",
+        labels: [{ name: "agent:ready" }],
+      },
+    });
+
+    await activateProject(engine, "development-closed-work-item", fixture);
+    await publishTag(engine, "development-closed-work-item", "closed", 1, workItemRef);
+    const executions = await waitForExecutions(engine, "development-closed-work-item", 2);
+    const development = executions.find(
+      ({ moduleInstanceId }) => moduleInstanceId === "development",
+    );
+    expect(development).toMatchObject({ status: "failed" });
+    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
+    let implementationEventId: string | undefined;
+    try {
+      expect(
+        database
+          .prepare(
+            "SELECT code, attempts, message FROM dead_letters WHERE module_instance_id = 'development'",
+          )
+          .get(),
+      ).toEqual({
+        code: "github.work-item-read-failed",
+        attempts: 1,
+        message: "The requested Work Item is closed.",
+      });
+      expect(
+        database
+          .prepare("SELECT COUNT(*) AS count FROM workspace_leases WHERE execution_id = ?")
+          .get(development!.id),
+      ).toEqual({ count: 0 });
+      expect(
+        database
+          .prepare("SELECT COUNT(*) AS count FROM execution_checkpoints WHERE execution_id = ?")
+          .get(development!.id),
+      ).toEqual({ count: 0 });
+      expect(
+        database
+          .prepare("SELECT message FROM dead_letters WHERE module_instance_id = 'development'")
+          .get(),
+      ).not.toMatchObject({
+        message: expect.stringContaining("External body must not be persisted."),
+      });
+      implementationEventId = (
+        database
+          .prepare("SELECT id FROM events WHERE type = 'development.implementation.requested'")
+          .get() as { id: string }
+      ).id;
+    } finally {
+      database.close();
+    }
+    const redelivery = await engine.call("/test/redeliver", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        projectId: "development-closed-work-item",
+        moduleInstanceId: "development",
+        moduleId: "jarvis.module.development",
+        eventId: implementationEventId,
+      }),
+    });
+    expect(redelivery.status, await redelivery.clone().text()).toBe(200);
+    expect(await redelivery.json()).toMatchObject({
+      redelivered: true,
+      executionId: null,
+      status: "failed",
+    });
+    expect(
+      github.requests.filter(
+        ({ method, path }) => method === "GET" && path === "/repos/Gasppacho/jarvis/issues/43",
+      ),
+    ).toHaveLength(1);
+    github.seedIssue({
+      owner: "Gasppacho",
+      repository: "jarvis",
+      issue: {
+        number: 43,
+        title: "Reopened after correction",
+        body: "Corrected external body",
+        state: "open",
+        labels: [{ name: "agent:ready" }],
+      },
+    });
+    const deadLetters = await engine.call("/v1/projects/development-closed-work-item/dead-letters");
+    const deadLetter = (await deadLetters.json()) as { items: readonly { deliveryId: string }[] };
+    const replay = await engine.call(
+      `/v1/dead-letters/${encodeURIComponent(deadLetter.items[0]!.deliveryId)}/replay`,
+      { method: "POST" },
+    );
+    expect(replay.status, await replay.clone().text()).toBe(202);
+    await waitForExecutions(engine, "development-closed-work-item", 3);
+    expect(
+      github.requests.filter(
+        ({ method, path }) => method === "GET" && path === "/repos/Gasppacho/jarvis/issues/43",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("reads the bound open GitHub Issue before allocating and running Development", async () => {
+    const fixture = makeRealGitRepositoryFixture({
+      remoteUrl: "git@github.com:Gasppacho/jarvis.git",
+    });
+    roots.push(fixture.root, fixture.remoteRoot);
+    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-work-item-"));
+    roots.push(dataRoot);
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
+    });
+    engines.push(engine);
+    const github = servers[0]!;
+    const workItemRef = "github://Gasppacho/jarvis/issues/42";
+    github.seedIssue({
+      owner: "Gasppacho",
+      repository: "jarvis",
+      issue: {
+        number: 42,
+        title: "Read verified issue",
+        body: "External untrusted body",
+        state: "open",
+        labels: [{ name: "agent:ready" }],
+      },
+    });
+
+    await activateProject(engine, "development-work-item", fixture);
+    await publishTag(engine, "development-work-item", "work-item", 1, workItemRef);
+    const executions = await waitForExecutions(engine, "development-work-item", 2);
+    const development = executions.find(
+      ({ moduleInstanceId }) => moduleInstanceId === "development",
+    );
+    expect(development, JSON.stringify(executions)).toMatchObject({
+      status: "failed",
+      error: "The configured remote does not point to the committed working branch.",
+    });
+    expect(github.requests).toContainEqual({
+      method: "GET",
+      path: "/repos/Gasppacho/jarvis/issues/42",
+      credential: "ghs_development_fixture",
+    });
+    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
+    try {
+      expect(
+        database
+          .prepare(
+            "SELECT type FROM execution_checkpoints WHERE execution_id = ? ORDER BY sequence",
+          )
+          .all(development!.id),
+      ).toEqual(expect.arrayContaining([{ type: "agent.started" }]));
+      expect(
+        database
+          .prepare("SELECT message FROM dead_letters WHERE module_instance_id = 'development'")
+          .get(),
+      ).not.toMatchObject({ message: expect.stringContaining("External untrusted body") });
+    } finally {
+      database.close();
+    }
+  });
+
   it("runs a project-bound Codex Runtime through a fake executable", async () => {
     const fixture = makeRealGitRepositoryFixture();
     roots.push(fixture.root, fixture.remoteRoot);
@@ -1315,12 +1523,30 @@ async function activateProject(
   maxRepairCycles = 0,
   runtimeRef = "runtime/fake-test",
 ): Promise<void> {
+  const connection = await engine.call("/v1/connections", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      id: "connection/github-work-items",
+      kind: "github",
+      displayName: "Work Items",
+      secretRef: "gh://WorkItems",
+    }),
+  });
+  expect(connection.status, await connection.clone().text()).toBe(201);
+  const validated = await engine.call("/v1/connections/connection%2Fgithub-work-items/validate", {
+    method: "POST",
+  });
+  expect(validated.status, await validated.clone().text()).toBe(200);
   const portableConfig = {
     apiVersion: "jarvis.dev/project/v1",
     kind: "Project",
     metadata: { id: projectId, name: "Development tracer" },
     repositories: [{ id: "main", root: ".", defaultBranch: "main", remote: "origin" }],
-    slots: { agentRuntime: { requires: "agent.execute" } },
+    slots: {
+      agentRuntime: { requires: "agent.execute" },
+      tickets: { requires: "work-items.read" },
+    },
     commands,
     git: {
       branchPattern: "agent/{workItemId}-{slug}",
@@ -1359,7 +1585,7 @@ async function activateProject(
         moduleId: "jarvis.module.development",
         enabled: true,
         runtimeSlot: "agentRuntime",
-        bindings: { repository: "main" },
+        bindings: { repository: "main", tickets: "tickets" },
         configuration: {
           validationOrder,
           maxRepairCycles,
@@ -1404,7 +1630,10 @@ async function activateProject(
       repositories: {
         main: { path: realpathSync(fixture.root), bookmarkRef: "bookmark/development-tracer" },
       },
-      slots: { agentRuntime: { kind: "runtime", ref: runtimeRef } },
+      slots: {
+        agentRuntime: { kind: "runtime", ref: runtimeRef },
+        tickets: { kind: "connection", ref: "connection/github-work-items" },
+      },
     }),
   });
   expect(bindings.status, await bindings.clone().text()).toBe(200);
@@ -1430,6 +1659,7 @@ async function publishTag(
   projectId: string,
   suffix = "first",
   generation = 1,
+  workItemRef = `fixture://${projectId}/${suffix}`,
 ): Promise<string> {
   const response = await engine.call("/test/events", {
     method: "POST",
@@ -1441,11 +1671,11 @@ async function publishTag(
       projectId,
       repositoryId: "main",
       producer: { moduleId: "jarvis.module.github", moduleInstanceId: "github" },
-      subject: { type: "work-item", ref: `fixture://${projectId}/${suffix}` },
+      subject: { type: "work-item", ref: workItemRef },
       correlationId: `corr_${suffix}`,
       causationId: null,
       payload: {
-        workItemRef: `fixture://${projectId}/${suffix}`,
+        workItemRef,
         tag: "agent:ready",
       },
       ...(generation === 1 ? {} : { metadata: { generation } }),

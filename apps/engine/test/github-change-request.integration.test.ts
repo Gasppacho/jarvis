@@ -964,6 +964,7 @@ async function bindAndActivate(
       slots: {
         ...bindings.slots,
         sourceControl: { kind: "connection", ref: connectionRef },
+        tickets: { kind: "connection", ref: connectionRef },
         agentRuntime: { kind: "runtime", ref: "runtime/fake-test" },
       },
     }),
@@ -1095,6 +1096,7 @@ function githubProjectConfiguration(id: string): Record<string, unknown> {
   configuration["metadata"] = { id, name: id };
   configuration["slots"] = {
     sourceControl: { requires: "scm.change-request.manage" },
+    tickets: { requires: "work-items.read" },
     agentRuntime: { requires: "agent.execute" },
   };
   configuration["modules"] = [
@@ -1114,7 +1116,7 @@ function githubProjectConfiguration(id: string): Record<string, unknown> {
       moduleId: "jarvis.module.development",
       enabled: true,
       runtimeSlot: "agentRuntime",
-      bindings: { repository: "main", sourceControl: "sourceControl" },
+      bindings: { repository: "main", sourceControl: "sourceControl", tickets: "tickets" },
       configuration: {
         validationOrder: ["test"],
         maxRepairCycles: 0,

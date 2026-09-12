@@ -67,6 +67,9 @@ type DevelopmentFailureCode =
   | "agent.run-failed"
   | "agent.run-timed-out"
   | "agent.run-cancelled"
+  | "github.work-item-unavailable"
+  | "github.work-item-unauthorized"
+  | "github.work-item-read-failed"
   | "system.internal-error";
 
 interface ValidationFailureContext {
@@ -196,16 +199,19 @@ async function runImplementationRequested(
   const projectBindings = ctx.capabilities.projectBindings;
   const projectCommands = ctx.capabilities.projectCommands;
   const shell = ctx.capabilities.shell;
+  const workItems = ctx.capabilities.workItems;
+  const requiresGitHubWorkItem = request.workItemRef.startsWith("github://");
   if (
     runtime === undefined ||
     workspace === undefined ||
     projectBindings === undefined ||
     projectCommands === undefined ||
-    shell === undefined
+    shell === undefined ||
+    (requiresGitHubWorkItem && workItems === undefined)
   ) {
     throw new DevelopmentExecutionError(
       "project.capability-unresolved",
-      "Development requires a project-bound Agent Runtime, workspace, and Project Commands.",
+      "Development requires a project-bound Agent Runtime, workspace, and Project Commands; GitHub Work Items also require project-bound Work Item access.",
     );
   }
   const validationOrder = readValidationOrder(ctx.configuration["validationOrder"]);
@@ -221,7 +227,10 @@ async function runImplementationRequested(
     MAX_OUTPUT_LIMIT_BYTES,
   );
   let checkpointSequence = 0;
-  const workItem = await readWorkItem(ctx, request.workItemRef, () => ++checkpointSequence);
+  const workItem =
+    !requiresGitHubWorkItem || workItems === undefined
+      ? undefined
+      : await readWorkItem(workItems, request.workItemRef, ctx.repositoryId);
 
   const allocation = await workspace.allocate({
     executionId: ctx.executionId,
@@ -535,6 +544,13 @@ function stableFailureCode(code: string): DevelopmentFailureCode {
   }
   if (code === "agent.run-failed" || code === "agent.run-timed-out") return code;
   if (code === "agent.run-cancelled") return code;
+  if (
+    code === "github.work-item-unavailable" ||
+    code === "github.work-item-unauthorized" ||
+    code === "github.work-item-read-failed"
+  ) {
+    return code;
+  }
   return "system.internal-error";
 }
 
@@ -561,6 +577,12 @@ function failureMessage(ctx: ModuleHandlerContext, code: DevelopmentFailureCode)
       return `${prefix} agent run timed out; increase the timeout or reduce the Work Item scope, then retry.`;
     case "agent.run-cancelled":
       return `${prefix} implementation was cancelled; start a new run when ready.`;
+    case "github.work-item-unavailable":
+      return `${prefix} cannot read the GitHub Work Item because GitHub is temporarily unavailable; retry later.`;
+    case "github.work-item-unauthorized":
+      return `${prefix} cannot read the GitHub Work Item; revalidate the project GitHub connection, then replay.`;
+    case "github.work-item-read-failed":
+      return `${prefix} cannot read an open GitHub Work Item; correct or reopen it, then replay.`;
     case "system.internal-error":
       return `${prefix} encountered an internal failure; inspect engine diagnostics and retry.`;
     default:
@@ -975,23 +997,32 @@ function workItemContent(workItemRef: string, item: WorkItem | undefined): strin
 }
 
 async function readWorkItem(
-  ctx: ModuleHandlerContext,
+  capability: NonNullable<ModuleHandlerContext["capabilities"]["workItems"]>,
   workItemRef: string,
-  nextCheckpointSequence: () => number,
-): Promise<WorkItem | undefined> {
-  const capability = ctx.capabilities.workItems;
-  if (capability === undefined) return undefined;
-  try {
-    return await capability.read(workItemRef, ctx.repositoryId);
-  } catch {
-    ctx.recordCheckpoint({
-      type: "agent.message",
-      sequence: nextCheckpointSequence(),
-      timestamp: new Date().toISOString(),
-      message: "Work Item details unavailable; continuing with the canonical reference.",
-    });
-    return undefined;
+  repositoryId: string | undefined,
+): Promise<WorkItem> {
+  const item = await capability.read(workItemRef, repositoryId);
+  if (
+    item.ref !== workItemRef ||
+    !Number.isSafeInteger(item.number) ||
+    item.number < 1 ||
+    typeof item.title !== "string" ||
+    item.title.trim() === "" ||
+    typeof item.body !== "string" ||
+    (item.state !== "open" && item.state !== "closed")
+  ) {
+    throw new DevelopmentExecutionError(
+      "github.work-item-read-failed",
+      "The Work Item reader returned an invalid Work Item.",
+    );
   }
+  if (item.state === "closed") {
+    throw new DevelopmentExecutionError(
+      "github.work-item-read-failed",
+      "The requested Work Item is closed.",
+    );
+  }
+  return item;
 }
 
 function boundedWorkItemContent(value: string): string {

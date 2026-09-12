@@ -93,6 +93,21 @@ describe("GitHubApiClient", () => {
     });
   });
 
+  it("classifies a timed-out request as unavailable", async () => {
+    const server = createServer(() => {});
+    servers.push(server);
+    const client = new GitHubApiClient({
+      secretRef: "gh://Gasppacho",
+      apiBaseUrl: await listen(server),
+      timeoutMs: 1,
+      credentialResolver: {
+        resolve: async () => ({ status: "available", credential: "gh_client_sentinel" }),
+      },
+    });
+
+    await expect(client.get("/user")).rejects.toEqual(new GitHubApiError("unavailable"));
+  });
+
   it("rejects absolute URLs so a bound client cannot escape its API host", async () => {
     const client = new GitHubApiClient({
       secretRef: "gh://Gasppacho",

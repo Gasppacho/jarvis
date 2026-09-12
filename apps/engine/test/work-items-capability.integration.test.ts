@@ -30,6 +30,7 @@ describe("project-bound Work Items capability", () => {
       ["project-a", snapshot("project-a", "connection/a")],
       ["project-b", snapshot("project-b")],
       ["project-c", snapshot("project-c", "connection/a", false)],
+      ["project-d", snapshot("project-d", "connection/b")],
     ]);
     const resolver = resolverFor(snapshots, fakeGitHub.baseUrl);
     const capabilities = resolver.resolve("project-a", "reader", "work-items-reader");
@@ -48,11 +49,21 @@ describe("project-bound Work Items capability", () => {
       path: "/repos/Gasppacho/jarvis/issues/16",
       credential: "token-a",
     });
+    await expect(
+      resolver
+        .resolve("project-d", "reader", "work-items-reader")
+        .workItems?.read("github://Gasppacho/jarvis/issues/16"),
+    ).resolves.toMatchObject({ ref: "github://Gasppacho/jarvis/issues/16" });
+    expect(fakeGitHub.requests).toContainEqual({
+      method: "GET",
+      path: "/repos/Gasppacho/jarvis/issues/16",
+      credential: "token-b",
+    });
     const requestsBeforeUnlinkedRead = fakeGitHub.requests.length;
     await expect(
       capabilities.workItems?.read("github://Other/repo/issues/16", "main"),
     ).rejects.toMatchObject({
-      code: "github.change-request-invalid",
+      code: "github.work-item-read-failed",
       retryable: false,
     });
     expect(fakeGitHub.requests).toHaveLength(requestsBeforeUnlinkedRead);
@@ -62,7 +73,7 @@ describe("project-bound Work Items capability", () => {
         .resolve("project-c", "reader", "work-items-reader")
         .workItems?.read("github://Gasppacho/jarvis/issues/16"),
     ).rejects.toMatchObject({
-      code: "github.change-request-invalid",
+      code: "github.work-item-read-failed",
       retryable: false,
     });
     expect(fakeGitHub.requests).toHaveLength(requestsBeforeUnboundRead);
@@ -92,7 +103,7 @@ describe("project-bound Work Items capability", () => {
     });
     await expect(workItems.read(ref)).rejects.toMatchObject({
       code: "github.work-item-unauthorized",
-      retryable: true,
+      retryable: false,
     });
     restoreUnauthorized();
 

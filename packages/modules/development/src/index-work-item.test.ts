@@ -40,6 +40,9 @@ describe("Development Work Item context", () => {
 
     const prompt = runtime.requests[0]!.systemInstructions.join("\n");
     expect(prompt).toContain("untrusted external text");
+    expect(prompt).toContain(`Reference: ${WORK_ITEM_REF}`);
+    expect(prompt).toContain("Number: 16");
+    expect(prompt).toContain("State: open");
     expect(prompt).toContain("Title:\nAdd health endpoint");
     expect(prompt).toContain("Body:");
     expect(prompt).toContain("[Work Item content truncated by Jarvis]");
@@ -47,35 +50,64 @@ describe("Development Work Item context", () => {
     expect(prompt).not.toContain(body);
   });
 
-  it("falls back to the reference when the bound read fails", async () => {
-    const runtime = new CapturingRuntime();
-    const checkpoints: string[] = [];
-    await runDevelopment({
-      runtime,
-      workItems: {
-        read: async () => {
-          throw new Error("provider detail with credential");
-        },
-      },
-      checkpoints,
-    });
+  it("does not allocate a workspace or start an agent when the Work Item read fails", async () => {
+    for (const [code, retryable] of [
+      ["github.work-item-unavailable", true],
+      ["github.work-item-unauthorized", false],
+      ["github.work-item-read-failed", false],
+    ] as const) {
+      const runtime = new CapturingRuntime();
+      const allocations: number[] = [];
+      await expect(
+        runDevelopment({
+          runtime,
+          workItems: {
+            read: async () => {
+              throw Object.assign(new Error("provider detail with credential"), {
+                code,
+                retryable,
+              });
+            },
+          },
+          allocations,
+        }),
+      ).rejects.toMatchObject({ code, retryable });
 
-    const prompt = runtime.requests[0]!.systemInstructions.join("\n");
-    expect(prompt).toContain(WORK_ITEM_REF);
-    expect(prompt).not.toContain("Title:");
-    expect(checkpoints).toEqual([
-      "Work Item details unavailable; continuing with the canonical reference.",
-    ]);
-    expect(prompt).not.toContain("credential");
+      expect(allocations).toEqual([]);
+      expect(runtime.requests).toEqual([]);
+    }
   });
 
-  it("keeps the existing reference-only prompt without the capability", async () => {
+  it("rejects a missing Work Item capability before workspace allocation", async () => {
     const runtime = new CapturingRuntime();
-    await runDevelopment({ runtime });
+    const allocations: number[] = [];
+    await expect(runDevelopment({ runtime, allocations })).rejects.toMatchObject({
+      code: "project.capability-unresolved",
+    });
 
-    const prompt = runtime.requests[0]!.systemInstructions.join("\n");
-    expect(prompt).toContain(WORK_ITEM_REF);
-    expect(prompt).not.toContain("Title:");
+    expect(allocations).toEqual([]);
+    expect(runtime.requests).toEqual([]);
+  });
+
+  it("rejects a closed Work Item before workspace allocation", async () => {
+    const runtime = new CapturingRuntime();
+    const allocations: number[] = [];
+    await expect(
+      runDevelopment({
+        runtime,
+        workItem: {
+          ref: WORK_ITEM_REF,
+          number: 16,
+          title: "Closed issue",
+          body: "Never send this to an agent.",
+          state: "closed",
+        },
+        allocations,
+      }),
+    ).rejects.toMatchObject({ code: "github.work-item-read-failed", retryable: false });
+
+    expect(allocations).toEqual([]);
+    expect(runtime.requests).toEqual([]);
   });
 
   it("uses the Issue number and title for branch, commit, and PR names", async () => {
@@ -106,11 +138,17 @@ describe("Development Work Item context", () => {
     });
   });
 
-  it("keeps non-GitHub references and makes repeated Issue runs distinct", async () => {
+  it("uses the verified Issue identity and makes repeated Issue runs distinct", async () => {
     const first = await runDevelopment({
       runtime: new CapturingRuntime(),
       executionId: "exec_first",
-      workItemRef: "fixture://project/first",
+      workItem: {
+        ref: "github://Gasppacho/jarvis/issues/15",
+        number: 15,
+        title: "First Issue",
+        body: "Body",
+        state: "open",
+      },
     });
     const second = await runDevelopment({
       runtime: new CapturingRuntime(),
@@ -125,10 +163,10 @@ describe("Development Work Item context", () => {
     });
 
     expect(first.branchContext).toEqual({
-      workItemId: "fixture-project-first",
-      slug: "implementation-exec-first",
+      workItemId: "15",
+      slug: "first-issue-exec-first",
     });
-    expect(first.commitSubject).toBe("feat: implement fixture-project-first");
+    expect(first.commitSubject).toBe("feat: implement first-issue");
     expect(first.branchContext.slug).not.toBe(second.branchContext.slug);
   });
 });
@@ -174,6 +212,7 @@ async function runDevelopment(input: {
   readonly executionId?: string;
   readonly workItems?: ModuleHandlerContext["capabilities"]["workItems"];
   readonly checkpoints?: string[];
+  readonly allocations?: number[];
 }): Promise<{
   readonly published: readonly ModuleHandlerPublishInput[];
   readonly branchContext: { readonly workItemId: string; readonly slug: string };
@@ -249,6 +288,7 @@ async function runDevelopment(input: {
       },
       workspace: {
         allocate: async (allocation) => {
+          input.allocations?.push(1);
           branchContext = allocation.branchContext;
           const branchName = `agent/${allocation.branchContext.workItemId}-${allocation.branchContext.slug}`;
           branch = branchName;

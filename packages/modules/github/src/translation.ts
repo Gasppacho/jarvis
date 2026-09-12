@@ -115,7 +115,9 @@ export function translateGitHubWorkItemResponse(response: unknown, ref: string):
   const providerResponse = asProviderResponse(response);
   const status = providerResponse.status;
   if (status !== undefined && !isSuccessful(status)) {
-    throw failureAsError(mapGitHubWorkItemError(status, providerResponse.headers));
+    throw failureAsError(
+      mapGitHubWorkItemError(status, providerResponse.headers, providerText(providerResponse.body)),
+    );
   }
 
   const body = providerResponse.body;
@@ -346,11 +348,12 @@ export function mapGitHubPullRequestError(
 function mapGitHubWorkItemError(
   status: number,
   headers: GitHubResponseHeaders | undefined,
+  text: string,
 ): GitHubTranslationFailure {
-  if (isRateLimited(status, headers, "")) {
+  if (isRateLimited(status, headers, text)) {
     return failure(
-      "github.rate-limited",
-      "GitHub rate limit prevents this Work Item read; retry later.",
+      "github.work-item-unavailable",
+      "GitHub Work Item service is temporarily unavailable; retry later.",
       true,
     );
   }
@@ -358,7 +361,7 @@ function mapGitHubWorkItemError(
     return failure(
       "github.work-item-unauthorized",
       "GitHub cannot access the requested Work Item.",
-      true,
+      false,
     );
   }
   if (retryableStatus(status)) {

@@ -56,10 +56,8 @@ capabilities:
       resolution:
         kind: engine
         ref: engine/local
-    # Ticket/work-item adapters are outside #10; bind this only when a later flow needs it.
     - id: work-items.read
       binding: tickets
-      optional: true
     - id: agent.execute
       binding: agentRuntime
   provides: []
