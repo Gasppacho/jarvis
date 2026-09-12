@@ -347,3 +347,23 @@ révoque la readiness; les bindings conservés ne valent jamais contrôle couran
 Le nouveau template allowliste les noms `PATH`, `HOME`, `CODEX_HOME`, sans leur
 valeur et sans grant implicite; les projets existants gardent leur allowlist et
 leur règle `agent:ready`. Le nouveau template conserve `ready-for-agent`.
+
+### Modèle GitHub Development confirmé (#195)
+
+Le nouveau modèle utilise `ready-for-agent` et `scm.work-item.ready` : GitHub confirme
+l'absence de bloqueur natif ouvert, puis la règle demande Development. Le contrôle
+Ready label met à jour le filtre de la règle readiness associée. Les projets historiques
+conservent leur label et leur règle tag-added lors d'une réouverture/sauvegarde.
+
+Workflow choices expose les commandes proposées et leur contexte : préparation dans
+le worktree frais avant l'agent, validations après l'implémentation, puis commit/push
+et demande de PR. Les validations sont sélectionnées explicitement ; une modification
+de commande exige une nouvelle sélection. Pour Jarvis, `pnpm verify` est proposé si
+le script existe, avec les prérequis macOS/Swift, Node 24 et pnpm. La préparation doit
+être choisie, y compris « No preparation necessary ». Une liste vide reste un brouillon
+sauvegardable, jamais un workflow prêt ou des validations réussies.
+
+Custom composition conserve les modifications. Revenir au modèle demande une
+confirmation native avant remplacement. Review annonce que les issues déjà prêtes
+peuvent démarrer dès l'activation explicite, une à la fois, et que le parcours s'arrête
+à la PR avec revue et merge manuels.

@@ -182,6 +182,17 @@ describe("discoverRepository", () => {
     });
   });
 
+  it("proposes the repository verify script without approving it", () => {
+    const root = fixture({
+      lockfile: "pnpm-lock.yaml",
+      packageJson: { scripts: { verify: "pnpm test && pnpm build", test: "vitest" } },
+    });
+    expect(discoverRepository(root).suggested.commands).toMatchObject({
+      verify: "pnpm verify",
+      install: "pnpm install --frozen-lockfile",
+    });
+  });
+
   it("never suggests an absolute path as a repository root", () => {
     const root = fixture();
     const suggested = discoverRepository(root).suggested as {

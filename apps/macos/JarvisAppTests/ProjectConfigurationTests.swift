@@ -500,6 +500,9 @@ final class ProjectConfigurationTests: XCTestCase {
     @MainActor
     func testFreshImportOffersGuidedStartingPointsAndRefreshesHumanModuleCards() async throws {
         let repository = try makeRepository()
+        try "[remote \"origin\"]\n\turl = git@github.com:QServices/swift-config.git\n".write(
+            to: repository.appendingPathComponent(".git/config"), atomically: true, encoding: .utf8)
+
         let session = EngineSessionModel(
             supervisor: EngineSupervisor(
                 resources: .developmentBuild(),
@@ -524,6 +527,13 @@ final class ProjectConfigurationTests: XCTestCase {
             ["GitHub Development", "Custom composition"])
         XCTAssertEqual(state.compositionGuide?.modulePackages.count, 4)
 
+        configuration.apply(.addSlot(name: "custom-slot", requirement: "agent.execute"), projectId: imported.id, packages: catalog.packages)
+        let slotsOnly = configuration.state(for: imported.id).draft
+        configuration.chooseStartingPoint(projectId: imported.id, startingPointId: "github-development")
+        XCTAssertEqual(configuration.state(for: imported.id).draft, slotsOnly)
+        XCTAssertEqual(configuration.state(for: imported.id).pendingStartingPointID, "github-development")
+        configuration.cancelStartingPointReplacement(projectId: imported.id)
+        configuration.apply(.removeSlot("custom-slot"), projectId: imported.id, packages: catalog.packages)
         configuration.chooseStartingPoint(
             projectId: imported.id, startingPointId: "github-development")
         await configuration.refreshCompositionChoices(projectId: imported.id)
@@ -532,6 +542,10 @@ final class ProjectConfigurationTests: XCTestCase {
             state.draft?.modules.map(\.instanceId),
             ["github", "automation-rules", "development"])
         XCTAssertEqual(state.localBindings?.slots, [])
+        let proposedDevelopment = try XCTUnwrap(state.draft?.modules.first { $0.instanceId == "development" })
+        XCTAssertEqual(proposedDevelopment.configurationValues["validationOrder"], "[]")
+        XCTAssertTrue(proposedDevelopment.configurationValues["preparation", default: ""].isEmpty)
+
         XCTAssertEqual(
             state.resourceChoices.map(\.slotId),
             [
@@ -574,6 +588,37 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertTrue(developmentCard.technicalDetails.contains("1.0.0"))
         XCTAssertTrue(
             developmentCard.technicalDetails.contains("development.implementation.requested.v1"))
+
+        let savedIncomplete = await configuration.saveDraft(projectId: imported.id, writeToRepository: false)
+        XCTAssertNotNil(savedIncomplete, configuration.state(for: imported.id).errorMessage ?? "")
+        await configuration.refresh(projectId: imported.id, packages: catalog.packages)
+        XCTAssertFalse(configuration.state(for: imported.id).compositionReview?.readyToValidate ?? true)
+        let commandModule = try XCTUnwrap(configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "development" })
+        configuration.setCommand(projectId: imported.id, name: "verify", command: "pnpm verify")
+        configuration.selectValidationCommand(projectId: imported.id, moduleID: commandModule.id, name: "verify", selected: true)
+        XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.first { $0.id == commandModule.id }?.configurationValues["validationOrder"], #"["verify"]"#)
+        configuration.setCommand(projectId: imported.id, name: "verify", command: "pnpm verify --changed")
+        XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.first { $0.id == commandModule.id }?.configurationValues["validationOrder"], "[]")
+        configuration.setReadyLabel(projectId: imported.id, label: "approved-work")
+        XCTAssertTrue(configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "automation-rules" }?.automationRules?.first?.matchJSON.contains("approved-work") == true)
+        let labelModule = try XCTUnwrap(configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "github" })
+        configuration.apply(.setModuleConfiguration(labelModule.id, "readyLabel", "reviewed-work"), projectId: imported.id, packages: catalog.packages)
+        XCTAssertTrue(configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "automation-rules" }?.automationRules?.first?.matchJSON.contains("reviewed-work") == true)
+        XCTAssertTrue(ProjectDetailPresentation.activationNotice.contains("already"))
+        XCTAssertTrue(ProjectDetailPresentation.activationNotice.contains("Existing and Custom"))
+        XCTAssertTrue(presentation.startingPoints.first?.description.contains("QServices/swift-config") == true)
+        let custom = try XCTUnwrap(configuration.state(for: imported.id).draft)
+        configuration.chooseStartingPoint(projectId: imported.id, startingPointId: "custom")
+        XCTAssertEqual(configuration.state(for: imported.id).draft, custom)
+        configuration.chooseStartingPoint(projectId: imported.id, startingPointId: "github-development")
+        XCTAssertEqual(configuration.state(for: imported.id).draft, custom)
+        XCTAssertEqual(configuration.state(for: imported.id).pendingStartingPointID, "github-development")
+        configuration.cancelStartingPointReplacement(projectId: imported.id)
+        XCTAssertNil(configuration.state(for: imported.id).pendingStartingPointID)
+        XCTAssertEqual(configuration.state(for: imported.id).draft, custom)
+        configuration.chooseStartingPoint(projectId: imported.id, startingPointId: "github-development", confirmedReplacement: true)
+        XCTAssertEqual(configuration.state(for: imported.id).draft?.commands["verify"], "pnpm verify --changed")
+        await configuration.refreshCompositionChoices(projectId: imported.id)
 
         configuration.apply(
             .setProjectName("Preserved name"),

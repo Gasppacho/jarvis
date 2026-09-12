@@ -11,7 +11,7 @@
   "properties": {
     "validationOrder": {
       "title": "Validation order",
-      "description": "Checks run after implementation, in this order.",
+      "description": "Commands explicitly selected for validation in the allocated worktree after implementation. An empty list is an incomplete draft and cannot activate.",
       "type": "array",
       "default": [
         "lint",
@@ -27,7 +27,7 @@
           "build"
         ]
       ],
-      "minItems": 1,
+      "minItems": 0,
       "uniqueItems": true,
       "items": {
         "title": "Validation check",
@@ -36,7 +36,8 @@
           "lint",
           "typecheck",
           "test",
-          "build"
+          "build",
+          "verify"
         ]
       }
     },

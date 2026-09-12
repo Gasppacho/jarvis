@@ -1,3 +1,6 @@
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import type { PortableProjectConfiguration } from "../../../packages/project-runtime/src/project-types.js";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -12,9 +15,180 @@ afterEach(async () => {
 });
 
 describe("reference workflow pull request", () => {
+  it("runs the imported guided draft only after explicit command choices and activation, stops at one PR", async () => {
+    const fixture = await startReferenceWorkflowFixture("guided-pull-request", {}, true);
+    fixtures.push(fixture);
+    const endpoint = `/v1/projects/${fixture.projectId}`;
+    const detail = (await (await fixture.engine.call(endpoint)).json()) as {
+      status: string;
+      portableConfig: PortableProjectConfiguration;
+    };
+    const draft = detail.portableConfig;
+    expect(detail.status).toBe("draft");
+    expect(draft.modules.map((module) => module.moduleId)).toEqual([
+      "jarvis.module.github",
+      "jarvis.module.automation-rules",
+      "jarvis.module.development",
+    ]);
+    expect(draft.workspace.maxConcurrentExecutions).toBe(1);
+    expect(draft.repositories).toEqual([
+      { id: "main", root: ".", remote: "github", defaultBranch: "main" },
+    ]);
+    expect(draft.git.pushRemote).toBe("origin");
+    expect(draft.modules[0]?.configuration?.["repositories"]).toEqual(["main"]);
+    expect(draft.modules[2]?.configuration?.["validationOrder"]).toEqual([]);
+    expect(draft.modules[2]?.configuration?.["preparation"]).toBeUndefined();
+    expect(JSON.stringify(draft)).not.toMatch(
+      /agent:ready|merge-requested|Gasppacho|QServices|\/Users\//,
+    );
+    const report = (await (
+      await fixture.engine.call(`${endpoint}/validation-report`, { method: "POST" })
+    ).json()) as {
+      valid: boolean;
+      compositionFingerprint: string;
+      findings: { message: string }[];
+    };
+    expect(report.valid).toBe(false);
+    expect(report.findings.map((f) => f.message).join(" ")).toContain("confirm at least one");
+    expect(report.findings.map((f) => f.message).join(" ")).toContain("preparation");
+    const refused = await fixture.engine.call(`${endpoint}/activate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ compositionFingerprint: report.compositionFingerprint }),
+    });
+    expect(refused.status).toBe(409);
+
+    const seed = (number: number, label: string, blocked = false) =>
+      fixture.fakeGitHub.seedIssue({
+        owner: "Gasppacho",
+        repository: "jarvis",
+        issue: {
+          number,
+          title: `Guided work ${number}`,
+          body: "Implement a small tested improvement.",
+          state: "open",
+          labels: [{ name: label }],
+          blockedBy: blocked
+            ? [{ number: 999, title: "Open blocker", body: "", state: "open", labels: [] }]
+            : [],
+        },
+      });
+    seed(195, "ready-for-agent");
+    seed(196, "ready-for-agent", true);
+    seed(197, "agent:ready");
+    // Many accelerated polling intervals elapse while the saved draft is inactive.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(
+      fixture.fakeGitHub.requests.filter((request) => request.path.includes("/issues")),
+    ).toEqual([]);
+    expect(readFileSync(fixture.runtimeCounterPath, "utf8")).toBe("");
+
+    const configuration: PortableProjectConfiguration = {
+      ...draft,
+      commands: { verify: "node --test" },
+      modules: draft.modules.map((module) =>
+        module.instanceId === "development"
+          ? {
+              ...module,
+              configuration: {
+                ...module.configuration,
+                preparation: "none",
+                validationOrder: ["verify"],
+                environmentAllowlist: ["JARVIS_FAKE_COUNTER_PATH"],
+              },
+            }
+          : module,
+      ),
+    };
+    const saved = await fixture.engine.call(`${endpoint}/configuration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ portableConfig: configuration, writeToRepository: false }),
+    });
+    expect(saved.status, await saved.clone().text()).toBe(200);
+    const reopened = (await (await fixture.engine.call(endpoint)).json()) as {
+      portableConfig: PortableProjectConfiguration;
+    };
+    expect(reopened.portableConfig).toEqual(configuration);
+    const ready = (await (
+      await fixture.engine.call(`${endpoint}/validation-report`, { method: "POST" })
+    ).json()) as {
+      valid: boolean;
+      requestRoutes: { consumer: { instanceId: string } }[];
+    };
+    expect(ready.valid).toBe(true);
+    expect(ready.requestRoutes.map((route) => route.consumer.instanceId).sort()).toEqual([
+      "development",
+      "github",
+    ]);
+    await fixture.activate();
+    const events = await waitForEventTypes(fixture, [
+      "scm.work-item.ready",
+      "development.implementation.completed",
+      "scm.change-request.created",
+    ]);
+    await waitForExecutions(fixture);
+    expect(fixture.fakeGitHub.pullRequests).toHaveLength(1);
+    const pr = fixture.fakeGitHub.pullRequests[0]!;
+    const pushed = execFileSync("git", ["rev-parse", `refs/heads/${pr.head}`], {
+      cwd: fixture.bareRemoteRoot,
+      encoding: "utf8",
+    }).trim();
+    expect(pushed).not.toBe(fixture.initialCommitSha);
+    const database = new Database(`${fixture.engine.dataRoot}/jarvis.sqlite`, { readonly: true });
+    try {
+      const rows = database
+        .prepare(
+          "SELECT envelope FROM outbox WHERE project_id = ? AND json_extract(envelope, '$.type') = 'development.implementation.completed'",
+        )
+        .all(fixture.projectId) as { envelope: string }[];
+      expect(rows).toHaveLength(1);
+      expect(JSON.parse(rows[0]!.envelope).payload).toMatchObject({
+        workItemRef: "github://Gasppacho/jarvis/issues/195",
+        headCommit: pushed,
+        validation: { passed: true, commands: [{ name: "verify", status: "passed" }] },
+      });
+    } finally {
+      database.close();
+    }
+    expect(events.filter((event) => event.type === "scm.change-request.created")).toHaveLength(1);
+    await fixture.restart();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(fixture.fakeGitHub.pullRequests).toHaveLength(1);
+    expect(readFileSync(fixture.runtimeCounterPath, "utf8").trim().split("\n")).toHaveLength(1);
+    const finalEvents = (await (await fixture.engine.call(`${endpoint}/events`)).json()) as {
+      items: WorkflowEvent[];
+    };
+    expect(
+      finalEvents.items.filter((event) => event.type === "development.implementation.requested"),
+    ).toHaveLength(1);
+    expect(finalEvents.items.some((event) => event.type.includes("merge"))).toBe(false);
+  });
+
   it("creates one Pull Request from Development's sourceControl request", async () => {
     const fixture = await startReferenceWorkflowFixture("reference-pull-request");
     fixtures.push(fixture);
+    const endpoint = `/v1/projects/${fixture.projectId}`;
+    await fixture.engine.call(`${endpoint}/pause`, { method: "POST" });
+    const before = (await (await fixture.engine.call(endpoint)).json()) as {
+      portableConfig: PortableProjectConfiguration;
+    };
+    const bindingsBefore = await (await fixture.engine.call(`${endpoint}/bindings`)).json();
+    const saved = await fixture.engine.call(`${endpoint}/configuration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ portableConfig: before.portableConfig, writeToRepository: false }),
+    });
+    expect(saved.status, await saved.clone().text()).toBe(200);
+    const reopened = (await (await fixture.engine.call(endpoint)).json()) as {
+      portableConfig: PortableProjectConfiguration;
+    };
+    expect(reopened.portableConfig).toEqual(before.portableConfig);
+    expect(JSON.stringify(reopened.portableConfig.modules[1])).toContain("agent:ready");
+    expect(await (await fixture.engine.call(`${endpoint}/bindings`)).json()).toEqual(
+      bindingsBefore,
+    );
+    await fixture.activate();
     fixture.fakeGitHub.appendLabeledIssueEvent({
       owner: "Gasppacho",
       repository: "jarvis",

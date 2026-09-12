@@ -9,7 +9,7 @@ import type { AgentProjectBindings } from "../../agent-runtime/src/request-build
 
 export type ModuleConfiguration = Readonly<Record<string, unknown>>;
 
-export type ProjectCommandName = "install" | "lint" | "typecheck" | "test" | "build";
+export type ProjectCommandName = "install" | "lint" | "typecheck" | "test" | "build" | "verify";
 
 export interface ProjectCommandsCapability {
   readonly commands: Readonly<Partial<Record<ProjectCommandName, string>>>;

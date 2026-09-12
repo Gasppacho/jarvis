@@ -24,6 +24,7 @@ export interface ReferenceWorkflowFixture {
   readonly projectId: string;
   readonly fakeGitHubBaseUrl: string;
   readonly initialCommitSha: string;
+  activate(): Promise<void>;
   restart(env?: Readonly<Record<string, string>>): Promise<void>;
   readonly runtimeCounterPath: string;
   dispose(): Promise<void>;
@@ -33,6 +34,7 @@ export interface ReferenceWorkflowFixture {
 export async function startReferenceWorkflowFixture(
   projectId = "reference-workflow",
   extraEnv: Readonly<Record<string, string>> = {},
+  guidedDraft = false,
 ): Promise<ReferenceWorkflowFixture> {
   const repository = makeRealGitRepositoryFixture({
     additionalRemotes: [{ name: "github", url: "git@github.com:Gasppacho/jarvis.git" }],
@@ -43,21 +45,23 @@ export async function startReferenceWorkflowFixture(
   let engine: Harness | undefined;
 
   try {
-    const configuration = referenceProjectConfiguration(projectId);
-    mkdirSync(join(repository.root, ".jarvis"), { recursive: true });
-    writeFileSync(
-      join(repository.root, ".jarvis", "project.yaml"),
-      stringifyYaml(configuration),
-      "utf8",
-    );
-    execFileSync("git", ["add", ".jarvis/project.yaml"], { cwd: repository.root });
-    execFileSync(
-      "git",
-      ["commit", "--quiet", "--no-gpg-sign", "-m", "Reference workflow configuration"],
-      {
-        cwd: repository.root,
-      },
-    );
+    if (!guidedDraft) {
+      const configuration = referenceProjectConfiguration(projectId);
+      mkdirSync(join(repository.root, ".jarvis"), { recursive: true });
+      writeFileSync(
+        join(repository.root, ".jarvis", "project.yaml"),
+        stringifyYaml(configuration),
+        "utf8",
+      );
+      execFileSync("git", ["add", ".jarvis/project.yaml"], { cwd: repository.root });
+      execFileSync(
+        "git",
+        ["commit", "--quiet", "--no-gpg-sign", "-m", "Reference workflow configuration"],
+        {
+          cwd: repository.root,
+        },
+      );
+    }
     const initialCommitSha = git(repository.root, ["rev-parse", "HEAD"]);
     execFileSync("git", ["push", repository.remoteName, repository.branch], {
       cwd: repository.root,
@@ -81,21 +85,56 @@ export async function startReferenceWorkflowFixture(
 
     await createConnection(engine);
     const project = await importProject(engine, repository.root);
-    await bindAndActivate(engine, project.id, repository.root, runtimeCounterPath);
-    await waitFor(
-      () =>
-        fakeGitHub.requests.some(
-          (request) =>
-            request.method === "GET" && request.path === "/repos/Gasppacho/jarvis/issues/events",
-        ),
-      "GitHub polling request",
-    );
+    if (guidedDraft) {
+      const response = await engine.call(`/v1/projects/${project.id}/composition-choices`, {
+        method: "POST",
+      });
+      const choices = (await response.json()) as {
+        startingPoints: { template?: PortableProjectConfiguration }[];
+      };
+      const template = choices.startingPoints[0]?.template;
+      if (template === undefined) throw new Error("guided template missing");
+      // Explicit local choices: GitHub identity from the named GitHub remote;
+      // pushes still use the local bare origin. Never rewrite the poller's ID.
+      const saved = await engine.call(`/v1/projects/${project.id}/configuration`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          portableConfig: {
+            ...template,
+            repositories: template.repositories.map((repository) => ({
+              ...repository,
+              remote: "github",
+            })),
+          },
+          writeToRepository: false,
+        }),
+      });
+      await requireStatus(saved, 200, "save guided draft");
+      const bindings = (await (
+        await engine.call(`/v1/projects/${project.id}/bindings`)
+      ).json()) as ProjectBindings;
+      if (Object.keys(bindings.slots).length !== 0) throw new Error("template granted resources");
+    }
+    await bindAndActivate(engine, project.id, repository.root, runtimeCounterPath, !guidedDraft);
+    if (!guidedDraft)
+      await waitFor(
+        () =>
+          fakeGitHub.requests.some(
+            (request) =>
+              request.method === "GET" && request.path === "/repos/Gasppacho/jarvis/issues/events",
+          ),
+        "GitHub polling request",
+      );
 
     return {
       get engine() {
         return engine!;
       },
       runtimeCounterPath,
+      async activate() {
+        await activate(engine!, project.id);
+      },
       async restart(extra = {}) {
         await engine!.dispose();
         engine = await startEngine({
@@ -215,6 +254,7 @@ async function bindAndActivate(
   projectId: string,
   repositoryRoot: string,
   runtimeCounterPath: string,
+  shouldActivate = true,
 ): Promise<void> {
   const repositoryBinding = await engine.call(
     `/v1/projects/${encodeURIComponent(projectId)}/repositories/main/binding`,
@@ -250,6 +290,10 @@ async function bindAndActivate(
   });
   await requireStatus(saved, 200, "save reference bindings");
 
+  if (shouldActivate) await activate(engine, projectId);
+}
+
+async function activate(engine: Harness, projectId: string): Promise<void> {
   const reportResponse = await engine.call(
     `/v1/projects/${encodeURIComponent(projectId)}/validation-report`,
     { method: "POST" },

@@ -247,6 +247,7 @@ public struct ProjectDetailView: View {
                 .textFieldStyle(.roundedBorder)
 
             startingPointEditor
+            workflowCommandEditor
             slotRequirementsEditor
 
             HStack {
@@ -299,7 +300,65 @@ public struct ProjectDetailView: View {
                     "Creates an editable Portable Configuration Draft without Local Bindings.")
             }
         }
+        .confirmationDialog("Replace the current module composition?", isPresented: Binding(
+            get: { state.pendingStartingPointID != nil },
+            set: { if !$0 { projectConfiguration.cancelStartingPointReplacement(projectId: project.id) } }
+        )) {
+            Button("Replace composition", role: .destructive) {
+                if let id = state.pendingStartingPointID {
+                    projectConfiguration.chooseStartingPoint(projectId: project.id, startingPointId: id, confirmedReplacement: true)
+                }
+            }
+            Button("Keep draft", role: .cancel) { projectConfiguration.cancelStartingPointReplacement(projectId: project.id) }
+        } message: {
+            Text("This replaces modules, rules and slot requirements. Project details and commands are kept. Resources still require explicit binding.")
+        }
         .id("starting-point")
+    }
+
+    private var workflowCommandEditor: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let draft = state.draft {
+                Text("Workflow choices").font(.headline)
+                Text("Recommended model").font(.subheadline)
+                Text(presentation.startingPoints.first(where: { $0.id == "github-development" })?.description ?? "Repository mapping unavailable. Refresh the Engine review.").font(.callout)
+                if let github = draft.modules.first(where: { $0.moduleId == "jarvis.module.github" }),
+                    github.configurationValues["readyLabel"] != nil {
+                    TextField("Ready label", text: Binding(
+                        get: { state.draft?.modules.first(where: { $0.id == github.id })?.configurationValues["readyLabel"] ?? "" },
+                        set: { projectConfiguration.setReadyLabel(projectId: project.id, label: $0) }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                }
+                Text("Commands are proposals from the repository. Confirm only commands you trust. Install prepares dependencies in each fresh worktree before the agent. Selected validations must pass in that worktree before commit, push and PR creation.")
+                    .font(.callout)
+                Text("For Jarvis, prefer pnpm verify. Prerequisites: macOS, Xcode command line tools and Swift, Node 24 and the pnpm version declared by packageManager; confirm the frozen install and grant the runtime's tool paths first.")
+                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(["install", "verify", "lint", "typecheck", "test", "build"], id: \.self) { name in
+                    TextField(name, text: Binding(
+                        get: { state.draft?.commands[name] ?? "" },
+                        set: { projectConfiguration.setCommand(projectId: project.id, name: name, command: $0) }
+                    )).textFieldStyle(.roundedBorder)
+                }
+                ForEach(draft.modules.filter { $0.moduleId == "jarvis.module.development" }) { module in
+                    Picker("Worktree preparation", selection: configurationBinding(module.id, "preparation")) {
+                        Text("Choose and confirm preparation").tag("")
+                        Text("Run the install command above").tag("install")
+                        Text("No preparation necessary").tag("none")
+                    }
+                    Text("Confirm validations for \(module.instanceId)").font(.subheadline)
+                    ForEach(draft.validationCommandNames, id: \.self) { name in
+                        Toggle("Run \(name): \(draft.commands[name] ?? "")", isOn: Binding(
+                            get: {
+                                let raw = state.draft?.modules.first(where: { $0.id == module.id })?.configurationValues["validationOrder"] ?? "[]"
+                                return ((try? JSONDecoder().decode([String].self, from: Data(raw.utf8))) ?? []).contains(name)
+                            },
+                            set: { projectConfiguration.selectValidationCommand(projectId: project.id, moduleID: module.id, name: name, selected: $0) }
+                        ))
+                    }
+                }
+            }
+        }
     }
 
     private var slotRequirementsEditor: some View {
@@ -852,6 +911,8 @@ public struct ProjectDetailView: View {
     private func compositionReview(_ proxy: ScrollViewProxy) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Review").sectionLabel()
+            Text(ProjectDetailPresentation.activationNotice)
+                .font(.callout)
             Label(
                 presentation.isReadyForValidation
                     ? "Ready to validate — the saved Draft and Local Bindings passed Engine review."

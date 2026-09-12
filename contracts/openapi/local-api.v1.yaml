@@ -2150,6 +2150,7 @@ components:
         typecheck: { type: string, minLength: 1 }
         test: { type: string, minLength: 1 }
         build: { type: string, minLength: 1 }
+        verify: { type: string, minLength: 1 }
     ProjectGitConfiguration:
       type: object
       additionalProperties: false

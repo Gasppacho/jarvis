@@ -27,6 +27,7 @@ public struct ProjectConfigurationState: Sendable, Equatable {
     public var isDraftSaved = false
     public var isLoading = false
     public var isSaving = false
+    public var pendingStartingPointID: String?
     public var errorMessage: String?
     public var agentRuntimes: Components.Schemas.ProjectAgentRuntimeChoices?
     public var isRuntimeBusy = false
@@ -225,14 +226,27 @@ public final class ProjectConfigurationModel {
         }
     }
 
-    public func chooseStartingPoint(projectId: String, startingPointId: String) {
+    public func chooseStartingPoint(projectId: String, startingPointId: String, confirmedReplacement: Bool = false) {
+        // Custom means keeping the current composition editable, never erasing it.
+        if startingPointId == "custom" { return }
+        if !confirmedReplacement, let current = state(for: projectId).draft,
+            !current.modules.isEmpty || !current.slotRequirements.isEmpty {
+            update(projectId) { $0.pendingStartingPointID = startingPointId }
+            return
+        }
         guard let guide = state(for: projectId).compositionGuide,
             let startingPoint = guide.startingPoints.first(where: { $0.id == startingPointId })
         else { return }
         if let template = startingPoint.template {
             update(projectId) {
-                $0.draft = ProjectConfigurationDraft(
-                    configuration: template, packages: guide.modulePackages)
+                $0.pendingStartingPointID = nil
+                var replacement = ProjectConfigurationDraft(configuration: template, packages: guide.modulePackages)
+                // The proposal may precede the most recent edit. Keep user-owned project data.
+                if let current = $0.draft {
+                    replacement.name = current.name
+                    replacement.commands = current.commands
+                }
+                $0.draft = replacement
                 $0.compositionReview = nil
                 $0.isDraftSaved = false
                 $0.errorMessage = nil
@@ -244,6 +258,62 @@ public final class ProjectConfigurationModel {
             editDraft(projectId: projectId) {
                 $0.modules = []
                 $0.slotRequirements = [:]
+            }
+        }
+    }
+
+    public func cancelStartingPointReplacement(projectId: String) {
+        update(projectId) { $0.pendingStartingPointID = nil }
+    }
+
+    public func setReadyLabel(projectId: String, label: String, moduleID: UUID? = nil) {
+        editDraft(projectId: projectId) { draft in
+            guard let github = draft.modules.firstIndex(where: { $0.moduleId == "jarvis.module.github" && (moduleID == nil || $0.id == moduleID) }),
+                let previous = draft.modules[github].configurationValues["readyLabel"]
+            else { return }
+            draft.modules[github].configurationValues["readyLabel"] = label
+            for index in draft.modules.indices {
+                guard var rules = draft.modules[index].automationRules else { continue }
+                for ruleIndex in rules.indices where rules[ruleIndex].inputEventType == "scm.work-item.ready" {
+                    let data = Data(rules[ruleIndex].matchJSON.utf8)
+                    guard var match = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                        match["payload.tag"] as? String == previous
+                    else { continue }
+                    match["payload.tag"] = label
+                    if let encoded = try? JSONSerialization.data(withJSONObject: match, options: [.sortedKeys]) {
+                        rules[ruleIndex].matchJSON = String(decoding: encoded, as: UTF8.self)
+                    }
+                }
+                draft.modules[index].automationRules = rules
+            }
+        }
+    }
+
+    public func setCommand(projectId: String, name: String, command: String) {
+        editDraft(projectId: projectId) { draft in
+            if command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                draft.commands.removeValue(forKey: name)
+            } else {
+                draft.commands[name] = command
+            }
+            for index in draft.modules.indices where draft.modules[index].moduleId == "jarvis.module.development" {
+                if name == "install" {
+                    draft.modules[index].configurationValues["preparation"] = ""
+                } else {
+                    draft.modules[index].configurationValues["validationOrder"] = "[]"
+                }
+            }
+        }
+    }
+
+    public func selectValidationCommand(projectId: String, moduleID: UUID, name: String, selected: Bool) {
+        editModule(projectId: projectId, moduleId: moduleID) { module in
+            let data = Data(module.configurationValues["validationOrder", default: "[]"].utf8)
+            var order = (try? JSONDecoder().decode([String].self, from: data)) ?? []
+            order.removeAll { $0 == name }
+            if selected { order.append(name) }
+            if let encoded = try? JSONEncoder().encode(order) {
+                module.configurationValues["validationOrder"] = String(decoding: encoded, as: UTF8.self)
             }
         }
     }
@@ -396,6 +466,10 @@ public final class ProjectConfigurationModel {
         case .setModuleBinding(let moduleId, let key, let value):
             editModule(projectId: projectId, moduleId: moduleId) { $0.bindings[key] = value }
         case .setModuleConfiguration(let moduleId, let key, let value):
+            if key == "readyLabel", state(for: projectId).draft?.modules.first(where: { $0.id == moduleId })?.moduleId == "jarvis.module.github" {
+                setReadyLabel(projectId: projectId, label: value, moduleID: moduleId)
+                return
+            }
             editModule(projectId: projectId, moduleId: moduleId) {
                 $0.configurationValues[key] = value
             }

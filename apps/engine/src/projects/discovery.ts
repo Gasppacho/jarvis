@@ -372,7 +372,7 @@ function buildSuggested(
   // Standard commands are invoked by script *name* through the package manager,
   // never by quoting the declared command line: the wizard re-displays the
   // declared script, and the suggestion stays stable even for a complex one.
-  for (const standard of ["lint", "typecheck", "test", "build"]) {
+  for (const standard of ["lint", "typecheck", "test", "build", "verify"]) {
     if (manifest?.scripts[standard] !== undefined && packageManager !== null) {
       commands[standard] = `${packageManager} ${standard}`;
     }

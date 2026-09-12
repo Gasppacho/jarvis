@@ -308,13 +308,24 @@ export class ProjectService implements ProjectRegistry<
 
   compositionReview(id: unknown, proposedConfiguration: unknown): ProjectCompositionReview {
     const project = this.requireProject(id);
-    const { configuration, validation } = this.validateComposition(project, proposedConfiguration);
+    const { configuration, validation, repositoryIdentities } = this.validateComposition(
+      project,
+      proposedConfiguration,
+    );
     const grantedResources = resourceGrantDetails(this.resourceGrants, project.id);
     const composition = previewProjectCompositionChoices(this.modules, {
       projectId: project.id,
       configuration,
       slotBindings: project.slotBindings,
       validationFindings: validation.findings,
+      repositoryMappings: configuration.repositories.map((repository) => {
+        const identity = repositoryIdentities.find((item) => item.repositoryId === repository.id);
+        const provider =
+          identity === undefined
+            ? "GitHub identity unresolved"
+            : `GitHub ${identity.owner}/${identity.name}`;
+        return `Repository ${repository.id} → ${provider}; identity remote ${repository.remote ?? "origin"}; push remote ${configuration.git.pushRemote}; target branch ${repository.defaultBranch ?? "main"}.`;
+      }),
     });
     return {
       apiVersion: "jarvis.dev/project-composition-review/v1",

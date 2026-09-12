@@ -3,6 +3,7 @@ import Foundation
 /// Complete, data-driven content and action inventory rendered by ProjectDetailView.
 /// SwiftUI owns only bindings and side-effect handlers; this value is testable in JarvisCore.
 public struct ProjectDetailPresentation: Sendable, Equatable {
+    public static let activationNotice = "The recommended model monitors issues already carrying the ready label: eligible issues can start immediately after activation. It checks native GitHub blockers and runs one issue at a time, ending at a PR for manual review and merge. Existing and Custom compositions retain their configured rules and concurrency. Saving a draft does not start monitoring or an agent."
     public struct SlotRequester: Identifiable, Sendable, Equatable {
         public var id: String { instanceId }
         public let instanceId: String

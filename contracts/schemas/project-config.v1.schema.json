@@ -127,6 +127,10 @@
         "build": {
           "type": "string",
           "minLength": 1
+        },
+        "verify": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },

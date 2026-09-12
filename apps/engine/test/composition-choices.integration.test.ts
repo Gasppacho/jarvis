@@ -138,6 +138,12 @@ describe("project composition choices", () => {
       }),
     );
     expect(fresh.moduleInstances).toEqual([]);
+    expect(fresh.startingPoints[0]?.description).toContain(
+      "Repository main → GitHub QServices/token-warehouse",
+    );
+    expect(fresh.startingPoints[0]?.description).toContain(
+      "push remote origin; target branch main",
+    );
 
     const template = fresh.startingPoints[0]?.template as {
       slots: Record<string, unknown>;

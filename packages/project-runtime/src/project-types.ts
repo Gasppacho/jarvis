@@ -172,7 +172,7 @@ export interface PortableProjectConfiguration {
   readonly repositories: readonly ProjectRepositoryConfiguration[];
   readonly slots: Readonly<Record<string, ProjectSlotRequirement>>;
   readonly commands: Readonly<
-    Partial<Record<"install" | "lint" | "typecheck" | "test" | "build", string>>
+    Partial<Record<"install" | "lint" | "typecheck" | "test" | "build" | "verify", string>>
   >;
   readonly git: {
     readonly branchPattern: string;

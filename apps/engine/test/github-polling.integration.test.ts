@@ -1592,6 +1592,12 @@ function projectConfig(
           (module as Record<string, unknown>)["instanceId"] === "development",
       )
     : undefined;
+  if (developmentModule !== undefined) {
+    developmentModule["configuration"] = {
+      ...(developmentModule["configuration"] as Record<string, unknown>),
+      preparation: "none",
+    };
+  }
   configuration["metadata"] = { id: projectId, name: `Polling Project ${projectId}` };
   configuration["slots"] = {
     sourceControl: { requires: "scm.change-request.manage" },

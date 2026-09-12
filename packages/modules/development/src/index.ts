@@ -48,7 +48,7 @@ const MAX_TIMEOUT_MS = 3_600_000;
 const DEFAULT_OUTPUT_LIMIT_BYTES = 1_048_576;
 const MAX_OUTPUT_LIMIT_BYTES = 10_485_760;
 const MAX_WORK_ITEM_CONTENT_BYTES = 64 * 1024;
-const VALIDATION_CHECKS = ["lint", "typecheck", "test", "build"] as const;
+const VALIDATION_CHECKS = ["lint", "typecheck", "test", "build", "verify"] as const;
 type ValidationCheck = (typeof VALIDATION_CHECKS)[number];
 type DevelopmentFailureCode =
   | "event.payload-invalid"

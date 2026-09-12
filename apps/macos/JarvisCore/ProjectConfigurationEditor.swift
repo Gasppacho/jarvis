@@ -269,6 +269,7 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
     public var modules: [ProjectModuleDraft]
     public var slotRequirements: [String: ProjectSlotDraft]
 
+    public var commands: [String: String]
     private let base: Components.Schemas.PortableProjectConfiguration
 
     public init(
@@ -276,12 +277,18 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
         packages: [ModulePackage]
     ) {
         base = configuration
+        let commandData = (try? JSONEncoder().encode(configuration.commands)) ?? Data()
+        commands = (try? JSONDecoder().decode([String: String].self, from: commandData)) ?? [:]
         name = configuration.metadata.name
         let packagesById = Dictionary(uniqueKeysWithValues: packages.map { ($0.moduleId, $0) })
         modules = configuration.modules.map {
             ProjectModuleDraft(payload: $0, package: packagesById[$0.moduleId])
         }
         slotRequirements = configuration.slots.additionalProperties.mapValues(ProjectSlotDraft.init)
+    }
+
+    public var validationCommandNames: [String] {
+        commands.keys.filter { $0 != "install" }.sorted()
     }
 
     /// The engine owns every discovered repository/Git/workspace value. Swift
@@ -458,6 +465,7 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
         var metadata = document["metadata"] as? [String: Any] ?? [:]
         metadata["name"] = name
         document["metadata"] = metadata
+        document["commands"] = commands
         document["slots"] = slotRequirements.mapValues { requirement in
             var value: [String: Any] = ["requires": requirement.requires]
             if let optional = requirement.optional { value["optional"] = optional }

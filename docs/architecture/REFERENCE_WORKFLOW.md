@@ -1,5 +1,45 @@
 # Reference Development Workflow
 
+## Recommended guided starting point (#195)
+
+Fresh imports use `ready-for-agent` and the canonical `scm.work-item.ready` v1
+Fact. GitHub confirms the issue is open and its complete native `blocked_by`
+list contains no open blocker. Already-labelled issues are eligible at activation.
+Unknown or blocked observations never start Development. The single Automation
+Rule targets the `development` instance. Development itself requests PR creation
+after validation and push: there is no second PR rule and no merge permission.
+
+The template preserves discovered repository IDs, target branches and remote names;
+`repositories[].remote` identifies the GitHub owner/name through the granted local
+repository, while `git.pushRemote` is the explicitly configured Git push destination.
+The poller receives a portable repository ID, never an example owner/name. Different
+identity and push remotes are supported (and exercised with a bare remote by the harness).
+Concurrency is fixed to one in the template. Global connections and runtimes remain
+candidates until bound explicitly to this project.
+
+Commands remain proposals. `commands.verify` is offered when the repository declares
+that script (`pnpm verify` for Jarvis). The new template has `validationOrder: []` and
+no preparation decision. Selecting a validation command confirms it; editing command
+text clears that selection, and editing `install` clears preparation. An empty list,
+a missing selected command, or absent worktree preparation blocks Engine readiness
+and activation, while the incomplete draft remains saveable. Confirm `install`, or
+explicitly choose no preparation. Install runs in each fresh worktree before the
+agent; selected validations run there after implementation and must pass before push.
+Jarvis requires macOS/Xcode command line tools and Swift, Node 24, and the pnpm version
+in `packageManager`, with tool paths approved in the project runtime binding.
+
+Custom composition keeps the current draft. Returning to the recommended model asks
+for replacement confirmation; declining preserves edits. This replaces modules,
+rules and slot requirements, preserving project details and command text. Saving
+or choosing a model never activates the project. Review announces pre-existing ready
+issues and the manual review/merge boundary before explicit activation.
+
+The existing example below and `examples/project/.jarvis/project.yaml` retain the
+historical `agent:ready` / `scm.work-item.tag-added` policy. Opening and saving an
+existing project does not migrate labels, rules, IDs, parameters or bindings.
+`examples/guided-project/.jarvis/project.yaml` illustrates confirmed choices for a
+repository with `verify`; templates do not copy either example into real projects.
+
 ## Configuration
 
 The Project enables three Module Instances:

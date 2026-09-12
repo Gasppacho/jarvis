@@ -511,7 +511,7 @@ function projectCommands(
   composition: ResolvedProjectSnapshot["composition"],
 ): ProjectCommandsCapability {
   const commands: Partial<Record<ProjectCommandName, string>> = {};
-  for (const name of ["install", "lint", "typecheck", "test", "build"] as const) {
+  for (const name of ["install", "lint", "typecheck", "test", "build", "verify"] as const) {
     const command = composition.commands[name];
     if (typeof command === "string") commands[name] = command;
   }

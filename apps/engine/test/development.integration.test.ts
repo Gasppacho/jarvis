@@ -1923,59 +1923,58 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
     });
     engines.push(engine);
 
-    await activateProject(
-      engine,
-      projectId,
-      fixture,
-      false,
-      300_000,
-      1_048_576,
-      { test: "node --test" },
-      ["build"],
+    await activateProject(engine, projectId, fixture);
+    await engine.call(`/v1/projects/${projectId}/pause`, { method: "POST" });
+    const detail = (await (await engine.call(`/v1/projects/${projectId}`)).json()) as {
+      portableConfig: PortableProjectConfiguration;
+    };
+    const configuration = {
+      ...detail.portableConfig,
+      modules: detail.portableConfig.modules.map((module) =>
+        module.instanceId === "development"
+          ? {
+              ...module,
+              configuration: { ...module.configuration, validationOrder: ["build"] },
+            }
+          : module,
+      ),
+    };
+    const saved = await engine.call(`/v1/projects/${projectId}/configuration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ portableConfig: configuration, writeToRepository: false }),
+    });
+    expect(saved.status).toBe(200);
+    const report = (await (
+      await engine.call(`/v1/projects/${projectId}/validation-report`, { method: "POST" })
+    ).json()) as {
+      valid: boolean;
+      compositionFingerprint: string;
+      findings: { code: string; target: { field?: string } }[];
+    };
+    expect(report.valid).toBe(false);
+    expect(report.findings).toContainEqual(
+      expect.objectContaining({
+        code: "project.instance-config-invalid",
+        target: expect.objectContaining({ field: "/configuration/validationOrder" }),
+      }),
     );
-    await publishTag(engine, projectId, "missing-command");
-    const executions = await waitForExecutions(engine, projectId, 2);
-    const development = executions.find(
-      (execution) => execution.moduleInstanceId === "development",
-    );
-    expect(development).toMatchObject({ status: "failed" });
-    expect(development).toBeDefined();
-
+    const activated = await engine.call(`/v1/projects/${projectId}/activate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ compositionFingerprint: report.compositionFingerprint }),
+    });
+    expect(activated.status).toBe(409);
     const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
     try {
-      expect(
-        database
-          .prepare(
-            "SELECT code, message, attempts FROM dead_letters WHERE module_instance_id = 'development'",
-          )
-          .get(),
-      ).toEqual({ code: "project.config-invalid", message: expect.any(String), attempts: 1 });
-      expect(
-        database.prepare("SELECT 1 FROM inbox WHERE module_instance_id = 'development'").get(),
-      ).toBeUndefined();
-      expect(readFailureEvent(database, projectId)).toMatchObject({
-        type: "development.implementation.failed",
-        payload: {
-          workItemRef: `fixture://${projectId}/missing-command`,
-          repositoryId: "main",
-          code: "project.config-invalid",
-          message: expect.stringContaining(`Project ${projectId}`),
-          retryable: false,
-          workspaceRef: `workspace://${projectId}/${development!.id}`,
-        },
-      });
-      expect(
-        database
-          .prepare(
-            "SELECT type FROM execution_checkpoints WHERE execution_id = ? ORDER BY sequence",
-          )
-          .all(development!.id),
-      ).toEqual([{ type: "agent.started" }, { type: "agent.message" }]);
-      expect(
-        database
-          .prepare("SELECT status FROM workspace_leases WHERE project_id = ? AND execution_id = ?")
-          .get(projectId, development!.id),
-      ).toEqual({ status: "retained" });
+      // The error is now caught before activation, allocation or any agent side effect.
+      for (const table of ["executions", "workspace_leases", "outbox", "dead_letters"]) {
+        expect(
+          database
+            .prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE project_id = ?`)
+            .get(projectId),
+        ).toEqual({ count: 0 });
+      }
     } finally {
       database.close();
     }

@@ -29,6 +29,7 @@ export interface ProjectCompositionChoiceInput {
   readonly projectId: string;
   readonly configuration: StoredPortableProjectConfiguration;
   readonly slotBindings: Readonly<Record<string, ProjectSlotBinding>>;
+  readonly repositoryMappings?: readonly string[];
   readonly validationFindings?: readonly ProjectValidationFinding[];
 }
 
@@ -86,20 +87,24 @@ export function previewProjectCompositionChoices(
     apiVersion: "jarvis.dev/project-composition-choices/v1",
     kind: "ProjectCompositionChoices",
     projectId: input.projectId,
-    startingPoints: startingPoints(input.configuration),
+    startingPoints: startingPoints(input.configuration, input.repositoryMappings ?? []),
     modulePackages: [...modules.catalog()].sort(compareJson),
     moduleInstances: moduleInstances(input.configuration, input.validationFindings ?? [], modules),
     choices,
   };
 }
 
-function startingPoints(configuration: StoredPortableProjectConfiguration) {
+function startingPoints(
+  configuration: StoredPortableProjectConfiguration,
+  repositoryMappings: readonly string[],
+) {
   return [
     {
       id: "github-development" as const,
       displayName: "GitHub Development",
       description:
-        "Start from GitHub intake, Automation Rules, and an isolated Development Module Instance.",
+        "GitHub confirms a ready issue has no open blocker, then requests Development. After validation and push, Development requests one PR. Review and merge stay manual. " +
+        repositoryMappings.join(" "),
       template: githubDevelopmentTemplate(configuration),
     },
     {
@@ -116,14 +121,12 @@ function githubDevelopmentTemplate(
   const repository = base.repositories[0];
   return {
     ...base,
-    repositories: [
-      {
-        id: "main",
-        root: ".",
-        defaultBranch: repository?.defaultBranch ?? "main",
-        remote: repository?.remote ?? "origin",
-      },
-    ],
+    repositories: base.repositories.map((item) => ({
+      ...item,
+      defaultBranch: item.defaultBranch ?? "main",
+      remote: item.remote ?? "origin",
+    })),
+    workspace: { ...base.workspace, maxConcurrentExecutions: 1 },
     slots: {
       agentRuntime: { requires: "agent.execute" },
       sourceControl: { requires: "scm.change-request.manage" },
@@ -138,7 +141,7 @@ function githubDevelopmentTemplate(
         configuration: {
           bootstrapLabelPolicy: "ignore-existing",
           pollIntervalSeconds: 60,
-          repositories: ["main"],
+          repositories: [repository?.id ?? "main"],
           readyLabel: "ready-for-agent",
         },
       },
@@ -169,12 +172,11 @@ function githubDevelopmentTemplate(
         runtimeSlot: "agentRuntime",
         bindings: {
           tickets: "tickets",
-          repository: "main",
+          repository: repository?.id ?? "main",
           sourceControl: "sourceControl",
         },
         configuration: {
-          preparation: "none",
-          validationOrder: ["lint", "typecheck", "test", "build"],
+          validationOrder: [],
           maxRepairCycles: 2,
           retainWorkspaceOnSuccess: false,
           timeoutMs: 300000,

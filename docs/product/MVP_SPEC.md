@@ -144,3 +144,14 @@ Tests complémentaires :
 - La première fixture de démonstration doit demander une fonctionnalité simple, par exemple un endpoint `GET /health` avec test.
 - Le polling GitHub est accepté comme source d'événements entrante du MVP ; l'architecture conserve un port pour ajouter un adapter webhook plus tard.
 - Le module de review est le premier module post-MVP recommandé pour démontrer l'extensibilité sans modifier le workflow existant.
+
+## Modèle recommandé du premier workflow (#195)
+
+Après import GitHub, le modèle compose GitHub, Automation Rules et Development, sans
+accord automatique de connexion/runtime. Son label est `ready-for-agent`, son fait
+`scm.work-item.ready`, sa concurrence 1 ; les dépendances GitHub natives ouvertes
+bloquent le départ. Les anciennes configurations `agent:ready` sont conservées.
+Les commandes détectées nécessitent une sélection explicite ; préparation et
+validations manquantes bloquent l'activation, sans empêcher Save Draft. Development
+produit lui-même la seule demande de PR après validation/push. Revue et merge restent
+manuels. Voir REFERENCE_WORKFLOW.md et UX.md pour la configuration et ses contrôles.

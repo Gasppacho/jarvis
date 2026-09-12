@@ -1129,6 +1129,7 @@ export interface components {
             typecheck?: string;
             test?: string;
             build?: string;
+            verify?: string;
         };
         ProjectGitConfiguration: {
             branchPattern: string;
