@@ -202,6 +202,24 @@ La cancellation, les dead letters et le replay sont exposés par les opérations
 déclarées dans OpenAPI : `GET /v1/projects/{projectId}/dead-letters` et
 `POST /v1/dead-letters/{deliveryId}/replay`.
 
+`GET /v1/projects/{projectId}/executions/{executionId}/detail` (ticket #200) renvoie
+une projection corrélée et durable d'une Execution. Le moteur retrouve l'Event d'entrée
+dans le même Project, suit son `correlationId`, puis regroupe les Executions, checkpoints,
+leases et faits de Pull Request prouvés par ces identifiants. La réponse expose toujours
+les sept étapes ordonnées `Issue reçue`, `Éligibilité confirmée`, `Workspace préparé`,
+`Agent en cours`, `Checks`, `Commit et push` et `Création de la Pull Request`; chaque
+étape indique `proved`, `active`, `failed`, `cancelled` ou `unavailable`. Une donnée
+absente reste `null` ou `Information indisponible` côté interface : aucun timestamp,
+résultat, artefact, payload ou diagnostic n'est fabriqué.
+
+Les Executions et les Checks portent leur durée seulement quand une fin durable est
+enregistrée. Les extraits agentiques sont limités et nettoyés; les événements techniques
+ne contiennent qu'un payload textuel borné après suppression des secrets et chemins. Les
+tableaux et extraits ont les bornes déclarées dans le schéma OpenAPI. `cancellableExecutionId`
+est présent uniquement pendant une Execution annulable, et `retryDeliveryId` permet le
+replay explicite d'une Dead Letter existante. Le détail n'autorise ni fusion ni auto-fusion;
+la Pull Request est présentée comme soumise à revue manuelle.
+
 ### Stream
 
 Ticket #60 : `GET /v1/stream` tient une connexion SSE par Engine Session, protégée

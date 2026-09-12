@@ -116,6 +116,31 @@ describe("ExecutionCheckpointStore", () => {
     ).toThrow("does not belong to Project project-b");
   });
 
+  it("limits reads to the latest checkpoints while retaining chronological order", () => {
+    db = seedDatabase();
+    const store = new ExecutionCheckpointStore(db);
+    const occurredAt = "2026-09-08T21:00:00.000Z";
+
+    for (const [sourceSequence, message] of [
+      [1, "first"],
+      [2, "second"],
+      [3, "third"],
+    ] as const) {
+      store.record({
+        projectId: "project-a",
+        executionId: "execution-a",
+        type: "agent.message",
+        sourceSequence,
+        occurredAt,
+        message,
+      });
+    }
+
+    expect(store.list("project-a", "execution-a", 2).map(({ sequence }) => sequence)).toEqual([
+      2, 3,
+    ]);
+  });
+
   it("deduplicates a repeated runtime sequence without creating another checkpoint", () => {
     db = seedDatabase();
     const store = new ExecutionCheckpointStore(db);

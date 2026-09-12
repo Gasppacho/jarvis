@@ -12,6 +12,7 @@ import SwiftUI
 struct ProjectTimelineView: View {
     let timeline: ProjectTimelineModel
     let projectId: String
+    var onOpenDetail: ((String) -> Void)? = nil
 
     var body: some View {
         // Read once per render: `presentation` rebuilds the id dictionary,
@@ -228,6 +229,12 @@ struct ProjectTimelineView: View {
                     row.isCancellationPending
                         ? "Cancelling \(row.title) for \(row.moduleInstance)"
                         : "Cancel \(row.title) for \(row.moduleInstance)")
+            }
+            if row.executionStatus != nil, let onOpenDetail {
+                Button("Open details") {
+                    onOpenDetail(String(row.id.dropFirst("execution:".count)))
+                }
+                .accessibilityLabel("Open details for \(row.title)")
             }
             Spacer()
         }

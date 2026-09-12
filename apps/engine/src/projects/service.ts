@@ -28,6 +28,9 @@ import { deriveProjectSubscriptions } from "../../../../packages/project-runtime
 import { EventJournalReader, type ListEventsQuery } from "../events/timeline.js";
 import type { DeadLetterReader } from "../events/dead-letters.js";
 import { ExecutionLedgerReader, type ListExecutionsQuery } from "../executions/ledger.js";
+import type { ExecutionCheckpointStore } from "../executions/checkpoints.js";
+import type { WorkspaceLeaseRepository } from "../../../../packages/workspace/src/lease-repository.js";
+import { buildExecutionDetail } from "./execution-detail.js";
 import type { DevelopmentAdmissions } from "../executions/development-admissions.js";
 import type { GitHubPollingStatusStore, GitHubPollingStatus } from "../events/polling-status.js";
 import type {
@@ -72,6 +75,7 @@ import type {
   ProjectDetail,
   ProjectSummary,
   ProjectOverview,
+  ProjectExecutionDetail,
   ProjectOverviewIssue,
   ProjectOverviewStage,
   StoredPortableProjectConfiguration,
@@ -129,6 +133,8 @@ export class ProjectService implements ProjectRegistry<
       Partial<Pick<WorkItemReadinessStore, "list">>,
     private readonly developmentAdmissions?: Pick<DevelopmentAdmissions, "read">,
     private readonly pollingStatus?: Pick<GitHubPollingStatusStore, "read">,
+    private readonly checkpoints?: Pick<ExecutionCheckpointStore, "list">,
+    private readonly workspaceLeases?: Pick<WorkspaceLeaseRepository, "findByExecution">,
   ) {}
 
   importProject(request: ImportProjectRequest): ProjectDetail {
@@ -203,6 +209,12 @@ export class ProjectService implements ProjectRegistry<
     const activeRefs = new Set(
       [...activeSubjects.values()].filter((ref): ref is string => typeof ref === "string"),
     );
+    const activeExecutionIdsByRef = new Map(
+      activeExecutions.flatMap((execution) => {
+        const ref = activeSubjects.get(execution.inputEventId);
+        return ref === undefined ? [] : [[ref, execution.id] as const];
+      }),
+    );
     const admissionByRef = new Map(
       admission.items.flatMap((item) =>
         item.workItemRef === undefined ? [] : [[item.workItemRef, item] as const],
@@ -212,6 +224,7 @@ export class ProjectService implements ProjectRegistry<
       .map((snapshot) =>
         overviewIssue(snapshot, {
           activeRefs,
+          activeExecutionIdsByRef,
           admission: admissionByRef.get(snapshot.workItemRef),
           paused,
           hasActiveExecution,
@@ -561,6 +574,82 @@ export class ProjectService implements ProjectRegistry<
         return { ...execution, ...(correlationId === undefined ? {} : { correlationId }) };
       }),
     };
+  }
+
+  getExecutionDetail(id: unknown, executionId: unknown): ProjectExecutionDetail {
+    const project = this.requireProject(id);
+    if (typeof executionId !== "string" || executionId.trim() === "") {
+      throw new EngineError("api.invalid-request", 400, "Execution id is required.");
+    }
+    const anchor = this.executionLedger.findById(project.id, executionId);
+    if (anchor === undefined) throw notFound(executionId);
+    const anchorEvent = this.eventJournal.findById(project.id, anchor.inputEventId);
+    if (anchorEvent === undefined) throw notFound(executionId);
+    const listedEvents = this.eventJournal.listDetails(project.id, {
+      correlationId: anchorEvent.correlationId,
+      limit: 100,
+    });
+    const events = listedEvents.some((event) => event.id === anchorEvent.id)
+      ? listedEvents
+      : [anchorEvent, ...listedEvents.slice(0, 99)].sort((left, right) =>
+          `${right.occurredAt}\u0000${right.id}`.localeCompare(
+            `${left.occurredAt}\u0000${left.id}`,
+          ),
+        );
+    const executions = this.executionLedger.listByInputEventIds(
+      project.id,
+      events.map((event) => event.id),
+    );
+    const uniqueExecutions = [
+      ...new Map(
+        [anchor, ...executions].map((execution) => [execution.id, execution] as const),
+      ).values(),
+    ];
+    const allExecutions =
+      uniqueExecutions.length <= 100
+        ? uniqueExecutions
+        : [anchor, ...uniqueExecutions.filter(({ id }) => id !== anchor.id).slice(-99)];
+    const checkpoints = new Map(
+      allExecutions.map(
+        (execution) =>
+          [execution.id, this.checkpoints?.list(project.id, execution.id, 100) ?? []] as const,
+      ),
+    );
+    const leases = new Map(
+      allExecutions.map(
+        (execution) =>
+          [execution.id, this.workspaceLeases?.findByExecution(project.id, execution.id)] as const,
+      ),
+    );
+    const executionIds = new Set(allExecutions.map((execution) => execution.id));
+    const retryDeliveryId =
+      this.deadLetters
+        .list(project.id)
+        .find(
+          (deadLetter) =>
+            deadLetter.lastExecutionId !== null && executionIds.has(deadLetter.lastExecutionId),
+        )?.deliveryId ?? null;
+    const correlationId = anchorEvent.correlationId;
+    const correlationIds = this.eventJournal.correlationIdsByEventId(
+      project.id,
+      allExecutions.map((execution) => execution.inputEventId),
+    );
+    return buildExecutionDetail({
+      projectId: project.id,
+      correlationId,
+      anchor,
+      executions: allExecutions.map((execution) => ({
+        ...execution,
+        ...(correlationIds.get(execution.inputEventId) === undefined
+          ? {}
+          : { correlationId: correlationIds.get(execution.inputEventId) }),
+      })),
+      events,
+      checkpoints,
+      leases,
+      readiness: this.readiness?.list?.(project.id) ?? [],
+      retryDeliveryId,
+    });
   }
 
   listProjectDeadLetters(id: unknown): { readonly items: DeadLetterSummary[] } {
@@ -1159,6 +1248,7 @@ function overviewIssue(
   snapshot: WorkItemReadinessSnapshot,
   input: {
     readonly activeRefs: ReadonlySet<string>;
+    readonly activeExecutionIdsByRef: ReadonlyMap<string, string>;
     readonly admission: OverviewAdmission | undefined;
     readonly paused: boolean;
     readonly hasActiveExecution: boolean;
@@ -1177,6 +1267,7 @@ function overviewIssue(
     openDependencyCount: blockerRefs.length,
     blockerRefs,
     readinessLabel: snapshot.tag?.trim() || input.fallbackReadinessLabel,
+    executionId: input.activeExecutionIdsByRef.get(snapshot.workItemRef) ?? null,
   };
 
   if (input.activeRefs.has(snapshot.workItemRef)) {

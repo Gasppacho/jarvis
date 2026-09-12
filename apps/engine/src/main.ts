@@ -38,6 +38,7 @@ import { ProjectService, RepositoryDiscoveryService } from "./projects/service.j
 import { EventJournalReader } from "./events/timeline.js";
 import { EventingDeadLetterReader } from "./events/dead-letters.js";
 import { ExecutionLedgerReader } from "./executions/ledger.js";
+import { ExecutionCheckpointStore } from "./executions/checkpoints.js";
 import {
   LocalAgentRuntimeRegistry,
   ConnectionGrantSource,
@@ -316,6 +317,12 @@ async function main(): Promise<void> {
   const developmentAdmissionsStore =
     database === undefined ? undefined : new DevelopmentAdmissions(database.db, new SystemClock());
   developmentAdmissions = developmentAdmissionsStore;
+  const checkpointStore =
+    database === undefined ? undefined : new ExecutionCheckpointStore(database.db);
+  const workspaceLeases =
+    database === undefined
+      ? undefined
+      : new WorkspaceLeaseRepository(database.db, new SystemClock(), new SystemIdGenerator());
   const projects =
     database === undefined || projectStore === undefined
       ? undefined
@@ -349,17 +356,15 @@ async function main(): Promise<void> {
           readinessStore,
           developmentAdmissionsStore,
           pollingStatusStore,
+          checkpointStore,
+          workspaceLeases,
         );
 
   // SYSTEM.md startup protocol: migrations are complete, then stale Workspace
   // state is reconciled, and only then can the ready handshake be emitted.
   if (database !== undefined && projectStore !== undefined) {
     try {
-      const leases = new WorkspaceLeaseRepository(
-        database.db,
-        new SystemClock(),
-        new SystemIdGenerator(),
-      );
+      const leases = workspaceLeases!;
       workspaceManager = new WorkspaceManager({
         dataRoot: database.dataRoot,
         leases,
@@ -567,7 +572,7 @@ async function main(): Promise<void> {
       repositoryDefaultBranches,
       publishedContracts,
       capabilities.resolve.bind(capabilities),
-      undefined,
+      checkpointStore,
       Math.random,
       repositoryIdentity,
     );

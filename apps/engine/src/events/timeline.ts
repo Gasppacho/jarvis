@@ -16,6 +16,14 @@ export interface EventSummary {
   readonly subjectRef: string;
 }
 
+/** Full journal data for an internal read model. Raw payloads never leave the
+ * engine; ProjectService redacts and bounds them before building the API. */
+export interface EventDetail extends EventSummary {
+  readonly repositoryId: string | null;
+  readonly subjectType: string | null;
+  readonly payload: Readonly<Record<string, unknown>>;
+}
+
 export interface ListEventsQuery {
   readonly correlationId?: string;
   readonly limit: number;
@@ -59,7 +67,25 @@ export class EventJournalReader {
    * index is actually chosen for.
    */
   public list(projectId: string, query: ListEventsQuery): EventSummary[] {
-    const rows = (
+    return this.readRows(projectId, query).map(toSummary);
+  }
+
+  public listDetails(projectId: string, query: ListEventsQuery): EventDetail[] {
+    return this.readRows(projectId, query).map(toDetail);
+  }
+
+  public findById(projectId: string, eventId: string): EventDetail | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, type, version, kind, occurred_at, envelope, correlation_id FROM events
+         WHERE project_id = @projectId AND id = @eventId LIMIT 1`,
+      )
+      .get({ projectId, eventId }) as EventRow | undefined;
+    return row === undefined ? undefined : toDetail(row);
+  }
+
+  private readRows(projectId: string, query: ListEventsQuery): EventRow[] {
+    return (
       query.correlationId === undefined
         ? this.db
             .prepare(
@@ -78,7 +104,6 @@ export class EventJournalReader {
             )
             .all({ projectId, correlationId: query.correlationId, limit: query.limit })
     ) as EventRow[];
-    return rows.map(toSummary);
   }
 
   /**
@@ -151,6 +176,16 @@ function toSummary(row: EventRow): EventSummary {
     correlationId: row.correlation_id,
     causationId: envelope.causationId,
     subjectRef: envelope.subject.ref,
+  };
+}
+
+function toDetail(row: EventRow): EventDetail {
+  const envelope = JSON.parse(row.envelope) as EventEnvelope;
+  return {
+    ...toSummary(row),
+    repositoryId: typeof envelope.repositoryId === "string" ? envelope.repositoryId : null,
+    subjectType: typeof envelope.subject.type === "string" ? envelope.subject.type : null,
+    payload: envelope.payload,
   };
 }
 

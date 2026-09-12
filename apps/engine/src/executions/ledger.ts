@@ -96,6 +96,36 @@ export class ExecutionLedgerReader {
       .all(projectId) as ExecutionRow[];
     return rows.map(toSummary);
   }
+
+  public findById(projectId: string, executionId: string): LedgerExecutionSummary | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, project_id, module_instance_id, status, attempt, created_at, error, completed_at, input_event_id, replayed
+         FROM executions
+         WHERE project_id = @projectId AND id = @executionId
+         LIMIT 1`,
+      )
+      .get({ projectId, executionId }) as ExecutionRow | undefined;
+    return row === undefined ? undefined : toSummary(row);
+  }
+
+  public listByInputEventIds(
+    projectId: string,
+    eventIds: readonly string[],
+  ): LedgerExecutionSummary[] {
+    if (eventIds.length === 0) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT id, project_id, module_instance_id, status, attempt, created_at, error, completed_at, input_event_id, replayed
+         FROM executions
+         WHERE project_id = @projectId
+           AND input_event_id IN (SELECT value FROM json_each(@eventIds))
+         ORDER BY created_at ASC, id ASC
+         LIMIT 100`,
+      )
+      .all({ projectId, eventIds: JSON.stringify(eventIds) }) as ExecutionRow[];
+    return rows.map(toSummary);
+  }
 }
 
 function toSummary(row: ExecutionRow): LedgerExecutionSummary {

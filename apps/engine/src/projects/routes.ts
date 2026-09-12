@@ -19,6 +19,7 @@ import type {
   ProjectResourceCandidateRegistry,
   ProjectSummary,
   ProjectOverview,
+  ProjectExecutionDetail,
   ProjectValidationReport,
   RepositoryDiscovery,
   EventSummary,
@@ -58,6 +59,7 @@ export type LocalProjectRegistry = ProjectRegistry<
     ): { readonly items: ExecutionSummary[] };
     listProjectDeadLetters(id: unknown): { readonly items: DeadLetterSummary[] };
     getProjectOverview(id: unknown): ProjectOverview;
+    getExecutionDetail(id: unknown, executionId: unknown): ProjectExecutionDetail;
     pauseProject(id: unknown): ProjectSummary;
     resumeProject(id: unknown): ProjectSummary;
   };
@@ -195,6 +197,12 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
     return reply
       .code(200)
       .send(service.listProjectExecutions(params?.projectId, parseListExecutionsQuery(query)));
+  });
+
+  app.get("/v1/projects/:projectId/executions/:executionId/detail", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown; executionId?: unknown } | undefined;
+    return reply.code(200).send(service.getExecutionDetail(params?.projectId, params?.executionId));
   });
 
   app.get("/v1/projects/:projectId/dead-letters", async (request, reply) => {

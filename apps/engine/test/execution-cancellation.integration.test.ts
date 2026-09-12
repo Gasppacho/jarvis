@@ -26,6 +26,12 @@ interface EventSummary {
   readonly type: string;
 }
 
+interface ExecutionDetail {
+  readonly failure: { readonly code: string } | null;
+  readonly steps: readonly { readonly id: string; readonly status: string }[];
+  readonly cancellableExecutionId: string | null;
+}
+
 const input = (projectId: string) => ({
   type: SAMPLE_PROBE_PINGED.type,
   version: SAMPLE_PROBE_PINGED.version,
@@ -41,9 +47,11 @@ const input = (projectId: string) => ({
 describe("execution cancellation Local API", () => {
   const engines: Harness[] = [];
   let validateExecution: ReturnType<typeof localApiValidator>;
+  let validateDetail: ReturnType<typeof localApiValidator>;
 
   beforeAll(() => {
     validateExecution = localApiValidator("ExecutionSummary");
+    validateDetail = localApiValidator("ExecutionDetailV1");
   });
 
   afterEach(async () => {
@@ -79,6 +87,18 @@ describe("execution cancellation Local API", () => {
 
     const cancelled = await waitForStatus(engine, "proj-cancel", "cancelled", running.id);
     expect(cancelled.completedAt).not.toBeNull();
+
+    const detailResponse = await engine.call(
+      `/v1/projects/proj-cancel/executions/${running.id}/detail`,
+    );
+    expect(detailResponse.status).toBe(200);
+    const detail = (await detailResponse.json()) as ExecutionDetail;
+    expect(validateDetail(detail), explain(validateDetail)).toBe(true);
+    expect(detail).toMatchObject({
+      failure: { code: "execution.cancelled" },
+      cancellableExecutionId: null,
+    });
+    expect(detail.steps.find((step) => step.id === "agent-running")?.status).toBe("cancelled");
 
     const events = await getEvents(engine, "proj-cancel");
     expect(events).toHaveLength(1);

@@ -1,0 +1,127 @@
+import { afterEach, describe, expect, it } from "vitest";
+import { explain, localApiValidator } from "./contract.js";
+import {
+  startReferenceWorkflowFixture,
+  type ReferenceWorkflowFixture,
+} from "./reference-workflow-fixture.js";
+
+const fixtures: ReferenceWorkflowFixture[] = [];
+const validateDetail = localApiValidator("ExecutionDetailV1");
+
+afterEach(async () => {
+  await Promise.all(fixtures.splice(0).map((fixture) => fixture.dispose()));
+});
+
+describe("execution detail", () => {
+  it("projects one correlated issue through checks, push and the created PR", async () => {
+    const fixture = await startReferenceWorkflowFixture("execution-detail");
+    fixtures.push(fixture);
+    fixture.fakeGitHub.appendLabeledIssueEvent({
+      owner: "Gasppacho",
+      repository: "jarvis",
+      issueNumber: 16,
+      issueTitle: "Execution detail acceptance",
+      issueBody: "A bounded detail body.",
+      label: "agent:ready",
+      actor: "reference-user",
+      createdAt: new Date().toISOString(),
+    });
+
+    await waitForEvent(fixture, "scm.change-request.created");
+    const executions = await readExecutions(fixture);
+    expect(executions).toHaveLength(3);
+    const detailResponse = await fixture.engine.call(
+      `/v1/projects/${fixture.projectId}/executions/${executions[0]!.id}/detail`,
+    );
+    expect(detailResponse.status).toBe(200);
+    const detail = (await detailResponse.json()) as Detail;
+    expect(validateDetail(detail), explain(validateDetail)).toBe(true);
+    expect(detail.correlationId).toMatch(/^corr_/);
+    expect(detail.workItem).toMatchObject({
+      ref: "github://Gasppacho/jarvis/issues/16",
+      issueNumber: 16,
+      title: "Execution detail acceptance",
+    });
+    expect(detail.executions).toHaveLength(3);
+    expect(detail.executions.every((execution) => execution.status === "completed")).toBe(true);
+    expect(detail.steps.map((step) => [step.id, step.status])).toEqual([
+      ["issue-received", "proved"],
+      ["eligibility-confirmed", "proved"],
+      ["workspace-prepared", "proved"],
+      ["agent-running", "proved"],
+      ["checks", "proved"],
+      ["commit-push", "proved"],
+      ["pull-request", "proved"],
+    ]);
+    expect(detail.checks).toEqual([expect.objectContaining({ name: "test", status: "passed" })]);
+    expect(detail.agentExcerpts.length).toBeLessThanOrEqual(8);
+    expect(detail.workspace?.status).toBe("released");
+    expect(detail.pullRequest).toMatchObject({
+      ref: "github://Gasppacho/jarvis/pulls/1",
+      number: 1,
+      title: expect.stringContaining("Implement"),
+      url: fixture.fakeGitHub.pullRequests[0]!.htmlUrl,
+    });
+    expect(detail.technical.inputEventIds.length).toBe(3);
+    expect(detail.technical.events.length).toBeGreaterThanOrEqual(5);
+    const publicText = JSON.stringify(detail);
+    expect(publicText).not.toContain("ghs_reference_fixture");
+    expect(publicText).not.toContain("A bounded detail body.");
+    expect(publicText).not.toContain("/private/tmp");
+    expect(publicText).not.toMatch(/merge|auto-merge/i);
+  });
+
+  it("keeps detail project-scoped", async () => {
+    const fixture = await startReferenceWorkflowFixture("execution-detail-scope");
+    fixtures.push(fixture);
+    const response = await fixture.engine.call(
+      `/v1/projects/other-project/executions/execution-unknown/detail`,
+    );
+    expect(response.status).toBe(404);
+  });
+});
+
+type Execution = { readonly id: string };
+type Detail = {
+  readonly correlationId: string | null;
+  readonly workItem: {
+    readonly ref: string;
+    readonly issueNumber: number | null;
+    readonly title: string | null;
+  } | null;
+  readonly executions: readonly { readonly status: string }[];
+  readonly steps: readonly { readonly id: string; readonly status: string }[];
+  readonly checks: readonly { readonly name: string; readonly status: string }[];
+  readonly agentExcerpts: readonly unknown[];
+  readonly workspace: { readonly status: string } | null;
+  readonly pullRequest: {
+    readonly ref: string;
+    readonly number: number | null;
+    readonly title: string | null;
+    readonly url: string | null;
+  } | null;
+  readonly technical: {
+    readonly inputEventIds: readonly string[];
+    readonly events: readonly unknown[];
+  };
+};
+
+async function readExecutions(fixture: ReferenceWorkflowFixture): Promise<readonly Execution[]> {
+  const response = await fixture.engine.call(`/v1/projects/${fixture.projectId}/executions`);
+  const body = (await response.json()) as { readonly items: readonly Execution[] };
+  return body.items;
+}
+
+async function waitForEvent(fixture: ReferenceWorkflowFixture, type: string): Promise<void> {
+  const deadline = Date.now() + 15_000;
+  for (;;) {
+    const response = await fixture.engine.call(`/v1/projects/${fixture.projectId}/events`);
+    const body = (await response.json()) as {
+      readonly items: readonly { readonly type: string }[];
+    };
+    if (body.items.some((event) => event.type === type)) return;
+    if (Date.now() >= deadline)
+      throw new Error(`execution detail timed out\n${fixture.engine.stderr()}`);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}

@@ -11,6 +11,7 @@ struct RootView: View {
     let timeline: ProjectTimelineModel
     let overview: ProjectOverviewModel
     let projectGraph: ProjectGraphModel
+    let executionDetail: ProjectExecutionDetailModel
     let deadLetters: ProjectDeadLettersModel
     let connections: ConnectionsModel
 
@@ -144,6 +145,7 @@ struct RootView: View {
                         moduleCatalog: moduleCatalog,
                         overview: overview,
                         timeline: timeline,
+                        executionDetail: executionDetail,
                         projectGraph: projectGraph,
                         deadLetters: deadLetters,
                         project: project)
@@ -161,6 +163,7 @@ struct RootView: View {
                     moduleCatalog: moduleCatalog,
                     overview: overview,
                     timeline: timeline,
+                    executionDetail: executionDetail,
                     projectGraph: projectGraph,
                     deadLetters: deadLetters,
                     project: project)

@@ -296,6 +296,21 @@ Liste filtrable par projet, module, statut et corrélation. Une fiche affiche :
 - action d'annulation lorsque possible ;
 - diagnostic de l'échec.
 
+Depuis une issue active de l'Overview ou une ligne d'exécution de la Timeline, l'utilisateur
+ouvre la fiche corrélée. Elle regroupe les executions finies et en cours autour de l'Event
+d'entrée et affiche exactement les étapes `Issue reçue`, `Éligibilité confirmée`, `Workspace
+préparé`, `Agent en cours`, `Checks`, `Commit et push` et `Création de la Pull Request`.
+Chaque ligne est fondée sur une preuve du journal, du Ledger ou des checkpoints; une preuve
+manquante affiche `Information indisponible`.
+
+La fiche distingue `Live`, `Reconnecting…` et `Snapshot précédent` sans effacer le dernier
+snapshot. Elle montre les checks avec leur nom, durée et résultat, les extraits agentiques
+bornés avec leur timestamp, puis le diagnostic, l'impact et l'action possible en cas d'échec,
+de dépassement de délai ou d'annulation. Une Pull Request créée expose son numéro, titre et
+lien; le message rappelle qu'une revue manuelle est requise. Les identifiants techniques,
+la corrélation, la causalité, les événements et les détails du workspace sont repliés dans
+`Technical details`; aucun contrôle de fusion ou d'auto-fusion n'est présent.
+
 ## Events
 
 La timeline montre requests et facts avec une distinction visuelle claire. Chaque événement affiche :

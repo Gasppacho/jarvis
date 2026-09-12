@@ -50,6 +50,33 @@ public struct ProjectOverview: Sendable, Equatable {
         public let openDependencyCount: Int
         public let blockerRefs: [String]
         public let readinessLabel: String
+        public let executionId: String?
+
+        public init(
+            workItemRef: String,
+            title: String,
+            issueNumber: Int,
+            repositoryId: String,
+            status: Status,
+            reason: String,
+            explanation: String,
+            openDependencyCount: Int,
+            blockerRefs: [String],
+            readinessLabel: String,
+            executionId: String? = nil
+        ) {
+            self.workItemRef = workItemRef
+            self.title = title
+            self.issueNumber = issueNumber
+            self.repositoryId = repositoryId
+            self.status = status
+            self.reason = reason
+            self.explanation = explanation
+            self.openDependencyCount = openDependencyCount
+            self.blockerRefs = blockerRefs
+            self.readinessLabel = readinessLabel
+            self.executionId = executionId
+        }
     }
 
     public let projectId: String
@@ -122,7 +149,8 @@ public struct ProjectOverview: Sendable, Equatable {
                 explanation: $0.explanation,
                 openDependencyCount: $0.openDependencyCount,
                 blockerRefs: $0.blockerRefs,
-                readinessLabel: $0.readinessLabel)
+                readinessLabel: $0.readinessLabel,
+                executionId: $0.executionId)
         }
         activeExecutionCount = payload.activeExecutionCount
         activeWorkItemRefs = payload.activeWorkItemRefs

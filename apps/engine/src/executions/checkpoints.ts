@@ -166,16 +166,22 @@ export class ExecutionCheckpointStore {
     })();
   }
 
-  public list(projectId: string, executionId: string): ExecutionCheckpoint[] {
+  public list(projectId: string, executionId: string, limit?: number): ExecutionCheckpoint[] {
+    const sqlLimit = limit === undefined ? "" : " LIMIT @limit";
     const rows = this.db
       .prepare(
         `SELECT project_id, execution_id, sequence, source_sequence, type, payload, occurred_at
          FROM execution_checkpoints
          WHERE project_id = @projectId AND execution_id = @executionId
-         ORDER BY sequence ASC`,
+         ORDER BY sequence ${limit === undefined ? "ASC" : "DESC"}${sqlLimit}`,
       )
-      .all({ projectId, executionId }) as ExecutionCheckpointRow[];
-    return rows.map(toCheckpoint);
+      .all(
+        limit === undefined
+          ? { projectId, executionId }
+          : { projectId, executionId, limit: Math.max(1, Math.floor(limit)) },
+      ) as ExecutionCheckpointRow[];
+    const checkpoints = rows.map(toCheckpoint);
+    return limit === undefined ? checkpoints : checkpoints.reverse();
   }
 
   public has(

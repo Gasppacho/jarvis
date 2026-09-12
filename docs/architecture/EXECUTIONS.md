@@ -221,3 +221,18 @@ Startup retains workspaces with commit/push evidence, even beyond ordinary
 failure retention. A live foreign owner prevents recovery and release. If its
 directory is temporarily inaccessible, project cleanup/pruning waits too.
 Successful recovery releases the original lease; failure preserves its work.
+
+## Correlated execution detail
+
+The Project Service exposes `GET /v1/projects/{projectId}/executions/{executionId}/detail`
+as a read projection owned by the API boundary. It resolves the anchor Execution and its
+input Event through project-scoped repositories, then joins only the Event journal, Ledger,
+Execution checkpoints, workspace lease and Dead Letter read APIs. It does not open another
+module's database or create a second workflow journal. The seven UI steps and Pull Request
+result are derived from durable facts; missing evidence is represented as unavailable.
+
+The projection keeps the existing finite Execution model: cancellation records a terminal
+result, while a retry replays an existing Dead Letter and starts the normal delivery path.
+The live badge is supplied by the existing SSE Timeline stream; REST remains the snapshot
+source after reconnect. Technical event payloads are bounded and redacted before leaving
+the Engine, and no merge request is emitted by the read path.

@@ -24,6 +24,7 @@ export type ProjectStatus = components["schemas"]["ProjectSummary"]["status"];
 export type ProjectOverview = components["schemas"]["ProjectOverviewV1"];
 export type ProjectOverviewIssue = components["schemas"]["ProjectOverviewIssue"];
 export type ProjectOverviewStage = components["schemas"]["ProjectOverviewStage"];
+export type ProjectExecutionDetail = components["schemas"]["ExecutionDetailV1"];
 
 type Assert<T extends true> = T;
 type MutuallyAssignable<Left, Right> = [Left] extends [Right]

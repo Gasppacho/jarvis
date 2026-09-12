@@ -390,6 +390,27 @@ public struct EngineClient: Sendable {
         }
     }
 
+    /// Ticket #200: one durable, project-scoped snapshot of a correlated
+    /// Execution chain. The server remains the only source of step evidence.
+    public func getExecutionDetail(
+        projectId: String,
+        executionId: String
+    ) async throws -> ProjectExecutionDetail {
+        let operation = "GET /v1/projects/\(projectId)/executions/\(executionId)/detail"
+        let output = try await underlying.getExecutionDetail(
+            .init(path: .init(projectId: projectId, executionId: executionId)))
+        switch output {
+        case .ok(let ok):
+            return ProjectExecutionDetail(payload: try ok.body.json)
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
     public func cancelExecution(executionId: String) async throws -> TimelineExecution {
         let operation = "POST /v1/executions/\(executionId)/cancel"
         let output = try await underlying.cancelExecution(

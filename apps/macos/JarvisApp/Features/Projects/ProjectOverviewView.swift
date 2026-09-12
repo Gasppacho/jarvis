@@ -7,6 +7,7 @@ struct ProjectOverviewView: View {
     let model: ProjectOverviewModel
     let projects: ProjectsModel
     let projectId: String
+    var onOpenExecution: ((String) -> Void)? = nil
 
     var body: some View {
         let presentation = ProjectOverviewPresentation(model.state(for: projectId))
@@ -213,6 +214,10 @@ struct ProjectOverviewView: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+            }
+            if let executionId = issue.executionId, let onOpenExecution {
+                Button("Open execution") { onOpenExecution(executionId) }
+                    .accessibilityLabel("Open execution for issue \(issue.issueNumber)")
             }
         }
         .padding(10)

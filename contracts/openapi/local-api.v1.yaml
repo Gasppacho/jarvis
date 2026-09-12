@@ -539,6 +539,36 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /v1/projects/{projectId}/executions/{executionId}/detail:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+      - name: executionId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: getExecutionDetail
+      description: >-
+        User-oriented, project-scoped detail for one Execution and every
+        durable Execution in its correlation chain. The response is a
+        snapshot: steps, timestamps, checks, workspaces, pull requests and
+        excerpts are returned only when the journal, ledger or checkpoints
+        prove them. Payloads are redacted and bounded before they cross the
+        Local API boundary.
+      responses:
+        "200":
+          description: Correlated execution detail snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecutionDetailV1"
+        default:
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/executions/{executionId}/cancel:
     post:
       operationId: cancelExecution
@@ -1975,6 +2005,9 @@ components:
           type: array
           items: { type: string }
         readinessLabel: { type: string, minLength: 1 }
+        executionId:
+          type: [string, "null"]
+          description: The active execution proving the in-progress issue, when one exists.
     PreflightScopeRequest:
       type: object
       additionalProperties: false
@@ -2202,6 +2235,194 @@ components:
             so a client can attach the Execution to its Event without
             guessing from timestamps or Module Instance. Optional for the
             same reason `inputEventId` is.
+    ExecutionDetailV1:
+      type: object
+      additionalProperties: false
+      required: [apiVersion, kind, projectId, correlationId, workItem, executions, steps, checks, agentExcerpts, workspace, artifacts, pullRequest, lastEvent, technical, failure, retryDeliveryId, cancellableExecutionId]
+      properties:
+        apiVersion: { const: jarvis.dev/execution-detail/v1 }
+        kind: { const: ExecutionDetail }
+        projectId: { type: string }
+        correlationId: { type: [string, "null"] }
+        workItem:
+          type: [object, "null"]
+          additionalProperties: false
+          required: [ref, title, issueNumber, repositoryId]
+          properties:
+            ref: { type: string, maxLength: 512 }
+            title: { type: [string, "null"] }
+            issueNumber: { type: [integer, "null"], minimum: 1 }
+            repositoryId: { type: [string, "null"] }
+        executions:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/ExecutionDetailExecution"
+        steps:
+          type: array
+          minItems: 7
+          maxItems: 7
+          items:
+            $ref: "#/components/schemas/ExecutionDetailStep"
+        checks:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/ExecutionDetailCheck"
+        agentExcerpts:
+          type: array
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/ExecutionDetailAgentExcerpt"
+        workspace:
+          type: [object, "null"]
+          additionalProperties: false
+          required: [path, repositoryId, branch, baseRevisionSha, status, executionId]
+          properties:
+            path: { type: string, maxLength: 4096 }
+            repositoryId: { type: string }
+            branch: { type: string, maxLength: 256 }
+            baseRevisionSha: { type: string, maxLength: 256 }
+            status: { type: string, enum: [active, retained, released] }
+            executionId: { type: string }
+        artifacts:
+          type: [array, "null"]
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/ExecutionDetailArtifact"
+        pullRequest:
+          type: [object, "null"]
+          additionalProperties: false
+          required: [ref, number, title, url, repositoryId]
+          properties:
+            ref: { type: string, maxLength: 512 }
+            number: { type: [integer, "null"], minimum: 1 }
+            title: { type: [string, "null"], maxLength: 512 }
+            url: { type: [string, "null"], format: uri }
+            repositoryId: { type: [string, "null"] }
+        lastEvent:
+          type: [object, "null"]
+          additionalProperties: false
+          required: [id, type, version, kind, occurredAt, producer, correlationId, causationId, subjectRef, payloadExcerpt]
+          properties:
+            id: { type: string }
+            type: { type: string }
+            version: { type: integer, minimum: 1 }
+            kind: { type: string, enum: [request, fact] }
+            occurredAt: { type: string, format: date-time }
+            producer: { type: string }
+            correlationId: { type: string }
+            causationId: { type: [string, "null"] }
+            subjectRef: { type: [string, "null"] }
+            payloadExcerpt: { type: string, maxLength: 512 }
+        technical:
+          $ref: "#/components/schemas/ExecutionDetailTechnical"
+        failure:
+          type: [object, "null"]
+          additionalProperties: false
+          required: [code, message, retryable, impact, nextAction, stepId]
+          properties:
+            code: { type: string, minLength: 1, maxLength: 128 }
+            message: { type: string, minLength: 1, maxLength: 512 }
+            retryable: { type: boolean }
+            impact: { type: string, minLength: 1, maxLength: 512 }
+            nextAction: { type: string, minLength: 1, maxLength: 512 }
+            stepId:
+              type: [string, "null"]
+              enum: [issue-received, eligibility-confirmed, workspace-prepared, agent-running, checks, commit-push, pull-request, null]
+        retryDeliveryId: { type: [string, "null"] }
+        cancellableExecutionId: { type: [string, "null"] }
+    ExecutionDetailExecution:
+      type: object
+      additionalProperties: false
+      required: [id, projectId, moduleInstanceId, status, attempt, createdAt, error, completedAt, inputEventId, replayed, correlationId, durationMs]
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        moduleInstanceId: { type: string }
+        status: { type: string, enum: [queued, running, cancelling, completed, failed, cancelled, timed-out] }
+        attempt: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        error: { type: [string, "null"], maxLength: 512 }
+        completedAt: { type: [string, "null"], format: date-time }
+        inputEventId: { type: string }
+        replayed: { type: boolean }
+        correlationId: { type: [string, "null"] }
+        durationMs: { type: [integer, "null"], minimum: 0 }
+    ExecutionDetailStep:
+      type: object
+      additionalProperties: false
+      required: [id, label, status, occurredAt, completedAt, executionId, detail]
+      properties:
+        id: { type: string, enum: [issue-received, eligibility-confirmed, workspace-prepared, agent-running, checks, commit-push, pull-request] }
+        label: { type: string, minLength: 1 }
+        status: { type: string, enum: [proved, active, failed, cancelled, unavailable] }
+        occurredAt: { type: [string, "null"], format: date-time }
+        completedAt: { type: [string, "null"], format: date-time }
+        executionId: { type: [string, "null"] }
+        detail: { type: string, minLength: 1, maxLength: 512 }
+    ExecutionDetailCheck:
+      type: object
+      additionalProperties: false
+      required: [name, status, durationMs, startedAt, completedAt, output, executionId]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 256 }
+        status: { type: string, enum: [passed, failed, unavailable] }
+        durationMs: { type: [integer, "null"], minimum: 0 }
+        startedAt: { type: [string, "null"], format: date-time }
+        completedAt: { type: [string, "null"], format: date-time }
+        output: { type: [string, "null"], maxLength: 512 }
+        executionId: { type: [string, "null"] }
+    ExecutionDetailAgentExcerpt:
+      type: object
+      additionalProperties: false
+      required: [occurredAt, executionId, text, truncated]
+      properties:
+        occurredAt: { type: string, format: date-time }
+        executionId: { type: string }
+        text: { type: string, maxLength: 512 }
+        truncated: { type: boolean }
+    ExecutionDetailArtifact:
+      type: object
+      additionalProperties: false
+      required: [ref, label]
+      properties:
+        ref: { type: string, maxLength: 512 }
+        label: { type: string, minLength: 1, maxLength: 256 }
+    ExecutionDetailEvent:
+      type: object
+      additionalProperties: false
+      required: [id, type, version, kind, occurredAt, producer, correlationId, causationId, subjectRef, payloadExcerpt]
+      properties:
+        id: { type: string }
+        type: { type: string }
+        version: { type: integer, minimum: 1 }
+        kind: { type: string, enum: [request, fact] }
+        occurredAt: { type: string, format: date-time }
+        producer: { type: string }
+        correlationId: { type: string }
+        causationId: { type: [string, "null"] }
+        subjectRef: { type: [string, "null"] }
+        payloadExcerpt: { type: string, maxLength: 512 }
+    ExecutionDetailTechnical:
+      type: object
+      additionalProperties: false
+      required: [inputEventIds, correlationId, causationIds, events]
+      properties:
+        inputEventIds:
+          type: array
+          maxItems: 100
+          items: { type: string }
+        correlationId: { type: [string, "null"] }
+        causationIds:
+          type: array
+          maxItems: 100
+          items: { type: string }
+        events:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/ExecutionDetailEvent"
     ResourceDescriptor:
       type: object
       required: [id, kind, displayName, status, capabilities]

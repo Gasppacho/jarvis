@@ -347,6 +347,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{projectId}/executions/{executionId}/detail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+                executionId: string;
+            };
+            cookie?: never;
+        };
+        /** @description User-oriented, project-scoped detail for one Execution and every durable Execution in its correlation chain. The response is a snapshot: steps, timestamps, checks, workspaces, pull requests and excerpts are returned only when the journal, ledger or checkpoints prove them. Payloads are redacted and bounded before they cross the Local API boundary. */
+        get: operations["getExecutionDetail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/executions/{executionId}/cancel": {
         parameters: {
             query?: never;
@@ -1145,6 +1165,8 @@ export interface components {
             openDependencyCount: number;
             blockerRefs: string[];
             readinessLabel: string;
+            /** @description The active execution proving the in-progress issue, when one exists. */
+            executionId?: string | null;
         };
         PreflightScopeRequest: {
             compositionFingerprint: string;
@@ -1249,6 +1271,141 @@ export interface components {
             replayed: boolean;
             /** @description Ticket #59: the correlationId of this Execution's input Event, so a client can attach the Execution to its Event without guessing from timestamps or Module Instance. Optional for the same reason `inputEventId` is. */
             correlationId?: string;
+        };
+        ExecutionDetailV1: {
+            /** @constant */
+            apiVersion: "jarvis.dev/execution-detail/v1";
+            /** @constant */
+            kind: "ExecutionDetail";
+            projectId: string;
+            correlationId: string | null;
+            workItem: {
+                ref: string;
+                title: string | null;
+                issueNumber: number | null;
+                repositoryId: string | null;
+            } | null;
+            executions: components["schemas"]["ExecutionDetailExecution"][];
+            steps: components["schemas"]["ExecutionDetailStep"][];
+            checks: components["schemas"]["ExecutionDetailCheck"][];
+            agentExcerpts: components["schemas"]["ExecutionDetailAgentExcerpt"][];
+            workspace: {
+                path: string;
+                repositoryId: string;
+                branch: string;
+                baseRevisionSha: string;
+                /** @enum {string} */
+                status: "active" | "retained" | "released";
+                executionId: string;
+            } | null;
+            artifacts: components["schemas"]["ExecutionDetailArtifact"][] | null;
+            pullRequest: {
+                ref: string;
+                number: number | null;
+                title: string | null;
+                /** Format: uri */
+                url: string | null;
+                repositoryId: string | null;
+            } | null;
+            lastEvent: {
+                id: string;
+                type: string;
+                version: number;
+                /** @enum {string} */
+                kind: "request" | "fact";
+                /** Format: date-time */
+                occurredAt: string;
+                producer: string;
+                correlationId: string;
+                causationId: string | null;
+                subjectRef: string | null;
+                payloadExcerpt: string;
+            } | null;
+            technical: components["schemas"]["ExecutionDetailTechnical"];
+            failure: {
+                code: string;
+                message: string;
+                retryable: boolean;
+                impact: string;
+                nextAction: string;
+                /** @enum {string|null} */
+                stepId: "issue-received" | "eligibility-confirmed" | "workspace-prepared" | "agent-running" | "checks" | "commit-push" | "pull-request" | null;
+            } | null;
+            retryDeliveryId: string | null;
+            cancellableExecutionId: string | null;
+        };
+        ExecutionDetailExecution: {
+            id: string;
+            projectId: string;
+            moduleInstanceId: string;
+            /** @enum {string} */
+            status: "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled" | "timed-out";
+            attempt: number;
+            /** Format: date-time */
+            createdAt: string;
+            error: string | null;
+            /** Format: date-time */
+            completedAt: string | null;
+            inputEventId: string;
+            replayed: boolean;
+            correlationId: string | null;
+            durationMs: number | null;
+        };
+        ExecutionDetailStep: {
+            /** @enum {string} */
+            id: "issue-received" | "eligibility-confirmed" | "workspace-prepared" | "agent-running" | "checks" | "commit-push" | "pull-request";
+            label: string;
+            /** @enum {string} */
+            status: "proved" | "active" | "failed" | "cancelled" | "unavailable";
+            /** Format: date-time */
+            occurredAt: string | null;
+            /** Format: date-time */
+            completedAt: string | null;
+            executionId: string | null;
+            detail: string;
+        };
+        ExecutionDetailCheck: {
+            name: string;
+            /** @enum {string} */
+            status: "passed" | "failed" | "unavailable";
+            durationMs: number | null;
+            /** Format: date-time */
+            startedAt: string | null;
+            /** Format: date-time */
+            completedAt: string | null;
+            output: string | null;
+            executionId: string | null;
+        };
+        ExecutionDetailAgentExcerpt: {
+            /** Format: date-time */
+            occurredAt: string;
+            executionId: string;
+            text: string;
+            truncated: boolean;
+        };
+        ExecutionDetailArtifact: {
+            ref: string;
+            label: string;
+        };
+        ExecutionDetailEvent: {
+            id: string;
+            type: string;
+            version: number;
+            /** @enum {string} */
+            kind: "request" | "fact";
+            /** Format: date-time */
+            occurredAt: string;
+            producer: string;
+            correlationId: string;
+            causationId: string | null;
+            subjectRef: string | null;
+            payloadExcerpt: string;
+        };
+        ExecutionDetailTechnical: {
+            inputEventIds: string[];
+            correlationId: string | null;
+            causationIds: string[];
+            events: components["schemas"]["ExecutionDetailEvent"][];
         };
         ResourceDescriptor: {
             id: string;
@@ -2112,6 +2269,32 @@ export interface operations {
                     "application/json": {
                         items: components["schemas"]["ExecutionSummary"][];
                     };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getExecutionDetail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+                executionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Correlated execution detail snapshot. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionDetailV1"];
                 };
             };
             401: components["responses"]["Unauthorized"];

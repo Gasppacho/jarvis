@@ -12,6 +12,7 @@ public struct ProjectDetailView: View {
         case composition
         case graph
         case timeline
+        case execution
         case deadLetters
     }
 
@@ -32,6 +33,7 @@ public struct ProjectDetailView: View {
     let moduleCatalog: ModuleCatalogModel
     let overview: ProjectOverviewModel
     let timeline: ProjectTimelineModel
+    let executionDetail: ProjectExecutionDetailModel
     let projectGraph: ProjectGraphModel
     let deadLetters: ProjectDeadLettersModel
     let project: Project
@@ -45,6 +47,7 @@ public struct ProjectDetailView: View {
     // switch-case slot for every Project, so SwiftUI preserves this state
     // across a Project switch rather than losing the selected tab.
     @State private var selectedTab: Tab = .overview
+    @State private var selectedExecutionID: String?
 
     public init(
         projects: ProjectsModel,
@@ -52,6 +55,7 @@ public struct ProjectDetailView: View {
         moduleCatalog: ModuleCatalogModel,
         overview: ProjectOverviewModel,
         timeline: ProjectTimelineModel,
+        executionDetail: ProjectExecutionDetailModel,
         projectGraph: ProjectGraphModel,
         deadLetters: ProjectDeadLettersModel,
         project: Project
@@ -61,6 +65,7 @@ public struct ProjectDetailView: View {
         self.moduleCatalog = moduleCatalog
         self.overview = overview
         self.timeline = timeline
+        self.executionDetail = executionDetail
         self.projectGraph = projectGraph
         self.deadLetters = deadLetters
         self.project = project
@@ -73,6 +78,7 @@ public struct ProjectDetailView: View {
                 Text("Composition").tag(Tab.composition)
                 Text("Graph").tag(Tab.graph)
                 Text("Timeline").tag(Tab.timeline)
+                Text("Execution").tag(Tab.execution)
                 Text("Dead Letters").tag(Tab.deadLetters)
             }
             .pickerStyle(.segmented)
@@ -82,7 +88,9 @@ public struct ProjectDetailView: View {
 
             switch selectedTab {
             case .overview:
-                ProjectOverviewView(model: overview, projects: projects, projectId: project.id)
+                ProjectOverviewView(model: overview, projects: projects, projectId: project.id) { id in
+                    openExecution(id)
+                }
             case .composition:
                 compositionTab
             case .graph:
@@ -92,7 +100,23 @@ public struct ProjectDetailView: View {
                 // different Project can never show this Project's rows for
                 // that other one, including while it is still loading
                 // (ProjectTimelineModel keys state by projectId).
-                ProjectTimelineView(timeline: timeline, projectId: project.id)
+                ProjectTimelineView(timeline: timeline, projectId: project.id) { id in
+                    openExecution(id)
+                }
+            case .execution:
+                if let selectedExecutionID {
+                    ProjectExecutionDetailView(
+                        model: executionDetail,
+                        timeline: timeline,
+                        projectId: project.id,
+                        executionId: selectedExecutionID,
+                        close: { selectedTab = .timeline })
+                } else {
+                    ContentUnavailableView(
+                        "No execution selected",
+                        systemImage: "gearshape",
+                        description: Text("Open an execution from Overview or Timeline."))
+                }
             case .deadLetters:
                 ProjectDeadLettersView(model: deadLetters, projectId: project.id)
             }
@@ -100,6 +124,10 @@ public struct ProjectDetailView: View {
         .task(id: refreshID) {
             await projectConfiguration.refresh(
                 projectId: project.id, packages: moduleCatalog.packages)
+        }
+        .onChange(of: project.id) { _, _ in
+            selectedExecutionID = nil
+            if selectedTab == .execution { selectedTab = .overview }
         }
         .alert(
             presentation.deletionConfirmation.title,
@@ -127,6 +155,11 @@ public struct ProjectDetailView: View {
                 },
                 secondaryButton: .cancel())
         }
+    }
+
+    private func openExecution(_ executionID: String) {
+        selectedExecutionID = executionID
+        selectedTab = .execution
     }
 
     /// Everything this screen showed before ticket #61, unchanged: moved
