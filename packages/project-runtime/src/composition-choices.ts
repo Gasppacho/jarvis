@@ -179,7 +179,7 @@ function githubDevelopmentTemplate(
           retainWorkspaceOnSuccess: false,
           timeoutMs: 300000,
           outputLimitBytes: 1048576,
-          environmentAllowlist: [],
+          environmentAllowlist: ["PATH", "HOME", "CODEX_HOME"],
         },
       },
     ],

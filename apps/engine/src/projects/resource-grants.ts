@@ -119,6 +119,10 @@ export class LocalAgentRuntimeRegistry
     }));
   }
 
+  public descriptors(): readonly RuntimeDescriptor[] {
+    return this.runtimes?.list() ?? [];
+  }
+
   public resolve(_projectId: string, ref: string): AgentRuntime | undefined {
     if (ref === FAKE_RUNTIME_REF) return this.fakeRuntime;
     const descriptor = this.runtimes?.list().find((candidate) => candidate.id === ref);

@@ -92,3 +92,14 @@ Certaines règles sont sémantiques :
 - commandes autorisées ;
 - modules compatibles ;
 - runtime et provider disponibles.
+
+## Inventaire guidé Codex (#197)
+
+Le champ optionnel `agentRuntimes` du contrat de ressources est une surface de
+**découverte**, distincte des ressources résolues transmises aux modules. Il
+nomme les candidats Codex globaux sûrs afin de permettre un choix explicite,
+y compris leurs incompatibilités; leur visibilité ne constitue aucun grant.
+La règle de non-divulgation ci-dessus s’applique aux ressources résolues et
+aux agents, pas à cet inventaire du shell. Seul le choix local explicite
+accorde le profil détecté au Project. Un slot runtime optionnel sans consumer
+actif ne rend pas le contrôle runtime obligatoire pour l’activation.

@@ -323,3 +323,27 @@ Codex runtime unavailable
 Development cannot start for Token Warehouse.
 Reconnect the runtime or bind another runtime in Project Settings.
 ```
+
+### Runtime agentique dans Connections (#197)
+
+La même étape `Connections` présente la carte `Runtime agentique` : nom Codex,
+version disponible, état textuel et icône native, choix local et dernier contrôle.
+`Choisir` confirme explicitement l’accès de ce seul projet aux outils et au
+contexte de connexion locaux détectés, puis vérifie le runtime. Aucun chemin,
+variable, JSON ou identifiant n’est nécessaire dans ce parcours; seul le ref
+opaque figure sous `Technical details`, en lecture seule.
+
+`Découvrir les runtimes` actualise les candidats. `Vérifier le runtime` rejoue
+le contrôle project-scoped sans démarrer Development. Les états `Prêt`, `Absent`,
+`Accès refusé`, `Version incompatible`, `Vérification en cours`, `Erreur du moteur`
+et `Non vérifié` conservent une explication textuelle, l’impact sur Development
+et la réparation. La progression, les boutons et la divulgation sont natifs;
+les couleurs sémantiques suivent les thèmes et aucun état ne repose sur la
+couleur seule. Les noms/version et l’accord local sont annoncés avec les contrôles.
+
+`Review` reste accessible dans tous ces états. L’activation exige à la fois le
+rapport courant et le runtime requis prêt. Une modification ou réouverture
+révoque la readiness; les bindings conservés ne valent jamais contrôle courant.
+Le nouveau template allowliste les noms `PATH`, `HOME`, `CODEX_HOME`, sans leur
+valeur et sans grant implicite; les projets existants gardent leur allowlist et
+leur règle `agent:ready`. Le nouveau template conserve `ready-for-agent`.

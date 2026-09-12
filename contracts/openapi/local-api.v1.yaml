@@ -583,6 +583,57 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /v1/projects/{projectId}/runtime-binding:
+    post:
+      operationId: bindProjectRuntime
+      description: Explicitly approve and persist the detected local profile without modifying portable configuration.
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [ref, approveEnvironment]
+              properties:
+                ref:
+                  type: string
+                approveEnvironment:
+                  type: boolean
+      responses:
+        "200":
+          description: Safe runtime choices and current readiness for this Project.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectAgentRuntimeChoices"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
+  /v1/projects/{projectId}/runtime-readiness:
+    post:
+      operationId: checkProjectRuntime
+      description: Bounded project-scoped probes using the same descriptor and environment filter as start. Never starts an agent execution.
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Safe runtime choices and current readiness for this Project.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectAgentRuntimeChoices"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        default:
+          $ref: "#/components/responses/Error"
   /v1/runtimes:
     get:
       operationId: listRuntimes
@@ -2252,6 +2303,9 @@ components:
       additionalProperties: false
       required: [items, slots]
       properties:
+        agentRuntimes:
+          description: Safe project-scoped Codex candidates; reading resets readiness to unchecked. Discovery is never an execution grant.
+          $ref: "#/components/schemas/ProjectAgentRuntimeChoices"
         items:
           description: Deduplicated union of resources eligible for at least one Slot.
           type: array
@@ -2261,6 +2315,56 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ProjectResourceBindingChoice"
+    ProjectRuntimeReadiness:
+      type: object
+      additionalProperties: false
+      required: [status, checkedAt, detail]
+      properties:
+        status:
+          type: string
+          enum: [ready, absent, access-denied, incompatible, checking, engine-error, unchecked]
+        checkedAt:
+          type: [string, "null"]
+          format: date-time
+        detail:
+          type: string
+          maxLength: 1000
+    ProjectAgentRuntimeCandidate:
+      type: object
+      additionalProperties: false
+      required: [ref, displayName, provider, version, capabilities, bound, selectable, readiness]
+      properties:
+        ref:
+          type: string
+        displayName:
+          type: string
+        provider:
+          type: string
+        version:
+          type: [string, "null"]
+        capabilities:
+          type: array
+          items:
+            type: string
+        bound:
+          type: boolean
+        selectable:
+          type: boolean
+        readiness:
+          $ref: "#/components/schemas/ProjectRuntimeReadiness"
+    ProjectAgentRuntimeChoices:
+      type: object
+      additionalProperties: false
+      required: [required, items, readiness]
+      properties:
+        required:
+          type: boolean
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectAgentRuntimeCandidate"
+        readiness:
+          $ref: "#/components/schemas/ProjectRuntimeReadiness"
     ProjectIneligibleResource:
       description: >-
         A resource explicitly granted to this Project but ineligible for this

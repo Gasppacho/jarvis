@@ -28,6 +28,15 @@ public struct ProjectConfigurationState: Sendable, Equatable {
     public var isLoading = false
     public var isSaving = false
     public var errorMessage: String?
+    public var agentRuntimes: Components.Schemas.ProjectAgentRuntimeChoices?
+    public var isRuntimeBusy = false
+    public var runtimeMetadataUnavailable = false
+    public var runtimePresentation: ProjectRuntimePresentation {
+        ProjectRuntimePresentation(choices: agentRuntimes, isBusy: isRuntimeBusy)
+    }
+    public var runtimeAllowsActivation: Bool {
+        !runtimeMetadataUnavailable && !isRuntimeBusy && (agentRuntimes?.required != true || agentRuntimes?.readiness.status == .ready)
+    }
 }
 
 /// Project Wizard coordinator for composition edits and project-scoped grants.
@@ -45,6 +54,9 @@ public final class ProjectConfigurationModel {
     private let projects: ProjectsModel
     private let validationReportProvider: ValidationReportProvider?
     private let activationProvider: ActivationProvider?
+    private let injectedRuntimeAPI: (any ProjectRuntimeAPI)?
+    private var runtimeRevisions: [String: Int] = [:]
+    private var runtimeAPI: (any ProjectRuntimeAPI)? { injectedRuntimeAPI ?? client }
     private var compositionRevisions: [String: Int] = [:]
     private var validationRevisions: [String: Int] = [:]
     private var refreshRevisions: [String: Int] = [:]
@@ -55,18 +67,21 @@ public final class ProjectConfigurationModel {
         self.projects = projects
         validationReportProvider = nil
         activationProvider = nil
+        injectedRuntimeAPI = nil
     }
 
     init(
         session: EngineSessionModel,
         projects: ProjectsModel,
         validationReportProvider: ValidationReportProvider? = nil,
-        activationProvider: ActivationProvider? = nil
+        activationProvider: ActivationProvider? = nil,
+        runtimeAPI: (any ProjectRuntimeAPI)? = nil
     ) {
         self.session = session
         self.projects = projects
         self.validationReportProvider = validationReportProvider
         self.activationProvider = activationProvider
+        injectedRuntimeAPI = runtimeAPI
     }
 
     private var client: EngineClient? { session.client }
@@ -92,6 +107,7 @@ public final class ProjectConfigurationModel {
         packages: [ModulePackage],
         preservingStaleValidation: Bool
     ) async {
+        invalidateRuntime(projectId: projectId)
         guard let client else {
             update(projectId) { $0.errorMessage = Self.engineUnavailable }
             return
@@ -145,6 +161,8 @@ public final class ProjectConfigurationModel {
                 $0.localBindings = bindings
                 $0.candidates = compositionReview.resourceChoices.candidates
                 $0.resourceChoices = compositionReview.resourceChoices.slots
+                $0.agentRuntimes = compositionReview.resourceChoices.agentRuntimes
+                $0.runtimeMetadataUnavailable = $0.agentRuntimes == nil
                 $0.compositionGuide = compositionReview.compositionGuide
                 $0.compositionReview = compositionReview
                 $0.compositionGraph = compositionGraph
@@ -247,6 +265,8 @@ public final class ProjectConfigurationModel {
                 $0.compositionGraph = graph
                 $0.candidates = review.resourceChoices.candidates
                 $0.resourceChoices = review.resourceChoices.slots
+                $0.agentRuntimes = review.resourceChoices.agentRuntimes
+                $0.runtimeMetadataUnavailable = $0.agentRuntimes == nil
                 $0.errorMessage = nil
             }
         } catch {
@@ -520,6 +540,10 @@ public final class ProjectConfigurationModel {
     /// it. The engine alone decides whether that fingerprint is still current;
     /// this method only reflects and forwards its answer.
     public func activate(projectId: String) async {
+        guard state(for: projectId).runtimeAllowsActivation else {
+            update(projectId) { $0.activation = .rejected(code: nil, message: "Development ne peut pas démarrer. Vérifiez le runtime du projet avant d’activer le workflow.") }
+            return
+        }
         guard case .valid(let report) = state(for: projectId).validation,
             report.projectId == projectId
         else {
@@ -631,6 +655,8 @@ public final class ProjectConfigurationModel {
                 $0.compositionReview = review
                 $0.candidates = review?.resourceChoices.candidates ?? []
                 $0.resourceChoices = review?.resourceChoices.slots ?? []
+                $0.runtimeMetadataUnavailable = review?.resourceChoices.agentRuntimes == nil
+                $0.agentRuntimes = review?.resourceChoices.agentRuntimes ?? $0.agentRuntimes
                 $0.isDraftSaved = true
                 $0.errorMessage = reviewError
             }
@@ -639,6 +665,98 @@ public final class ProjectConfigurationModel {
         } catch {
             update(projectId) { $0.errorMessage = ProjectsModel.describe(error) }
             return nil
+        }
+    }
+
+    public func refreshRuntimeCandidates(projectId: String, discover: Bool = false) async {
+        await runtimeOperation(projectId: projectId) { api in
+            if discover { try await api.discoverProjectRuntimes() }
+            guard let choices = try await api.listProjectBindingCandidates(projectId: projectId).agentRuntimes else {
+                throw EngineClientError.unexpectedResponse("Runtime resources are unavailable")
+            }
+            return choices
+        }
+    }
+
+    public func chooseRuntime(projectId: String, ref: String) async {
+        guard !state(for: projectId).isRuntimeBusy && !state(for: projectId).isSaving else { return }
+        // Choosing also confirms the displayed local tool/login profile. The
+        // server resolves slots and values; Swift never invents execution policy.
+        if state(for: projectId).draft != nil && !state(for: projectId).isDraftSaved {
+            guard await saveDraft(projectId: projectId, writeToRepository: false) != nil else { return }
+        }
+        markValidationStale(projectId: projectId)
+        update(projectId) { $0.isSaving = true }
+        defer { update(projectId) { $0.isSaving = false } }
+        await runtimeOperation(projectId: projectId) { api in
+            try await api.bindProjectRuntime(projectId: projectId, ref: ref)
+        }
+        if let runtimeAPI {
+            do {
+                let bindings = try await runtimeAPI.getProjectBindings(projectId: projectId)
+                update(projectId) { $0.localBindings = bindings }
+            } catch {
+                invalidateRuntime(projectId: projectId)
+                update(projectId) {
+                    $0.localBindings = nil
+                    $0.errorMessage = "Le choix local n’a pas pu être rechargé. Rechargez le projet avant de continuer."
+                }
+                return
+            }
+        }
+        if state(for: projectId).agentRuntimes?.readiness.status != .engine_hyphen_error {
+            await checkRuntime(projectId: projectId)
+        }
+    }
+
+    public func checkRuntime(projectId: String) async {
+        guard state(for: projectId).draft == nil || state(for: projectId).isDraftSaved else {
+            invalidateRuntime(projectId: projectId)
+            update(projectId) {
+                $0.agentRuntimes?.readiness.detail = "Enregistrez le brouillon avant de vérifier son profil d’exécution."
+            }
+            return
+        }
+        await runtimeOperation(projectId: projectId) { api in
+            try await api.checkProjectRuntime(projectId: projectId)
+        }
+    }
+
+    private func runtimeOperation(
+        projectId: String,
+        operation: (any ProjectRuntimeAPI) async throws -> Components.Schemas.ProjectAgentRuntimeChoices
+    ) async {
+        guard !state(for: projectId).isRuntimeBusy else { return }
+        runtimeRevisions[projectId, default: 0] += 1
+        let revision = runtimeRevisions[projectId, default: 0]
+        update(projectId) {
+            $0.isRuntimeBusy = true
+            $0.agentRuntimes?.readiness = .init(status: .checking, checkedAt: nil, detail: "Vérification en cours. Development ne peut pas démarrer.")
+        }
+        defer {
+            if revision == runtimeRevisions[projectId, default: 0] { update(projectId) { $0.isRuntimeBusy = false } }
+        }
+        do {
+            guard let runtimeAPI else { throw EngineClientError.unexpectedResponse("Engine unavailable") }
+            let choices = try await operation(runtimeAPI)
+            guard revision == runtimeRevisions[projectId, default: 0] else { return }
+            update(projectId) { $0.agentRuntimes = choices; $0.runtimeMetadataUnavailable = false }
+        } catch {
+            guard revision == runtimeRevisions[projectId, default: 0] else { return }
+            update(projectId) {
+                var choices = $0.agentRuntimes ?? .init(required: true, items: [], readiness: .init(status: .unchecked, checkedAt: nil, detail: ""))
+                // Transport/provider errors may contain paths or credentials.
+                choices.readiness = .init(status: .engine_hyphen_error, checkedAt: nil, detail: "Le moteur ne peut pas vérifier le runtime. Development ne peut pas démarrer. Rétablissez la connexion au moteur, puis réessayez.")
+                $0.agentRuntimes = choices
+            }
+        }
+    }
+
+    private func invalidateRuntime(projectId: String) {
+        runtimeRevisions[projectId, default: 0] += 1
+        update(projectId) {
+            $0.isRuntimeBusy = false
+            $0.agentRuntimes?.readiness = .init(status: .unchecked, checkedAt: nil, detail: "Le projet a changé ou a été rechargé. Vérifiez à nouveau le runtime.")
         }
     }
 
@@ -747,6 +865,8 @@ public final class ProjectConfigurationModel {
                 update(projectId) {
                     $0.candidates = review.resourceChoices.candidates
                     $0.resourceChoices = review.resourceChoices.slots
+                $0.agentRuntimes = review.resourceChoices.agentRuntimes
+                $0.runtimeMetadataUnavailable = $0.agentRuntimes == nil
                     $0.compositionGuide = review.compositionGuide
                     $0.compositionReview = review
                 }
@@ -764,6 +884,7 @@ public final class ProjectConfigurationModel {
     }
 
     private func markValidationStale(projectId: String) {
+        invalidateRuntime(projectId: projectId)
         validationRevisions[projectId, default: 0] += 1
         let current = state(for: projectId).validation
         let report: ProjectValidationReport?

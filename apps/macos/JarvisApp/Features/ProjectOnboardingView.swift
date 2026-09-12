@@ -95,6 +95,7 @@ struct ProjectOnboardingView: View {
             }
         case .connections:
             connectionsStep
+            runtimeCard
         case .review:
             review
         }
@@ -165,22 +166,66 @@ struct ProjectOnboardingView: View {
                 }
                 .disabled(connections.isRefreshing)
                 Button("Continuer vers Review") { step = .review }
-                    .disabled(!hasProjectConnectionBinding)
                 Button("Advanced") { openAdvanced() }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private var hasProjectConnectionBinding: Bool {
-        connections.connections.contains {
-            projectConfiguration.hasLocalBinding(projectId: project.id, connectionID: $0.id)
-        }
-    }
-
     private func refreshConnections() async {
         await connections.refresh()
         await projectConfiguration.refresh(projectId: project.id, packages: moduleCatalog.packages)
+    }
+
+    private var runtimeCard: some View {
+        let runtime = projectConfiguration.state(for: project.id).runtimePresentation
+        return GroupBox(runtime.title) {
+            VStack(alignment: .leading, spacing: 12) {
+                Label(runtime.status, systemImage: runtime.icon)
+                    .font(.headline)
+                if runtime.isBusy { ProgressView().accessibilityLabel(runtime.status) }
+                Text(runtime.impact)
+                Text(runtime.detail).foregroundStyle(.secondary)
+                if let checkedAt = runtime.checkedAt {
+                    Text("Dernier contrôle : \(checkedAt.formatted(date: .abbreviated, time: .standard))")
+                        .font(.caption)
+                } else {
+                    Text("Dernier contrôle : aucun").font(.caption)
+                }
+                Text(runtime.approval).font(.callout)
+                ForEach(runtime.candidates) { candidate in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(candidate.name).font(.headline)
+                        Text(candidate.subtitle)
+                        Label(candidate.bound ? "Choisi pour ce projet" : candidate.status,
+                              systemImage: candidate.bound ? "checkmark.circle" : "info.circle")
+                        Text(candidate.detail).font(.callout).foregroundStyle(.secondary)
+                        Button("Choisir") {
+                            Task { await projectConfiguration.chooseRuntime(projectId: project.id, ref: candidate.id) }
+                        }
+                        .disabled(!candidate.selectable || projectConfiguration.state(for: project.id).isSaving)
+                        .accessibilityLabel("Choisir \(candidate.name), \(candidate.subtitle)")
+                        .accessibilityHint(runtime.approval)
+                        DisclosureGroup("Technical details") {
+                            Text(candidate.id).font(.caption.monospaced())
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                }
+                Button("Découvrir les runtimes") {
+                    Task { await projectConfiguration.refreshRuntimeCandidates(projectId: project.id, discover: true) }
+                }
+                .disabled(runtime.isBusy)
+                Button("Vérifier le runtime") {
+                    Task { await projectConfiguration.checkRuntime(projectId: project.id) }
+                }
+                .disabled(!runtime.canCheck)
+                Button("Continuer vers Review") { step = .review }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private var saveDraftAction: some View {

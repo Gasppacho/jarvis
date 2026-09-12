@@ -229,3 +229,38 @@ politique de reconnexion côté client, ne sont pas introduits par ce ticket.
 ## Versioning
 
 Le préfixe `/v1` versionne les breaking changes. Un ajout backward-compatible reste en v1. UI et moteur vérifient `apiVersion` au handshake et refusent une combinaison incompatible.
+
+### Guided Codex binding and readiness (#197)
+
+`ProjectResourceChoices.agentRuntimes` is an optional, additive v1 extension,
+also returned by composition review and draft resource previews. It contains
+Engine-owned `required`, safe Codex candidates (`ref`, human `displayName`,
+`provider`, optional version value, capabilities, `bound`, `selectable`) and
+bounded readiness (`status`, `checkedAt`, `detail`). It exposes no executable
+path, profile value, authentication output or token. GET/preview never probe or
+grant anything; readiness starts `unchecked` on reopening, even for a saved binding.
+
+`POST /v1/projects/{projectId}/runtime-binding` accepts only
+`{ "ref": "runtime/codex-default", "approveEnvironment": true }`. It requires an
+eligible candidate and explicit approval, resolves the workflow runtime slots
+in the Engine, and replaces only their local bindings. The detected profile
+contains only `PATH`, `HOME` and `CODEX_HOME` when present. These machine values
+stay local and pass the existing credential filter; neither the portable
+configuration nor any authentication file is written or copied. Configuration
+continues to specify the allowlist by name; existing projects with an empty
+allowlist remain unready until the user changes that configuration explicitly.
+
+`POST /v1/projects/{projectId}/runtime-readiness` returns `ProjectAgentRuntimeChoices`.
+It checks each required bound runtime with the same absolute descriptor and
+`filteredEnvironment` used by the execution request builder. Only bounded
+version/login probes execute, never an agent session. A missing grant/profile,
+non-executable file, missing capability, incompatible protocol response, login
+refusal or probe failure prevents `ready`. Duplicate profiles are probed once;
+checks stop admitting further probes after ten seconds (one admitted adapter
+probe pair takes at most four additional seconds plus process cleanup).
+Configuration, bindings or registry changes during a check invalidate its result.
+
+The finite statuses are `ready`, `absent`, `access-denied`, `incompatible`,
+`checking`, `engine-error`, `unchecked`; Swift projects these into text/icons and
+never decides capability or runtime policy. Readiness is ephemeral and does not
+replace the normal activation validation report or Development preflight.

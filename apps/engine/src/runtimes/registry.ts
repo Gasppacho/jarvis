@@ -96,7 +96,9 @@ export class RuntimeRegistry {
 
   public async discover(): Promise<RuntimeDescriptor[]> {
     const executablePath = await this.detector.detect("codex");
-    const descriptor = await new CodexRuntime(executablePath).describe();
+    const descriptor = await new CodexRuntime(executablePath).describe(
+      detectedRuntimeEnvironment(),
+    );
     this.store.upsert(descriptor);
     return this.store.list();
   }
@@ -144,4 +146,14 @@ function toDescriptor(row: RuntimeDescriptorRow): RuntimeDescriptor {
     capabilities: [...capabilities],
     status: row.status,
   };
+}
+
+/** Candidate profile only. A Project must explicitly approve it before use. */
+export function detectedRuntimeEnvironment(): Record<string, string> {
+  return Object.fromEntries(
+    ["PATH", "HOME", "CODEX_HOME"].flatMap((name) => {
+      const value = process.env[name];
+      return typeof value === "string" && value.trim() !== "" ? [[name, value]] : [];
+    }),
+  );
 }

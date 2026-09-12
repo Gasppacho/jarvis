@@ -121,7 +121,16 @@ function runtimeEnvironment(
   return binding?.kind === "runtime" ? (binding.environment ?? {}) : {};
 }
 
-function filteredEnvironment(
+/** The same known secret values are excluded from preflight and execution. */
+export function secretEnvironmentValues(
+  source: Readonly<Record<string, string | undefined>>,
+): readonly string[] {
+  return Object.entries(source).flatMap(([name, value]) =>
+    SECRET_NAME.test(name) && value !== undefined && value !== "" ? [value] : [],
+  );
+}
+
+export function filteredEnvironment(
   source: Readonly<Record<string, string | undefined>>,
   allowlist: readonly string[],
   secrets: readonly string[],

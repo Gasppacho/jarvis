@@ -53,7 +53,9 @@ describe("runtime isolation acceptance", () => {
     const projectB = "runtime-isolation-b";
     const projectAOnly = "project-a-only-value";
     const projectBOnly = "project-b-only-value";
-    const projectBPath = process.env["PATH"] ?? "/usr/bin";
+    // A fixed local profile proves exact propagation/redaction independently of
+    // whether pnpm run or pnpm exec prepends its own tool directories.
+    const projectBPath = "./node_modules/.bin:/private/tmp/runtime-tools:/usr/bin:/bin";
     const engineOnly = "engine-only-value";
     const secret = "runtime-isolation-secret";
     const fixtureA = makeRealGitRepositoryFixture();

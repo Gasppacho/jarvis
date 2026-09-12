@@ -126,3 +126,15 @@ Si une commande échoue, Development peut démarrer une nouvelle session de rép
 - budget de cycles restant.
 
 Le nombre de cycles est borné. Aucun futur événement externe n'est attendu.
+
+## Guided project preflight
+
+Resource choices expose a safe Codex inventory separately from generic expert
+slots. The explicit choice grants only the detected local tool/login profile
+to the current Project. The portable template carries `PATH`, `HOME`,
+`CODEX_HOME` names; local values remain in ProjectBindings and are filtered by
+the same request-builder function before readiness and start. Global discovery
+may inspect this local context to identify a candidate, but cannot make a
+Project ready. Readiness uses bounded `describe` probes, checks file execution
+permission separately from absence, and never starts an Agent Run. It is not
+persisted; Development still revalidates immediately before every start.

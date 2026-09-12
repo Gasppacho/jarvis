@@ -72,6 +72,15 @@ import type {
 import type { ProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
 import type { ProjectResourceGrant, ProjectResourceGrantDetailsPort } from "./resource-grants.js";
 
+import {
+  checkProjectRuntimeReadiness,
+  runtimeSlots,
+  projectAgentRuntimeChoices,
+} from "./runtime-readiness.js";
+import { detectedRuntimeEnvironment } from "../runtimes/registry.js";
+import type { ProjectAgentRuntimeChoices } from "../../../../packages/project-runtime/src/project-types.js";
+import type { LocalAgentRuntimeRegistry } from "./resource-grants.js";
+
 const PROJECT_YAML = join(".jarvis", "project.yaml");
 const MAX_PROJECT_YAML_BYTES = 512 * 1024;
 const INITIAL_STATUS = "draft" as const;
@@ -103,6 +112,7 @@ export class ProjectService implements ProjectRegistry<
     private readonly executionLedger: ExecutionLedgerReader,
     private readonly deadLetters: DeadLetterReader = { list: () => [] },
     private readonly repositoryResolver: ProjectRepositoryResolver = new ProjectRepositoryResolver(),
+    private readonly agentRuntimes?: LocalAgentRuntimeRegistry,
   ) {}
 
   importProject(request: ImportProjectRequest): ProjectDetail {
@@ -313,7 +323,13 @@ export class ProjectService implements ProjectRegistry<
       readyToValidate: validation.valid,
       composition,
       validation: toWireValidationReport(validation),
-      resources: resourceChoices(project, configuration, this.modules, grantedResources),
+      resources: resourceChoices(
+        project,
+        configuration,
+        this.modules,
+        grantedResources,
+        this.agentRuntimes,
+      ),
     };
   }
 
@@ -674,6 +690,7 @@ export class ProjectService implements ProjectRegistry<
       current.portableConfig,
       this.modules,
       resourceGrantDetails(this.resourceGrants, current.id),
+      this.agentRuntimes,
     );
   }
 
@@ -688,7 +705,85 @@ export class ProjectService implements ProjectRegistry<
       configuration,
       this.modules,
       resourceGrantDetails(this.resourceGrants, current.id),
+      this.agentRuntimes,
     );
+  }
+
+  bindProjectRuntime(projectId: unknown, request: unknown): ProjectAgentRuntimeChoices {
+    const current = this.requireProject(projectId);
+    const body = request as { ref?: unknown; approveEnvironment?: unknown } | undefined;
+    if (
+      body?.approveEnvironment !== true ||
+      typeof body.ref !== "string" ||
+      Object.keys(body).some((key) => key !== "ref" && key !== "approveEnvironment")
+    ) {
+      throw new EngineError(
+        "api.invalid-request",
+        400,
+        "Choose a runtime and explicitly approve its local environment profile.",
+      );
+    }
+    const choices = this.getProjectResourceChoices(current.id);
+    const candidate = choices.agentRuntimes?.items.find(
+      (item) => item.ref === body.ref && item.selectable,
+    );
+    if (candidate === undefined) {
+      throw new EngineError(
+        "project.bindings-invalid",
+        400,
+        "This runtime is not eligible. Refresh discovery and choose a compatible runtime.",
+      );
+    }
+    const slots = { ...current.slotBindings };
+    for (const slot of runtimeSlots(current.portableConfig, choices.slots)) {
+      slots[slot.slotId] = {
+        kind: "runtime",
+        ref: candidate.ref,
+        environment: detectedRuntimeEnvironment(),
+      };
+    }
+    this.replaceProjectBindings({
+      projectId: current.id,
+      bindings: { ...this.getProjectBindings(current.id), slots },
+    });
+    return this.getProjectResourceChoices(current.id).agentRuntimes!;
+  }
+
+  async checkProjectRuntime(projectId: unknown): Promise<ProjectAgentRuntimeChoices> {
+    const current = this.requireProject(projectId);
+    const choices = this.getProjectResourceChoices(current.id);
+    if (choices.agentRuntimes === undefined || this.agentRuntimes === undefined) {
+      throw new EngineError(
+        "system.internal-error",
+        503,
+        "Runtime verification is unavailable. Retry when the Engine is ready.",
+      );
+    }
+    const snapshot = JSON.stringify([
+      current.portableConfig,
+      current.slotBindings,
+      this.agentRuntimes.descriptors(),
+    ]);
+    const readiness = await checkProjectRuntimeReadiness(
+      current,
+      choices.slots,
+      this.agentRuntimes,
+    );
+    const latest = this.requireProject(projectId);
+    if (
+      snapshot !==
+      JSON.stringify([latest.portableConfig, latest.slotBindings, this.agentRuntimes.descriptors()])
+    ) {
+      return {
+        ...this.getProjectResourceChoices(current.id).agentRuntimes!,
+        readiness: {
+          status: "unchecked",
+          checkedAt: null,
+          detail: "Le projet a changé pendant la vérification. Vérifiez à nouveau le runtime.",
+        },
+      };
+    }
+    return { ...choices.agentRuntimes, readiness };
   }
 
   replaceProjectBindings(request: ReplaceProjectBindingsRequest): ProjectBindings {
@@ -868,6 +963,7 @@ function resourceChoices(
   configuration: StoredPortableProjectConfiguration,
   modules: ModuleHost,
   grantedResources: readonly ProjectResourceGrant[],
+  runtimes?: LocalAgentRuntimeRegistry,
 ): ProjectResourceChoices {
   const grantedCandidates = grantedResources.map(({ candidate }) => candidate);
   const statusByCandidate = new Map(
@@ -947,6 +1043,16 @@ function resourceChoices(
   const eligibleIds = new Set(slots.flatMap((slot) => slot.candidates.map(resourceCandidateId)));
   return {
     items: scopedCandidates.filter((candidate) => eligibleIds.has(resourceCandidateId(candidate))),
+    ...(runtimes === undefined
+      ? {}
+      : {
+          agentRuntimes: projectAgentRuntimeChoices(
+            project,
+            configuration,
+            slots,
+            runtimes.descriptors(),
+          ),
+        }),
     slots,
   };
 }

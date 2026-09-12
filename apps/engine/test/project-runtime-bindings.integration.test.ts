@@ -1,4 +1,12 @@
-import { readFileSync, realpathSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +23,16 @@ const ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const projectRepositories: string[] = [];
 
 interface ResourceChoicesBody {
+  readonly agentRuntimes?: {
+    readonly required: boolean;
+    readonly items: readonly {
+      readonly ref: string;
+      readonly displayName: string;
+      readonly version: string | null;
+      readonly bound: boolean;
+    }[];
+    readonly readiness: { readonly status: string };
+  };
   readonly slots: readonly {
     readonly slotId: string;
     readonly candidates: readonly unknown[];
@@ -42,6 +60,228 @@ describe("project runtime bindings", () => {
     }
   });
 
+  it("records an explicitly approved local profile and checks only the selected project", async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-runtime-ready-"));
+    roots.push(dataRoot);
+    const executable = join(dataRoot, "controlled-codex");
+    const observation = join(dataRoot, "probes.jsonl");
+    writeFileSync(
+      executable,
+      `#!${process.execPath}
+const fs = require("node:fs");
+// macOS inserts this runtime-owned variable after exec (same fixture policy as runtime-isolation).
+delete process.env.__CF_USER_TEXT_ENCODING;
+fs.appendFileSync(${JSON.stringify(observation)}, JSON.stringify({args: process.argv.slice(2), environment: process.env}) + "\\n");
+if (process.argv[2] === "--version") console.log("codex-cli 0.153.4");
+else if (process.argv[2] === "login") console.log(process.env.PATH && process.env.HOME ? "Logged in using ChatGPT" : "Not logged in");
+else process.exit(99);
+`,
+    );
+    chmodSync(executable, 0o755);
+    const engine = await startEngine({
+      dataRoot,
+      env: { JARVIS_UNUSED: "not-granted", JARVIS_PRIVATE_TOKEN: "do-not-expose" },
+    });
+    engines.push(engine);
+    seedRuntime(dataRoot, {
+      id: "runtime/codex-default",
+      provider: "codex",
+      displayName: "Codex — personal",
+      executablePath: executable,
+      version: "0.153.4",
+      capabilities: ["agent.execute"],
+      status: "available",
+    });
+    const first = await createProject(engine);
+    const second = await createProject(engine);
+    const before = await json<unknown>(engine, `/v1/projects/${first.id}`);
+    const portableFile = join(first.repositoryPath, ".jarvis/project.yaml");
+    mkdirSync(join(first.repositoryPath, ".jarvis"), { recursive: true });
+    writeFileSync(portableFile, "# portable sentinel\n");
+    const select = await engine.call(`/v1/projects/${first.id}/runtime-binding`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ref: "runtime/codex-default", approveEnvironment: true }),
+    });
+    expect(select.status).toBe(200);
+    const checked = await json<{
+      readiness: { status: string; checkedAt: string };
+      items: unknown[];
+    }>(engine, `/v1/projects/${first.id}/runtime-readiness`, "POST");
+    expect(checked.readiness).toMatchObject({ status: "ready", checkedAt: expect.any(String) });
+    const bindings = await json<BindingsBody>(engine, `/v1/projects/${first.id}/bindings`);
+    expect(bindings.slots).toMatchObject({
+      agentRuntime: {
+        ref: "runtime/codex-default",
+        environment: { PATH: expect.any(String), HOME: expect.any(String) },
+      },
+    });
+    expect((await json<BindingsBody>(engine, `/v1/projects/${second.id}/bindings`)).slots).toEqual(
+      {},
+    );
+    expect(await json<unknown>(engine, `/v1/projects/${first.id}`)).toEqual(before);
+    expect(readFileSync(portableFile, "utf8")).toBe("# portable sentinel\n");
+    const probes = readFileSync(observation, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { args: string[]; environment: Record<string, string> });
+    expect(probes.map((probe) => probe.args)).toEqual([["--version"], ["login", "status"]]);
+    for (const probe of probes) {
+      expect(Object.keys(probe.environment).sort()).toEqual(["HOME", "PATH"]);
+      expect(probe.environment).not.toHaveProperty("JARVIS_UNUSED");
+      expect(probe.environment).not.toHaveProperty("JARVIS_PRIVATE_TOKEN");
+    }
+    expect(JSON.stringify(checked)).not.toContain(dataRoot);
+    expect(JSON.stringify(checked)).not.toContain("do-not-expose");
+    const reopened = await json<ResourceChoicesBody>(
+      engine,
+      `/v1/projects/${first.id}/binding-candidates`,
+    );
+    expect(reopened.agentRuntimes).toMatchObject({
+      items: [expect.objectContaining({ bound: true })],
+      readiness: { status: "unchecked" },
+    });
+  });
+
+  it("distinguishes absence, permission, authentication, incompatible output and bounded probe failure", async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-runtime-errors-"));
+    roots.push(dataRoot);
+    const executable = join(dataRoot, "codex-controlled");
+    const script = (version: string, login: string, hang = false) => {
+      writeFileSync(
+        executable,
+        `#!${process.execPath}
+if (process.argv[2] === "--version") ${hang ? "setTimeout(() => {}, 60000)" : `console.log(${JSON.stringify(version)})`};
+else if (process.argv[2] === "login") console.log(${JSON.stringify(login)});
+else { require("node:fs").writeFileSync(${JSON.stringify(join(dataRoot, "unexpected-start"))}, "unexpected"); process.exit(99); }
+`,
+      );
+      chmodSync(executable, 0o755);
+    };
+    script("codex-cli 0.153.4", "Logged in using ChatGPT");
+    const engine = await startEngine({ dataRoot });
+    engines.push(engine);
+    seedRuntime(dataRoot, {
+      id: "runtime/codex-default",
+      provider: "codex",
+      displayName: "Codex test",
+      executablePath: executable,
+      version: "0.153.4",
+      capabilities: ["agent.execute"],
+      status: "available",
+    });
+    const project = await createProject(engine);
+    const choose = (body: unknown) =>
+      engine.call(`/v1/projects/${project.id}/runtime-binding`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    expect((await choose({ ref: "runtime/codex-default", approveEnvironment: false })).status).toBe(
+      400,
+    );
+    expect(
+      (
+        await choose({
+          ref: "runtime/codex-default",
+          approveEnvironment: true,
+          environment: { HOME: "/other/project" },
+        })
+      ).status,
+    ).toBe(400);
+    expect((await choose({ ref: "runtime/codex-default", approveEnvironment: true })).status).toBe(
+      200,
+    );
+    const check = () =>
+      json<{ readiness: { status: string; detail: string } }>(
+        engine,
+        `/v1/projects/${project.id}/runtime-readiness`,
+        "POST",
+      );
+    expect((await check()).readiness.status).toBe("ready");
+    chmodSync(executable, 0o644);
+    expect((await check()).readiness.status).toBe("access-denied");
+    rmSync(executable);
+    expect((await check()).readiness.status).toBe("absent");
+    script("unsupported-version /private/secret-token", "Logged in using ChatGPT");
+    const incompatible = await check();
+    expect(incompatible.readiness.status).toBe("incompatible");
+    expect(JSON.stringify(incompatible)).not.toContain("secret-token");
+    script("codex-cli 0.153.4", "Not logged in");
+    expect((await check()).readiness.status).toBe("access-denied");
+    script("codex-cli 0.153.4", "Logged in using ChatGPT", true);
+    const started = Date.now();
+    expect((await check()).readiness.status).toBe("engine-error");
+    expect(Date.now() - started).toBeLessThan(5000);
+    script("codex-cli 0.153.4", "Logged in using ChatGPT");
+    seedRuntime(dataRoot, {
+      id: "runtime/codex-default",
+      provider: "codex",
+      displayName: "Codex limité",
+      executablePath: executable,
+      version: "0.153.4",
+      capabilities: [],
+      status: "available",
+    });
+    expect((await check()).readiness).toMatchObject({
+      status: "incompatible",
+      detail: expect.stringContaining("agent.execute"),
+    });
+    seedRuntime(dataRoot, {
+      id: "runtime/codex-compatible",
+      provider: "codex",
+      displayName: "Codex compatible",
+      executablePath: executable,
+      version: "0.154.0",
+      capabilities: ["agent.execute"],
+      status: "available",
+    });
+    const alternatives = await json<ResourceChoicesBody>(
+      engine,
+      `/v1/projects/${project.id}/binding-candidates`,
+    );
+    expect(alternatives.agentRuntimes?.items).toEqual([
+      expect.objectContaining({
+        ref: "runtime/codex-compatible",
+        displayName: "Codex compatible",
+        version: "0.154.0",
+        selectable: true,
+        bound: false,
+      }),
+      expect.objectContaining({
+        ref: "runtime/codex-default",
+        displayName: "Codex limité",
+        selectable: false,
+        bound: true,
+      }),
+    ]);
+    expect(existsSync(join(dataRoot, "unexpected-start"))).toBe(false);
+    expect(
+      (await json<{ items: unknown[] }>(engine, `/v1/projects/${project.id}/executions`)).items,
+    ).toEqual([]);
+  });
+
+  it("does not require an unused optional runtime slot", async () => {
+    const engine = await startEngine();
+    engines.push(engine);
+    const project = await createProject(engine);
+    const configuration = portableConfiguration();
+    configuration["modules"] = (configuration["modules"] as { instanceId: string }[]).filter(
+      (instance) => instance.instanceId !== "development",
+    );
+    configuration["slots"] = { agentRuntime: { requires: "agent.execute", optional: true } };
+    const save = await engine.call(`/v1/projects/${project.id}/configuration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ portableConfig: configuration, writeToRepository: false }),
+    });
+    expect(save.status).toBe(200);
+    expect(
+      (await json<ResourceChoicesBody>(engine, `/v1/projects/${project.id}/binding-candidates`))
+        .agentRuntimes?.required,
+    ).toBe(false);
+  });
+
   it("offers registry runtimes per project and rejects a stale unavailable binding", async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-runtime-bindings-"));
     roots.push(dataRoot);
@@ -63,6 +303,18 @@ describe("project runtime bindings", () => {
       engine,
       `/v1/projects/${first.id}/binding-candidates`,
     );
+    expect(choices.agentRuntimes).toMatchObject({
+      required: true,
+      items: [
+        expect.objectContaining({
+          ref: "runtime/codex-default",
+          displayName: "Codex — default",
+          version: "0.153.4",
+          bound: false,
+        }),
+      ],
+      readiness: { status: "unchecked" },
+    });
     expect(choices.slots.find((slot) => slot.slotId === "agentRuntime")).toMatchObject({
       candidates: expect.arrayContaining([
         expect.objectContaining({ ref: "runtime/codex-default" }),
@@ -178,7 +430,25 @@ function portableConfiguration(): Record<string, unknown> {
   );
   if (automation === undefined) throw new Error("automation-rules fixture is missing");
   configuration["slots"] = { agentRuntime: { requires: "agent.execute" } };
-  configuration["modules"] = [automation];
+  configuration["modules"] = [
+    automation,
+    {
+      instanceId: "development",
+      moduleId: "jarvis.module.development",
+      enabled: true,
+      runtimeSlot: "agentRuntime",
+      bindings: { repository: "main" },
+      configuration: {
+        preparation: "none",
+        validationOrder: ["test"],
+        maxRepairCycles: 0,
+        retainWorkspaceOnSuccess: false,
+        timeoutMs: 300000,
+        outputLimitBytes: 1048576,
+        environmentAllowlist: ["PATH", "HOME"],
+      },
+    },
+  ];
   return configuration;
 }
 

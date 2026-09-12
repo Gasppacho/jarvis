@@ -341,6 +341,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{projectId}/runtime-binding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Explicitly approve and persist the detected local profile without modifying portable configuration. */
+        post: operations["bindProjectRuntime"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{projectId}/runtime-readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Bounded project-scoped probes using the same descriptor and environment filter as start. Never starts an agent execution. */
+        post: operations["checkProjectRuntime"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/runtimes": {
         parameters: {
             query?: never;
@@ -1163,9 +1197,33 @@ export interface components {
             capabilities: string[];
         };
         ProjectResourceChoices: {
+            /** @description Safe project-scoped Codex candidates; reading resets readiness to unchecked. Discovery is never an execution grant. */
+            agentRuntimes?: components["schemas"]["ProjectAgentRuntimeChoices"];
             /** @description Deduplicated union of resources eligible for at least one Slot. */
             items: components["schemas"]["ProjectResourceCandidate"][];
             slots: components["schemas"]["ProjectResourceBindingChoice"][];
+        };
+        ProjectRuntimeReadiness: {
+            /** @enum {string} */
+            status: "ready" | "absent" | "access-denied" | "incompatible" | "checking" | "engine-error" | "unchecked";
+            /** Format: date-time */
+            checkedAt: string | null;
+            detail: string;
+        };
+        ProjectAgentRuntimeCandidate: {
+            ref: string;
+            displayName: string;
+            provider: string;
+            version: string | null;
+            capabilities: string[];
+            bound: boolean;
+            selectable: boolean;
+            readiness: components["schemas"]["ProjectRuntimeReadiness"];
+        };
+        ProjectAgentRuntimeChoices: {
+            required: boolean;
+            items: components["schemas"]["ProjectAgentRuntimeCandidate"][];
+            readiness: components["schemas"]["ProjectRuntimeReadiness"];
         };
         /** @description A resource explicitly granted to this Project but ineligible for this Slot (missing capability, wrong `kind`, or only a partial capability match), named with the Engine's reason (ADR 0014). Never populated from a resource this Project has no grant for. */
         ProjectIneligibleResource: {
@@ -1884,6 +1942,63 @@ export interface operations {
                     "application/json": {
                         items: components["schemas"]["ResourceDescriptor"][];
                     };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    bindProjectRuntime: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    ref: string;
+                    approveEnvironment: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Safe runtime choices and current readiness for this Project. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectAgentRuntimeChoices"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    checkProjectRuntime: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Safe runtime choices and current readiness for this Project. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectAgentRuntimeChoices"];
                 };
             };
             401: components["responses"]["Unauthorized"];

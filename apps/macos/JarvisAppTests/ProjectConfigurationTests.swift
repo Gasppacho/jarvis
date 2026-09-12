@@ -39,6 +39,28 @@ final class ProjectConfigurationTests: XCTestCase {
     }
 
     @MainActor
+    func testRuntimeCheckRefusesAnUnsavedDraftInsteadOfCertifyingTheOlderProfile() async throws {
+        let repository = try makeRepository()
+        let session = EngineSessionModel(supervisor: EngineSupervisor(resources: .developmentBuild(), dataRoot: temporaryDirectory(prefix: "runtime-draft")))
+        let projects = ProjectsModel(session: session, repositoryGrants: RepositoryGrantStore(storageDirectory: temporaryDirectory(prefix: "runtime-grants")))
+        let api = RuntimeAPIStub(choices: .init(required: true, items: [], readiness: .init(status: .unchecked, checkedAt: nil, detail: "")),
+            result: .init(required: true, items: [], readiness: .init(status: .ready, checkedAt: nil, detail: "Saved profile ready")))
+        let model = ProjectConfigurationModel(session: session, projects: projects, runtimeAPI: api)
+        await session.start()
+        await projects.inspect(at: repository)
+        let importedResult = await projects.confirmImport()
+        let imported = try XCTUnwrap(importedResult)
+        await model.refresh(projectId: imported.id)
+        await model.refreshRuntimeCandidates(projectId: imported.id)
+        model.editDraft(projectId: imported.id) { draft in draft.name = "New unsaved profile" }
+        await model.checkRuntime(projectId: imported.id)
+        XCTAssertEqual(model.state(for: imported.id).runtimePresentation.status, "Non vérifié")
+        XCTAssertTrue(model.state(for: imported.id).runtimePresentation.detail.contains("Enregistrez le brouillon"))
+        XCTAssertFalse(model.state(for: imported.id).runtimeAllowsActivation)
+        await session.shutdown()
+    }
+
+    @MainActor
     func testSavesLoadsAndPresentsConfiguredInstancesAcrossEngineRestart() async throws {
         let repository = try makeRepository()
         let dataRoot = temporaryDirectory(prefix: "jarvis-config-data")

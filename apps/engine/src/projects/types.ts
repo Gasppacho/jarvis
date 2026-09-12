@@ -1,5 +1,6 @@
 import type { components } from "../api/generated/local-api.js";
 import type {
+  ProjectAgentRuntimeChoices,
   BindingStatus,
   ProjectBindings,
   ProjectCompositionChoices,
@@ -43,6 +44,13 @@ type ApiContractEdge = Extract<
 >;
 
 /** Compile-time guards against generated Local API and Project Runtime report drift. */
+export type ProjectRuntimeChoicesContractParity = Assert<
+  MutuallyAssignable<
+    Mutable<ProjectAgentRuntimeChoices>,
+    components["schemas"]["ProjectAgentRuntimeChoices"]
+  >
+>;
+
 export type ProjectRequestRouteContractParity = Assert<
   MutuallyAssignable<ProjectRequestRoute, ApiValidationReport["requestRoutes"][number]>
 >;

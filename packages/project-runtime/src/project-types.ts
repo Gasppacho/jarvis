@@ -41,7 +41,38 @@ export interface ProjectResourceBindingChoice {
   readonly ineligibleGrantedResources?: readonly ProjectIneligibleResource[];
 }
 
+export interface ProjectRuntimeReadiness {
+  readonly status:
+    | "ready"
+    | "absent"
+    | "access-denied"
+    | "incompatible"
+    | "checking"
+    | "engine-error"
+    | "unchecked";
+  readonly checkedAt: string | null;
+  readonly detail: string;
+}
+
+export interface ProjectAgentRuntimeCandidate {
+  readonly ref: string;
+  readonly displayName: string;
+  readonly provider: string;
+  readonly version: string | null;
+  readonly capabilities: readonly string[];
+  readonly bound: boolean;
+  readonly selectable: boolean;
+  readonly readiness: ProjectRuntimeReadiness;
+}
+
+export interface ProjectAgentRuntimeChoices {
+  readonly required: boolean;
+  readonly items: readonly ProjectAgentRuntimeCandidate[];
+  readonly readiness: ProjectRuntimeReadiness;
+}
+
 export interface ProjectResourceChoices {
+  readonly agentRuntimes?: ProjectAgentRuntimeChoices;
   /** Deduplicated union of candidates eligible for at least one Slot. */
   readonly items: readonly ProjectResourceCandidate[];
   readonly slots: readonly ProjectResourceBindingChoice[];

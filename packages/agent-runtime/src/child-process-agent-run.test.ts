@@ -49,6 +49,30 @@ async function collectEvents(run: ChildProcessAgentRun): Promise<AgentRunEvent[]
 }
 
 describe("ChildProcessAgentRun", () => {
+  it("redacts temporary profile paths from the runtime observation stream", async () => {
+    const root = await mkdtemp(join(tmpdir(), "jarvis-child-profile-"));
+    try {
+      const run = new ChildProcessAgentRun({
+        request: request(root),
+        signal: new AbortController().signal,
+        executable: process.execPath,
+        args: [
+          "-e",
+          'console.log("PATH=./node_modules/.bin:/private/tmp/project/node_modules/.bin:/usr/bin"); console.log("/tmp/private-profile"); console.log("done");',
+        ],
+        stdin: "",
+        translator: translator(),
+        displayName: "Controlled runtime",
+      });
+      const events = await collectEvents(run);
+      expect(
+        events.filter((event) => event.type === "message").map((event) => event.message),
+      ).toEqual(["PATH=./node_modules/.bin:<path>", "<path>"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("frames stdout lines before passing them to a translator", async () => {
     const root = await mkdtemp(join(tmpdir(), "jarvis-child-agent-run-framing-"));
     try {

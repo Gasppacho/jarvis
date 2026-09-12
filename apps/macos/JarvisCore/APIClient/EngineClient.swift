@@ -557,7 +557,8 @@ public struct EngineClient: Sendable {
             let payload = try ok.body.json
             return ProjectResourceChoices(
                 candidates: payload.items.map(ProjectResourceCandidate.init(payload:)),
-                slots: payload.slots.map(ProjectResourceBindingChoice.init(payload:)))
+                slots: payload.slots.map(ProjectResourceBindingChoice.init(payload:)),
+                agentRuntimes: payload.agentRuntimes)
         case .unauthorized:
             throw EngineClientError.unauthorized(operation: operation)
         case .forbidden:
@@ -581,7 +582,8 @@ public struct EngineClient: Sendable {
             let payload = try ok.body.json
             return ProjectResourceChoices(
                 candidates: payload.items.map(ProjectResourceCandidate.init(payload:)),
-                slots: payload.slots.map(ProjectResourceBindingChoice.init(payload:)))
+                slots: payload.slots.map(ProjectResourceBindingChoice.init(payload:)),
+                agentRuntimes: payload.agentRuntimes)
         case .unauthorized:
             throw EngineClientError.unauthorized(operation: operation)
         case .forbidden:
@@ -627,6 +629,37 @@ public struct EngineClient: Sendable {
     }
 
     // MARK: Connections (ticket 118)
+
+    public func discoverProjectRuntimes() async throws {
+        let output = try await underlying.discoverRuntimes(.init())
+        switch output {
+        case .ok: return
+        case .unauthorized: throw EngineClientError.unauthorized(operation: "Discover runtimes")
+        case .forbidden: throw EngineClientError.hostNotAllowed(operation: "Discover runtimes")
+        case .undocumented(let code, _): throw EngineClientError.unexpectedResponse("Discover runtimes returned \(code)")
+        }
+    }
+
+    public func bindProjectRuntime(projectId: String, ref: String) async throws -> Components.Schemas.ProjectAgentRuntimeChoices {
+        let output = try await underlying.bindProjectRuntime(.init(
+            path: .init(projectId: projectId), body: .json(.init(ref: ref, approveEnvironment: true))))
+        switch output {
+        case .ok(let ok): return try ok.body.json
+        case .unauthorized: throw EngineClientError.unauthorized(operation: "Bind runtime")
+        case .forbidden: throw EngineClientError.hostNotAllowed(operation: "Bind runtime")
+        case .`default`(_, let error): throw try mappedEngineError(operation: "Bind runtime", payload: error.body.json)
+        }
+    }
+
+    public func checkProjectRuntime(projectId: String) async throws -> Components.Schemas.ProjectAgentRuntimeChoices {
+        let output = try await underlying.checkProjectRuntime(.init(path: .init(projectId: projectId)))
+        switch output {
+        case .ok(let ok): return try ok.body.json
+        case .unauthorized: throw EngineClientError.unauthorized(operation: "Check runtime")
+        case .forbidden: throw EngineClientError.hostNotAllowed(operation: "Check runtime")
+        case .`default`(_, let error): throw try mappedEngineError(operation: "Check runtime", payload: error.body.json)
+        }
+    }
 
     public func listConnections() async throws -> [Connection] {
         let operation = "GET /v1/connections"

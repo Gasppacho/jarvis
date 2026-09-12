@@ -243,15 +243,18 @@ public struct ProjectResourceBindingChoice: Identifiable, Sendable, Equatable {
 }
 
 public struct ProjectResourceChoices: Sendable, Equatable {
+    public let agentRuntimes: Components.Schemas.ProjectAgentRuntimeChoices?
     public let candidates: [ProjectResourceCandidate]
     public let slots: [ProjectResourceBindingChoice]
 
-    init(candidates: [ProjectResourceCandidate], slots: [ProjectResourceBindingChoice]) {
+    init(candidates: [ProjectResourceCandidate], slots: [ProjectResourceBindingChoice], agentRuntimes: Components.Schemas.ProjectAgentRuntimeChoices? = nil) {
+        self.agentRuntimes = agentRuntimes
         self.candidates = candidates
         self.slots = slots
     }
 
     init(payload: Components.Schemas.ProjectResourceChoices) {
+        agentRuntimes = payload.agentRuntimes
         candidates = payload.items.map(ProjectResourceCandidate.init(payload:))
         slots = payload.slots.map(ProjectResourceBindingChoice.init(payload:))
     }

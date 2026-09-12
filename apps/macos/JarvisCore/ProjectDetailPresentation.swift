@@ -732,7 +732,8 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         activation = Self.activation(
             from: state.activation,
             validation: validation,
-            projectStatus: project.status)
+            projectStatus: project.status,
+            runtimeAllowsActivation: state.runtimeAllowsActivation)
         compositionOutline = state.compositionGraph.map(ProjectCompositionOutline.init(graph:))
         deletionConfirmation = DeletionConfirmation(
             title: "Delete “\(project.name)”?",
@@ -876,8 +877,12 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
     private static func activation(
         from state: ProjectActivationState,
         validation: Validation,
-        projectStatus: Project.Status
+        projectStatus: Project.Status,
+        runtimeAllowsActivation: Bool
     ) -> Activation {
+        if projectStatus != .active && !runtimeAllowsActivation {
+            return Activation(status: .unavailable, isEnabled: false, title: "Runtime à vérifier", explanation: "Development ne peut pas démarrer. Vérifiez le runtime avant d’activer le workflow.", accessibilityLabel: "Runtime à vérifier. Development ne peut pas démarrer.")
+        }
         let requiresRepositorySnapshotMigration = validation.findings.contains {
             $0.code == ProjectValidationFinding.Code.instanceConfigInvalid.rawValue
                 && $0.reference == "project/field/repositories/migration"

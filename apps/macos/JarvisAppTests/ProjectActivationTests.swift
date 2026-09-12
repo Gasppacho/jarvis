@@ -72,6 +72,22 @@ final class ProjectActivationTests: XCTestCase {
             noFingerprintPresentation.activation.explanation.contains("no composition fingerprint"))
     }
 
+    func testRuntimeReadinessBlocksActivationEvenWithAValidComposition() throws {
+        var state = ProjectConfigurationState()
+        state.validation = .valid(try decodeReport(fingerprint: Self.fingerprint))
+        for status in [Components.Schemas.ProjectRuntimeReadiness.statusPayload.unchecked, .checking, .absent, .access_hyphen_denied, .incompatible, .engine_hyphen_error, .ready] {
+            state.agentRuntimes = .init(required: true, items: [], readiness: .init(status: status, checkedAt: nil, detail: "Runtime check"))
+            let presentation = ProjectDetailPresentation(project: makeProject(status: .draft), detail: nil, state: state, packages: [])
+            XCTAssertEqual(presentation.activation.isEnabled, status == .ready)
+        }
+        state.agentRuntimes = nil
+        state.runtimeMetadataUnavailable = true
+        XCTAssertFalse(ProjectDetailPresentation(project: makeProject(status: .draft), detail: nil, state: state, packages: []).activation.isEnabled,
+                       "A successful save with unavailable resource metadata must not bypass runtime readiness")
+        state.isRuntimeBusy = true
+        XCTAssertFalse(ProjectDetailPresentation(project: makeProject(status: .draft), detail: nil, state: state, packages: []).activation.isEnabled)
+    }
+
     func testAlreadyActiveProjectNeverOffersActivateRegardlessOfLocalActivationState() throws {
         let project = makeProject(status: .active)
         var state = ProjectConfigurationState()

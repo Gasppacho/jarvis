@@ -1943,7 +1943,20 @@ capabilities:
     };
     expect(
       await (await engine.call(`/v1/projects/${created.id}/binding-candidates`)).json(),
-    ).toEqual({ items: [], slots: [] });
+    ).toEqual({
+      items: [],
+      slots: [],
+      agentRuntimes: {
+        required: false,
+        items: [],
+        readiness: {
+          status: "absent",
+          checkedAt: null,
+          detail:
+            "Aucun runtime Codex découvert. Installez ou activez Codex avec les instructions locales, puis relancez la découverte.",
+        },
+      },
+    });
     const portableConfig = parseYaml(
       readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
     ) as Record<string, unknown>;
@@ -1972,6 +1985,16 @@ capabilities:
     ).json();
     expect(validateResourceChoices(candidates), explain(validateResourceChoices)).toBe(true);
     expect(candidates).toEqual({
+      agentRuntimes: {
+        required: true,
+        items: [],
+        readiness: {
+          status: "absent",
+          checkedAt: null,
+          detail:
+            "Aucun runtime Codex découvert. Installez ou activez Codex avec les instructions locales, puis relancez la découverte.",
+        },
+      },
       items: [
         expect.objectContaining({
           ref: "github",

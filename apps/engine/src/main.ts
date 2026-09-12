@@ -318,6 +318,7 @@ async function main(): Promise<void> {
           new ExecutionLedgerReader(database.db),
           new EventingDeadLetterReader(database.db),
           repositoryResolver,
+          runtimeGrants,
         );
 
   // SYSTEM.md startup protocol: migrations are complete, then stale Workspace

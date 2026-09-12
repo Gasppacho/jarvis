@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import type { AgentRun, AgentRunResult, AgentRuntime } from "../../../agent-runtime/src/index.js";
-import { buildAgentRunRequest } from "../../../agent-runtime/src/request-builder.js";
+import {
+  buildAgentRunRequest,
+  secretEnvironmentValues,
+} from "../../../agent-runtime/src/request-builder.js";
 import { GitRunner, type GitCommandResult } from "../../../workspace/src/git-runner.js";
 import { ModuleDeliveryDeferredError } from "../../../module-sdk/src/index.js";
 import type {
@@ -46,8 +49,6 @@ const MAX_TIMEOUT_MS = 3_600_000;
 const DEFAULT_OUTPUT_LIMIT_BYTES = 1_048_576;
 const MAX_OUTPUT_LIMIT_BYTES = 10_485_760;
 const MAX_WORK_ITEM_CONTENT_BYTES = 64 * 1024;
-const SECRET_ENVIRONMENT_NAME =
-  /(?:secret|token|password|passwd|credential|private[_-]?key|api[_-]?key)/i;
 const VALIDATION_CHECKS = ["lint", "typecheck", "test", "build"] as const;
 type ValidationCheck = (typeof VALIDATION_CHECKS)[number];
 type DevelopmentFailureCode =
@@ -1288,9 +1289,7 @@ async function verifyChangedFiles(
 }
 
 function processSecretValues(): readonly string[] {
-  return Object.entries(process.env).flatMap(([key, value]) =>
-    SECRET_ENVIRONMENT_NAME.test(key) && value !== undefined && value !== "" ? [value] : [],
-  );
+  return secretEnvironmentValues(process.env);
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {

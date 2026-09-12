@@ -24,6 +24,8 @@ import type {
 } from "./types.js";
 import type { ProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
 
+import type { ProjectAgentRuntimeChoices } from "../../../../packages/project-runtime/src/project-types.js";
+
 export type LocalProjectRegistry = ProjectRegistry<
   ProjectSummary,
   ProjectDetail,
@@ -31,6 +33,8 @@ export type LocalProjectRegistry = ProjectRegistry<
   ProjectValidationReport
 > &
   ProjectResourceCandidateRegistry & {
+    bindProjectRuntime(id: unknown, request: unknown): ProjectAgentRuntimeChoices;
+    checkProjectRuntime(id: unknown): Promise<ProjectAgentRuntimeChoices>;
     previewCompositionChoices(
       id: unknown,
       proposedConfiguration: unknown,
@@ -219,6 +223,18 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
     return reply
       .code(200)
       .send(service.previewProjectResourceChoices(params?.projectId, body?.portableConfig));
+  });
+
+  app.post("/v1/projects/:projectId/runtime-binding", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    return reply.code(200).send(service.bindProjectRuntime(params?.projectId, request.body));
+  });
+
+  app.post("/v1/projects/:projectId/runtime-readiness", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    return reply.code(200).send(await service.checkProjectRuntime(params?.projectId));
   });
 
   app.put("/v1/projects/:projectId/bindings", async (request, reply) => {

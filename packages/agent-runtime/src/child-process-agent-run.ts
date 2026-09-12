@@ -420,5 +420,8 @@ function sanitizeOutput(value: string, request: AgentRunRequest): string {
     if (key === "JARVIS_FAKE_SCENARIO" || !SECRET_ENVIRONMENT_NAME.test(key)) continue;
     if (secret !== "") sanitized = sanitized.replaceAll(secret, "<redacted>");
   }
-  return sanitized.replace(/(?:\/Users|\/home|\/private\/var)\/[^\s"']+/g, "<path>");
+  return sanitized.replace(
+    /(?:\/Users|\/home|\/private\/(?:var|tmp)|\/tmp|\/var\/folders)\/[^\s"']+/g,
+    "<path>",
+  );
 }
