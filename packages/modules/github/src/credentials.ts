@@ -84,7 +84,7 @@ function accountFromSecretRef(secretRef: string): string | null {
   return /^[A-Za-z0-9-]{1,39}$/.test(account) ? account : null;
 }
 
-function ghEnvironment(): NodeJS.ProcessEnv {
+export function ghEnvironment(): NodeJS.ProcessEnv {
   return {
     PATH: process.env["PATH"] ?? "",
     HOME: process.env["HOME"] ?? "",
@@ -94,7 +94,7 @@ function ghEnvironment(): NodeJS.ProcessEnv {
   };
 }
 
-function defaultGhExecutablePaths(): readonly string[] {
+export function defaultGhExecutablePaths(): readonly string[] {
   if (process.platform === "win32") return ["C:\\Program Files\\GitHub CLI\\gh.exe"];
   return ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh", "/bin/gh"];
 }

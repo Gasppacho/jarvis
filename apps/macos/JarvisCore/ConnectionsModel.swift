@@ -1,5 +1,19 @@
 import Observation
 
+public enum GitHubConnectionDiscoveryState: Equatable {
+    case searching
+    case accounts
+    case none
+    case unavailable
+}
+
+public struct GitHubConnectionPresentation: Equatable {
+    public let status: String
+    public let diagnostic: String
+    public let action: String
+    public let isSelectable: Bool
+}
+
 @MainActor
 @Observable
 public final class ConnectionsModel {
@@ -9,8 +23,12 @@ public final class ConnectionsModel {
     public private(set) var validatingConnectionIDs: Set<String> = []
     public private(set) var errorMessage: String?
 
+    public static let emptyDiscoveryMessage = "Aucun compte GitHub authentifié n'a été découvert. Jarvis utilise l'authentification locale `gh`; exécutez `gh auth login`, puis revenez ici et cliquez sur `Réessayer`."
+
     private let session: EngineSessionModel?
     private let injectedAPI: (any ConnectionsAPI)?
+    private var refreshGeneration = 0
+    private var discoveryFailed = false
 
     public init(session: EngineSessionModel) {
         self.session = session
@@ -30,16 +48,64 @@ public final class ConnectionsModel {
     public func refresh() async {
         guard let api else {
             errorMessage = Self.engineUnavailable
+            discoveryFailed = true
             return
         }
+        refreshGeneration += 1
+        let generation = refreshGeneration
         isRefreshing = true
-        defer { isRefreshing = false }
-        do {
-            connections = try await api.listConnections().sorted { $0.id < $1.id }
-            errorMessage = nil
-        } catch {
-            errorMessage = Self.describe(error)
+        defer {
+            if generation == refreshGeneration { isRefreshing = false }
         }
+        do {
+            let discovered = try await api.discoverGitHubConnections().sorted { $0.id < $1.id }
+            guard generation == refreshGeneration else { return }
+            connections = discovered
+            errorMessage = nil
+            discoveryFailed = false
+        } catch {
+            guard generation == refreshGeneration else { return }
+            errorMessage = Self.describe(error)
+            discoveryFailed = true
+        }
+    }
+
+    public var discoveryState: GitHubConnectionDiscoveryState {
+        if isRefreshing { return .searching }
+        if discoveryFailed { return .unavailable }
+        return connections.isEmpty ? .none : .accounts
+    }
+
+    public func presentation(for connection: Connection) -> GitHubConnectionPresentation {
+        guard connection.provider == "github" else {
+            return GitHubConnectionPresentation(
+                status: "Compte incompatible",
+                diagnostic: "Ce compte ne fournit pas GitHub.",
+                action: "Choisir un compte compatible",
+                isSelectable: false)
+        }
+        if connection.status == "unauthenticated" || connection.status == "revoked" {
+            return GitHubConnectionPresentation(
+                status: "Accès requis",
+                diagnostic: "GitHub est installé mais Jarvis ne peut pas lire ce compte. Reconnectez ou autorisez gh pour collecter les issues.",
+                action: "Reconnecter ou autoriser gh",
+                isSelectable: false)
+        }
+        guard connection.status == "available",
+            Set(connection.capabilities).isSuperset(of: Self.requiredGitHubCapabilities)
+        else {
+            let missing = Self.requiredGitHubCapabilities.subtracting(connection.capabilities).sorted()
+            return GitHubConnectionPresentation(
+                status: "Compte incompatible",
+                diagnostic: "Capability manquante : \(missing.joined(separator: ", ")).",
+                action: "Choisir un compte compatible",
+                isSelectable: false)
+        }
+        return GitHubConnectionPresentation(
+            status: "Disponible",
+            diagnostic: "Prêt à être accordé explicitement à ce projet.",
+            action: "Utiliser pour ce projet",
+            isSelectable: true)
     }
 
     @discardableResult
@@ -110,4 +176,7 @@ public final class ConnectionsModel {
     }
 
     private static let engineUnavailable = "The engine is not running. Restart Jarvis."
+    private static let requiredGitHubCapabilities: Set<String> = [
+        "github.api", "scm.change-request.manage", "work-items.read",
+    ]
 }

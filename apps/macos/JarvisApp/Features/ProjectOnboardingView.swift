@@ -6,6 +6,7 @@ import SwiftUI
 struct ProjectOnboardingView: View {
     let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
+    let connections: ConnectionsModel
     let project: Project
     let openAdvanced: () -> Void
 
@@ -15,11 +16,13 @@ struct ProjectOnboardingView: View {
     init(
         projectConfiguration: ProjectConfigurationModel,
         moduleCatalog: ModuleCatalogModel,
+        connections: ConnectionsModel,
         project: Project,
         openAdvanced: @escaping () -> Void
     ) {
         self.projectConfiguration = projectConfiguration
         self.moduleCatalog = moduleCatalog
+        self.connections = connections
         self.project = project
         self.openAdvanced = openAdvanced
         _step = State(initialValue: navigation.currentStep(for: project.id))
@@ -64,6 +67,7 @@ struct ProjectOnboardingView: View {
         .id(project.id)
         .onChange(of: step) { _, value in navigation.set(value, for: project.id) }
         .task(id: project.id) {
+            await connections.refresh()
             await projectConfiguration.refresh(
                 projectId: project.id, packages: moduleCatalog.packages)
         }
@@ -90,14 +94,7 @@ struct ProjectOnboardingView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         case .connections:
-            GroupBox("Connections") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Connections are configured for this project only. They remain incomplete until you explicitly bind them.")
-                    Text("You can continue to Review while connections are incomplete.")
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            connectionsStep
         case .review:
             review
         }
@@ -107,6 +104,83 @@ struct ProjectOnboardingView: View {
         Button("Advanced") {
             openAdvanced()
         }
+    }
+
+    private var connectionsStep: some View {
+        GroupBox("Connections") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Choisissez explicitement le compte GitHub utilisable par ce projet. Ce choix ne le rend pas disponible aux autres projets.")
+                switch connections.discoveryState {
+                case .searching:
+                    Label("Recherche des comptes", systemImage: "magnifyingglass")
+                case .none:
+                    Text(ConnectionsModel.emptyDiscoveryMessage)
+                        .foregroundStyle(.secondary)
+                    Button("Réessayer") {
+                        Task { await refreshConnections() }
+                    }
+                    Link("Aide de connexion", destination: URL(string: "https://cli.github.com/manual/gh_auth_login")!)
+                case .unavailable:
+                    Label(
+                        connections.errorMessage ?? "Impossible de vérifier les comptes GitHub.",
+                        systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                case .accounts:
+                    ForEach(connections.connections) { connection in
+                        let presentation = connections.presentation(for: connection)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(connection.accountLabel).font(.headline)
+                            Text("GitHub · \(presentation.status)")
+                                .font(.callout.weight(.medium))
+                            Text(presentation.diagnostic)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                            if projectConfiguration.hasLocalBinding(
+                                projectId: project.id, connectionID: connection.id
+                            ) {
+                                Text("Binding du projet : ce compte n’est pas rendu disponible aux autres projets.")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                            }
+                            if presentation.isSelectable {
+                                Button(presentation.action) {
+                                    Task {
+                                        _ = await projectConfiguration.bindGitHubConnection(
+                                            projectId: project.id, connectionID: connection.id)
+                                    }
+                                }
+                                .disabled(projectConfiguration.state(for: project.id).isSaving)
+                            } else if presentation.status == "Accès requis" {
+                                Link(
+                                    presentation.action,
+                                    destination: URL(string: "https://cli.github.com/manual/gh_auth_login")!)
+                            }
+                        }
+                        .padding(12)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                    }
+                }
+                Button("Actualiser les comptes") {
+                    Task { await refreshConnections() }
+                }
+                .disabled(connections.isRefreshing)
+                Button("Continuer vers Review") { step = .review }
+                    .disabled(!hasProjectConnectionBinding)
+                Button("Advanced") { openAdvanced() }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var hasProjectConnectionBinding: Bool {
+        connections.connections.contains {
+            projectConfiguration.hasLocalBinding(projectId: project.id, connectionID: $0.id)
+        }
+    }
+
+    private func refreshConnections() async {
+        await connections.refresh()
+        await projectConfiguration.refresh(projectId: project.id, packages: moduleCatalog.packages)
     }
 
     private var saveDraftAction: some View {

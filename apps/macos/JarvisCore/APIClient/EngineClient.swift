@@ -643,6 +643,21 @@ public struct EngineClient: Sendable {
         }
     }
 
+    public func discoverGitHubConnections() async throws -> [Connection] {
+        let operation = "POST /v1/connections/discover"
+        let output = try await underlying.discoverGitHubConnections(.init())
+        switch output {
+        case .ok(let ok):
+            return try ok.body.json.items.map(Connection.init(payload:))
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .default(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
     public func registerGitHubConnection(accountReference: String) async throws -> Connection {
         let operation = "POST /v1/connections"
         let account = String(accountReference.dropFirst("gh://".count))

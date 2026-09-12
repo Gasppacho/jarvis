@@ -82,6 +82,7 @@ import {
 import { WorkspaceManager } from "../../../packages/workspace/src/workspace-manager.js";
 import { ConnectionRegistry } from "./connections/registry.js";
 import {
+  GitHubCliAccountDiscovery,
   GitHubCliCredentialResolver,
   GitHubProviderCheckAdapter,
   handleChangeRequestCreationRequested,
@@ -279,6 +280,11 @@ async function main(): Promise<void> {
       ? process.env["JARVIS_GH_EXECUTABLE"]
       : undefined;
   const githubCredentials = new GitHubCliCredentialResolver(
+    ghExecutable === undefined
+      ? {}
+      : { knownExecutablePaths: [ghExecutable], allowShellProbe: false },
+  );
+  const githubAccountDiscovery = new GitHubCliAccountDiscovery(
     ghExecutable === undefined
       ? {}
       : { knownExecutablePaths: [ghExecutable], allowShellProbe: false },
@@ -566,6 +572,7 @@ async function main(): Promise<void> {
     runtimes,
     connections,
     connectionValidator,
+    connectionDiscovery: githubAccountDiscovery,
     projects,
     modules,
     isShuttingDown: () => shuttingDown,

@@ -35,6 +35,7 @@ public struct Connection: Identifiable, Hashable, Sendable {
 /// The connection operations consumed by the macOS Connections feature.
 public protocol ConnectionsAPI: Sendable {
     func listConnections() async throws -> [Connection]
+    func discoverGitHubConnections() async throws -> [Connection]
     func registerGitHubConnection(accountReference: String) async throws -> Connection
     func validateConnection(id: String) async throws -> Connection
 }

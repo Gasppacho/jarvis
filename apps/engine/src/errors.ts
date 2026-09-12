@@ -7,6 +7,7 @@ export type ErrorCode =
   | "api.host-not-allowed"
   | "api.invalid-request"
   | "engine.database-unavailable"
+  | "connection.discovery-unavailable"
   | "connection.provider-unsupported"
   | "connection.secret-ref-invalid"
   | "connection.not-found"

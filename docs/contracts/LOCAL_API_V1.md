@@ -25,7 +25,8 @@ Health, version, diagnostic et shutdown.
 
 ### Discovery
 
-Inspection read-only d'un repository et détection des runtimes/connexions.
+Inspection read-only d'un repository et détection des runtimes. La découverte de
+comptes GitHub est une synchronisation explicite distincte, décrite ci-dessous.
 
 ### Connections
 
@@ -35,6 +36,12 @@ enregistre ou remplace un descripteur. `POST
 retourne le descripteur actualisé. Les réponses n'exposent jamais `secretRef`
 ni une valeur de credential ; pour GitHub, la référence est un pointeur opaque
 vers le compte authentifié par `gh`.
+
+`POST /v1/connections/discover` exécute uniquement `gh auth status --json hosts`
+sans demander de token. Il synchronise les comptes GitHub observés dans le registre
+global, marque les anciens comptes GitHub non observés comme `unauthenticated` et
+retourne seulement les descripteurs de cette observation. Cette synchronisation ne
+crée aucun binding : chaque Project doit toujours enregistrer son accord explicite.
 
 ### Projects
 

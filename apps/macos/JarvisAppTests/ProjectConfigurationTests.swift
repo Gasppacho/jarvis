@@ -103,6 +103,9 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(
             firstConfiguration.state(for: imported.id).detail?.projectSlots,
             ["sourceControl"])
+        await firstConfiguration.refresh(projectId: imported.id)
+        XCTAssertEqual(firstConfiguration.state(for: imported.id).draft?.name, "Unsaved input")
+        XCTAssertFalse(firstConfiguration.state(for: imported.id).isDraftSaved)
         first.releaseRepositoryAccess()
         await firstSession.shutdown()
 

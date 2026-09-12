@@ -561,6 +561,28 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /v1/connections/discover:
+    post:
+      operationId: discoverGitHubConnections
+      responses:
+        "200":
+          description: Locally authenticated GitHub accounts without secrets.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ResourceDescriptor"
+        default:
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/runtimes:
     get:
       operationId: listRuntimes

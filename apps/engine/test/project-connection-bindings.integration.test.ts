@@ -138,6 +138,48 @@ describe("project connection bindings", () => {
     }
   });
 
+  it("binds separately the accounts discovered from local gh", async () => {
+    const fakeGhRoot = mkdtempSync(join(tmpdir(), "jarvis-gh-discovered-bindings-"));
+    roots.push(fakeGhRoot);
+    const fakeGh = join(fakeGhRoot, "gh");
+    writeFileSync(
+      fakeGh,
+      `#!/bin/sh
+if [ "$*" != "auth status --json hosts" ]; then exit 64; fi
+printf '%s\\n' '{"hosts":{"github.com":[{"state":"success","login":"AccountA"},{"state":"success","login":"AccountB"}]}}'
+`,
+      "utf8",
+    );
+    chmodSync(fakeGh, 0o755);
+    const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-discovered-bindings-"));
+    roots.push(dataRoot);
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: TEST_BUNDLE,
+      env: { JARVIS_GH_EXECUTABLE: fakeGh },
+    });
+    engines.push(engine);
+
+    expect((await engine.call("/v1/connections/discover", { method: "POST" })).status).toBe(200);
+    const projectA = await createProject(engine, "project-discovered-a");
+    const projectB = await createProject(engine, "project-discovered-b");
+
+    expect(
+      (await replaceConnectionBinding(engine, projectA.id, "connection/github-AccountA")).status,
+    ).toBe(200);
+    expect(
+      (await replaceConnectionBinding(engine, projectB.id, "connection/github-AccountB")).status,
+    ).toBe(200);
+    expect((await readBindings(engine, projectA.id)).slots["sourceControl"]).toEqual({
+      kind: "connection",
+      ref: "connection/github-AccountA",
+    });
+    expect((await readBindings(engine, projectB.id)).slots["sourceControl"]).toEqual({
+      kind: "connection",
+      ref: "connection/github-AccountB",
+    });
+  });
+
   it("rejects absent and non-available sourceControl connections", async () => {
     const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-connection-bindings-invalid-"));
     roots.push(dataRoot);

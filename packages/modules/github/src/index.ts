@@ -9,6 +9,14 @@ export {
 } from "./credentials.js";
 
 export {
+  GitHubCliAccountDiscovery,
+  type GitHubAccountDiscovery,
+  type GitHubAccountDiscoveryOptions,
+  type GitHubAccountDiscoveryPort,
+  type GitHubAccountDiscoveryResult,
+} from "./account-discovery.js";
+
+export {
   GitHubProviderCheckAdapter,
   type GitHubProviderCheckOptions,
   type GitHubProviderCheckPort,

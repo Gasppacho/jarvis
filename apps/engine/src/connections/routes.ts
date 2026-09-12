@@ -4,6 +4,10 @@ import type { DatabaseState } from "../db/open.js";
 import { EngineError } from "../errors.js";
 import type { ConnectionDescriptor, ConnectionRegistry } from "./registry.js";
 import type { GitHubProviderCheckPort } from "../../../../packages/modules/github/src/provider-check.js";
+import type {
+  GitHubAccountDiscovery,
+  GitHubAccountDiscoveryPort,
+} from "../../../../packages/modules/github/src/account-discovery.js";
 
 type ResourceDescriptor = components["schemas"]["ResourceDescriptor"];
 
@@ -14,6 +18,7 @@ export interface ConnectionRouteDependencies {
   readonly databaseState: () => DatabaseState;
   readonly connections: ConnectionRegistry | undefined;
   readonly validator: GitHubProviderCheckPort | undefined;
+  readonly discovery: GitHubAccountDiscoveryPort | undefined;
 }
 
 export function registerConnectionRoutes(
@@ -36,6 +41,24 @@ export function registerConnectionRoutes(
       secretRef: body.secretRef,
     });
     return reply.code(201).send(toResourceDescriptor(descriptor));
+  });
+
+  app.post("/v1/connections/discover", async (_request, reply) => {
+    const registry = requireConnectionRegistry(deps);
+    if (deps.discovery === undefined) throw discoveryUnavailable();
+    const result = await deps.discovery.discover();
+    if (result.status === "unavailable") throw discoveryUnavailable();
+
+    const descriptors = result.accounts.map((account) =>
+      upsertDiscoveredConnection(registry, account),
+    );
+    const observedReferences = new Set(result.accounts.map((account) => account.secretRef));
+    for (const descriptor of registry.list()) {
+      if (descriptor.provider !== "github" || observedReferences.has(descriptor.secretRef))
+        continue;
+      registry.upsert({ ...descriptor, status: "unauthenticated", capabilities: [] });
+    }
+    return reply.code(200).send({ items: descriptors.map(toResourceDescriptor) });
   });
 
   app.post("/v1/connections/:connectionId/validate", async (request, reply) => {
@@ -79,6 +102,30 @@ function connectionNotFound(connectionId: string): EngineError {
     404,
     `Connection ${connectionId || "(empty)"} is not registered.`,
   );
+}
+
+function discoveryUnavailable(): EngineError {
+  return new EngineError(
+    "connection.discovery-unavailable",
+    503,
+    "GitHub account discovery is unavailable. Check that gh is installed, then retry.",
+  );
+}
+
+function upsertDiscoveredConnection(
+  registry: ConnectionRegistry,
+  account: GitHubAccountDiscovery,
+): ConnectionDescriptor {
+  const descriptor: ConnectionDescriptor = {
+    id: `connection/github-${account.accountLabel}`,
+    provider: "github",
+    accountLabel: account.accountLabel,
+    status: account.status,
+    capabilities: [...account.capabilities],
+    secretRef: account.secretRef,
+  };
+  registry.upsert(descriptor);
+  return descriptor;
 }
 
 function requireConnectionRegistry(deps: ConnectionRouteDependencies): ConnectionRegistry {

@@ -17,6 +17,92 @@ final class ConnectionsModelTests: XCTestCase {
 
         XCTAssertEqual(model.connections, [connection])
         XCTAssertNil(model.errorMessage)
+        XCTAssertEqual(model.discoveryState, .accounts)
+    }
+
+    @MainActor
+    func testEmptyDiscoveryExplainsHowToAuthenticateLocally() async {
+        let model = ConnectionsModel(api: StubConnectionsAPI())
+
+        await model.refresh()
+
+        XCTAssertEqual(model.discoveryState, .none)
+        XCTAssertEqual(
+            ConnectionsModel.emptyDiscoveryMessage,
+            "Aucun compte GitHub authentifié n'a été découvert. Jarvis utilise l'authentification locale `gh`; exécutez `gh auth login`, puis revenez ici et cliquez sur `Réessayer`.")
+    }
+
+    @MainActor
+    func testDiscoveryFailureIsNotPresentedAsNoAccount() async {
+        let model = ConnectionsModel(
+            api: StubConnectionsAPI(
+                listError: .engineError(
+                    operation: "POST /v1/connections/discover",
+                    code: "connection.discovery-unavailable",
+                    message: "GitHub account discovery is unavailable.")))
+
+        await model.refresh()
+
+        XCTAssertEqual(model.discoveryState, .unavailable)
+        XCTAssertEqual(
+            model.errorMessage,
+            "GitHub account discovery is unavailable. (connection.discovery-unavailable)")
+    }
+
+    @MainActor
+    func testDiscoveredAccessAndCompatibilityHaveActionablePresentation() async {
+        let accessRequired = Connection(
+            id: "connection/github-locked",
+            provider: "github",
+            accountLabel: "Locked",
+            status: "unauthenticated",
+            capabilities: [])
+        let incompatible = Connection(
+            id: "connection/github-limited",
+            provider: "github",
+            accountLabel: "Limited",
+            status: "available",
+            capabilities: ["github.api"])
+        let model = ConnectionsModel(
+            api: StubConnectionsAPI(connections: [accessRequired, incompatible]))
+
+        await model.refresh()
+
+        XCTAssertEqual(model.presentation(for: accessRequired).status, "Accès requis")
+        XCTAssertEqual(
+            model.presentation(for: accessRequired).diagnostic,
+            "GitHub est installé mais Jarvis ne peut pas lire ce compte. Reconnectez ou autorisez gh pour collecter les issues.")
+        XCTAssertEqual(model.presentation(for: incompatible).status, "Compte incompatible")
+        XCTAssertEqual(
+            model.presentation(for: incompatible).diagnostic,
+            "Capability manquante : scm.change-request.manage, work-items.read.")
+        XCTAssertEqual(
+            model.presentation(for: incompatible).action,
+            "Choisir un compte compatible")
+    }
+
+    @MainActor
+    func testRefreshIgnoresAnObsoleteDiscoveryResponse() async {
+        let stale = Connection(
+            id: "connection/github-stale", provider: "github", accountLabel: "Stale",
+            status: "available", capabilities: ["github.api", "scm.change-request.manage", "work-items.read"])
+        let current = Connection(
+            id: "connection/github-current", provider: "github", accountLabel: "Current",
+            status: "available", capabilities: ["github.api", "scm.change-request.manage", "work-items.read"])
+        let api = DeferredDiscoveryAPI()
+        let model = ConnectionsModel(api: api)
+
+        let first = Task { await model.refresh() }
+        await api.waitForDiscoveries(1)
+        let second = Task { await model.refresh() }
+        await api.waitForDiscoveries(2)
+        await api.resolve(at: 0, with: [stale])
+        await api.resolve(at: 1, with: [current])
+        await first.value
+        await second.value
+
+        XCTAssertEqual(model.connections, [current])
+        XCTAssertEqual(model.discoveryState, .accounts)
     }
 
     @MainActor
@@ -143,6 +229,11 @@ private actor StubConnectionsAPI: ConnectionsAPI {
         return connections
     }
 
+    func discoverGitHubConnections() async throws -> [Connection] {
+        if let listError { throw listError }
+        return connections
+    }
+
     func registerGitHubConnection(accountReference: String) async throws -> Connection {
         registeredReferences.append(accountReference)
         if let registerError { throw registerError }
@@ -152,5 +243,33 @@ private actor StubConnectionsAPI: ConnectionsAPI {
     func validateConnection(id: String) async throws -> Connection {
         if let validateError { throw validateError }
         return validated
+    }
+}
+
+private actor DeferredDiscoveryAPI: ConnectionsAPI {
+    private var continuations: [CheckedContinuation<[Connection], Never>] = []
+
+    func listConnections() async throws -> [Connection] { [] }
+
+    func discoverGitHubConnections() async throws -> [Connection] {
+        await withCheckedContinuation { continuations.append($0) }
+    }
+
+    func registerGitHubConnection(accountReference: String) async throws -> Connection {
+        Connection(
+            id: accountReference, provider: "github", accountLabel: "Unused",
+            status: "unauthenticated", capabilities: [])
+    }
+
+    func validateConnection(id: String) async throws -> Connection {
+        Connection(id: id, provider: "github", accountLabel: "Unused", status: "unauthenticated", capabilities: [])
+    }
+
+    func waitForDiscoveries(_ expected: Int) async {
+        while continuations.count < expected { await Task.yield() }
+    }
+
+    func resolve(at index: Int, with connections: [Connection]) {
+        continuations[index].resume(returning: connections)
     }
 }

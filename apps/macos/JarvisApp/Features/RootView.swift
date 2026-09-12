@@ -133,6 +133,7 @@ struct RootView: View {
                     ProjectOnboardingView(
                         projectConfiguration: projectConfiguration,
                         moduleCatalog: moduleCatalog,
+                        connections: connections,
                         project: project,
                         openAdvanced: { selection = .projectAdvanced(project.id) })
                 } else {

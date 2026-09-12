@@ -3,7 +3,6 @@ import SwiftUI
 
 public struct ConnectionsView: View {
     let model: ConnectionsModel
-    @State private var accountReference = ""
 
     public init(model: ConnectionsModel) {
         self.model = model
@@ -14,66 +13,77 @@ public struct ConnectionsView: View {
             HStack {
                 Text("Connections").font(.title2.bold())
                 Spacer()
-                if model.isRefreshing { ProgressView().controlSize(.small) }
+                Button("Actualiser les comptes") {
+                    Task { await model.refresh() }
+                }
+                .disabled(model.isRefreshing)
             }
 
-            Text("Register a GitHub connection with the opaque gh account reference already configured in gh. No token is requested.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-
-            HStack {
-                TextField("gh://Account", text: $accountReference)
-                    .textFieldStyle(.roundedBorder)
-                Button("Register") {
-                    Task {
-                        if await model.register(accountReference: accountReference) {
-                            accountReference = ""
-                        }
-                    }
-                }
-                .disabled(
-                    accountReference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        || model.isRegistering)
-            }
-
-            if let errorMessage = model.errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout)
-                    .foregroundStyle(.orange)
-            }
-
-            if model.connections.isEmpty && !model.isRefreshing {
-                ContentUnavailableView {
-                    Label("No connections", systemImage: "link.badge.plus")
-                } description: {
-                    Text("Register an authenticated gh account to make it available to Projects.")
-                }
-            } else {
-                List(model.connections) { connection in
-                    HStack(alignment: .firstTextBaseline, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(connection.accountLabel).font(.headline)
-                            Text(connection.provider)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Text(connection.status)
-                            .font(.callout.weight(.medium))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(.quaternary, in: Capsule())
-                        Button("Validate") {
-                            Task { await model.validate(connectionID: connection.id) }
-                        }
-                        .disabled(model.isValidating(connectionID: connection.id))
-                    }
-                    .padding(.vertical, 4)
-                }
+            GroupBox("GitHub") {
+                content
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(24)
         .task { await model.refresh() }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch model.discoveryState {
+        case .searching:
+            Label("Recherche des comptes", systemImage: "magnifyingglass")
+                .padding(.vertical, 4)
+        case .none:
+            ContentUnavailableView {
+                Label("Aucun compte découvert", systemImage: "person.crop.circle.badge.questionmark")
+            } description: {
+                Text(ConnectionsModel.emptyDiscoveryMessage)
+            } actions: {
+                Button("Réessayer") { Task { await model.refresh() } }
+                Link("Aide de connexion", destination: URL(string: "https://cli.github.com/manual/gh_auth_login")!)
+            }
+        case .unavailable:
+            Label(
+                model.errorMessage ?? "Impossible de vérifier les comptes GitHub.",
+                systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+        case .accounts:
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(model.connections) { connection in
+                    let presentation = model.presentation(for: connection)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(connection.accountLabel).font(.headline)
+                            Spacer()
+                            Text(presentation.status)
+                                .font(.callout.weight(.medium))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(.quaternary, in: Capsule())
+                        }
+                        Text("GitHub")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(presentation.diagnostic)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        if presentation.status == "Accès requis" {
+                            Link(
+                                presentation.action,
+                                destination: URL(string: "https://cli.github.com/manual/gh_auth_login")!)
+                        }
+                        DisclosureGroup("Advanced") {
+                            Text("Identifiant de support : \(connection.id)")
+                                .font(.caption)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .padding(12)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                    .accessibilityElement(children: .combine)
+                }
+            }
+        }
     }
 }

@@ -102,6 +102,47 @@ describe("connection Local API", () => {
     });
   });
 
+  it("discovers local gh accounts without exposing credentials", async () => {
+    const fakeGhRoot = mkdtempSync(join(tmpdir(), "jarvis-gh-discovery-"));
+    roots.push(fakeGhRoot);
+    const fakeGh = join(fakeGhRoot, "gh");
+    writeFileSync(
+      fakeGh,
+      `#!/bin/sh
+if [ "$*" != "auth status --json hosts" ]; then exit 64; fi
+printf '%s\\n' '{"hosts":{"github.com":[{"state":"success","active":true,"host":"github.com","login":"AccountA"},{"state":"failure","active":false,"host":"github.com","login":"AccountB"}]}}'
+`,
+      "utf8",
+    );
+    chmodSync(fakeGh, 0o755);
+    const engine = await start({ env: { JARVIS_GH_EXECUTABLE: fakeGh } });
+
+    const discovered = await engine.call("/v1/connections/discover", { method: "POST" });
+
+    expect(discovered.status).toBe(200);
+    const body = await discovered.json();
+    expect(body).toEqual({
+      items: [
+        {
+          id: "connection/github-AccountA",
+          kind: "github",
+          displayName: "AccountA",
+          status: "available",
+          capabilities: ["github.api", "scm.change-request.manage", "work-items.read"],
+        },
+        {
+          id: "connection/github-AccountB",
+          kind: "github",
+          displayName: "AccountB",
+          status: "unauthenticated",
+          capabilities: [],
+        },
+      ],
+    });
+    expect(JSON.stringify(body)).not.toContain("token");
+    expect(await (await engine.call("/v1/connections")).json()).toEqual(body);
+  });
+
   it("rejects unknown properties, credentials and unsupported providers without echoing secrets", async () => {
     const engine = await start();
     const request = (body: unknown) =>

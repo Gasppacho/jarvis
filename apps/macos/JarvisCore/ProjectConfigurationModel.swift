@@ -47,6 +47,7 @@ public final class ProjectConfigurationModel {
     private let activationProvider: ActivationProvider?
     private var compositionRevisions: [String: Int] = [:]
     private var validationRevisions: [String: Int] = [:]
+    private var refreshRevisions: [String: Int] = [:]
     private var lastValidationReports: [String: ProjectValidationReport] = [:]
 
     public init(session: EngineSessionModel, projects: ProjectsModel) {
@@ -95,21 +96,26 @@ public final class ProjectConfigurationModel {
             update(projectId) { $0.errorMessage = Self.engineUnavailable }
             return
         }
+        refreshRevisions[projectId, default: 0] += 1
+        let refreshRevision = refreshRevisions[projectId, default: 0]
+        let preservedDraft = state(for: projectId).isDraftSaved ? nil : state(for: projectId).draft
         validationRevisions[projectId, default: 0] += 1
         if !preservingStaleValidation {
             lastValidationReports[projectId] = nil
         }
         update(projectId) {
             $0.isLoading = true
-            $0.candidates = []
-            $0.resourceChoices = []
             if !preservingStaleValidation {
                 // A report evaluates the previously loaded snapshot. Reopening or
                 // reloading requires a fresh engine evaluation before it is current.
                 $0.validation = .unvalidated
             }
         }
-        defer { update(projectId) { $0.isLoading = false } }
+        defer {
+            if refreshRevisions[projectId, default: 0] == refreshRevision {
+                update(projectId) { $0.isLoading = false }
+            }
+        }
         do {
             let detail = try await client.getProject(id: projectId)
             let bindings = try await client.getProjectBindings(projectId: projectId)
@@ -133,6 +139,7 @@ public final class ProjectConfigurationModel {
             } else {
                 draft = nil
             }
+            guard refreshRevisions[projectId, default: 0] == refreshRevision else { return }
             update(projectId) {
                 $0.detail = detail
                 $0.localBindings = bindings
@@ -141,14 +148,13 @@ public final class ProjectConfigurationModel {
                 $0.compositionGuide = compositionReview.compositionGuide
                 $0.compositionReview = compositionReview
                 $0.compositionGraph = compositionGraph
-                $0.draft = draft
-                $0.isDraftSaved = true
+                $0.draft = preservedDraft ?? draft
+                $0.isDraftSaved = preservedDraft == nil
                 $0.errorMessage = nil
             }
         } catch {
+            guard refreshRevisions[projectId, default: 0] == refreshRevision else { return }
             update(projectId) {
-                $0.candidates = []
-                $0.resourceChoices = []
                 $0.errorMessage = ProjectsModel.describe(error)
             }
         }
@@ -158,9 +164,11 @@ public final class ProjectConfigurationModel {
         projectId: String,
         _ edit: (inout ProjectConfigurationDraft) -> Void
     ) {
+        refreshRevisions[projectId, default: 0] += 1
         var didEdit = false
         update(projectId) { state in
             guard var draft = state.draft else { return }
+            state.isLoading = false
             edit(&draft)
             state.draft = draft
             state.compositionReview = nil
@@ -653,6 +661,61 @@ public final class ProjectConfigurationModel {
             payload.slots.additionalProperties.removeValue(forKey: slotId)
         }
         return await saveBindings(projectId: projectId, bindings: payload)
+    }
+
+    /// Binds one discovered GitHub account only to the compatible slots of this Project.
+    @discardableResult
+    public func bindGitHubConnection(
+        projectId: String,
+        connectionID: String
+    ) async -> LocalProjectBindings? {
+        let current = state(for: projectId)
+        guard var payload = current.localBindings?.wirePayload else {
+            update(projectId) {
+                $0.errorMessage =
+                    "Local Bindings are not loaded. Reload this Project before binding a GitHub account."
+            }
+            return nil
+        }
+        guard let candidate = current.candidates.first(where: {
+            $0.kind == .connection && $0.ref == connectionID
+        }) else {
+            update(projectId) {
+                $0.errorMessage =
+                    "This GitHub account is not available to the current Project. Refresh the accounts and try again."
+            }
+            return nil
+        }
+        let slots = current.resourceChoices.filter { choice in
+            choice.candidates.contains(candidate)
+        }
+        guard !slots.isEmpty else {
+            update(projectId) {
+                $0.errorMessage =
+                    "This GitHub account does not satisfy a Project binding requirement. Choose a compatible account."
+            }
+            return nil
+        }
+        for slot in slots {
+            payload.slots.additionalProperties[slot.slotId] = .init(
+                kind: candidate.kind.payload, ref: candidate.ref)
+        }
+        return await saveBindings(projectId: projectId, bindings: payload)
+    }
+
+    public func hasLocalBinding(projectId: String, connectionID: String) -> Bool {
+        let current = state(for: projectId)
+        guard let bindings = current.localBindings?.wirePayload.slots.additionalProperties else {
+            return false
+        }
+        return current.resourceChoices.contains { choice in
+            guard bindings[choice.slotId]?.kind == .connection,
+                bindings[choice.slotId]?.ref == connectionID
+            else { return false }
+            return choice.candidates.contains {
+                $0.kind == .connection && $0.ref == connectionID
+            }
+        }
     }
 
     @discardableResult

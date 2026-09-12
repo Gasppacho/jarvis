@@ -325,6 +325,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/connections/discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["discoverGitHubConnections"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/runtimes": {
         parameters: {
             query?: never;
@@ -1776,6 +1792,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ResourceDescriptor"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    discoverGitHubConnections: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Locally authenticated GitHub accounts without secrets. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ResourceDescriptor"][];
+                    };
                 };
             };
             401: components["responses"]["Unauthorized"];

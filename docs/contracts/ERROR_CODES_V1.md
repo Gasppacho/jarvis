@@ -49,6 +49,7 @@ Errors crossing the Local API or stored as terminal Execution errors use stable 
 | `connection.provider-unsupported` | No | The requested connection provider is not bundled |
 | `connection.secret-ref-invalid` | No | The request supplied a credential value or unsupported reference instead of an opaque `gh://account` reference |
 | `connection.not-found` | No | The requested connection is not registered |
+| `connection.discovery-unavailable` | Yes | Jarvis could not run or safely read local `gh auth status`; check that `gh` is installed, then retry discovery |
 
 ## Eventing
 
