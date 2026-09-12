@@ -4,13 +4,14 @@ import type { ModuleCompositionMetadata } from "../../../../packages/kernel/src/
 import type { EventEnvelope } from "../../../../packages/eventing/src/envelope.js";
 import type { ProjectModuleInstanceConfiguration } from "../../../../packages/project-runtime/src/project-types.js";
 import type { ProjectRow, ResolvedProjectSnapshot } from "../projects/store.js";
+import { ProjectRepositoryResolver } from "../projects/repository-resolution.js";
 import { GitHubPollingScheduler } from "./github-polling.js";
 
 const instance = {
   instanceId: "github",
   moduleId: "jarvis.module.github",
   enabled: true,
-  configuration: { pollIntervalSeconds: 15, repositories: ["Gasppacho/jarvis"] },
+  configuration: { pollIntervalSeconds: 15, repositories: ["main"] },
 } satisfies ProjectModuleInstanceConfiguration;
 
 const project = {
@@ -28,6 +29,9 @@ const project = {
 const snapshot = {
   moduleInstances: [instance],
   composition: { repositories: [{ id: "main" }] },
+  repositoryIdentities: [
+    { repositoryId: "main", provider: "github", owner: "Gasppacho", name: "jarvis" },
+  ],
 } as unknown as ResolvedProjectSnapshot;
 const composition = {} as ModuleCompositionMetadata;
 
@@ -157,6 +161,7 @@ describe("GitHubPollingScheduler", () => {
       transaction: (operation) => operation(),
       ids: { next: () => "id" },
       clock: { now: () => now },
+      repositoryResolver: new ProjectRepositoryResolver(),
       pollIntervalMs: 1,
     });
 
@@ -211,6 +216,7 @@ function schedulerFor(api: GitHubApi, pollIntervalMs: number): GitHubPollingSche
     transaction: (operation) => operation(),
     ids: { next: () => "id" },
     clock: { now: () => new Date() },
+    repositoryResolver: new ProjectRepositoryResolver(),
     pollIntervalMs,
   });
 }

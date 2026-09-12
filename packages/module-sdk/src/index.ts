@@ -78,8 +78,16 @@ export interface WorkItem {
   readonly state: "open" | "closed";
 }
 
+/** Provider identity resolved from one Project repository binding. */
+export interface ProjectRepositoryIdentity {
+  readonly repositoryId: string;
+  readonly provider: string;
+  readonly owner: string;
+  readonly name: string;
+}
+
 export interface WorkItemsCapability {
-  read(ref: string): Promise<WorkItem>;
+  read(ref: string, repositoryId?: string): Promise<WorkItem>;
 }
 
 export interface ExternalMappingRecord {
@@ -211,6 +219,8 @@ export interface ModuleHandlerContext {
   readonly executionId: string;
   readonly moduleInstanceId: string;
   readonly repositoryId: string | undefined;
+  /** Provider identity resolved for `repositoryId` inside the Project. */
+  readonly repository?: ProjectRepositoryIdentity;
   readonly repositoryDefaultBranch: string | undefined;
   readonly event: EventEnvelope;
   readonly configuration: ModuleConfiguration;

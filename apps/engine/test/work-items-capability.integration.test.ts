@@ -29,6 +29,7 @@ describe("project-bound Work Items capability", () => {
     const snapshots = new Map([
       ["project-a", snapshot("project-a", "connection/a")],
       ["project-b", snapshot("project-b")],
+      ["project-c", snapshot("project-c", "connection/a", false)],
     ]);
     const resolver = resolverFor(snapshots, fakeGitHub.baseUrl);
     const capabilities = resolver.resolve("project-a", "reader", "work-items-reader");
@@ -47,6 +48,24 @@ describe("project-bound Work Items capability", () => {
       path: "/repos/Gasppacho/jarvis/issues/16",
       credential: "token-a",
     });
+    const requestsBeforeUnlinkedRead = fakeGitHub.requests.length;
+    await expect(
+      capabilities.workItems?.read("github://Other/repo/issues/16", "main"),
+    ).rejects.toMatchObject({
+      code: "github.change-request-invalid",
+      retryable: false,
+    });
+    expect(fakeGitHub.requests).toHaveLength(requestsBeforeUnlinkedRead);
+    const requestsBeforeUnboundRead = fakeGitHub.requests.length;
+    await expect(
+      resolver
+        .resolve("project-c", "reader", "work-items-reader")
+        .workItems?.read("github://Gasppacho/jarvis/issues/16"),
+    ).rejects.toMatchObject({
+      code: "github.change-request-invalid",
+      retryable: false,
+    });
+    expect(fakeGitHub.requests).toHaveLength(requestsBeforeUnboundRead);
     expect(capabilities.workItems).toBeDefined();
     expect(resolver.resolve("project-b", "reader", "work-items-reader").workItems).toBeUndefined();
     expect(resolver.resolve("project-a", "reader", "unprivileged")).toEqual({});
@@ -117,7 +136,11 @@ function resolverFor(
   );
 }
 
-function snapshot(projectId: string, connectionRef?: string): ResolvedProjectSnapshot {
+function snapshot(
+  projectId: string,
+  connectionRef?: string,
+  includeRepositoryIdentity = true,
+): ResolvedProjectSnapshot {
   return {
     composition: {
       commands: {},
@@ -129,6 +152,13 @@ function snapshot(projectId: string, connectionRef?: string): ResolvedProjectSna
       },
     } as ResolvedProjectSnapshot["composition"],
     moduleInstances: [{ instanceId: "reader", moduleId: "work-items-reader", enabled: true }],
+    ...(includeRepositoryIdentity
+      ? {
+          repositoryIdentities: [
+            { repositoryId: "main", provider: "github", owner: "Gasppacho", name: "jarvis" },
+          ],
+        }
+      : {}),
     bindings: {
       repository: { path: "/tmp/project", bookmarkRef: null },
       slots:

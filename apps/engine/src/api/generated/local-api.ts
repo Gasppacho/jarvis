@@ -893,6 +893,12 @@ export interface components {
                 /** @enum {unknown} */
                 severity: "error" | "warning";
                 message: string;
+                /** @description An explicit Draft-only replacement proposed by the engine; writing the repository remains a separate user action. */
+                repositoryReferenceReplacement?: {
+                    field: string;
+                    from: string;
+                    to: string;
+                };
                 target: components["schemas"]["ProjectFindingTarget"] | components["schemas"]["RequestEdgeFindingTarget"] | components["schemas"]["ContractEdgeFindingTarget"] | components["schemas"]["ModuleInstanceFindingTarget"] | components["schemas"]["SlotFindingTarget"] | components["schemas"]["ModuleCapabilityFindingTarget"] | components["schemas"]["SlotCapabilityFindingTarget"];
             }[];
             /** @description Stable digest of exactly the Portable Configuration and Local Bindings this report describes. POST /v1/projects/{projectId}/activate takes it back and refuses activation when it no longer matches what is saved right now, instead of silently revalidating a stale report. */

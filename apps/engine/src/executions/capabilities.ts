@@ -257,11 +257,17 @@ export class ProjectModuleCapabilityResolver {
       );
       if (githubApi !== undefined) {
         const workItems: WorkItemsCapability = {
-          read: async (ref) => {
-            parseGitHubWorkItemRef(ref);
+          read: async (ref, repositoryId) => {
+            const reference = parseGitHubWorkItemRef(ref);
+            if (!linkedRepository(snapshot, repositoryId, reference.owner, reference.repository)) {
+              throw new GitHubTranslationError(
+                "github.change-request-invalid",
+                "The requested Work Item repository is not linked to this Project repository.",
+                false,
+              );
+            }
             let response;
             try {
-              const reference = parseGitHubWorkItemRef(ref);
               response = await githubApi.get(
                 `/repos/${reference.owner}/${reference.repository}/issues/${reference.number}`,
               );
@@ -384,6 +390,23 @@ export class ProjectModuleCapabilityResolver {
       ...(this.githubApiBaseUrl === undefined ? {} : { apiBaseUrl: this.githubApiBaseUrl }),
     });
   }
+}
+
+function linkedRepository(
+  snapshot: ResolvedProjectSnapshot,
+  repositoryId: string | undefined,
+  owner: string,
+  repository: string,
+): boolean {
+  const identities = snapshot.repositoryIdentities;
+  if (identities === undefined) return false;
+  return identities.some(
+    (identity) =>
+      identity.provider === "github" &&
+      (repositoryId === undefined || identity.repositoryId === repositoryId) &&
+      identity.owner.toLowerCase() === owner.toLowerCase() &&
+      identity.name.toLowerCase() === repository.toLowerCase(),
+  );
 }
 
 function runProjectCommand(input: ModuleShellCommandInput): Promise<ModuleShellCommandResult> {

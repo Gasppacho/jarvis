@@ -10,6 +10,7 @@ import type {
   ModuleHandlerLookup,
   ModuleHandlerPublishInput,
   ModuleRepositoryDefaultBranchLookup,
+  ProjectRepositoryIdentity,
 } from "../../../../packages/module-sdk/src/index.js";
 
 export type ModulePublishedContract = Pick<ModuleHandlerPublishInput, "type" | "version" | "kind">;
@@ -17,6 +18,11 @@ export type ModulePublishedContract = Pick<ModuleHandlerPublishInput, "type" | "
 export type ModulePublishedContractsLookup = (
   moduleId: string,
 ) => readonly ModulePublishedContract[] | undefined;
+
+export type ModuleRepositoryIdentityLookup = (
+  projectId: string,
+  repositoryId: string | undefined,
+) => ProjectRepositoryIdentity | undefined;
 
 import { EventPublisher, type PublishEventInput } from "../events/publisher.js";
 import { EngineError } from "../errors.js";
@@ -196,6 +202,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
     private readonly capabilities: ModuleCapabilityLookup = () => ({}),
     checkpointStore?: ExecutionCheckpointStore,
     private readonly retryRandom: () => number = Math.random,
+    private readonly repositoryIdentity: ModuleRepositoryIdentityLookup = () => undefined,
   ) {
     this.checkpointStore = checkpointStore ?? new ExecutionCheckpointStore(db);
   }
@@ -967,11 +974,13 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
     signal: AbortSignal,
     capabilities: ModuleHandlerCapabilities,
   ): ModuleHandlerContext {
+    const repository = this.repositoryIdentity(delivery.projectId, envelope.repositoryId);
     return {
       projectId: delivery.projectId,
       executionId,
       moduleInstanceId: delivery.moduleInstanceId,
       repositoryId: envelope.repositoryId,
+      ...(repository === undefined ? {} : { repository }),
       repositoryDefaultBranch: this.repositoryDefaultBranches(
         delivery.projectId,
         envelope.repositoryId,

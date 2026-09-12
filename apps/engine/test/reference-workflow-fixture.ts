@@ -31,7 +31,9 @@ export interface ReferenceWorkflowFixture {
 export async function startReferenceWorkflowFixture(
   projectId = "reference-workflow",
 ): Promise<ReferenceWorkflowFixture> {
-  const repository = makeRealGitRepositoryFixture();
+  const repository = makeRealGitRepositoryFixture({
+    additionalRemotes: [{ name: "github", url: "git@github.com:Gasppacho/jarvis.git" }],
+  });
   const fakeGitHub = await startFakeGitHubApi();
   const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-reference-gh-"));
   const executable = join(executableRoot, "gh");
@@ -129,7 +131,6 @@ function referenceProjectConfiguration(projectId: string): PortableProjectConfig
           ...module.configuration,
           bootstrapLabelPolicy: "ignore-existing",
           pollIntervalSeconds: 15,
-          repositories: ["Gasppacho/jarvis"],
         },
       };
     }
@@ -148,6 +149,9 @@ function referenceProjectConfiguration(projectId: string): PortableProjectConfig
   return {
     ...configuration,
     metadata: { id: projectId, name: `Reference Workflow ${projectId}` },
+    repositories: configuration.repositories.map((repository) =>
+      repository.id === "main" ? { ...repository, remote: "github" } : repository,
+    ),
     commands: { ...configuration.commands, test: "node --test" },
     modules,
   };

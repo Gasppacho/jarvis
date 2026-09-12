@@ -42,6 +42,12 @@ describe("reference workflow pull request", () => {
     ]);
     expect(executions.every((execution) => execution.status === "completed")).toBe(true);
     expect(fixture.fakeGitHub.pullRequests).toHaveLength(1);
+    expect(fixture.fakeGitHub.requests).toContainEqual(
+      expect.objectContaining({
+        method: "POST",
+        path: "/repos/Gasppacho/jarvis/pulls",
+      }),
+    );
 
     const database = new Database(`${fixture.engine.dataRoot}/jarvis.sqlite`, { readonly: true });
     try {

@@ -82,6 +82,24 @@ final class ProjectActivationTests: XCTestCase {
         XCTAssertEqual(presentation.activation.status, .succeeded)
     }
 
+    func testActiveProjectOffersAnExplicitRepositorySnapshotRefresh() throws {
+        let project = makeProject(status: .active)
+        var state = ProjectConfigurationState()
+        state.validation = .valid(
+            try decodeReport(
+                fingerprint: Self.fingerprint,
+                findingsJSON: """
+                    [{"code":"project.instance-config-invalid","severity":"warning","message":"refresh","target":{"kind":"project","field":"/repositories/migration"}}]
+                    """))
+        let presentation = ProjectDetailPresentation(
+            project: project, detail: nil, state: state, packages: [])
+
+        XCTAssertTrue(presentation.activation.isEnabled)
+        XCTAssertEqual(presentation.activation.status, .ready)
+        XCTAssertEqual(presentation.activation.title, "Refresh repository links")
+        XCTAssertTrue(presentation.activation.explanation.contains("identities refreshed"))
+    }
+
     func testActivationRejectionRendersDistinctlyFromAValidationFinding() throws {
         let project = makeProject(status: .draft)
         var state = ProjectConfigurationState()
@@ -316,7 +334,8 @@ final class ProjectActivationTests: XCTestCase {
     private func decodeReport(
         projectId: String = "activation-fixture",
         valid: Bool = true,
-        fingerprint: String?
+        fingerprint: String?,
+        findingsJSON: String = "[]"
     ) throws -> ProjectValidationReport {
         let fingerprintField = fingerprint.map { "\"\($0)\"" } ?? "null"
         let json = """
@@ -327,7 +346,7 @@ final class ProjectActivationTests: XCTestCase {
               "valid": \(valid),
               "requestRoutes": [],
               "satisfiedCapabilities": [],
-              "findings": [],
+              "findings": \(findingsJSON),
               "compositionFingerprint": \(fingerprintField)
             }
             """

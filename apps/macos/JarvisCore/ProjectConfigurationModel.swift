@@ -174,6 +174,31 @@ public final class ProjectConfigurationModel {
         Task { await refreshCompositionChoices(projectId: projectId) }
     }
 
+    /// Applies an Engine-proposed repository reference replacement to the
+    /// in-memory Draft only. Writing `.jarvis/project.yaml` remains the
+    /// separate explicit `saveRepository` action.
+    public func applyRepositoryReferenceReplacement(
+        projectId: String,
+        moduleInstanceID: String,
+        replacement: ProjectRepositoryReferenceReplacement
+    ) {
+        guard replacement.field == "/configuration/repositories" else { return }
+        editDraft(projectId: projectId) { draft in
+            guard let index = draft.modules.firstIndex(where: {
+                $0.instanceId == moduleInstanceID
+            }),
+                let raw = draft.modules[index].configurationValues["repositories"],
+                let data = raw.data(using: .utf8),
+                var values = try? JSONDecoder().decode([String].self, from: data),
+                values.contains(replacement.from)
+            else { return }
+            values = values.map { $0 == replacement.from ? replacement.to : $0 }
+            guard let encoded = try? JSONEncoder().encode(values) else { return }
+            draft.modules[index].configurationValues["repositories"] =
+                String(decoding: encoded, as: UTF8.self)
+        }
+    }
+
     public func chooseStartingPoint(projectId: String, startingPointId: String) {
         guard let guide = state(for: projectId).compositionGuide,
             let startingPoint = guide.startingPoints.first(where: { $0.id == startingPointId })

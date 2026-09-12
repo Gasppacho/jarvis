@@ -129,6 +129,9 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             public let code: String
             public let targetKind: ProjectValidationFinding.Target.Kind
             public let reference: String
+            public let navigationTarget: String?
+            public let moduleInstanceID: String?
+            public let repositoryReferenceReplacement: ProjectRepositoryReferenceReplacement?
             public let unavailable: String
             public let impact: String
             public let correctiveAction: String
@@ -875,7 +878,25 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         validation: Validation,
         projectStatus: Project.Status
     ) -> Activation {
+        let requiresRepositorySnapshotMigration = validation.findings.contains {
+            $0.code == ProjectValidationFinding.Code.instanceConfigInvalid.rawValue
+                && $0.reference == "project/field/repositories/migration"
+        }
         if projectStatus == .active {
+            if requiresRepositorySnapshotMigration {
+                let isReady = validation.isReadyToActivate && validation.compositionFingerprint != nil
+                let explanation = isReady
+                    ? "The active Project needs its repository identities refreshed. Validate the selected remotes, then activate again to persist them explicitly."
+                    : validation.activationReadinessExplanation
+                return Activation(
+                    status: isReady ? .ready : .unavailable,
+                    isEnabled: isReady,
+                    title: isReady ? "Refresh repository links" : "Repository links need attention",
+                    explanation: explanation,
+                    accessibilityLabel: isReady
+                        ? "Ready to refresh repository links"
+                        : "Repository links need attention. (explanation)")
+            }
             return Activation(
                 status: .succeeded,
                 isEnabled: false,
@@ -946,6 +967,23 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
     private static func validationFinding(
         _ finding: ProjectValidationFinding
     ) -> Validation.Finding {
+        let isHistoricalRepositoryReference =
+            finding.code == .instanceConfigInvalid
+            && finding.target.stableReference.hasSuffix(
+                "/field/configuration/repositories/legacy")
+        let isRepositorySnapshotMigration =
+            finding.code == .instanceConfigInvalid
+            && finding.target.stableReference == "project/field/repositories/migration"
+        let correction: String
+        if isHistoricalRepositoryReference {
+            correction =
+                "Replace the historical repository reference with the portable repository ID proposed by Engine, save the Draft, and validate again."
+        } else if isRepositorySnapshotMigration {
+            correction =
+                "Validate the current selected remotes, then use Refresh repository links to persist their identities explicitly."
+        } else {
+            correction = "Correct the referenced configuration field, save, and validate again."
+        }
         let guidance: (unavailable: String, impact: String, correction: String) =
             switch finding.code {
             case .compositionIncomplete:
@@ -976,7 +1014,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 (
                     "Valid Module Instance configuration is unavailable.",
                     "The referenced Module Instance cannot run its configured behaviour.",
-                    "Correct the referenced configuration field, save, and validate again."
+                    correction
                 )
             case .modulePackageUnavailable:
                 (
@@ -998,11 +1036,22 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 )
             }
         let reference = finding.target.stableReference
+        let navigationTarget: String? = switch finding.target {
+        case .moduleInstance(let instanceId, _): "module-instance-\(instanceId)"
+        default: nil
+        }
+        let moduleInstanceID: String? = switch finding.target {
+        case .moduleInstance(let instanceId, _): instanceId
+        default: nil
+        }
         return Validation.Finding(
             id: "\(finding.code.rawValue)-\(reference)",
             code: finding.code.rawValue,
             targetKind: finding.target.kind,
             reference: reference,
+            navigationTarget: navigationTarget,
+            moduleInstanceID: moduleInstanceID,
+            repositoryReferenceReplacement: finding.repositoryReferenceReplacement,
             unavailable: guidance.unavailable,
             impact: guidance.impact,
             correctiveAction: guidance.correction,

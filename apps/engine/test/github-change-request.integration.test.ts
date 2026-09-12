@@ -919,6 +919,7 @@ async function createGitHubProject(
   id: string,
 ): Promise<{ readonly id: string; readonly repositoryPath: string }> {
   const repositoryPath = makeNodeRepositoryFixture({
+    remoteUrl: "git@github.com:QServices/repo.git",
     projectYaml: stringifyYaml(githubProjectConfiguration(id)),
   });
   repositories.push(repositoryPath);

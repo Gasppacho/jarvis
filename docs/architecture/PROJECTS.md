@@ -201,6 +201,28 @@ le même root local `.` et donc le même Repository Grant. Cette limite sépare 
 remotes logiques (par exemple plusieurs dépôts GitHub) du futur multi-root local,
 sans confondre leurs cursors ni leurs identifiants dans les Events.
 
+L'identifiant de `repositories[].id` est la référence canonique dans la Portable
+Configuration et dans la configuration des Modules. Le champ `remote` sélectionne
+le remote Git du checkout lié ; à la validation, Jarvis résout chaque ID vers
+l'identité du provider portée par ce remote. Pour GitHub, les URLs HTTPS et SSH
+(avec ou sans `.git`) produisent la même identité `owner/name`. Un Module ne
+remplace donc pas l'ID portable par un slug provider et ne choisit jamais un
+remote ou un dépôt par position dans la liste.
+
+Une référence inconnue, un remote absent, un provider non supporté ou une identité
+ambiguë produit un finding avant l'activation et bloque tout appel provider. Une
+ancienne référence `owner/name` reste lisible uniquement lorsqu'un seul repository
+déclaré correspond exactement ; l'interface propose alors de la remplacer par
+l'ID portable et expose une confirmation qui ne modifie que le Draft en mémoire.
+L'écriture du `.jarvis/project.yaml` commité reste une sauvegarde explicite
+séparée ; aucune normalisation silencieuse n'est effectuée.
+
+Les snapshots activés avant la persistance des identités portent un finding de
+migration visible sur les projets actifs. Les opérations provider restent
+suspendues jusqu'à une validation puis une réactivation explicite ; cette
+réactivation met à jour le snapshot existant en place, sans créer une seconde
+composition résolue.
+
 ## Project template
 
 Un template accélère le setup sans masquer la composition :

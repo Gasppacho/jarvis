@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import type { Clock } from "../../../../packages/kernel/src/clock.js";
+import type { ProjectRepositoryIdentity } from "../../../../packages/module-sdk/src/index.js";
 import type {
   ProjectBindings,
   ProjectModuleInstanceConfiguration,
@@ -16,6 +17,8 @@ import type { ProjectStatus } from "./types.js";
 export interface ResolvedProjectSnapshot {
   readonly composition: StoredPortableProjectConfiguration;
   readonly moduleInstances: readonly ProjectModuleInstanceConfiguration[];
+  /** GitHub/provider identities resolved from the bound repository at activation. */
+  readonly repositoryIdentities?: readonly ProjectRepositoryIdentity[];
   readonly bindings: {
     readonly slots: ProjectBindings["slots"];
     readonly repository: { readonly path: string; readonly bookmarkRef: string | null };
@@ -145,8 +148,10 @@ export class ProjectStore {
   /**
    * Freezes the Resolved Project for `compositionFingerprint` and moves the
    * Project to `active`, atomically. A repeat activation carrying the same
-   * fingerprint as the one already recorded writes no second Resolved
-   * Project row — only `projects.status`/`updated_at` are touched again.
+   * fingerprint as the one already recorded writes no second Resolved Project
+   * row. If the validated repository identity changed outside the composition
+   * fingerprint, the existing row is refreshed in place so active consumers
+   * cannot retain a stale provider target.
    */
   activateProject(
     projectId: string,
@@ -156,11 +161,17 @@ export class ProjectStore {
     return this.db.transaction(() => {
       const existing = this.db
         .prepare(
-          "SELECT composition_fingerprint FROM project_resolved_compositions WHERE project_id = ?",
+          "SELECT composition_fingerprint, resolved_project FROM project_resolved_compositions WHERE project_id = ?",
         )
-        .get(projectId) as { composition_fingerprint: string } | undefined;
+        .get(projectId) as
+        { composition_fingerprint: string; resolved_project: string } | undefined;
       const now = this.clock.now().toISOString();
-      if (existing === undefined || existing.composition_fingerprint !== compositionFingerprint) {
+      const serializedSnapshot = JSON.stringify(snapshot);
+      if (
+        existing === undefined ||
+        existing.composition_fingerprint !== compositionFingerprint ||
+        existing.resolved_project !== serializedSnapshot
+      ) {
         this.db
           .prepare(
             `INSERT INTO project_resolved_compositions
@@ -174,7 +185,7 @@ export class ProjectStore {
           .run({
             projectId,
             fingerprint: compositionFingerprint,
-            snapshot: JSON.stringify(snapshot),
+            snapshot: serializedSnapshot,
             now,
           });
       }

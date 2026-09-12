@@ -37,6 +37,16 @@ export const handleChangeRequestCreationRequested: ModuleHandler = async (
   if (ctx.repositoryId !== request.repositoryId) {
     throw invalidRequest("The request repository does not match its Event repository.");
   }
+  const repository = ctx.repository;
+  if (
+    repository === undefined ||
+    repository.provider !== "github" ||
+    repository.owner.toLowerCase() !== reference.owner.toLowerCase() ||
+    repository.name.toLowerCase() !== reference.repository.toLowerCase()
+  ) {
+    throw invalidRequest("The Work Item repository is not linked to the Project repository.");
+  }
+  const githubRepositoryId = `${repository.owner}/${repository.name}`;
   const idempotencyKey = ctx.event.idempotencyKey;
   if (idempotencyKey === undefined || idempotencyKey.length === 0) {
     throw invalidRequest("The request idempotency key is required.");
@@ -72,7 +82,7 @@ export const handleChangeRequestCreationRequested: ModuleHandler = async (
       let lookup: Awaited<ReturnType<typeof githubApi.get>>;
       try {
         lookup = await githubApi.get(
-          `/repos/${reference.owner}/${reference.repository}/pulls?head=${encodeURIComponent(request.headBranch)}&state=open`,
+          `/repos/${githubRepositoryId}/pulls?head=${encodeURIComponent(request.headBranch)}&state=open`,
         );
       } catch (error) {
         if (error instanceof GitHubTranslationError) throw error;
@@ -95,7 +105,7 @@ export const handleChangeRequestCreationRequested: ModuleHandler = async (
 
     const response = await githubApi.request({
       method: "POST",
-      path: `/repos/${reference.owner}/${reference.repository}/pulls`,
+      path: `/repos/${githubRepositoryId}/pulls`,
       body: { ...buildGitHubPullRequestBody(request) },
     });
     const created = translateGitHubPullRequestResponse(response, request);

@@ -64,8 +64,8 @@ export function discoverRepository(root: unknown): RepositoryDiscovery {
 
   return {
     isGitRepository: git !== undefined,
-    remoteUrl: remote?.url ?? null,
-    provider: remote === undefined ? null : providerFor(remote.url),
+    remoteUrl: remote?.url === undefined ? null : publicRemoteUrl(remote.url),
+    provider: remote?.url === undefined ? null : providerFor(remote.url),
     defaultBranch: defaultBranch ?? null,
     packageManager,
     scripts: manifest?.scripts ?? {},
@@ -131,21 +131,33 @@ function readCommonDir(gitDir: string): string {
   }
 }
 
-interface Remote {
+export interface RepositoryRemote {
   readonly name: string;
-  readonly url: string;
+  readonly url: string | undefined;
+  readonly urls: readonly string[];
 }
 
 /** Remotes are parsed from the common directory's `config`, origin preferred. */
-function readRemote(commonDir: string): Remote | undefined {
+function readRemote(commonDir: string): RepositoryRemote | undefined {
+  return selectRemote(readRemotes(commonDir));
+}
+
+/** Reads every configured remote without choosing one on the caller's behalf. */
+export function readRepositoryRemotes(root: unknown): readonly RepositoryRemote[] {
+  const canonical = requireRepositoryDirectory(root);
+  const git = readGitDirectory(canonical);
+  return git === undefined ? [] : readRemotes(git.commonDir);
+}
+
+function readRemotes(commonDir: string): RepositoryRemote[] {
   let text: string;
   try {
     text = readFileSync(join(commonDir, "config"), "utf8");
   } catch {
-    return undefined;
+    return [];
   }
 
-  const remotes: Record<string, string> = {};
+  const remotes: Record<string, string[]> = {};
   let section = "";
   for (const line of text.split("\n")) {
     const sectionMatch = line.match(/^\s*\[([^\]]+)\]\s*$/);
@@ -157,30 +169,103 @@ function readRemote(commonDir: string): Remote | undefined {
     if (keyMatch === null || keyMatch[1] !== "url" || keyMatch[2] === undefined) continue;
     if (!section.startsWith("remote ")) continue;
     const name = section.slice("remote ".length).trim().replace(/^"|"$/g, "").trim();
-    if (name !== "") remotes[name] = keyMatch[2];
+    if (name !== "") (remotes[name] ??= []).push(keyMatch[2]);
   }
 
-  if (remotes["origin"] !== undefined) return { name: "origin", url: remotes["origin"] };
-  const entries = Object.entries(remotes);
-  const [only] = entries;
+  return Object.entries(remotes).map(([name, urls]) => ({
+    name,
+    url: urls.length === 1 ? urls[0] : undefined,
+    urls,
+  }));
+}
+
+function selectRemote(remotes: readonly RepositoryRemote[]): RepositoryRemote | undefined {
+  const origin = remotes.find((remote) => remote.name === "origin");
+  if (origin !== undefined) return origin;
   // With several remotes and no origin the default cannot be guessed.
-  return entries.length === 1 && only !== undefined ? { name: only[0], url: only[1] } : undefined;
+  return remotes.length === 1 ? remotes[0] : undefined;
 }
 
 function providerFor(remoteUrl: string): string | null {
-  let host: string | undefined;
+  return providerForHost(remoteLocation(remoteUrl).host);
+}
+
+function publicRemoteUrl(remoteUrl: string): string {
+  const value = remoteUrl.trim();
   try {
-    host = new URL(remoteUrl).hostname;
+    const parsed = new URL(value);
+    if (
+      parsed.username !== "" ||
+      parsed.password !== "" ||
+      parsed.search !== "" ||
+      parsed.hash !== ""
+    ) {
+      parsed.username = "";
+      parsed.password = "";
+      parsed.search = "";
+      parsed.hash = "";
+      return parsed.toString();
+    }
   } catch {
-    // scp-like syntax: `git@github.com:owner/repo.git`
-    const match = remoteUrl.match(/^git@([^:/]+):/);
-    host = match?.[1];
+    // scp-like URLs have no URL credentials to remove.
   }
+  const metadata = value.search(/[?#]/);
+  return metadata === -1 ? value : value.slice(0, metadata);
+}
+
+function providerForHost(host: string | undefined): string | null {
   if (host === undefined) return null;
-  if (host === "github.com" || host.endsWith(".github.com")) return "github";
-  if (host === "gitlab.com" || host.endsWith(".gitlab.com")) return "gitlab";
-  if (host === "bitbucket.org") return "bitbucket";
+  const normalizedHost = host.toLowerCase();
+  if (normalizedHost === "github.com" || normalizedHost.endsWith(".github.com")) return "github";
+  if (normalizedHost === "gitlab.com" || normalizedHost.endsWith(".gitlab.com")) return "gitlab";
+  if (normalizedHost === "bitbucket.org") return "bitbucket";
   return null;
+}
+
+export interface ParsedRepositoryRemote {
+  readonly provider: string | null;
+  readonly owner?: string;
+  readonly repository?: string;
+}
+
+/** Parses the same HTTPS and SSH/scp-like remotes accepted during import. */
+export function parseRepositoryRemote(remoteUrl: string): ParsedRepositoryRemote {
+  const { host, path } = remoteLocation(remoteUrl);
+  const provider = providerForHost(host);
+  if (host === undefined || path === undefined) return { provider };
+  const parts = path
+    .replace(/^\/+|\/+$/g, "")
+    .replace(/\.git$/i, "")
+    .split("/");
+  const [owner, repository] = parts;
+  if (
+    parts.length !== 2 ||
+    owner === undefined ||
+    repository === undefined ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(owner) ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(repository)
+  ) {
+    return { provider };
+  }
+  return { provider, owner, repository };
+}
+
+function remoteLocation(remoteUrl: string): {
+  readonly host?: string;
+  readonly path?: string;
+} {
+  const value = remoteUrl.trim();
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "ssh:") return {};
+    return { host: parsed.hostname, path: parsed.pathname };
+  } catch {
+    // Accept the standard scp-like form, including an arbitrary SSH user.
+    const match = /^(?:[^@\s/:]+@)?([^:/\s]+):(.+)$/.exec(value);
+    if (match === null || match[1] === undefined || match[2] === undefined) return {};
+    const path = match[2].split(/[?#]/, 1)[0];
+    return path === undefined || path === "" ? { host: match[1] } : { host: match[1], path };
+  }
 }
 
 /** `ref: refs/heads/<branch>` names the branch; a raw object id is detached. */

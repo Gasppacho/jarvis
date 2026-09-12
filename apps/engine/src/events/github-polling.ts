@@ -1,6 +1,7 @@
 import type {
   GitHubApi,
   ModuleHandlerCapabilities,
+  ProjectRepositoryIdentity,
   PollCursorCapability,
 } from "../../../../packages/module-sdk/src/index.js";
 import type { Clock } from "../../../../packages/kernel/src/clock.js";
@@ -16,6 +17,11 @@ import {
 } from "../../../../packages/modules/github/src/translation.js";
 import type { ProjectModuleInstanceConfiguration } from "../../../../packages/project-runtime/src/project-types.js";
 import type { ProjectStore, ResolvedProjectSnapshot } from "../projects/store.js";
+import type {
+  ProjectRepositoryResolver,
+  RepositoryResolution,
+} from "../projects/repository-resolution.js";
+import { configuredRepositoryReferences } from "../projects/repository-resolution.js";
 import type { EventPublisher } from "./publisher.js";
 import { failpoint } from "../test-support/failpoint.js";
 
@@ -48,6 +54,7 @@ export interface GitHubPollingDependencies {
   readonly transaction: <Result>(operation: () => Result) => Result;
   readonly ids: Pick<IdGenerator, "next">;
   readonly clock: Pick<Clock, "now">;
+  readonly repositoryResolver: Pick<ProjectRepositoryResolver, "resolve">;
   readonly pollIntervalMs?: number;
 }
 
@@ -127,15 +134,33 @@ export class GitHubPollingScheduler {
       return;
     }
 
-    const repositories = configuredRepositories(instance.configuration);
+    const repositories = configuredRepositoryReferences(instance.configuration);
     await Promise.all(
-      repositories.map((repositoryId, index) => {
-        const portableRepositoryId = portableRepository(snapshot, repositoryId, index);
+      repositories.map((configuredReference) => {
+        let resolution: RepositoryResolution;
+        try {
+          resolution = resolveRepository(
+            snapshot,
+            configuredReference,
+            this.dependencies.repositoryResolver,
+          );
+        } catch {
+          logPollingFailure(projectId, instance.instanceId, "unresolved", "repository-unresolved");
+          return;
+        }
+        if (resolution.status !== "resolved") {
+          logPollingFailure(
+            projectId,
+            instance.instanceId,
+            "unresolved",
+            `repository-${resolution.status}`,
+          );
+          return;
+        }
         return this.pollRepository(
           projectId,
           instance.instanceId,
-          repositoryId,
-          portableRepositoryId,
+          resolution.repository,
           githubApi,
           pollCursor,
           externalMappings,
@@ -148,30 +173,22 @@ export class GitHubPollingScheduler {
   private async pollRepository(
     projectId: string,
     moduleInstanceId: string,
-    githubRepositoryId: string,
-    repositoryId: string | undefined,
+    repository: ProjectRepositoryIdentity,
     githubApi: GitHubApi,
     pollCursor: PollCursorCapability,
     externalMappings: NonNullable<ModuleHandlerCapabilities["externalMappings"]>,
     configuration: Readonly<Record<string, unknown>> | undefined,
   ): Promise<void> {
+    const repositoryId = repository.repositoryId;
+    const githubRepositoryId = `${repository.owner}/${repository.name}`;
     try {
-      const repositoryParts = githubRepositoryId.split("/").filter((part) => part !== "");
-      if (repositoryParts.length !== 2) {
-        throw new Error("invalid repository");
-      }
-      const [owner, repository] = repositoryParts;
-      if (owner === undefined || repository === undefined) throw new Error("invalid repository");
-      if (repositoryId === undefined) {
-        await githubApi.get(issueEventsPath(githubRepositoryId));
-        return;
-      }
+      if (repository.provider !== "github") throw new Error("unsupported repository provider");
       const cursor = pollCursor.read(repositoryId);
       const observed = await readIssueEvents(
         githubApi,
         githubRepositoryId,
-        owner,
-        repository,
+        repository.owner,
+        repository.name,
         cursor,
       );
       if (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) {
@@ -231,6 +248,14 @@ export class GitHubPollingScheduler {
   }
 }
 
+function resolveRepository(
+  snapshot: ResolvedProjectSnapshot,
+  configuredReference: string,
+  resolver: Pick<ProjectRepositoryResolver, "resolve">,
+): RepositoryResolution {
+  return resolver.resolve(snapshot, configuredReference);
+}
+
 interface ObservedIssueEvents {
   readonly events: GitHubIssueEventTranslation[];
   readonly newest: GitHubIssueEventPosition | undefined;
@@ -269,29 +294,6 @@ async function readIssueEvents(
     }
   }
   return { events, newest };
-}
-
-function configuredRepositories(
-  configuration: Readonly<Record<string, unknown>> | undefined,
-): readonly string[] {
-  const repositories = configuration?.["repositories"];
-  if (!Array.isArray(repositories)) return [];
-  return repositories.filter(
-    (repository): repository is string =>
-      typeof repository === "string" && repository.trim() !== "",
-  );
-}
-
-function portableRepository(
-  snapshot: ResolvedProjectSnapshot,
-  configuredRepositoryId: string,
-  configuredIndex: number,
-): string | undefined {
-  const declared = snapshot.composition.repositories.find(
-    (repository) => repository.id === configuredRepositoryId,
-  );
-  if (declared !== undefined) return declared.id;
-  return snapshot.composition.repositories[configuredIndex]?.id;
 }
 
 function bootstrapLabelPolicy(

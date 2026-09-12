@@ -43,6 +43,7 @@ import {
   ProjectResourceGrantAggregate,
 } from "./projects/resource-grants.js";
 import { ProjectStore } from "./projects/store.js";
+import { ProjectRepositoryResolver } from "./projects/repository-resolution.js";
 import { RuntimeRegistry } from "./runtimes/registry.js";
 import {
   ProjectModuleCapabilityResolver,
@@ -67,6 +68,7 @@ import {
   type ModuleHandler,
   type ModuleHandlerLookup,
   type ModulePublishedContractsLookup,
+  type ModuleRepositoryIdentityLookup,
   type ModuleRepositoryDefaultBranchLookup,
 } from "./executions/delivery-consumer.js";
 import type { DurabilityTestHooks } from "./test-support/durability-test-routes.js";
@@ -292,6 +294,7 @@ async function main(): Promise<void> {
   const runtimeGrants = new LocalAgentRuntimeRegistry(runtimes);
   const connectionGrants = new ConnectionGrantSource(connections);
   const resourceGrants = new ProjectResourceGrantAggregate([runtimeGrants, connectionGrants]);
+  const repositoryResolver = new ProjectRepositoryResolver();
   const projects =
     database === undefined || projectStore === undefined
       ? undefined
@@ -305,6 +308,7 @@ async function main(): Promise<void> {
           new EventJournalReader(database.db),
           new ExecutionLedgerReader(database.db),
           new EventingDeadLetterReader(database.db),
+          repositoryResolver,
         );
 
   // SYSTEM.md startup protocol: migrations are complete, then stale Workspace
@@ -431,6 +435,12 @@ async function main(): Promise<void> {
         .getResolvedProject(projectId)
         ?.moduleInstances.find((instance) => instance.instanceId === moduleInstanceId)
         ?.configuration;
+    const repositoryIdentity: ModuleRepositoryIdentityLookup = (projectId, repositoryId) => {
+      const snapshot = projectStore.getResolvedProject(projectId);
+      return snapshot === undefined
+        ? undefined
+        : repositoryResolver.identity(snapshot, repositoryId);
+    };
     const repositoryDefaultBranches: ModuleRepositoryDefaultBranchLookup = (
       projectId,
       repositoryId,
@@ -504,6 +514,9 @@ async function main(): Promise<void> {
       repositoryDefaultBranches,
       publishedContracts,
       capabilities.resolve.bind(capabilities),
+      undefined,
+      Math.random,
+      repositoryIdentity,
     );
     executionCancellation = consumer;
     deadLetterReplay = consumer;
@@ -531,6 +544,7 @@ async function main(): Promise<void> {
       transaction: (operation) => database.db.transaction(operation)(),
       ids,
       clock,
+      repositoryResolver,
       ...(githubPollIntervalMs === undefined ? {} : { pollIntervalMs: githubPollIntervalMs }),
     }).start();
     if (testHooksEnabled && projects !== undefined && workspaceManager !== undefined) {

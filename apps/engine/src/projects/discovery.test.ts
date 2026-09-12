@@ -73,6 +73,69 @@ describe("discoverRepository", () => {
     expect(discovery.provider).toBe("gitlab");
   });
 
+  it("does not expose an arbitrary URL when one remote has multiple URLs", () => {
+    const root = fixture();
+    writeFileSync(
+      join(root, ".git", "config"),
+      [
+        '[remote "origin"]',
+        "\turl = git@github.com:one/repo.git",
+        "\turl = git@github.com:two/repo.git",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    expect(discoverRepository(root)).toMatchObject({ remoteUrl: null, provider: null });
+  });
+
+  it("removes credentials from the public discovery result", () => {
+    const root = fixture();
+    writeFileSync(
+      join(root, ".git", "config"),
+      '[remote "origin"]\n\turl = https://secret:token@github.com/Gasppacho/jarvis.git\n',
+      "utf8",
+    );
+
+    expect(discoverRepository(root)).toMatchObject({
+      remoteUrl: "https://github.com/Gasppacho/jarvis.git",
+      provider: "github",
+    });
+    expect(JSON.stringify(discoverRepository(root))).not.toContain("token");
+  });
+
+  it("removes query and fragment data from the public discovery result", () => {
+    const root = fixture();
+    writeFileSync(
+      join(root, ".git", "config"),
+      '[remote "origin"]\n\turl = https://github.com/Gasppacho/jarvis.git?token=secret#private\n',
+      "utf8",
+    );
+
+    expect(discoverRepository(root)).toMatchObject({
+      remoteUrl: "https://github.com/Gasppacho/jarvis.git",
+      provider: "github",
+    });
+    expect(JSON.stringify(discoverRepository(root))).not.toContain("secret");
+    expect(JSON.stringify(discoverRepository(root))).not.toContain("private");
+  });
+
+  it("removes query and fragment data from scp-like discovery results", () => {
+    const root = fixture();
+    writeFileSync(
+      join(root, ".git", "config"),
+      '[remote "origin"]\n\turl = git@github.com:Gasppacho/jarvis.git?token=secret#private\n',
+      "utf8",
+    );
+
+    expect(discoverRepository(root)).toMatchObject({
+      remoteUrl: "git@github.com:Gasppacho/jarvis.git",
+      provider: "github",
+    });
+    expect(JSON.stringify(discoverRepository(root))).not.toContain("secret");
+    expect(JSON.stringify(discoverRepository(root))).not.toContain("private");
+  });
+
   it("reports no branch for a detached HEAD", () => {
     const root = fixture();
     writeFileSync(join(root, ".git", "HEAD"), "9fceb02b4f2e1e0c\n", "utf8");

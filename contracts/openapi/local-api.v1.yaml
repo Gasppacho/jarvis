@@ -1704,6 +1704,23 @@ components:
               message:
                 type: string
                 minLength: 1
+              repositoryReferenceReplacement:
+                type: object
+                additionalProperties: false
+                required: [field, from, to]
+                properties:
+                  field:
+                    type: string
+                    minLength: 1
+                  from:
+                    type: string
+                    minLength: 1
+                  to:
+                    type: string
+                    minLength: 1
+                description: >-
+                  An explicit Draft-only replacement proposed by the engine;
+                  writing the repository remains a separate user action.
               target:
                 oneOf:
                   - $ref: "#/components/schemas/ProjectFindingTarget"

@@ -477,6 +477,12 @@ public struct ProjectSatisfiedCapability: Sendable, Equatable {
     public let source: Source
 }
 
+public struct ProjectRepositoryReferenceReplacement: Sendable, Equatable {
+    public let field: String
+    public let from: String
+    public let to: String
+}
+
 public struct ProjectValidationFinding: Sendable, Equatable {
     public enum Code: String, Sendable, Equatable {
         case compositionIncomplete = "project.composition-incomplete"
@@ -562,6 +568,7 @@ public struct ProjectValidationFinding: Sendable, Equatable {
     public let severity: Severity
     public let message: String
     public let target: Target
+    public let repositoryReferenceReplacement: ProjectRepositoryReferenceReplacement?
 }
 
 public struct ProjectValidationReport: Sendable, Equatable {
@@ -644,7 +651,13 @@ public struct ProjectValidationReport: Sendable, Equatable {
                 code: code,
                 severity: severity,
                 message: finding.message,
-                target: try Self.findingTarget(finding.target))
+                target: try Self.findingTarget(finding.target),
+                repositoryReferenceReplacement: finding.repositoryReferenceReplacement.map {
+                    ProjectRepositoryReferenceReplacement(
+                        field: $0.field,
+                        from: $0.from,
+                        to: $0.to)
+                })
         }
     }
 
@@ -930,6 +943,12 @@ private struct WireProjectValidationReport: Decodable {
         let source: CapabilitySource
     }
 
+    struct RepositoryReferenceReplacement: Decodable {
+        let field: String
+        let from: String
+        let to: String
+    }
+
     struct FindingTarget: Decodable {
         let kind: String
         let field: String?
@@ -948,6 +967,7 @@ private struct WireProjectValidationReport: Decodable {
         let severity: String
         let message: String
         let target: FindingTarget
+        let repositoryReferenceReplacement: RepositoryReferenceReplacement?
     }
 
     let apiVersion: String

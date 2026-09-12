@@ -91,6 +91,257 @@ esac
     expect(await health.json()).toMatchObject({ status: "ready" });
   });
 
+  it("refuses activation for an unknown repository ID without polling a guessed provider", async () => {
+    const fakeGitHub = await startFakeGitHubApi();
+    servers.push(fakeGitHub);
+    const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-polling-invalid-gh-"));
+    roots.push(executableRoot);
+    const executable = join(executableRoot, "gh");
+    writeFileSync(executable, "#!/bin/sh\necho ghs_invalid_sentinel\n", "utf8");
+    chmodSync(executable, 0o755);
+
+    const engine = await startEngine({
+      enginePath: TEST_BUNDLE,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+        JARVIS_GITHUB_POLL_INTERVAL_MS: "25",
+      },
+    });
+    engines.push(engine);
+    await registerConnection(engine);
+    const project = await createProject(
+      engine,
+      false,
+      "ignore-existing",
+      projectConfig(false, "ignore-existing", "polling-invalid-id", ["missing"]),
+    );
+
+    const report = await bindProject(engine, project.id, project.path);
+    expect(report.valid).toBe(false);
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "error",
+          message: expect.stringContaining("Use a repository ID declared by the Project"),
+        }),
+      ]),
+    );
+    const activation = await engine.call(`/v1/projects/${project.id}/activate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ compositionFingerprint: report.compositionFingerprint }),
+    });
+    expect(activation.status).toBe(409);
+    expect(await activation.json()).toMatchObject({
+      error: { code: "project.activation-not-validated" },
+    });
+    expect(issueEventRequests(fakeGitHub)).toEqual([]);
+  });
+
+  it("refuses activation when a declared repository remote is absent", async () => {
+    const fakeGitHub = await startFakeGitHubApi();
+    servers.push(fakeGitHub);
+    const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-polling-missing-remote-gh-"));
+    roots.push(executableRoot);
+    const executable = join(executableRoot, "gh");
+    writeFileSync(executable, "#!/bin/sh\necho ghs_missing_remote_sentinel\n", "utf8");
+    chmodSync(executable, 0o755);
+
+    const configuration = projectConfig(false, "ignore-existing", "polling-missing-remote", [
+      "main",
+    ]);
+    const repositories = configuration["repositories"] as Record<string, unknown>[];
+    const main = repositories.find((repository) => repository["id"] === "main");
+    if (main === undefined) throw new Error("main repository declaration is missing");
+    main["remote"] = "missing";
+
+    const engine = await startEngine({
+      enginePath: TEST_BUNDLE,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+        JARVIS_GITHUB_POLL_INTERVAL_MS: "25",
+      },
+    });
+    engines.push(engine);
+    await registerConnection(engine);
+    const project = await createProject(engine, false, "ignore-existing", configuration);
+    const report = await bindProject(engine, project.id, project.path);
+    expect(report.valid).toBe(false);
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "error",
+          message: expect.stringContaining("Configure the declared remote"),
+        }),
+      ]),
+    );
+    const activation = await engine.call(`/v1/projects/${project.id}/activate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ compositionFingerprint: report.compositionFingerprint }),
+    });
+    expect(activation.status).toBe(409);
+    expect(await activation.json()).toMatchObject({
+      error: { code: "project.activation-not-validated" },
+    });
+    expect(issueEventRequests(fakeGitHub)).toEqual([]);
+  });
+
+  it("refuses activation when the selected remote uses an unsupported provider", async () => {
+    const fakeGitHub = await startFakeGitHubApi();
+    servers.push(fakeGitHub);
+    const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-polling-unsupported-gh-"));
+    roots.push(executableRoot);
+    const executable = join(executableRoot, "gh");
+    writeFileSync(executable, "#!/bin/sh\necho ghs_unsupported_provider_sentinel\n", "utf8");
+    chmodSync(executable, 0o755);
+
+    const configuration = projectConfig(false, "ignore-existing", "polling-unsupported-provider", [
+      "main",
+    ]);
+    const repositories = configuration["repositories"] as Record<string, unknown>[];
+    const main = repositories.find((repository) => repository["id"] === "main");
+    if (main === undefined) throw new Error("main repository declaration is missing");
+    main["remote"] = "gitlab";
+
+    const engine = await startEngine({
+      enginePath: TEST_BUNDLE,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+        JARVIS_GITHUB_POLL_INTERVAL_MS: "25",
+      },
+    });
+    engines.push(engine);
+    await registerConnection(engine);
+    const project = await createProject(engine, false, "ignore-existing", configuration, [
+      { name: "gitlab", url: "git@gitlab.com:Other/repo.git" },
+    ]);
+    const report = await bindProject(engine, project.id, project.path);
+    expect(report.valid).toBe(false);
+    expect(report.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "error",
+          message: expect.stringContaining("Select a supported GitHub remote"),
+        }),
+      ]),
+    );
+    const activation = await engine.call(`/v1/projects/${project.id}/activate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ compositionFingerprint: report.compositionFingerprint }),
+    });
+    expect(activation.status).toBe(409);
+    expect(await activation.json()).toMatchObject({
+      error: { code: "project.activation-not-validated" },
+    });
+    expect(issueEventRequests(fakeGitHub)).toEqual([]);
+  });
+
+  it("makes a pre-#188 active snapshot explicitly refreshable", async () => {
+    const fakeGitHub = await startFakeGitHubApi();
+    servers.push(fakeGitHub);
+    const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-polling-migration-gh-"));
+    const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-polling-migration-data-"));
+    roots.push(executableRoot, dataRoot);
+    const executable = join(executableRoot, "gh");
+    writeFileSync(executable, "#!/bin/sh\necho ghs_migration_sentinel\n", "utf8");
+    chmodSync(executable, 0o755);
+
+    const engineOptions = {
+      enginePath: TEST_BUNDLE,
+      dataRoot,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+        JARVIS_GITHUB_POLL_INTERVAL_MS: "60000",
+      },
+    } as const;
+    const engine = await startEngine(engineOptions);
+    engines.push(engine);
+    await registerConnection(engine);
+    const project = await createProject(
+      engine,
+      false,
+      "ignore-existing",
+      projectConfig(false, "ignore-existing", "polling-migration", ["main"]),
+    );
+    const report = await bindProject(engine, project.id, project.path);
+    expect(report.valid).toBe(true);
+    const fingerprint = report.compositionFingerprint;
+    if (fingerprint === undefined) throw new Error("validation fingerprint is missing");
+    const activated = await engine.call(`/v1/projects/${project.id}/activate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ compositionFingerprint: fingerprint }),
+    });
+    expect(activated.status, await activated.clone().text()).toBe(200);
+
+    await engine.dispose();
+    engines.splice(engines.indexOf(engine), 1);
+    const database = new Database(join(dataRoot, "jarvis.sqlite"));
+    const row = database
+      .prepare("SELECT resolved_project FROM project_resolved_compositions WHERE project_id = ?")
+      .get(project.id) as { resolved_project: string };
+    const oldSnapshot = JSON.parse(row.resolved_project) as Record<string, unknown>;
+    delete oldSnapshot["repositoryIdentities"];
+    database
+      .prepare("UPDATE project_resolved_compositions SET resolved_project = ? WHERE project_id = ?")
+      .run(JSON.stringify(oldSnapshot), project.id);
+    database.close();
+
+    const restarted = await startEngine(engineOptions);
+    engines.push(restarted);
+    expect(issueEventRequests(fakeGitHub)).toEqual([]);
+    const migrationResponse = await restarted.call(`/v1/projects/${project.id}/validation-report`, {
+      method: "POST",
+    });
+    const migrationReport = (await migrationResponse.json()) as {
+      readonly valid: boolean;
+      readonly compositionFingerprint?: string;
+      readonly findings: readonly { readonly code: string; readonly severity: string }[];
+    };
+    expect(migrationReport.valid).toBe(true);
+    expect(migrationReport.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "project.instance-config-invalid",
+          severity: "warning",
+        }),
+      ]),
+    );
+
+    const refreshed = await restarted.call(`/v1/projects/${project.id}/activate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ compositionFingerprint: migrationReport.compositionFingerprint }),
+    });
+    expect(refreshed.status, await refreshed.clone().text()).toBe(200);
+    await restarted.dispose();
+    engines.splice(engines.indexOf(restarted), 1);
+    const refreshedDatabase = new Database(join(dataRoot, "jarvis.sqlite"));
+    const refreshedRow = refreshedDatabase
+      .prepare("SELECT resolved_project FROM project_resolved_compositions WHERE project_id = ?")
+      .get(project.id) as { resolved_project: string };
+    const refreshedSnapshot = JSON.parse(refreshedRow.resolved_project) as {
+      readonly repositoryIdentities: readonly Record<string, string>[];
+    };
+    expect(refreshedSnapshot.repositoryIdentities).toContainEqual({
+      repositoryId: "main",
+      provider: "github",
+      owner: "Gasppacho",
+      name: "jarvis",
+    });
+    refreshedDatabase.close();
+  });
+
   it("publishes ordered label facts, advances the cursor, and delivers them in-project", async () => {
     const fakeGitHub = await startFakeGitHubApi();
     servers.push(fakeGitHub);
@@ -566,7 +817,7 @@ esac
       engine,
       false,
       "ignore-existing",
-      multiRepositoryConfig(["Gasppacho/jarvis", "Other/repo", "Unowned/repo"]),
+      multiRepositoryConfig(["secondary", "main"]),
     );
     await bindAndActivate(engine, project.id, project.path);
     await waitForRequest(fakeGitHub, "/repos/Gasppacho/jarvis/issues/events");
@@ -676,7 +927,7 @@ esac
       engine,
       false,
       "ignore-existing",
-      multiRepositoryConfig(["Gasppacho/jarvis"]),
+      multiRepositoryConfig(["main"]),
     );
     await bindAndActivate(engine, project.id, project.path);
     await waitForRequest(fakeGitHub, "/repos/Gasppacho/jarvis/issues/events");
@@ -691,7 +942,7 @@ esac
       actor: "octocat",
       createdAt: "2026-09-11T10:06:00.000Z",
     });
-    const addedConfig = multiRepositoryConfig(["Gasppacho/jarvis", "Other/repo"]);
+    const addedConfig = multiRepositoryConfig(["main", "secondary"]);
     const drafted = await engine.call(`/v1/projects/${project.id}/configuration`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -772,20 +1023,20 @@ esac
       engine,
       false,
       "ignore-existing",
-      projectConfig(false, "ignore-existing", "project-a", ["Gasppacho/jarvis"]),
+      projectConfig(false, "ignore-existing", "project-a", ["main"]),
     );
     const projectB = await createProject(
       engine,
       false,
       "ignore-existing",
-      projectConfig(false, "ignore-existing", "project-b", ["Other/repo"]),
+      projectConfig(false, "ignore-existing", "project-b", ["secondary"]),
     );
     await bindAndActivate(engine, projectA.id, projectA.path, "connection/github-a");
     await bindAndActivate(engine, projectB.id, projectB.path, "connection/github-b");
     await waitForRequest(fakeGitHub, "/repos/Gasppacho/jarvis/issues/events");
     await waitForRequest(fakeGitHub, "/repos/Other/repo/issues/events");
     await waitForCursor(engine.dataRoot, "bootstrap-empty", projectA.id);
-    await waitForCursor(engine.dataRoot, "bootstrap-empty", projectB.id);
+    await waitForCursor(engine.dataRoot, "bootstrap-empty", projectB.id, "secondary");
 
     fakeGitHub.appendLabeledIssueEvent({
       owner: "Gasppacho",
@@ -1034,8 +1285,14 @@ async function createProject(
   withSubscriber = false,
   bootstrapLabelPolicy: "ignore-existing" | "emit-existing" = "ignore-existing",
   configuration = projectConfig(withSubscriber, bootstrapLabelPolicy),
+  additionalRemotes: readonly { readonly name: string; readonly url: string }[] = [],
 ): Promise<{ readonly id: string; readonly path: string }> {
   const projectPath = makeNodeRepositoryFixture({
+    remoteUrl: "git@github.com:Gasppacho/jarvis.git",
+    additionalRemotes: [
+      { name: "upstream", url: "git@github.com:Other/repo.git" },
+      ...additionalRemotes,
+    ],
     projectYaml: stringifyYaml(configuration),
   });
   roots.push(projectPath);
@@ -1057,6 +1314,26 @@ async function bindAndActivate(
   repositoryPath: string,
   connectionRef = "connection/github-polling",
 ): Promise<void> {
+  const report = await bindProject(engine, projectId, repositoryPath, connectionRef);
+  expect(report.valid, JSON.stringify(report)).toBe(true);
+  const activated = await engine.call(`/v1/projects/${projectId}/activate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ compositionFingerprint: report.compositionFingerprint }),
+  });
+  expect(activated.status, await activated.clone().text()).toBe(200);
+}
+
+async function bindProject(
+  engine: Harness,
+  projectId: string,
+  repositoryPath: string,
+  connectionRef = "connection/github-polling",
+): Promise<{
+  readonly valid: boolean;
+  readonly compositionFingerprint?: string;
+  readonly findings?: readonly { readonly severity: string; readonly message: string }[];
+}> {
   const repositoryBinding = await engine.call(
     `/v1/projects/${projectId}/repositories/main/binding`,
     {
@@ -1093,22 +1370,17 @@ async function bindAndActivate(
   const report = (await reportResponse.json()) as {
     readonly valid: boolean;
     readonly compositionFingerprint?: string;
+    readonly findings?: readonly { readonly severity: string; readonly message: string }[];
   };
   expect(reportResponse.status, JSON.stringify(report)).toBe(200);
-  expect(report.valid, JSON.stringify(report)).toBe(true);
-  const activated = await engine.call(`/v1/projects/${projectId}/activate`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ compositionFingerprint: report.compositionFingerprint }),
-  });
-  expect(activated.status, await activated.clone().text()).toBe(200);
+  return report;
 }
 
 function projectConfig(
   withSubscriber = false,
   bootstrapLabelPolicy: "ignore-existing" | "emit-existing" = "ignore-existing",
   projectId = "polling-project",
-  githubRepositories: readonly string[] = ["Gasppacho/jarvis", "Other/repo"],
+  githubRepositories: readonly string[] = ["main", "secondary"],
 ): Record<string, unknown> {
   const configuration = parseYaml(
     readFileSync(join(ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
@@ -1128,6 +1400,10 @@ function projectConfig(
     tickets: { requires: "work-items.read" },
     agentRuntime: { requires: "agent.execute" },
   };
+  configuration["repositories"] = [
+    { id: "main", root: ".", defaultBranch: "main", remote: "origin" },
+    { id: "secondary", root: ".", defaultBranch: "main", remote: "upstream" },
+  ];
   configuration["modules"] = [
     {
       instanceId: "github",
@@ -1184,9 +1460,7 @@ function multiRepositoryConfig(githubRepositories: readonly string[]): Record<st
 }
 
 function endToEndConfig(): Record<string, unknown> {
-  const configuration = projectConfig(true, "ignore-existing", "polling-project", [
-    "Gasppacho/jarvis",
-  ]);
+  const configuration = projectConfig(true, "ignore-existing", "polling-project", ["main"]);
   const modules = configuration["modules"] as Record<string, unknown>[];
   const automationRules = modules.find((module) => module["instanceId"] === "automation-rules");
   if (automationRules === undefined) throw new Error("automation-rules module is missing");

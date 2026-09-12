@@ -222,7 +222,10 @@ export function buildProjectCompositionGraph(
     nodes,
     edges,
     rail,
-    findings: findings.map((finding, index) => ({ ...finding, id: `f${index + 1}` })),
+    findings: findings.map((finding, index) => {
+      const { repositoryReferenceReplacement: _replacement, ...wireFinding } = finding;
+      return { ...wireFinding, id: `f${index + 1}` };
+    }),
   };
 }
 

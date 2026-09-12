@@ -692,8 +692,20 @@ final class ProjectConfigurationTests: XCTestCase {
             .setModuleConfiguration(moduleId, "pollIntervalSeconds", "60"),
             projectId: imported.id, packages: catalog.packages)
         configuration.apply(
-            .setModuleConfiguration(moduleId, "repositories", #"["main"]"#),
+            .setModuleConfiguration(moduleId, "repositories", #"["Gasppacho/jarvis"]"#),
             projectId: imported.id, packages: catalog.packages)
+        configuration.applyRepositoryReferenceReplacement(
+            projectId: imported.id,
+            moduleInstanceID: "github-primary",
+            replacement: ProjectRepositoryReferenceReplacement(
+                field: "/configuration/repositories",
+                from: "Gasppacho/jarvis",
+                to: "main"))
+        XCTAssertEqual(
+            configuration.state(for: imported.id).draft?.modules.first?.configurationValues[
+                "repositories"],
+            #"["main"]"#)
+        XCTAssertFalse(configuration.state(for: imported.id).isDraftSaved)
 
         let editorState = configuration.state(for: imported.id)
         let presentation = ProjectDetailPresentation(

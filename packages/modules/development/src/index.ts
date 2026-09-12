@@ -982,7 +982,7 @@ async function readWorkItem(
   const capability = ctx.capabilities.workItems;
   if (capability === undefined) return undefined;
   try {
-    return await capability.read(workItemRef);
+    return await capability.read(workItemRef, ctx.repositoryId);
   } catch {
     ctx.recordCheckpoint({
       type: "agent.message",

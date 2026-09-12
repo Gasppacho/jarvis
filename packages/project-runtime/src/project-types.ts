@@ -300,6 +300,12 @@ export interface ProjectValidationFinding {
   readonly severity: "error" | "warning";
   readonly message: string;
   readonly target: ProjectValidationFindingTarget;
+  /** A safe, explicit Draft-only repair proposal for the macOS editor. */
+  readonly repositoryReferenceReplacement?: {
+    readonly field: string;
+    readonly from: string;
+    readonly to: string;
+  };
 }
 
 export interface ProjectValidationReport {

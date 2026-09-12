@@ -15,6 +15,18 @@ public struct ProjectDetailView: View {
         case deadLetters
     }
 
+    private struct PendingRepositoryNormalization: Identifiable {
+        let id: String
+        let moduleInstanceID: String
+        let replacement: ProjectRepositoryReferenceReplacement
+
+        init(moduleInstanceID: String, replacement: ProjectRepositoryReferenceReplacement) {
+            id = "\(moduleInstanceID):\(replacement.field):\(replacement.from):\(replacement.to)"
+            self.moduleInstanceID = moduleInstanceID
+            self.replacement = replacement
+        }
+    }
+
     let projects: ProjectsModel
     let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
@@ -24,6 +36,7 @@ public struct ProjectDetailView: View {
     let project: Project
 
     @State private var isDeleteConfirmationPresented = false
+    @State private var pendingRepositoryNormalization: PendingRepositoryNormalization?
     @State private var newSlotName = ""
     @State private var newSlotRequirement = ""
     @State private var selectedCompositionID: String?
@@ -95,6 +108,19 @@ public struct ProjectDetailView: View {
         } message: {
             Text(presentation.deletionConfirmation.message)
         }
+        .alert(item: $pendingRepositoryNormalization) { proposal in
+            Alert(
+                title: Text("Normalize repository reference?"),
+                message: Text(
+                    "Replace \(proposal.replacement.from) with \(proposal.replacement.to) in the Draft for Module Instance \(proposal.moduleInstanceID). The repository file changes only when you explicitly save and write .jarvis/project.yaml."),
+                primaryButton: .default(Text("Apply to Draft")) {
+                    projectConfiguration.applyRepositoryReferenceReplacement(
+                        projectId: project.id,
+                        moduleInstanceID: proposal.moduleInstanceID,
+                        replacement: proposal.replacement)
+                },
+                secondaryButton: .cancel())
+        }
     }
 
     /// Everything this screen showed before ticket #61, unchanged: moved
@@ -111,7 +137,7 @@ public struct ProjectDetailView: View {
                             localBindingsEditor
                             compositionReview(proxy)
                             compositionOutline
-                            validationReport
+                            validationReport(proxy)
                             activationSection
                             saveActions
                         } else {
@@ -991,7 +1017,7 @@ public struct ProjectDetailView: View {
         .id("composition-selection-detail")
     }
 
-    private var validationReport: some View {
+    private func validationReport(_ proxy: ScrollViewProxy) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Validation Report").sectionLabel()
             Label(
@@ -1031,11 +1057,28 @@ public struct ProjectDetailView: View {
                     Text(finding.unavailable).font(.callout.weight(.semibold))
                     Text(finding.impact).font(.callout)
                     Text(finding.correctiveAction).font(.callout)
+                    if let replacement = finding.repositoryReferenceReplacement,
+                        let moduleInstanceID = finding.moduleInstanceID
+                    {
+                        Button("Propose \(replacement.to) in Draft") {
+                            pendingRepositoryNormalization =
+                                PendingRepositoryNormalization(
+                                    moduleInstanceID: moduleInstanceID,
+                                    replacement: replacement)
+                        }
+                        .buttonStyle(.link)
+                    }
+                    if let target = finding.navigationTarget {
+                        Button("Edit the affected Draft field") {
+                            withAnimation { proxy.scrollTo(target, anchor: .center) }
+                        }
+                        .buttonStyle(.link)
+                    }
                     Text("Engine detail: \(finding.diagnostic)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                .accessibilityElement(children: .combine)
+                .accessibilityElement(children: .contain)
                 .accessibilityLabel(finding.accessibilityLabel)
             }
 

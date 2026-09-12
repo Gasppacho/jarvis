@@ -168,6 +168,40 @@ final class ProjectValidationTests: XCTestCase {
             })
     }
 
+    func testHistoricalRepositoryFindingProposesPortableIDNormalization() throws {
+        let project = Project(
+            id: "validation-fixture",
+            name: "Validation Fixture",
+            status: .draft,
+            moduleCount: 2,
+            activeExecutions: nil)
+        let historicalMessage =
+            "GitHub Module Instance \"github\" uses historical repository reference \"Gasppacho/jarvis\". Impact: compatibility resolution targets portable repository ID \"main\". Action: replace it with that portable repository ID and save the Draft; the committed .jarvis/project.yaml changes only when you explicitly write it."
+        let encodedMessage = try XCTUnwrap(
+            String(data: JSONEncoder().encode(historicalMessage), encoding: .utf8))
+        var state = ProjectConfigurationState()
+        state.validation = .invalid(
+            try decodeReport(
+                fixture(valid: false, includesFindings: true).replacingOccurrences(
+                    of: "\"field\":\"/configuration\"",
+                    with: "\"field\":\"/configuration/repositories/legacy\"")
+                    .replacingOccurrences(
+                        of: "\"message\":\"config\"", with: "\"message\":" + encodedMessage)))
+
+        let presentation = ProjectDetailPresentation(
+            project: project, detail: nil, state: state, packages: [])
+        let finding = try XCTUnwrap(
+            presentation.validation.findings.first {
+                $0.reference.hasSuffix("/field/configuration/repositories/legacy")
+            })
+        XCTAssertTrue(finding.correctiveAction.contains("portable repository ID"))
+        XCTAssertTrue(finding.correctiveAction.contains("save the Draft"))
+        XCTAssertTrue(finding.diagnostic.contains("committed .jarvis/project.yaml changes only"))
+        XCTAssertEqual(finding.navigationTarget, "module-instance-development")
+        XCTAssertEqual(finding.repositoryReferenceReplacement?.from, "Gasppacho/jarvis")
+        XCTAssertEqual(finding.repositoryReferenceReplacement?.to, "main")
+    }
+
     func testStepFiveDerivesActivationReadinessFromOnlyTheCurrentValidReport() throws {
         let selectedProject = Project(
             id: "validation-fixture",
@@ -350,7 +384,7 @@ final class ProjectValidationTests: XCTestCase {
           {"code":"project.binding-missing","severity":"error","message":"binding","target":{"kind":"slot","slot":"sourceControl"}},
           {"code":"project.composition-incomplete","severity":"error","message":"composition","target":{"kind":"project","field":"/modules"}},
           {"code":"project.request-ambiguous","severity":"error","message":"ambiguous","target":{"kind":"request-edge","contract":{"type":"work.requested","version":1,"kind":"request"},"producer":{"instanceId":"rules","moduleId":"jarvis.module.automation-rules"},"candidates":[{"instanceId":"two","moduleId":"jarvis.module.development"},{"instanceId":"one","moduleId":"jarvis.module.development"}]}},
-          {"code":"project.instance-config-invalid","severity":"error","message":"config","target":{"kind":"module-instance","instanceId":"development","field":"/configuration"}},
+          {"code":"project.instance-config-invalid","severity":"error","message":"config","repositoryReferenceReplacement":{"field":"/configuration/repositories","from":"Gasppacho/jarvis","to":"main"},"target":{"kind":"module-instance","instanceId":"development","field":"/configuration"}},
           {"code":"project.contract-incompatible","severity":"error","message":"contract","target":{"kind":"contract-edge","producer":{"instanceId":"rules","moduleId":"jarvis.module.automation-rules","contract":{"type":"work.requested","version":1,"kind":"request"}},"consumer":{"instanceId":"development","moduleId":"jarvis.module.development","contract":{"type":"work.requested","version":2,"kind":"request"}}}},
           {"code":"project.capability-unresolved","severity":"error","message":"slot capability","target":{"kind":"capability","capability":"work-items.read","slot":"tickets"}}
         ]

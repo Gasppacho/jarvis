@@ -47,6 +47,7 @@ import {
 import type { ProjectConfigurationWriter } from "./repository-config-writer.js";
 import type { RepositoryAccessibilityPort } from "./repository-accessibility.js";
 import type { ProjectRow, ProjectStore, ResolvedProjectSnapshot } from "./store.js";
+import { ProjectRepositoryResolver } from "./repository-resolution.js";
 import type {
   BindingStatus,
   ProjectCompositionChoices,
@@ -101,6 +102,7 @@ export class ProjectService implements ProjectRegistry<
     private readonly eventJournal: EventJournalReader,
     private readonly executionLedger: ExecutionLedgerReader,
     private readonly deadLetters: DeadLetterReader = { list: () => [] },
+    private readonly repositoryResolver: ProjectRepositoryResolver = new ProjectRepositoryResolver(),
   ) {}
 
   importProject(request: ImportProjectRequest): ProjectDetail {
@@ -157,20 +159,7 @@ export class ProjectService implements ProjectRegistry<
 
   validateProject(id: unknown): ProjectValidationReport {
     const project = this.requireProject(id);
-    return toWireValidationReport(
-      this.compositionValidator.validate({
-        projectId: project.id,
-        configuration: project.portableConfig,
-        slotBindings: project.slotBindings,
-        repositoryBinding: {
-          saved: project.bookmarkRef !== null,
-          accessible: this.repositoryAccessibility.isAccessibleDirectory(project.repositoryPath),
-          path: project.repositoryPath,
-          bookmarkRef: project.bookmarkRef,
-        },
-        grantedResources: this.resourceGrants.grantedToProject(project.id),
-      }),
-    );
+    return toWireValidationReport(this.validateComposition(project, undefined).validation);
   }
 
   /**
@@ -183,18 +172,10 @@ export class ProjectService implements ProjectRegistry<
    */
   activateProject(request: ActivateProjectRequest): ProjectSummary {
     const project = this.requireProject(request.projectId);
-    const report = this.compositionValidator.validate({
-      projectId: project.id,
-      configuration: project.portableConfig,
-      slotBindings: project.slotBindings,
-      repositoryBinding: {
-        saved: project.bookmarkRef !== null,
-        accessible: this.repositoryAccessibility.isAccessibleDirectory(project.repositoryPath),
-        path: project.repositoryPath,
-        bookmarkRef: project.bookmarkRef,
-      },
-      grantedResources: this.resourceGrants.grantedToProject(project.id),
-    });
+    const { validation: report, repositoryIdentities } = this.validateComposition(
+      project,
+      undefined,
+    );
     // Optional only on the wire contract, for a fixture predating ticket #53
     // (see `ProjectValidationReport.compositionFingerprint`); this engine's own
     // validator always sets it.
@@ -239,6 +220,7 @@ export class ProjectService implements ProjectRegistry<
         repository: { path: project.repositoryPath, bookmarkRef: project.bookmarkRef },
       },
       requestRoutes: report.requestRoutes,
+      ...(repositoryIdentities.length === 0 ? {} : { repositoryIdentities }),
     };
     const updated = this.store.activateProject(project.id, currentFingerprint, snapshot);
     if (updated === undefined) throw notFound(project.id);
@@ -554,25 +536,54 @@ export class ProjectService implements ProjectRegistry<
   ): {
     readonly configuration: StoredPortableProjectConfiguration;
     readonly validation: ProjectValidationReport;
+    readonly repositoryIdentities: NonNullable<ResolvedProjectSnapshot["repositoryIdentities"]>;
   } {
     const configuration =
       proposedConfiguration === undefined
         ? project.portableConfig
         : requirePortableProjectConfiguration(proposedConfiguration, this.modules);
+    const validation = this.compositionValidator.validate({
+      projectId: project.id,
+      configuration,
+      slotBindings: project.slotBindings,
+      repositoryBinding: {
+        saved: project.bookmarkRef !== null,
+        accessible: this.repositoryAccessibility.isAccessibleDirectory(project.repositoryPath),
+        path: project.repositoryPath,
+        bookmarkRef: project.bookmarkRef,
+      },
+      grantedResources: this.resourceGrants.grantedToProject(project.id),
+    });
+    const repositoryResolution = this.repositoryResolver.validate(
+      configuration,
+      project.repositoryPath,
+    );
+    const migrationFinding =
+      project.status === "active"
+        ? this.repositoryResolver.migrationFinding(
+            configuration,
+            this.store.getResolvedProject(project.id),
+          )
+        : undefined;
+    const findings = [
+      ...validation.findings,
+      ...repositoryResolution.findings,
+      ...(migrationFinding === undefined ? [] : [migrationFinding]),
+    ].sort(
+      (left, right) =>
+        left.code.localeCompare(right.code) ||
+        JSON.stringify(left.target).localeCompare(JSON.stringify(right.target)) ||
+        left.severity.localeCompare(right.severity) ||
+        left.message.localeCompare(right.message),
+    );
     return {
       configuration,
-      validation: this.compositionValidator.validate({
-        projectId: project.id,
-        configuration,
-        slotBindings: project.slotBindings,
-        repositoryBinding: {
-          saved: project.bookmarkRef !== null,
-          accessible: this.repositoryAccessibility.isAccessibleDirectory(project.repositoryPath),
-          path: project.repositoryPath,
-          bookmarkRef: project.bookmarkRef,
-        },
-        grantedResources: this.resourceGrants.grantedToProject(project.id),
-      }),
+      validation: {
+        ...validation,
+        valid: findings.every((finding) => finding.severity !== "error"),
+        findings,
+      },
+      repositoryIdentities: repositoryResolution.repositoryIdentities,
     };
   }
 

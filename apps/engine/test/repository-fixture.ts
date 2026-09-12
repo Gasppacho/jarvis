@@ -7,6 +7,7 @@ import { join } from "node:path";
 
 export interface RepositoryFixtureOptions {
   readonly remoteUrl?: string;
+  readonly additionalRemotes?: readonly { readonly name: string; readonly url: string }[];
   readonly branch?: string;
   readonly packageJson?: Record<string, unknown>;
   readonly lockfile?: string;
@@ -31,6 +32,11 @@ export function makeRepositoryFixture(options: RepositoryFixtureOptions = {}): s
       '[remote "origin"]',
       `\turl = ${remote}`,
       "\tfetch = +refs/heads/*:refs/remotes/origin/*",
+      ...(options.additionalRemotes ?? []).flatMap((candidate) => [
+        `[remote "${candidate.name}"]`,
+        `\turl = ${candidate.url}`,
+        `\tfetch = +refs/heads/*:refs/remotes/${candidate.name}/*`,
+      ]),
       '[branch "main"]',
       "\tremote = origin",
       "",
@@ -83,6 +89,8 @@ export interface RealGitRepositoryFixture {
 
 export interface RealGitRepositoryFixtureOptions {
   readonly branch?: string;
+  readonly remoteUrl?: string;
+  readonly additionalRemotes?: readonly { readonly name: string; readonly url: string }[];
 }
 
 /** A real repository for tests that exercise Git, not repository discovery. */
@@ -169,6 +177,25 @@ export function makeRealGitRepositoryFixture(
       env,
       stdio: "ignore",
     });
+    for (const remote of options.additionalRemotes ?? []) {
+      execFileSync("git", ["remote", "add", remote.name, remote.url], {
+        cwd: root,
+        env,
+        stdio: "ignore",
+      });
+    }
+    if (options.remoteUrl !== undefined) {
+      execFileSync("git", ["remote", "set-url", remoteName, options.remoteUrl], {
+        cwd: root,
+        env,
+        stdio: "ignore",
+      });
+      execFileSync("git", ["remote", "set-url", "--push", remoteName, remoteRoot], {
+        cwd: root,
+        env,
+        stdio: "ignore",
+      });
+    }
     return { root, branch, commitSha, remoteRoot, remoteName };
   } catch (error: unknown) {
     rmSync(root, { recursive: true, force: true });
