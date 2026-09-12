@@ -131,14 +131,19 @@ public struct ProjectDetailView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     header
                     if let detail = state.detail {
-                        repositorySection(detail)
+                        repositorySection(detail).id("repository")
                         if state.draft != nil {
-                            portableConfigurationEditor(detail)
-                            localBindingsEditor
+                            portableConfigurationEditor(detail).id("portable-configuration")
+                            localBindingsEditor.id("local-bindings")
                             compositionReview(proxy)
                             compositionOutline
-                            validationReport(proxy)
-                            activationSection
+                            ProjectPreflightView(model: projectConfiguration, project: project, packages: moduleCatalog.packages) { destination in
+                                let target = destination == .repository ? "repository" : destination == .connections ? "local-bindings" : "portable-configuration"
+                                withAnimation { proxy.scrollTo(target, anchor: .top) }
+                            }
+                            DisclosureGroup("Advanced validation") {
+                                validationReport(proxy)
+                            }
                             saveActions
                         } else {
                             Label(
@@ -1186,67 +1191,6 @@ public struct ProjectDetailView: View {
         case .failed: .orange
         case .stale: .orange
         case .unvalidated, .validating: .secondary
-        }
-    }
-
-    /// Ticket #55: the real Activate request. Deliberately its own section,
-    /// not folded into `validationReport` — a rejected activation must never
-    /// read as another validation finding.
-    private var activationSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Activation").sectionLabel()
-            Label(presentation.activation.title, systemImage: activationStatusIcon)
-                .foregroundStyle(activationStatusColor)
-            Text(presentation.activation.explanation)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel(presentation.activation.accessibilityLabel)
-
-            if presentation.activation.status == .activating {
-                ProgressView("Activating…")
-            }
-
-            if presentation.activation.status == .rejected
-                || presentation.activation.status == .transportFailure
-            {
-                VStack(alignment: .leading, spacing: 4) {
-                    Label(
-                        "Activation error — not a validation finding",
-                        systemImage: "bolt.trianglebadge.exclamationmark.fill"
-                    )
-                    .font(.callout.weight(.semibold))
-                    Text(presentation.activation.explanation).font(.callout)
-                }
-                .padding(10)
-                .background(Color.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(presentation.activation.accessibilityLabel)
-            }
-
-            let activate = ProjectDetailPresentation.Action.Asynchronous.activate
-            Button(activate.label) { perform(.asynchronous(activate)) }
-                .disabled(!presentation.activation.isEnabled)
-        }
-        .id("activation")
-    }
-
-    private var activationStatusIcon: String {
-        switch presentation.activation.status {
-        case .ready: "bolt.circle"
-        case .activating: "bolt.horizontal.circle"
-        case .succeeded: "bolt.circle.fill"
-        case .rejected, .transportFailure: "bolt.trianglebadge.exclamationmark.fill"
-        case .unavailable: "bolt.slash.circle"
-        }
-    }
-
-    private var activationStatusColor: Color {
-        switch presentation.activation.status {
-        case .ready: .blue
-        case .activating: .blue
-        case .succeeded: .green
-        case .rejected, .transportFailure: .red
-        case .unavailable: .secondary
         }
     }
 

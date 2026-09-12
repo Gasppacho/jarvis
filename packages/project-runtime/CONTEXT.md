@@ -39,3 +39,6 @@ A Project whose Module Instances and event sources are running.
 
 ### Degraded Project
 An active or configured Project whose required resource became unavailable.
+
+### Project Preflight
+The read-only assessment of whether the current Project configuration and its bound resources are ready for explicit activation. Configuration readiness is independent of the presence or eligibility of a current Work Item candidate.

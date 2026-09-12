@@ -367,3 +367,28 @@ Custom composition conserve les modifications. Revenir au modèle demande une
 confirmation native avant remplacement. Review annonce que les issues déjà prêtes
 peuvent démarrer dès l'activation explicite, une à la fois, et que le parcours s'arrête
 à la PR avec revue et merge manuels.
+
+### Review guidé et premier essai (#198)
+
+Review propose `Vérifier que le workflow est prêt`. La réponse Engine affiche
+`Prêt à activer` ou `Corrections nécessaires`, les contrôles avec leur impact,
+et `Corriger` vers Repository, Workflow ou Connections. Les références de
+contrats et le fingerprint sont dans Advanced. `Aucune issue correspondante
+pour le moment` conserve la possibilité d'activer une configuration prête.
+Les candidates nomment les dépendances ouvertes, le label, la contrainte une
+issue à la fois et les ressources contrôlées. Une information inconnue ne
+s'affiche jamais comme une issue éligible.
+
+`Essayer avec cette issue uniquement` conserve la règle et ajoute son filtre
+exact de Work Item, enregistre localement le Draft et demande un nouveau
+préflight. L'activation reste séparée. `Surveiller toutes les issues éligibles`
+n'est proposé que pour le filtre posé par cet essai; il enlève seulement ce
+filtre, conserve tous les autres choix et exige un nouveau préflight puis une
+activation explicite. Une issue déjà admise ne redémarre pas; une candidate
+jamais admise redevient disponible après élargissement du périmètre.
+
+Tout changement invalide le rapport. Les erreurs Local API, findings et rejets
+d'activation sont distincts. Le texte avant `Activate workflow` annonce qu'une
+issue déjà éligible peut démarrer dès cette action. Le préflight n'exécute aucun
+travail. Les contrôles natifs restent accessibles au clavier et nommés pour
+VoiceOver, avec texte et icône; les raisons restent multilignes.

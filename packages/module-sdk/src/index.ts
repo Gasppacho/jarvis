@@ -155,6 +155,8 @@ export interface WorkItemReadinessCapability {
     readonly reason: string;
     readonly blockerRefs: readonly string[];
     readonly observedAt: string;
+    /** False records the observation without consuming its publication identity. */
+    readonly admit?: boolean;
   }) => boolean;
 }
 

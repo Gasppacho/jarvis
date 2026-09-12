@@ -21,6 +21,11 @@ public struct ProjectConfigurationState: Sendable, Equatable {
     public var compositionGuide: ProjectCompositionGuide?
     public var compositionReview: ProjectCompositionReview?
     public var compositionGraph: ProjectCompositionGraph?
+    public var preflight: ProjectPreflightState = .unchecked
+    public var trialWorkItemRef: String?
+    public var pendingScopeDescription: String?
+    public var canRestoreTrial: Bool { trialWorkItemRef != nil && trialWorkItemRef == preflight.report?.rule?.selectedWorkItemRef }
+
     public var validation: ProjectValidationState = .unvalidated
     public var activation: ProjectActivationState = .idle
     public var draft: ProjectConfigurationDraft?
@@ -55,6 +60,8 @@ public final class ProjectConfigurationModel {
     private let projects: ProjectsModel
     private let validationReportProvider: ValidationReportProvider?
     private let activationProvider: ActivationProvider?
+    private let injectedPreflightAPI: (any ProjectPreflightAPI)?
+    private var preflightAPI: (any ProjectPreflightAPI)? { injectedPreflightAPI ?? client }
     private let injectedRuntimeAPI: (any ProjectRuntimeAPI)?
     private var runtimeRevisions: [String: Int] = [:]
     private var runtimeAPI: (any ProjectRuntimeAPI)? { injectedRuntimeAPI ?? client }
@@ -69,6 +76,7 @@ public final class ProjectConfigurationModel {
         validationReportProvider = nil
         activationProvider = nil
         injectedRuntimeAPI = nil
+        injectedPreflightAPI = nil
     }
 
     init(
@@ -76,19 +84,24 @@ public final class ProjectConfigurationModel {
         projects: ProjectsModel,
         validationReportProvider: ValidationReportProvider? = nil,
         activationProvider: ActivationProvider? = nil,
-        runtimeAPI: (any ProjectRuntimeAPI)? = nil
+        runtimeAPI: (any ProjectRuntimeAPI)? = nil,
+        preflightAPI: (any ProjectPreflightAPI)? = nil
     ) {
         self.session = session
         self.projects = projects
         self.validationReportProvider = validationReportProvider
         self.activationProvider = activationProvider
         injectedRuntimeAPI = runtimeAPI
+        injectedPreflightAPI = preflightAPI
     }
 
     private var client: EngineClient? { session.client }
 
     public func state(for projectId: String) -> ProjectConfigurationState {
-        states[projectId] ?? ProjectConfigurationState()
+        if let state = states[projectId] { return state }
+        var state = ProjectConfigurationState()
+        state.trialWorkItemRef = UserDefaults.standard.string(forKey: "dev.jarvis.project-trial.v1.\(projectId)")
+        return state
     }
 
     public func refresh(projectId: String, packages: [ModulePackage] = []) async {
@@ -126,6 +139,7 @@ public final class ProjectConfigurationModel {
                 // A report evaluates the previously loaded snapshot. Reopening or
                 // reloading requires a fresh engine evaluation before it is current.
                 $0.validation = .unvalidated
+                $0.preflight = .unchecked
             }
         }
         defer {
@@ -561,6 +575,90 @@ public final class ProjectConfigurationModel {
         }
     }
 
+    public func preflight(projectId: String) async {
+        guard state(for: projectId).preflight != .loading else { return }
+        guard state(for: projectId).draft == nil || state(for: projectId).isDraftSaved else {
+            update(projectId) { $0.preflight = .stale($0.preflight.report); $0.errorMessage = "Enregistrez le brouillon avant de relancer le préflight." }
+            return
+        }
+        guard let api = preflightAPI else {
+            update(projectId) { $0.preflight = .failed(Self.engineUnavailable) }
+            return
+        }
+        let revision = validationRevisions[projectId, default: 0]
+        update(projectId) { $0.preflight = .loading; $0.activation = .idle; $0.validation = .validating }
+        do {
+            let report = try await api.preflightProject(projectId: projectId)
+            guard revision == validationRevisions[projectId, default: 0] else { return }
+            guard report.projectId == projectId else { throw EngineClientError.unexpectedResponse("Le préflight appartient à un autre projet.") }
+            let validation = try ProjectValidationReport(payload: report.validation)
+            lastValidationReports[projectId] = validation
+            update(projectId) {
+                $0.preflight = .current(report)
+                $0.pendingScopeDescription = nil
+                $0.validation = report.valid ? .valid(validation) : .invalid(validation)
+                $0.agentRuntimes = report.runtime
+                $0.runtimeMetadataUnavailable = false
+                $0.errorMessage = nil
+            }
+        } catch {
+            guard revision == validationRevisions[projectId, default: 0] else { return }
+            update(projectId) { $0.preflight = .failed(ProjectsModel.describe(error)); $0.validation = .failed(ProjectsModel.describe(error)) }
+        }
+    }
+
+    public func scopeWorkflow(projectId: String, workItemRef: String?, packages: [ModulePackage] = []) async {
+        guard case .current(let report) = state(for: projectId).preflight,
+              state(for: projectId).isDraftSaved, let api = preflightAPI else { return }
+        guard workItemRef != nil || state(for: projectId).canRestoreTrial else { return }
+        guard report.rule?.selectedWorkItemRef == nil || state(for: projectId).canRestoreTrial else {
+            update(projectId) { $0.errorMessage = "La règle possède déjà un filtre exact. Modifiez-le dans Workflow pour conserver votre périmètre existant." }
+            return
+        }
+        let revision = validationRevisions[projectId, default: 0]
+        guard state(for: projectId).activation != .activating else { return }
+        update(projectId) { $0.preflight = .loading; $0.activation = .idle }
+        do {
+            let configuration = try await api.scopePreflightProject(projectId: projectId, fingerprint: report.compositionFingerprint, workItemRef: workItemRef)
+            guard revision == validationRevisions[projectId, default: 0] else { return }
+            markValidationStale(projectId: projectId)
+            update(projectId) {
+                $0.draft = ProjectConfigurationDraft(configuration: configuration, packages: packages)
+                $0.isDraftSaved = false
+            }
+            // The Engine returned a rule edit only. Saving it withdraws the old
+            // active composition; the new scope still needs explicit activation.
+            guard await saveDraft(projectId: projectId, writeToRepository: false) != nil else { return }
+            UserDefaults.standard.set(workItemRef, forKey: "dev.jarvis.project-trial.v1.\(projectId)")
+            update(projectId) {
+                $0.trialWorkItemRef = workItemRef
+                $0.pendingScopeDescription = workItemRef.map { "Essai limité à \($0)" } ?? "Surveillance de toutes les issues éligibles — relancez le préflight, puis activez explicitement."
+                $0.preflight = .stale(nil)
+            }
+            await projects.refresh()
+            if workItemRef != nil { await preflight(projectId: projectId) }
+        } catch {
+            guard revision == validationRevisions[projectId, default: 0] else { return }
+            update(projectId) { $0.preflight = .failed(ProjectsModel.describe(error)); $0.errorMessage = ProjectsModel.describe(error) }
+        }
+    }
+
+    public func activateWorkflow(projectId: String) async {
+        guard case .current(let report) = state(for: projectId).preflight,
+              report.projectId == projectId, state(for: projectId).preflight.canActivate,
+              state(for: projectId).activation != .activating, state(for: projectId).runtimeAllowsActivation, let api = preflightAPI else { return }
+        update(projectId) { $0.activation = .activating }
+        do {
+            _ = try await api.activatePreflightProject(projectId: projectId, fingerprint: report.compositionFingerprint)
+            update(projectId) { $0.activation = .succeeded }
+            await projects.refresh()
+        } catch let EngineClientError.engineError(_, code, message) {
+            update(projectId) { $0.activation = .rejected(code: code, message: message) }
+        } catch {
+            update(projectId) { $0.activation = .transportFailure(ProjectsModel.describe(error)) }
+        }
+    }
+
     public func validate(projectId: String) async {
         let previousValidation = state(for: projectId).validation
         guard previousValidation != .validating else { return }
@@ -958,6 +1056,8 @@ public final class ProjectConfigurationModel {
     }
 
     private func markValidationStale(projectId: String) {
+        update(projectId) { $0.preflight = .stale($0.preflight.report) }
+
         invalidateRuntime(projectId: projectId)
         validationRevisions[projectId, default: 0] += 1
         let current = state(for: projectId).validation
@@ -996,7 +1096,7 @@ public final class ProjectConfigurationModel {
         _ projectId: String,
         _ change: (inout ProjectConfigurationState) -> Void
     ) {
-        var value = states[projectId] ?? ProjectConfigurationState()
+        var value = state(for: projectId)
         change(&value)
         states[projectId] = value
     }

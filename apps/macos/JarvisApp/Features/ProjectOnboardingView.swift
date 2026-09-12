@@ -80,6 +80,7 @@ struct ProjectOnboardingView: View {
             GroupBox("Repository") {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Imported as a Draft. Jarvis will not start a workflow until you validate and activate it.")
+                    Button("Corriger le repository") { openAdvanced() }
                     Text("The repository access is kept locally on this Mac.")
                         .foregroundStyle(.secondary)
                 }
@@ -236,29 +237,8 @@ struct ProjectOnboardingView: View {
     }
 
     private var review: some View {
-        let configuration = projectConfiguration.state(for: project.id)
-        let presentation = ProjectDetailPresentation(
-            project: project,
-            detail: configuration.detail,
-            state: configuration,
-            packages: moduleCatalog.packages,
-            capabilityGuidance: moduleCatalog.capabilityGuidance)
-        return GroupBox("Review") {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Review is available for every Draft. Activation stays unavailable until the current Engine validation succeeds.")
-                if let message = configuration.errorMessage {
-                    Label(message, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                }
-                Button("Activate workflow") {
-                    Task {
-                        await projectConfiguration.perform(.activate, projectId: project.id)
-                    }
-                }
-                .disabled(!presentation.activation.isEnabled)
-                .accessibilityHint(presentation.activation.explanation)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        ProjectPreflightView(model: projectConfiguration, project: project, packages: moduleCatalog.packages) { destination in
+            step = destination
         }
     }
 

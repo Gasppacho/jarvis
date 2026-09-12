@@ -1,3 +1,4 @@
+import { GitHubApiClient } from "../../../packages/modules/github/src/api-client.js";
 import { readdirSync, readFileSync, writeSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
@@ -304,6 +305,8 @@ async function main(): Promise<void> {
   const connectionGrants = new ConnectionGrantSource(connections);
   const resourceGrants = new ProjectResourceGrantAggregate([runtimeGrants, connectionGrants]);
   const repositoryResolver = new ProjectRepositoryResolver();
+  const readinessStore =
+    database === undefined ? undefined : new WorkItemReadinessStore(database.db, new SystemClock());
   const projects =
     database === undefined || projectStore === undefined
       ? undefined
@@ -319,6 +322,22 @@ async function main(): Promise<void> {
           new EventingDeadLetterReader(database.db),
           repositoryResolver,
           runtimeGrants,
+          (ref) => {
+            const connection = connections?.find(ref);
+            if (
+              !connection ||
+              connection.provider !== "github" ||
+              connection.status !== "available" ||
+              !connection.capabilities.includes("github.api")
+            )
+              return undefined;
+            return new GitHubApiClient({
+              secretRef: connection.secretRef,
+              credentialResolver: githubCredentials,
+              ...(githubApiBaseUrl === undefined ? {} : { apiBaseUrl: githubApiBaseUrl }),
+            });
+          },
+          readinessStore,
         );
 
   // SYSTEM.md startup protocol: migrations are complete, then stale Workspace
@@ -422,7 +441,7 @@ async function main(): Promise<void> {
     const publisher = new EventPublisher(database.db, clock, ids, envelopes);
     const externalMappings = new ExternalMappingStore(database.db, clock);
     const pollCursors = new PollCursorStore(database.db, clock);
-    const workItemReadiness = new WorkItemReadinessStore(database.db, clock);
+    const workItemReadiness = readinessStore!;
     developmentAdmissions = new DevelopmentAdmissions(database.db, clock);
     const fixtures = testFixtures;
     const sampleProbeHandler = fixtures?.createSampleProbeHandler(database.db);

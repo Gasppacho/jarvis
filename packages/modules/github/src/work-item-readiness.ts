@@ -97,9 +97,27 @@ export class WorkItemReadinessStore {
     private readonly clock: Clock,
   ) {}
 
+  public wasAdmitted(projectId: string, repositoryId: string, workItemRef: string): boolean {
+    return (
+      this.db
+        .prepare(
+          "SELECT 1 FROM github_work_item_readiness WHERE project_id = ? AND repository_id = ? AND work_item_ref = ? AND admitted_at IS NOT NULL",
+        )
+        .get(projectId, repositoryId, workItemRef) !== undefined
+    );
+  }
+
   public bind(projectId: string, moduleInstanceId: string): WorkItemReadinessCapability {
     return {
-      observe: ({ repositoryId, workItemRef, status, reason, blockerRefs, observedAt }) => {
+      observe: ({
+        repositoryId,
+        workItemRef,
+        status,
+        reason,
+        blockerRefs,
+        observedAt,
+        admit = true,
+      }) => {
         this.db
           .prepare(
             `INSERT INTO github_work_item_readiness
@@ -121,7 +139,7 @@ export class WorkItemReadinessStore {
             blockerRefs: JSON.stringify(blockerRefs),
             observedAt,
           });
-        if (status !== "ready") return false;
+        if (status !== "ready" || !admit) return false;
         return (
           this.db
             .prepare(

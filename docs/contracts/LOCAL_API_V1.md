@@ -264,3 +264,49 @@ The finite statuses are `ready`, `absent`, `access-denied`, `incompatible`,
 `checking`, `engine-error`, `unchecked`; Swift projects these into text/icons and
 never decides capability or runtime policy. Readiness is ephemeral and does not
 replace the normal activation validation report or Development preflight.
+
+### Workflow preflight and scoped trial (#198)
+
+`POST /v1/projects/{projectId}/preflight` returns `ProjectPreflightV1`
+(`jarvis.dev/project-preflight/v1`): the existing versioned validation report,
+its composition fingerprint, bounded runtime readiness, actionable checks with
+`Repository`, `Workflow` or `Connections` destinations, the label/rule scope,
+and `candidateEligibility`. `valid` and `configurationReady` describe the
+configuration; `empty` candidates and open blockers alone do not invalidate it.
+Unknown GitHub/dependency reads produce failed checks. A previously admitted
+candidate is shown as ineligible for automatic admission.
+
+The guided path supports one readable `scm.work-item.ready` admission Rule,
+without static work-item/repository/tag/base-branch emission overrides. Other
+configurations remain saved and editable, with a Workflow finding explaining
+why the guided scope cannot promise the selected Work Item. Historical
+`agent:ready` labels are retained; switching the legacy `tag-added` trigger to
+durable readiness is an explicit user edit, never a migration on save.
+
+GitHub calls are authenticated GETs for linked repositories, labels, issues and
+native `blocked_by`, using the existing provider assessment and pagination.
+The read window is bounded; incomplete reads fail closed. Repository role
+permissions are checked, but read-only probes cannot prove every future write
+will succeed. With no current issues the API cannot exercise an issue-specific
+`blocked_by` route: the report says so and admission still rechecks every
+candidate. No label, comment, dependency, worktree, event, agent execution or
+remote object is created by preflight. Runtime version/login probes are not
+agent executions.
+
+`POST /v1/projects/{projectId}/preflight-scope` accepts
+`{compositionFingerprint, scope: "issue", workItemRef}` and returns a Portable Configuration
+proposal only. The reference must belong to the current scoped preview; `scope: "all"` (without `workItemRef`)
+removes only `when.equals["payload.workItemRef"]`. The label, other predicates,
+rule identity, target, resources and every other configuration field remain
+unchanged. The shell tracks which exact filter its trial added, so an existing
+permanent filter is never silently replaced or offered for trial restoration.
+The proposal does not save, activate or enqueue anything. The shell saves it
+locally as a Draft; selection then reevaluates preflight, while restoration
+requires the user's explicit new preflight and activation.
+
+`POST /v1/projects/{projectId}/preflight-activate` requires the exact fingerprint
+of a successful current preflight in this Engine session, then delegates to
+the existing activation guard. A restart, invalid result, late response or
+configuration/binding edit cannot authorize activation with the old report.
+The older validation and activation endpoints retain wire compatibility for
+existing integrations; both native activation surfaces use preflight.

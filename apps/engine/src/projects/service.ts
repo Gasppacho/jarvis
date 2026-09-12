@@ -1,3 +1,6 @@
+import type { WorkItemReadinessStore } from "../../../../packages/modules/github/src/work-item-readiness.js";
+import { preflightGitHub, check, workflowRule, type ProjectPreflight } from "./preflight.js";
+import type { GitHubApi } from "../../../../packages/module-sdk/src/index.js";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -113,6 +116,8 @@ export class ProjectService implements ProjectRegistry<
     private readonly deadLetters: DeadLetterReader = { list: () => [] },
     private readonly repositoryResolver: ProjectRepositoryResolver = new ProjectRepositoryResolver(),
     private readonly agentRuntimes?: LocalAgentRuntimeRegistry,
+    private readonly preflightApi?: (ref: string) => GitHubApi | undefined,
+    private readonly readiness?: Pick<WorkItemReadinessStore, "wasAdmitted">,
   ) {}
 
   importProject(request: ImportProjectRequest): ProjectDetail {
@@ -165,6 +170,153 @@ export class ProjectService implements ProjectRegistry<
 
   getProject(id: unknown): ProjectDetail {
     return toDetail(this.requireProject(id), this.repositoryAccessibility);
+  }
+
+  private readonly preflights = new Map<string, ProjectPreflight>();
+  private readonly preflightRevisions = new Map<string, number>();
+
+  async preflightProject(id: unknown): Promise<ProjectPreflight> {
+    const project = this.requireProject(id);
+    const revision = (this.preflightRevisions.get(project.id) ?? 0) + 1;
+    this.preflightRevisions.set(project.id, revision);
+    this.preflights.delete(project.id);
+    const { validation, repositoryIdentities } = this.validateComposition(project, undefined);
+    const runtime = await this.checkProjectRuntime(project.id);
+    const github = await preflightGitHub({
+      configuration: project.portableConfig,
+      repositories: repositoryIdentities,
+      now: Date.now,
+      wasAdmitted: (repositoryId, ref) =>
+        this.readiness?.wasAdmitted(project.id, repositoryId, ref) ?? false,
+      apiFor: (slot) => {
+        const binding = project.slotBindings[slot];
+        if (
+          binding?.kind !== "connection" ||
+          !this.resourceGrants
+            .grantedToProject(project.id)
+            .some((r) => r.kind === "connection" && r.ref === binding.ref)
+        )
+          return undefined;
+        return this.preflightApi?.(binding.ref);
+      },
+    });
+    const checks = [
+      ...validation.findings.map((finding, index) =>
+        check(
+          `composition:${index}`,
+          finding.message,
+          finding.severity !== "error",
+          finding.message,
+          finding.target.kind === "slot" || finding.target.kind === "capability"
+            ? "Connections"
+            : finding.code.startsWith("repository.")
+              ? "Repository"
+              : "Workflow",
+        ),
+      ),
+      check(
+        "composition",
+        "Composition et routage exact",
+        validation.valid,
+        "Chaque Request doit avoir un unique consumer actif et ses ressources requises.",
+        "Workflow",
+      ),
+      check(
+        "runtime",
+        "Runtime agentique",
+        !runtime.required || runtime.readiness.status === "ready",
+        runtime.readiness.detail,
+        "Connections",
+      ),
+      ...github.checks,
+    ];
+    if (
+      this.preflightRevisions.get(project.id) !== revision ||
+      this.validateProject(project.id).compositionFingerprint !== validation.compositionFingerprint
+    ) {
+      throw activationRejected(
+        "project.activation-report-stale",
+        project.id,
+        "changed during preflight",
+      );
+    }
+    const valid = validation.valid && checks.every((c) => c.status === "passed");
+    const report: ProjectPreflight = {
+      apiVersion: "jarvis.dev/project-preflight/v1",
+      kind: "ProjectPreflight",
+      projectId: project.id,
+      compositionFingerprint: validation.compositionFingerprint!,
+      valid,
+      configurationReady: valid,
+      validation: toWireValidationReport(validation),
+      runtime,
+      ...github,
+      checks,
+    };
+    this.preflights.set(project.id, report);
+    return report;
+  }
+
+  activatePreflightProject(request: ActivateProjectRequest): ProjectSummary {
+    const project = this.requireProject(request.projectId);
+    const report = this.preflights.get(project.id);
+    if (!report?.valid || report.compositionFingerprint !== request.compositionFingerprint)
+      throw activationRejected(
+        "project.activation-not-validated",
+        project.id,
+        "requires a current successful preflight",
+      );
+    return this.activateProject(request);
+  }
+
+  scopePreflightProject(id: unknown, request: unknown): PortableProjectConfiguration {
+    const project = this.requireProject(id);
+    const body = request as
+      { compositionFingerprint?: unknown; workItemRef?: unknown; scope?: unknown } | undefined;
+    const report = this.preflights.get(project.id);
+    if (
+      !report ||
+      body?.compositionFingerprint !== report.compositionFingerprint ||
+      this.validateProject(project.id).compositionFingerprint !== report.compositionFingerprint
+    )
+      throw activationRejected(
+        "project.activation-report-stale",
+        project.id,
+        "requires a current preflight before changing scope",
+      );
+    if (body.scope !== "issue" && body.scope !== "all")
+      throw new EngineError("api.invalid-request", 400, "Choose issue or all scope explicitly.");
+    const ref = body.scope === "all" ? null : body.workItemRef;
+    if (body.scope === "all" && Object.hasOwn(body, "workItemRef"))
+      throw new EngineError("api.invalid-request", 400, "All scope cannot name a selected issue.");
+    if (
+      body.scope === "issue" &&
+      (typeof ref !== "string" ||
+        !report.candidateEligibility.items.some((item) => item.workItemRef === ref))
+    )
+      throw new EngineError(
+        "api.invalid-request",
+        400,
+        "Select an issue from this project's current preview.",
+      );
+    const configuration = structuredClone(project.portableConfig) as PortableProjectConfiguration;
+    let selected: ReturnType<typeof workflowRule>;
+    try {
+      selected = workflowRule(configuration);
+    } catch {
+      throw new EngineError("api.invalid-request", 400, "Repair the workflow rule first.");
+    }
+    const instance = configuration.modules.find(
+      (m) => m.instanceId === selected.instance.instanceId,
+    )!;
+    const rules = instance.configuration!["rules"] as {
+      id: string;
+      when: { equals: Record<string, unknown> };
+    }[];
+    const equals = rules.find((r) => r.id === selected.rule.id)!.when.equals;
+    if (ref === null) delete equals["payload.workItemRef"];
+    else equals["payload.workItemRef"] = ref;
+    return configuration;
   }
 
   validateProject(id: unknown): ProjectValidationReport {

@@ -1,3 +1,7 @@
+import {
+  readRules,
+  matchesRuleEvent,
+} from "../../../../packages/modules/automation-rules/src/index.js";
 import type {
   GitHubApi,
   ModuleHandlerCapabilities,
@@ -175,6 +179,7 @@ export class GitHubPollingScheduler {
           externalMappings,
           workItemReadiness,
           instance.configuration,
+          snapshot,
         );
       }),
     );
@@ -189,6 +194,7 @@ export class GitHubPollingScheduler {
     externalMappings: NonNullable<ModuleHandlerCapabilities["externalMappings"]>,
     workItemReadiness: WorkItemReadinessCapability,
     configuration: Readonly<Record<string, unknown>> | undefined,
+    snapshot: ResolvedProjectSnapshot,
   ): Promise<void> {
     const repositoryId = repository.repositoryId;
     const githubRepositoryId = `${repository.owner}/${repository.name}`;
@@ -202,6 +208,7 @@ export class GitHubPollingScheduler {
         moduleInstanceId,
         workItemReadiness,
         this.dependencies,
+        snapshot,
       );
     } catch (error: unknown) {
       logPollingFailure(
@@ -293,6 +300,7 @@ async function scanReadiness(
   moduleInstanceId: string,
   readiness: WorkItemReadinessCapability,
   dependencies: Pick<GitHubPollingDependencies, "publisher" | "transaction" | "ids" | "clock">,
+  snapshot: ResolvedProjectSnapshot,
 ): Promise<void> {
   if (repository.provider !== "github") throw new Error("unsupported repository provider");
   const candidates = await readCurrentIssues(githubApi, githubRepositoryId);
@@ -307,6 +315,24 @@ async function scanReadiness(
       number: candidate.number,
       tag,
     });
+    const payload = {
+      repositoryId: repository.repositoryId,
+      workItemRef,
+      issueProvider: "github",
+      tag,
+      observedAt,
+    };
+    const rules = snapshot.moduleInstances
+      .filter(
+        (instance) => instance.enabled && instance.moduleId === "jarvis.module.automation-rules",
+      )
+      .flatMap((instance) => readRules(instance.configuration ?? {}))
+      .filter((rule) => rule.when.eventType === "scm.work-item.ready");
+    const admit =
+      rules.length === 0 ||
+      rules.some((rule) =>
+        matchesRuleEvent(rule, { kind: "fact", type: "scm.work-item.ready", payload }),
+      );
     dependencies.transaction(() => {
       const admitted = readiness.observe({
         repositoryId: repository.repositoryId,
@@ -315,6 +341,7 @@ async function scanReadiness(
         reason: assessment.reason,
         blockerRefs: assessment.blockerRefs,
         observedAt,
+        admit,
       });
       if (!admitted) return;
       dependencies.publisher.publish({
@@ -328,13 +355,7 @@ async function scanReadiness(
         correlationId: `corr_${dependencies.ids.next()}`,
         causationId: null,
         idempotencyKey: readinessIdentity(projectId, repository.repositoryId, workItemRef),
-        payload: {
-          repositoryId: repository.repositoryId,
-          workItemRef,
-          issueProvider: "github",
-          tag,
-          observedAt,
-        },
+        payload,
       });
     });
   }
@@ -344,7 +365,7 @@ function readinessIdentity(projectId: string, repositoryId: string, workItemRef:
   return `${projectId}:${repositoryId}:${workItemRef}:ready-v1`;
 }
 
-async function readCurrentIssues(
+export async function readCurrentIssues(
   githubApi: GitHubApi,
   githubRepositoryId: string,
 ): Promise<CurrentGitHubIssue[]> {

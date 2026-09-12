@@ -84,6 +84,7 @@ export interface FakeGitHubIssueEventSeed {
 }
 
 export interface FakeGitHubRouteResponse {
+  readonly delayMs?: number;
   readonly status: number;
   readonly body: unknown;
 }
@@ -389,6 +390,8 @@ async function handleFakeGitHubRequest(
 ): Promise<void> {
   const scripted = routes.get(routeKey(method, path));
   if (scripted !== undefined) {
+    if (scripted.delayMs !== undefined)
+      await new Promise((resolve) => setTimeout(resolve, scripted.delayMs));
     writeJson(response, scripted.status, scripted.body);
     return;
   }

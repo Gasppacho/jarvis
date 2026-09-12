@@ -375,6 +375,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{projectId}/preflight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["preflightProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{projectId}/preflight-scope": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["scopePreflightProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{projectId}/preflight-activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["activatePreflightProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/runtimes": {
         parameters: {
             query?: never;
@@ -950,6 +998,56 @@ export interface components {
             severity: "error" | "warning";
             message: string;
             target: components["schemas"]["ProjectFindingTarget"] | components["schemas"]["RequestEdgeFindingTarget"] | components["schemas"]["ContractEdgeFindingTarget"] | components["schemas"]["ModuleInstanceFindingTarget"] | components["schemas"]["SlotFindingTarget"] | components["schemas"]["ModuleCapabilityFindingTarget"] | components["schemas"]["SlotCapabilityFindingTarget"];
+        };
+        PreflightCheck: {
+            id: string;
+            title: string;
+            /** @enum {string} */
+            status: "passed" | "failed";
+            impact: string;
+            /** @enum {string} */
+            repairStep: "Repository" | "Workflow" | "Connections";
+        };
+        PreflightRule: {
+            instanceId: string;
+            ruleId: string;
+            label: string;
+            selectedWorkItemRef: string | null;
+        };
+        PreflightCandidate: {
+            workItemRef: string;
+            title: string;
+            repositoryId: string;
+            /** @enum {string} */
+            status: "eligible" | "ineligible" | "unavailable";
+            openDependencyCount: number;
+            blockerRefs: string[];
+            reason: string;
+        };
+        ProjectPreflightV1: {
+            /** @constant */
+            apiVersion: "jarvis.dev/project-preflight/v1";
+            /** @constant */
+            kind: "ProjectPreflight";
+            projectId: string;
+            compositionFingerprint: string;
+            valid: boolean;
+            configurationReady: boolean;
+            validation: components["schemas"]["ProjectValidationReportV1"];
+            runtime: components["schemas"]["ProjectAgentRuntimeChoices"];
+            checks: components["schemas"]["PreflightCheck"][];
+            rule?: components["schemas"]["PreflightRule"];
+            candidateEligibility: {
+                /** @enum {string} */
+                status: "empty" | "available" | "unavailable";
+                items: components["schemas"]["PreflightCandidate"][];
+            };
+        };
+        PreflightScopeRequest: {
+            compositionFingerprint: string;
+            /** @enum {string} */
+            scope: "issue" | "all";
+            workItemRef?: string;
         };
         ProjectValidationReportV1: {
             /** @constant */
@@ -2000,6 +2098,91 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectAgentRuntimeChoices"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    preflightProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Project preflight result. No remote mutation during preflight or scope preview. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectPreflightV1"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    scopePreflightProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreflightScopeRequest"];
+            };
+        };
+        responses: {
+            /** @description Project preflight result. No remote mutation during preflight or scope preview. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortableProjectConfiguration"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    activatePreflightProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    compositionFingerprint: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Project preflight result. No remote mutation during preflight or scope preview. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectSummary"];
                 };
             };
             401: components["responses"]["Unauthorized"];

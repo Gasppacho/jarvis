@@ -1,3 +1,6 @@
+import type { ProjectPreflight } from "./preflight.js";
+import type { ActivateProjectRequest } from "../../../../packages/kernel/src/project-registry.js";
+import type { PortableProjectConfiguration } from "./types.js";
 import type { FastifyInstance } from "fastify";
 import type { DatabaseState } from "../db/open.js";
 import { EngineError } from "../errors.js";
@@ -33,6 +36,9 @@ export type LocalProjectRegistry = ProjectRegistry<
   ProjectValidationReport
 > &
   ProjectResourceCandidateRegistry & {
+    preflightProject(id: unknown): Promise<ProjectPreflight>;
+    scopePreflightProject(id: unknown, request: unknown): PortableProjectConfiguration;
+    activatePreflightProject(request: ActivateProjectRequest): ProjectSummary;
     bindProjectRuntime(id: unknown, request: unknown): ProjectAgentRuntimeChoices;
     checkProjectRuntime(id: unknown): Promise<ProjectAgentRuntimeChoices>;
     previewCompositionChoices(
@@ -104,6 +110,28 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
       message,
     }));
     return reply.code(200).send({ valid: report.valid, issues });
+  });
+
+  app.post("/v1/projects/:projectId/preflight", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: string };
+    return reply.code(200).send(await service.preflightProject(params.projectId));
+  });
+  app.post("/v1/projects/:projectId/preflight-scope", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: string };
+    return reply.code(200).send(service.scopePreflightProject(params.projectId, request.body));
+  });
+  app.post("/v1/projects/:projectId/preflight-activate", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: string };
+    const body = request.body as { compositionFingerprint?: unknown } | undefined;
+    return reply.code(200).send(
+      service.activatePreflightProject({
+        projectId: params.projectId,
+        compositionFingerprint: body?.compositionFingerprint,
+      }),
+    );
   });
 
   app.post("/v1/projects/:projectId/validation-report", async (request, reply) => {

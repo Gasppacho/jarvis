@@ -1,0 +1,79 @@
+{
+  "apiVersion": "jarvis.dev/project-preflight/v1",
+  "kind": "ProjectPreflight",
+  "projectId": "token-warehouse",
+  "compositionFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "valid": true,
+  "configurationReady": true,
+  "validation": {
+    "apiVersion": "jarvis.dev/project-validation/v1",
+    "kind": "ProjectValidationReport",
+    "projectId": "token-warehouse",
+    "valid": true,
+    "requestRoutes": [
+      {
+        "contract": {
+          "type": "development.implementation.requested",
+          "version": 1,
+          "kind": "request"
+        },
+        "producer": {
+          "instanceId": "automation-rules",
+          "moduleId": "jarvis.module.automation-rules"
+        },
+        "consumer": {
+          "instanceId": "development",
+          "moduleId": "jarvis.module.development"
+        }
+      }
+    ],
+    "satisfiedCapabilities": [
+      {
+        "capability": "work-items.read",
+        "target": {
+          "kind": "slot",
+          "slot": "tickets"
+        },
+        "source": {
+          "kind": "module-instance",
+          "ref": "github"
+        }
+      },
+      {
+        "capability": "repository.write",
+        "target": {
+          "kind": "module-instance",
+          "instanceId": "development"
+        },
+        "source": {
+          "kind": "repository",
+          "ref": "repository/main"
+        }
+      }
+    ],
+    "findings": [],
+    "compositionFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "runtime": {
+    "required": false,
+    "items": [],
+    "readiness": {
+      "status": "unchecked",
+      "checkedAt": null,
+      "detail": "No runtime required by this example."
+    }
+  },
+  "checks": [
+    {
+      "id": "composition",
+      "title": "Composition",
+      "status": "passed",
+      "impact": "Resolve the reported composition findings before activation.",
+      "repairStep": "Workflow"
+    }
+  ],
+  "candidateEligibility": {
+    "status": "empty",
+    "items": []
+  }
+}

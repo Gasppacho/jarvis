@@ -45,7 +45,7 @@ export function handleWorkItemTagAdded(ctx: ModuleHandlerContext): AutomationRul
   const emittedEventIds: string[] = [];
 
   for (const rule of readRules(ctx.configuration)) {
-    if (!matches(rule, ctx)) {
+    if (!matchesRuleEvent(rule, ctx.event)) {
       continue;
     }
 
@@ -78,7 +78,7 @@ export function handleWorkItemTagAdded(ctx: ModuleHandlerContext): AutomationRul
  * promote the second, and the operator would see the Rule Set's documented
  * order disagree with what actually ran, with no diagnostic anywhere.
  */
-function readRules(configuration: ModuleHandlerContext["configuration"]): AutomationRule[] {
+export function readRules(configuration: ModuleHandlerContext["configuration"]): AutomationRule[] {
   const rules = configuration["rules"];
   if (!Array.isArray(rules)) {
     return [];
@@ -174,8 +174,11 @@ function readTarget(value: unknown): RuleTarget | undefined {
   return undefined;
 }
 
-function matches(rule: AutomationRule, ctx: ModuleHandlerContext): boolean {
-  if (ctx.event.kind !== "fact" || rule.when.eventType !== ctx.event.type) {
+export function matchesRuleEvent(
+  rule: AutomationRule,
+  event: Pick<ModuleHandlerContext["event"], "kind" | "type" | "payload">,
+): boolean {
+  if (event.kind !== "fact" || rule.when.eventType !== event.type) {
     return false;
   }
 
@@ -183,8 +186,8 @@ function matches(rule: AutomationRule, ctx: ModuleHandlerContext): boolean {
     const field = /^payload\.([A-Za-z0-9_-]+)$/.exec(path)?.[1];
     return (
       field !== undefined &&
-      Object.hasOwn(ctx.event.payload, field) &&
-      ctx.event.payload[field] === expected
+      Object.hasOwn(event.payload, field) &&
+      event.payload[field] === expected
     );
   });
 }

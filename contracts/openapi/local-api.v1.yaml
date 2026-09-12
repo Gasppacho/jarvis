@@ -634,6 +634,76 @@ paths:
           $ref: "#/components/responses/Forbidden"
         default:
           $ref: "#/components/responses/Error"
+  /v1/projects/{projectId}/preflight:
+    post:
+      operationId: preflightProject
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: Project preflight result. No remote mutation during preflight or scope preview.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectPreflightV1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/projects/{projectId}/preflight-scope:
+    post:
+      operationId: scopePreflightProject
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreflightScopeRequest'
+      responses:
+        '200':
+          description: Project preflight result. No remote mutation during preflight or scope preview.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PortableProjectConfiguration'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        default:
+          $ref: '#/components/responses/Error'
+  /v1/projects/{projectId}/preflight-activate:
+    post:
+      operationId: activatePreflightProject
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [compositionFingerprint]
+              properties:
+                compositionFingerprint: { type: string }
+      responses:
+        '200':
+          description: Project preflight result. No remote mutation during preflight or scope preview.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        default:
+          $ref: '#/components/responses/Error'
   /v1/runtimes:
     get:
       operationId: listRuntimes
@@ -1722,6 +1792,78 @@ components:
             - $ref: "#/components/schemas/SlotFindingTarget"
             - $ref: "#/components/schemas/ModuleCapabilityFindingTarget"
             - $ref: "#/components/schemas/SlotCapabilityFindingTarget"
+    PreflightCheck:
+      type: object
+      additionalProperties: false
+      required: [id, title, status, impact, repairStep]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        status: { type: string, enum: [passed, failed] }
+        impact: { type: string }
+        repairStep: { type: string, enum: [Repository, Workflow, Connections] }
+    PreflightRule:
+      type: object
+      additionalProperties: false
+      required: [instanceId, ruleId, label, selectedWorkItemRef]
+      properties:
+        instanceId: { type: string }
+        ruleId: { type: string }
+        label: { type: string }
+        selectedWorkItemRef: { type: [string, 'null'] }
+    PreflightCandidate:
+      type: object
+      additionalProperties: false
+      required: [workItemRef, title, repositoryId, status, openDependencyCount, blockerRefs, reason]
+      properties:
+        workItemRef: { type: string }
+        title: { type: string }
+        repositoryId: { type: string }
+        status: { type: string, enum: [eligible, ineligible, unavailable] }
+        openDependencyCount: { type: integer, minimum: 0 }
+        blockerRefs:
+          type: array
+          items: { type: string }
+        reason: { type: string }
+    ProjectPreflightV1:
+      type: object
+      additionalProperties: false
+      required: [apiVersion, kind, projectId, compositionFingerprint, valid, configurationReady, validation, checks, candidateEligibility, runtime]
+      properties:
+        apiVersion: { const: jarvis.dev/project-preflight/v1 }
+        kind: { const: ProjectPreflight }
+        projectId: { type: string }
+        compositionFingerprint: { type: string }
+        valid: { type: boolean }
+        configurationReady: { type: boolean }
+        validation:
+          $ref: '#/components/schemas/ProjectValidationReportV1'
+        runtime:
+          $ref: '#/components/schemas/ProjectAgentRuntimeChoices'
+        checks:
+          type: array
+          items:
+            $ref: '#/components/schemas/PreflightCheck'
+        rule:
+          $ref: '#/components/schemas/PreflightRule'
+        candidateEligibility:
+          type: object
+          additionalProperties: false
+          required: [status, items]
+          properties:
+            status: { type: string, enum: [empty, available, unavailable] }
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/PreflightCandidate'
+    PreflightScopeRequest:
+      type: object
+      additionalProperties: false
+      required: [compositionFingerprint, scope]
+      properties:
+        compositionFingerprint: { type: string }
+        scope: { type: string, enum: [issue, all] }
+        workItemRef: { type: string }
     ProjectValidationReportV1:
       type: object
       additionalProperties: false

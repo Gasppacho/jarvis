@@ -53,6 +53,7 @@ public enum EngineClientError: Error, Sendable, Equatable {
 /// nothing here can drift from contracts/openapi/local-api.v1.yaml.
 public struct EngineClient: Sendable {
     private let underlying: Client
+    private var preflightUnderlying: Client
 
     /// Loopback only, so a request that has not answered in a few seconds is
     /// wedged rather than slow. URLSession's 60-second default would hang Quit
@@ -67,6 +68,14 @@ public struct EngineClient: Sendable {
             serverURL: URL(string: "http://127.0.0.1:\(port)")!,
             transport: URLSessionTransport(
                 configuration: .init(session: URLSession(configuration: configuration))),
+            middlewares: [SessionTokenMiddleware(token: token)])
+        let preflightConfiguration = URLSessionConfiguration.ephemeral
+        preflightConfiguration.timeoutIntervalForRequest = 35
+        preflightConfiguration.timeoutIntervalForResource = 35
+        preflightUnderlying = Client(
+            serverURL: URL(string: "http://127.0.0.1:\(port)")!,
+            configuration: Configuration(dateTranscoder: FlexibleISO8601DateTranscoder()),
+            transport: URLSessionTransport(configuration: .init(session: URLSession(configuration: preflightConfiguration))),
             middlewares: [SessionTokenMiddleware(token: token)])
     }
 
@@ -92,6 +101,7 @@ public struct EngineClient: Sendable {
             transport: transport,
             middlewares: middlewares
         )
+        preflightUnderlying = underlying
     }
 
     public func health() async throws -> EngineHealth {
@@ -451,6 +461,43 @@ public struct EngineClient: Sendable {
         }
     }
 
+    public func preflightProject(projectId: String) async throws -> Components.Schemas.ProjectPreflightV1 {
+        let operation = "preflightProject"
+        let output = try await preflightUnderlying.preflightProject(.init(path: .init(projectId: projectId)))
+        switch output {
+        case .ok(let ok):
+            return try ok.body.json
+        case .unauthorized: throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden: throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error): throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
+    public func scopePreflightProject(projectId: String, fingerprint: String, workItemRef: String?) async throws -> Components.Schemas.PortableProjectConfiguration {
+        let operation = "scopePreflightProject"
+        let output = try await underlying.scopePreflightProject(.init(path: .init(projectId: projectId), body: .json(.init(compositionFingerprint: fingerprint, scope: workItemRef == nil ? .all : .issue, workItemRef: workItemRef))))
+        switch output {
+        case .ok(let ok):
+            return try ok.body.json
+        case .unauthorized: throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden: throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error): throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
+    public func activatePreflightProject(projectId: String, fingerprint: String) async throws -> Project {
+        let operation = "activatePreflightProject"
+        let output = try await underlying.activatePreflightProject(.init(path: .init(projectId: projectId), body: .json(.init(compositionFingerprint: fingerprint))))
+        switch output {
+        case .ok(let ok):
+            let payload = try ok.body.json
+            return Project(id: payload.id, name: payload.name, status: payload.status.asDomain, moduleCount: payload.moduleCount, activeExecutions: payload.activeExecutions)
+        case .unauthorized: throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden: throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error): throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
     public func generateProjectValidationReport(projectId: String) async throws
         -> ProjectValidationReport
     {
@@ -767,3 +814,5 @@ public struct EngineClient: Sendable {
         }
     }
 }
+
+extension EngineClient: ProjectPreflightAPI {}
