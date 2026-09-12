@@ -36,6 +36,7 @@ export type WorkspaceLeaseClaim =
   | { readonly kind: "created"; readonly lease: WorkspaceLease }
   | { readonly kind: "existing"; readonly lease: WorkspaceLease }
   | { readonly kind: "branch-conflict" }
+  | { readonly kind: "admission-denied" }
   | { readonly kind: "concurrency-limit"; readonly maxConcurrentExecutions: number };
 
 interface WorkspaceLeaseRow {
@@ -95,6 +96,7 @@ export class WorkspaceLeaseRepository {
         .run({ ...lease, maxConcurrentExecutions });
       if (result.changes === 1) return { kind: "created", lease };
     } catch (error: unknown) {
+      if (isAdmissionDenied(error)) return { kind: "admission-denied" };
       if (!isUniqueConstraint(error)) throw error;
       constraintError = error;
     }
@@ -269,6 +271,10 @@ export class WorkspaceLeaseRepository {
       )
       .run(lease);
   }
+}
+
+function isAdmissionDenied(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("development-admission-suspended");
 }
 
 function isUniqueConstraint(error: unknown): boolean {

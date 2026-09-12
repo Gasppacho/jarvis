@@ -89,6 +89,7 @@ describe("handleWorkItemTagAdded", () => {
           workItemRef: "github://QServices/token-warehouse/issues/42",
           repositoryId: "main",
           baseBranch: "main",
+          tag: "agent:ready",
         },
         metadata: { generation: 1 },
       },

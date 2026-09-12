@@ -702,6 +702,31 @@ describe("DeliveryConsumer", () => {
     expect(firstEvent.id).not.toBe(secondEvent.id);
   });
 
+  it("admits equal-time Development deliveries by their durable delivery id", () => {
+    const harnessState = harness();
+    const { db: database, clock, store, publisher, dispatcher } = harnessState;
+    activate(store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+    const first = publisher.publish(pingInput("project-a"));
+    const second = publisher.publish(
+      pingInput("project-a", { subject: { type: "work-item", ref: "second" } }),
+    );
+    dispatcher.dispatchPending();
+    database
+      .prepare(
+        `UPDATE deliveries
+         SET module_id = 'jarvis.module.development', created_at = '2026-09-12T00:00:00.000Z'
+         WHERE event_id IN (?, ?)`,
+      )
+      .run(first.id, second.id);
+
+    const expected = database
+      .prepare("SELECT event_id FROM deliveries ORDER BY id LIMIT 1")
+      .get() as { event_id: string };
+    expect(claimDueDeliveries(database, clock)).toMatchObject([{ eventId: expected.event_id }]);
+  });
+
   it("does not let an expired worker commit a terminal outcome", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {

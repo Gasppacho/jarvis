@@ -887,7 +887,7 @@ final class ProjectConfigurationTests: XCTestCase {
         var editor = try XCTUnwrap(configuration.state(for: imported.id).draft)
         XCTAssertEqual(
             editor.modules.first?.configurationFields.map(\.key),
-            ["bootstrapLabelPolicy", "pollIntervalSeconds", "repositories"])
+            ["bootstrapLabelPolicy", "pollIntervalSeconds", "readyLabel", "repositories"])
         let bundledFields = Dictionary(
             uniqueKeysWithValues: try XCTUnwrap(editor.modules.first).configurationFields.map {
                 ($0.key, $0)

@@ -6,6 +6,7 @@ import type { DatabaseState } from "../db/open.js";
 import { EngineError, toErrorEnvelope } from "../errors.js";
 import { ForbiddenJsonKeyError, parseJsonBody } from "./json.js";
 import { API_VERSION, ENGINE_VERSION } from "../version.js";
+import type { DevelopmentAdmissions } from "../executions/development-admissions.js";
 import {
   registerProjectRoutes,
   type LocalProjectRegistry,
@@ -58,6 +59,7 @@ export interface ServerDependencies {
   /** Engine-owned execution control; HTTP does not depend on ProjectService. */
   readonly executionCancellation: ExecutionCancellationPort | undefined;
   readonly deadLetterReplay: DeadLetterReplayPort | undefined;
+  readonly developmentAdmissions: DevelopmentAdmissions | undefined;
   /** Ticket #60: one per Engine Session, fed by the dispatch loop after a
    * commit. Registered unconditionally — `GET /v1/stream` exists even while
    * the engine runs degraded, the same as `/v1/health` — but it only ever
@@ -196,6 +198,49 @@ export function buildServer(deps: ServerDependencies): FastifyInstance {
     repositoryDiscovery: deps.repositoryDiscovery,
     projects: deps.projects,
   });
+
+  app.get("/v1/projects/:projectId/development-admission", async (request, reply) => {
+    if (
+      deps.databaseState() !== "ready" ||
+      deps.developmentAdmissions === undefined ||
+      deps.projects === undefined
+    ) {
+      throw new EngineError(
+        "engine.database-unavailable",
+        503,
+        "Development admission is unavailable.",
+      );
+    }
+    const projectId = (request.params as { projectId?: unknown } | undefined)?.projectId;
+    if (typeof projectId !== "string" || projectId.trim() === "") {
+      throw new EngineError("api.invalid-request", 400, "Project id is required.");
+    }
+    deps.projects.getProject(projectId);
+    return reply.code(200).send(deps.developmentAdmissions.read(projectId));
+  });
+
+  for (const action of ["suspend", "resume"] as const) {
+    app.post(`/v1/projects/:projectId/development-admission/${action}`, async (request, reply) => {
+      if (
+        deps.databaseState() !== "ready" ||
+        deps.developmentAdmissions === undefined ||
+        deps.projects === undefined
+      ) {
+        throw new EngineError(
+          "engine.database-unavailable",
+          503,
+          "Development admission is unavailable.",
+        );
+      }
+      const projectId = (request.params as { projectId?: unknown } | undefined)?.projectId;
+      if (typeof projectId !== "string" || projectId.trim() === "") {
+        throw new EngineError("api.invalid-request", 400, "Project id is required.");
+      }
+      deps.projects.getProject(projectId);
+      deps.developmentAdmissions[action](projectId);
+      return reply.code(200).send(deps.developmentAdmissions.read(projectId));
+    });
+  }
 
   registerRuntimeRoutes(app, {
     databaseState: deps.databaseState,

@@ -51,6 +51,7 @@ import {
 } from "./executions/capabilities.js";
 import { ExternalMappingStore } from "./executions/external-mappings.js";
 import { PollCursorStore } from "./executions/poll-cursors.js";
+import { DevelopmentAdmissions } from "./executions/development-admissions.js";
 import { loadBundledModuleHost } from "./modules/bundled-module-registry.js";
 import { EventPublisher } from "./events/publisher.js";
 import {
@@ -174,6 +175,7 @@ async function main(): Promise<void> {
   let stopEventLoop: (() => void) | undefined;
   let stopGitHubPolling: (() => void) | undefined;
   let workspaceManager: WorkspaceManager | undefined;
+  let developmentAdmissions: DevelopmentAdmissions | undefined;
 
   /** Returns false when the WAL could not be checkpointed. */
   function closeDatabase(): boolean {
@@ -413,6 +415,7 @@ async function main(): Promise<void> {
     const externalMappings = new ExternalMappingStore(database.db, clock);
     const pollCursors = new PollCursorStore(database.db, clock);
     const workItemReadiness = new WorkItemReadinessStore(database.db, clock);
+    developmentAdmissions = new DevelopmentAdmissions(database.db, clock);
     const fixtures = testFixtures;
     const sampleProbeHandler = fixtures?.createSampleProbeHandler(database.db);
     const openSubscriptions: OpenSubscriptionsPort = (projectId) =>
@@ -581,6 +584,7 @@ async function main(): Promise<void> {
     isShuttingDown: () => shuttingDown,
     executionCancellation,
     deadLetterReplay,
+    developmentAdmissions,
     onShutdownRequested: () => {
       void shutdown(0);
     },

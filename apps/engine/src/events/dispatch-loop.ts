@@ -160,10 +160,44 @@ export function claimDueDeliveries(
                 deliveries.module_id AS moduleId, deliveries.event_id AS eventId,
                 deliveries.replay_requested AS replayed
          FROM deliveries
+         JOIN projects ON projects.id = deliveries.project_id
          WHERE deliveries.consumed_at IS NULL
            AND (deliveries.next_attempt_at IS NULL OR deliveries.next_attempt_at <= @now)
            AND (deliveries.lease_expires_at IS NULL OR deliveries.lease_expires_at <= @now)
-         ORDER BY deliveries.created_at
+           AND (
+             deliveries.module_id <> 'jarvis.module.development'
+             OR (
+               NOT EXISTS (
+                 SELECT 1 FROM development_admission_controls controls
+                 WHERE controls.project_id = deliveries.project_id
+                   AND controls.suspended_at IS NOT NULL
+               )
+               AND (
+                 SELECT COUNT(*) FROM workspace_leases leases
+                 WHERE leases.project_id = deliveries.project_id AND leases.status = 'active'
+               ) < COALESCE(
+                 CAST(json_extract(projects.portable_config, '$.workspace.maxConcurrentExecutions') AS INTEGER),
+                 1
+               )
+               AND (
+                 SELECT COUNT(*) FROM deliveries earlier
+                 WHERE earlier.project_id = deliveries.project_id
+                   AND earlier.module_id = 'jarvis.module.development'
+                   AND earlier.consumed_at IS NULL
+                   AND (earlier.next_attempt_at IS NULL OR earlier.next_attempt_at <= @now)
+                   AND (earlier.lease_expires_at IS NULL OR earlier.lease_expires_at <= @now)
+                   AND (earlier.created_at < deliveries.created_at
+                     OR (earlier.created_at = deliveries.created_at AND earlier.id < deliveries.id))
+               ) < COALESCE(
+                 CAST(json_extract(projects.portable_config, '$.workspace.maxConcurrentExecutions') AS INTEGER),
+                 1
+               ) - (
+                 SELECT COUNT(*) FROM workspace_leases leases
+                 WHERE leases.project_id = deliveries.project_id AND leases.status = 'active'
+               )
+             )
+           )
+         ORDER BY deliveries.created_at, deliveries.id
          LIMIT @limit`,
       )
       .all({ now: now.toISOString(), limit }) as {

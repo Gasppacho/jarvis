@@ -64,6 +64,7 @@ export type WorkspaceAllocationErrorCode =
   | "workspace.allocation-failed"
   | "workspace.branch-conflict"
   | "workspace.concurrency-limit"
+  | "workspace.admission-denied"
   | "git.base-not-found";
 
 export interface WorkspaceAllocationErrorOptions {
@@ -341,6 +342,12 @@ export class WorkspaceManager {
           details: { repositoryId: input.repositoryId, workingBranch },
           retryable: false,
         },
+      );
+    }
+    if (claim.kind === "admission-denied") {
+      throw new WorkspaceAllocationError(
+        "workspace.admission-denied",
+        "Workspace admission is currently suspended.",
       );
     }
     if (claim.kind === "concurrency-limit") {

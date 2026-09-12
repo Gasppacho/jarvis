@@ -76,6 +76,12 @@ describe("engine with an unavailable database", () => {
       "engine.database-unavailable",
     );
 
+    const admissionResponse = await engine.call("/v1/projects/some-project/development-admission");
+    expect(admissionResponse.status).toBe(503);
+    expect(((await admissionResponse.json()) as { error: { code: string } }).error.code).toBe(
+      "engine.database-unavailable",
+    );
+
     const replayResponse = await engine.call("/v1/dead-letters/delivery-a/replay", {
       method: "POST",
     });

@@ -829,6 +829,60 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /v1/projects/{projectId}/development-admission:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      operationId: getDevelopmentAdmission
+      responses:
+        "200":
+          description: Durable Development admission state for one Project.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DevelopmentAdmissionState"
+        default:
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /v1/projects/{projectId}/development-admission/suspend:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      operationId: suspendDevelopmentAdmission
+      responses:
+        "200":
+          description: Development admission suspended without cancelling active work.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DevelopmentAdmissionState"
+        default:
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /v1/projects/{projectId}/development-admission/resume:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      operationId: resumeDevelopmentAdmission
+      responses:
+        "200":
+          description: Development admission resumed and pending candidates re-evaluated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DevelopmentAdmissionState"
+        default:
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/dead-letters/{deliveryId}/replay:
     post:
       operationId: replayDeadLetter
@@ -2343,6 +2397,35 @@ components:
         createdAt:
           type: string
           format: date-time
+    DevelopmentAdmission:
+      type: object
+      additionalProperties: false
+      required: [deliveryId, eventId, status, reason]
+      properties:
+        deliveryId:
+          type: string
+        eventId:
+          type: string
+        workItemRef:
+          type: string
+        repositoryId:
+          type: string
+        status:
+          type: string
+          enum: [waiting-capacity, blocked, impossible, ineligible, suspended]
+        reason:
+          type: string
+    DevelopmentAdmissionState:
+      type: object
+      additionalProperties: false
+      required: [suspended, items]
+      properties:
+        suspended:
+          type: boolean
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DevelopmentAdmission"
     ErrorResponse:
       type: object
       additionalProperties: false

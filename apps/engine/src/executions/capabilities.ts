@@ -21,6 +21,7 @@ import {
   GitHubApiClient,
   GitHubApiError,
   GitHubTranslationError,
+  assessGitHubWorkItemReadiness,
   type GitHubCredentialResolutionPort,
   parseGitHubWorkItemRef,
   translateGitHubWorkItemResponse,
@@ -144,8 +145,7 @@ export class ProjectModuleCapabilityResolver {
       githubRequirement === undefined &&
       workItemsRequirement === undefined &&
       this.externalMappings === undefined &&
-      this.pollCursors === undefined &&
-      this.workItemReadiness === undefined
+      this.pollCursors === undefined
     ) {
       return {};
     }
@@ -158,8 +158,7 @@ export class ProjectModuleCapabilityResolver {
       githubRequirement === undefined &&
       workItemsRequirement === undefined &&
       this.externalMappings === undefined &&
-      this.pollCursors === undefined &&
-      this.workItemReadiness === undefined
+      this.pollCursors === undefined
     ) {
       return {};
     }
@@ -185,7 +184,7 @@ export class ProjectModuleCapabilityResolver {
       ...(this.pollCursors === undefined
         ? {}
         : { pollCursor: this.pollCursors.bind(projectId, moduleInstanceId) }),
-      ...(this.workItemReadiness === undefined
+      ...(this.workItemReadiness === undefined || moduleId !== "jarvis.module.github"
         ? {}
         : { workItemReadiness: this.workItemReadiness.bind(projectId, moduleInstanceId) }),
     };
@@ -318,6 +317,23 @@ export class ProjectModuleCapabilityResolver {
               throw error;
             }
             return translateGitHubWorkItemResponse(response, ref);
+          },
+          assessReadiness: async ({ ref, repositoryId, tag }) => {
+            const reference = parseGitHubWorkItemRef(ref);
+            if (!linkedRepository(snapshot, repositoryId, reference.owner, reference.repository)) {
+              return {
+                status: "impossible",
+                reason: "work-item-repository-unlinked",
+                blockerRefs: [],
+              };
+            }
+            return assessGitHubWorkItemReadiness({
+              api: githubApi,
+              owner: reference.owner,
+              repository: reference.repository,
+              number: reference.number,
+              tag,
+            });
           },
         };
         resolved = { ...resolved, workItems };

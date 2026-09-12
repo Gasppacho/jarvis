@@ -57,7 +57,7 @@ final class ModuleCatalogTests: XCTestCase {
             automation.description,
             "Translates matching project Facts into targeted Requests.")
         XCTAssertEqual(automation.categories, ["automation"])
-        XCTAssertEqual(automation.consumes, ["scm.work-item.tag-added.v1"])
+        XCTAssertEqual(automation.consumes, ["scm.work-item.ready.v1", "scm.work-item.tag-added.v1"])
         XCTAssertEqual(automation.produces, ["development.implementation.requested.v1"])
         XCTAssertEqual(automation.requires, [])
         XCTAssertEqual(automation.requiredCapabilityIDs, [])
@@ -143,7 +143,7 @@ final class ModuleCatalogTests: XCTestCase {
         XCTAssertEqual(
             github.produces,
             [
-                "scm.work-item.tag-added.v1", "scm.change-request.created.v1",
+                "scm.work-item.ready.v1", "scm.work-item.tag-added.v1", "scm.change-request.created.v1",
                 "scm.change-request.creation-failed.v1",
             ])
         XCTAssertEqual(github.requires, [ModuleCapabilityRequirement(id: "github.api", binding: "sourceControl")])

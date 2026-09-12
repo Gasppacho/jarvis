@@ -25,6 +25,11 @@
       "minLength": 1,
       "maxLength": 200
     },
+    "tag": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
     "requestedGeneration": {
       "type": "integer",
       "minimum": 1

@@ -160,3 +160,7 @@ Chaque erreur possède code stable, message utilisateur, détails techniques net
 ## No hidden continuation
 
 Un identifiant d'exécution ne doit jamais être placé dans un webhook pour « reprendre » une loop. Les liens valides sont `correlationId`, `causationId`, `subject` et les références métier. Cette règle garantit que chaque module reste autonome et remplaçable.
+
+## Development admission
+
+Une Request Development qui ne peut pas encore obtenir sa capacité reste une Delivery durable non consommée. Son identité est la Delivery existante : elle ne consomme ni tentative de retry, ni budget de réparation, ni Dead Letter. L'admission est ordonnée par l'arrivée durable puis l'identifiant de Delivery, est limitée par projet, et revérifie l'issue provider avant l'allocation du Workspace. La suspension d'admission est durable et interdit les nouveaux départs sans annuler une Execution déjà active.

@@ -209,12 +209,14 @@ function implementationPayload(
   rule: AutomationRule,
 ): ImplementationRequestPayload {
   const configured = rule.emit.payload ?? {};
+  const tag = readNonEmptyString(configured["tag"]) ?? readNonEmptyString(ctx.event.payload["tag"]);
   return {
     ...configured,
     workItemRef:
       readNonEmptyString(configured["workItemRef"]) ??
       readNonEmptyString(ctx.event.payload["workItemRef"]) ??
       ctx.event.subject.ref,
+    ...(tag === undefined ? {} : { tag }),
     repositoryId:
       readNonEmptyString(configured["repositoryId"]) ??
       readNonEmptyString(ctx.repositoryId) ??

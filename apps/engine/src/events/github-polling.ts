@@ -9,6 +9,7 @@ import type { Clock } from "../../../../packages/kernel/src/clock.js";
 import type { ModuleHost } from "../../../../packages/kernel/src/module-host.js";
 import type { IdGenerator } from "../../../../packages/kernel/src/id-generator.js";
 import { GitHubApiError } from "../../../../packages/modules/github/src/api-client.js";
+import { assessGitHubWorkItemReadiness } from "../../../../packages/modules/github/src/work-item-readiness.js";
 import {
   GitHubTranslationError,
   latestGitHubIssueEvent,
@@ -283,11 +284,6 @@ interface CurrentGitHubIssue {
   readonly labels: readonly string[];
 }
 
-interface ReadinessBlocker {
-  readonly number: number;
-  readonly state: "open" | "closed";
-}
-
 async function scanReadiness(
   githubApi: GitHubApi,
   githubRepositoryId: string,
@@ -304,34 +300,20 @@ async function scanReadiness(
     if (!candidate.labels.includes(tag)) continue;
     const workItemRef = `github://${repository.owner}/${repository.name}/issues/${candidate.number}`;
     const observedAt = dependencies.clock.now().toISOString();
-    let blockerRefs: string[];
-    try {
-      blockerRefs = (await readBlockedBy(githubApi, githubRepositoryId, candidate.number))
-        .filter((blocker) => blocker.state === "open")
-        .map(
-          (blocker) => `github://${repository.owner}/${repository.name}/issues/${blocker.number}`,
-        );
-    } catch {
-      dependencies.transaction(() => {
-        readiness.observe({
-          repositoryId: repository.repositoryId,
-          workItemRef,
-          status: "impossible",
-          reason: "dependency-state-unavailable",
-          blockerRefs: [],
-          observedAt,
-        });
-      });
-      continue;
-    }
-    const status = blockerRefs.length === 0 ? "ready" : "blocked";
+    const assessment = await assessGitHubWorkItemReadiness({
+      api: githubApi,
+      owner: repository.owner,
+      repository: repository.name,
+      number: candidate.number,
+      tag,
+    });
     dependencies.transaction(() => {
       const admitted = readiness.observe({
         repositoryId: repository.repositoryId,
         workItemRef,
-        status,
-        reason: status === "ready" ? "no-open-native-blockers" : "open-native-blockers",
-        blockerRefs,
+        status: assessment.status,
+        reason: assessment.reason,
+        blockerRefs: assessment.blockerRefs,
         observedAt,
       });
       if (!admitted) return;
@@ -345,12 +327,7 @@ async function scanReadiness(
         subject: { type: "work-item", ref: workItemRef },
         correlationId: `corr_${dependencies.ids.next()}`,
         causationId: null,
-        idempotencyKey: readinessIdentity(
-          projectId,
-          moduleInstanceId,
-          repository.repositoryId,
-          workItemRef,
-        ),
+        idempotencyKey: readinessIdentity(projectId, repository.repositoryId, workItemRef),
         payload: {
           repositoryId: repository.repositoryId,
           workItemRef,
@@ -363,13 +340,8 @@ async function scanReadiness(
   }
 }
 
-function readinessIdentity(
-  projectId: string,
-  moduleInstanceId: string,
-  repositoryId: string,
-  workItemRef: string,
-): string {
-  return `${projectId}:${moduleInstanceId}:${repositoryId}:${workItemRef}:ready-v1`;
+function readinessIdentity(projectId: string, repositoryId: string, workItemRef: string): string {
+  return `${projectId}:${repositoryId}:${workItemRef}:ready-v1`;
 }
 
 async function readCurrentIssues(
@@ -391,23 +363,6 @@ async function readCurrentIssues(
     if (!hasNextPage(response)) return issues;
   }
   throw new Error("GitHub issue pagination is incomplete");
-}
-
-async function readBlockedBy(
-  githubApi: GitHubApi,
-  githubRepositoryId: string,
-  issueNumber: number,
-): Promise<ReadinessBlocker[]> {
-  const blockers: ReadinessBlocker[] = [];
-  for (let page = 1; page <= READINESS_MAX_PAGES; page += 1) {
-    const response = await githubApi.get(
-      `/repos/${githubRepositoryId}/issues/${issueNumber}/dependencies/blocked_by?per_page=${READINESS_PAGE_SIZE}&page=${page}`,
-    );
-    const body = successfulArray(response, "dependency list");
-    blockers.push(...body.map(readBlocker));
-    if (!hasNextPage(response)) return blockers;
-  }
-  throw new Error("GitHub dependency pagination is incomplete");
 }
 
 function successfulArray(response: unknown, label: string): unknown[] {
@@ -457,21 +412,6 @@ function hasNextPage(response: unknown): boolean {
   if (!isRecord(headers)) return false;
   const link = headers["link"];
   return typeof link === "string" && /(?:^|,)\s*<[^>]+>;\s*rel="next"(?:,|$)/.test(link);
-}
-
-function readBlocker(value: unknown): ReadinessBlocker {
-  if (!isRecord(value)) throw new Error("invalid GitHub dependency response");
-  const number = value["number"];
-  const state = value["state"];
-  if (
-    typeof number !== "number" ||
-    !Number.isSafeInteger(number) ||
-    number < 1 ||
-    (state !== "open" && state !== "closed")
-  ) {
-    throw new Error("invalid GitHub dependency response");
-  }
-  return { number, state };
 }
 
 function readyLabel(configuration: Readonly<Record<string, unknown>> | undefined): string {

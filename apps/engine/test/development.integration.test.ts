@@ -59,12 +59,96 @@ afterEach(async () => {
 });
 
 describe("Development Module tracer bullet", () => {
-  it("rejects a GitHub Issue closed after readiness without a worktree or agent", async () => {
+  it("keeps a closed GitHub Issue pending without a workspace, retry, or dead letter", async () => {
     const fixture = makeRealGitRepositoryFixture({
       remoteUrl: "git@github.com:Gasppacho/jarvis.git",
     });
     roots.push(fixture.root, fixture.remoteRoot);
-    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-closed-work-item-"));
+    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-pending-closed-"));
+    roots.push(dataRoot);
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
+    });
+    engines.push(engine);
+    const missing = await engine.call("/v1/projects/missing/development-admission");
+    expect(missing.status).toBe(404);
+    expect((await missing.json()) as { error: { code: string } }).toMatchObject({
+      error: { code: "project.not-found" },
+    });
+    const github = servers[0]!;
+    const workItemRef = "github://Gasppacho/jarvis/issues/44";
+    github.seedIssue({
+      owner: "Gasppacho",
+      repository: "jarvis",
+      issue: {
+        number: 44,
+        title: "Closed while waiting",
+        body: "External body must not be persisted.",
+        state: "closed",
+        labels: [{ name: "agent:ready" }],
+      },
+    });
+
+    await activateProject(engine, "development-pending-closed", fixture);
+    await publishTag(engine, "development-pending-closed", "closed-pending", 1, workItemRef);
+    await waitForAdmission(dataRoot, "development-pending-closed", "ineligible");
+    const admission = await engine.call(
+      "/v1/projects/development-pending-closed/development-admission",
+    );
+    expect(admission.status, await admission.clone().text()).toBe(200);
+    expect(await admission.json()).toMatchObject({
+      suspended: false,
+      items: [
+        {
+          workItemRef,
+          status: "ineligible",
+          reason: "work-item-closed",
+        },
+      ],
+    });
+    const suspended = await engine.call(
+      "/v1/projects/development-pending-closed/development-admission/suspend",
+      { method: "POST" },
+    );
+    expect(await suspended.json()).toMatchObject({ suspended: true });
+    const resumed = await engine.call(
+      "/v1/projects/development-pending-closed/development-admission/resume",
+      { method: "POST" },
+    );
+    expect(await resumed.json()).toMatchObject({ suspended: false });
+
+    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
+    try {
+      expect(
+        database
+          .prepare(
+            "SELECT COUNT(*) AS count FROM dead_letters WHERE module_instance_id = 'development'",
+          )
+          .get(),
+      ).toEqual({ count: 0 });
+      expect(database.prepare("SELECT COUNT(*) AS count FROM workspace_leases").get()).toEqual({
+        count: 0,
+      });
+      expect(
+        database
+          .prepare(
+            "SELECT attempt_count FROM deliveries WHERE project_id = ? AND module_instance_id = 'development'",
+          )
+          .get("development-pending-closed"),
+      ).toEqual({ attempt_count: 0 });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("does not start a new Development workspace while admission is suspended, then resumes it", async () => {
+    const fixture = makeRealGitRepositoryFixture({
+      remoteUrl: "git@github.com:Gasppacho/jarvis.git",
+    });
+    roots.push(fixture.root, fixture.remoteRoot);
+    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-suspended-"));
     roots.push(dataRoot);
     const engine = await startEngine({
       dataRoot,
@@ -73,110 +157,56 @@ describe("Development Module tracer bullet", () => {
     });
     engines.push(engine);
     const github = servers[0]!;
-    const workItemRef = "github://Gasppacho/jarvis/issues/43";
+    const workItemRef = "github://Gasppacho/jarvis/issues/45";
     github.seedIssue({
       owner: "Gasppacho",
       repository: "jarvis",
       issue: {
-        number: 43,
-        title: "Closed after readiness",
+        number: 45,
+        title: "Suspended before start",
         body: "External body must not be persisted.",
-        state: "closed",
-        labels: [{ name: "agent:ready" }],
-      },
-    });
-
-    await activateProject(engine, "development-closed-work-item", fixture);
-    await publishTag(engine, "development-closed-work-item", "closed", 1, workItemRef);
-    const executions = await waitForExecutions(engine, "development-closed-work-item", 2);
-    const development = executions.find(
-      ({ moduleInstanceId }) => moduleInstanceId === "development",
-    );
-    expect(development).toMatchObject({ status: "failed" });
-    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
-    let implementationEventId: string | undefined;
-    try {
-      expect(
-        database
-          .prepare(
-            "SELECT code, attempts, message FROM dead_letters WHERE module_instance_id = 'development'",
-          )
-          .get(),
-      ).toEqual({
-        code: "github.work-item-read-failed",
-        attempts: 1,
-        message: "The requested Work Item is closed.",
-      });
-      expect(
-        database
-          .prepare("SELECT COUNT(*) AS count FROM workspace_leases WHERE execution_id = ?")
-          .get(development!.id),
-      ).toEqual({ count: 0 });
-      expect(
-        database
-          .prepare("SELECT COUNT(*) AS count FROM execution_checkpoints WHERE execution_id = ?")
-          .get(development!.id),
-      ).toEqual({ count: 0 });
-      expect(
-        database
-          .prepare("SELECT message FROM dead_letters WHERE module_instance_id = 'development'")
-          .get(),
-      ).not.toMatchObject({
-        message: expect.stringContaining("External body must not be persisted."),
-      });
-      implementationEventId = (
-        database
-          .prepare("SELECT id FROM events WHERE type = 'development.implementation.requested'")
-          .get() as { id: string }
-      ).id;
-    } finally {
-      database.close();
-    }
-    const redelivery = await engine.call("/test/redeliver", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        projectId: "development-closed-work-item",
-        moduleInstanceId: "development",
-        moduleId: "jarvis.module.development",
-        eventId: implementationEventId,
-      }),
-    });
-    expect(redelivery.status, await redelivery.clone().text()).toBe(200);
-    expect(await redelivery.json()).toMatchObject({
-      redelivered: true,
-      executionId: null,
-      status: "failed",
-    });
-    expect(
-      github.requests.filter(
-        ({ method, path }) => method === "GET" && path === "/repos/Gasppacho/jarvis/issues/43",
-      ),
-    ).toHaveLength(1);
-    github.seedIssue({
-      owner: "Gasppacho",
-      repository: "jarvis",
-      issue: {
-        number: 43,
-        title: "Reopened after correction",
-        body: "Corrected external body",
         state: "open",
         labels: [{ name: "agent:ready" }],
       },
     });
-    const deadLetters = await engine.call("/v1/projects/development-closed-work-item/dead-letters");
-    const deadLetter = (await deadLetters.json()) as { items: readonly { deliveryId: string }[] };
-    const replay = await engine.call(
-      `/v1/dead-letters/${encodeURIComponent(deadLetter.items[0]!.deliveryId)}/replay`,
+    await activateProject(engine, "development-suspended", fixture);
+    const suspended = await engine.call(
+      "/v1/projects/development-suspended/development-admission/suspend",
       { method: "POST" },
     );
-    expect(replay.status, await replay.clone().text()).toBe(202);
-    await waitForExecutions(engine, "development-closed-work-item", 3);
-    expect(
-      github.requests.filter(
-        ({ method, path }) => method === "GET" && path === "/repos/Gasppacho/jarvis/issues/43",
-      ),
-    ).toHaveLength(2);
+    expect(suspended.status).toBe(200);
+    await publishTag(engine, "development-suspended", "suspended", 1, workItemRef);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
+    try {
+      expect(
+        database
+          .prepare(
+            "SELECT COUNT(*) AS count FROM workspace_leases WHERE project_id = 'development-suspended'",
+          )
+          .get(),
+      ).toEqual({ count: 0 });
+      expect(
+        database
+          .prepare(
+            "SELECT COUNT(*) AS count FROM executions WHERE project_id = 'development-suspended' AND module_instance_id = 'development'",
+          )
+          .get(),
+      ).toEqual({ count: 0 });
+    } finally {
+      database.close();
+    }
+
+    const resumed = await engine.call(
+      "/v1/projects/development-suspended/development-admission/resume",
+      { method: "POST" },
+    );
+    expect(resumed.status).toBe(200);
+    const executions = await waitForExecutions(engine, "development-suspended", 2);
+    expect(executions.some(({ moduleInstanceId }) => moduleInstanceId === "development")).toBe(
+      true,
+    );
   });
 
   it("reads the bound open GitHub Issue before allocating and running Development", async () => {
@@ -1910,6 +1940,27 @@ async function waitForExecution(
     if (Date.now() - startedAt > 10_000) {
       throw new Error(`Development execution did not reach ${status} in time.`);
     }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+async function waitForAdmission(
+  dataRoot: string,
+  projectId: string,
+  status: string,
+): Promise<void> {
+  const startedAt = Date.now();
+  for (;;) {
+    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
+    try {
+      const row = database
+        .prepare("SELECT status FROM development_admissions WHERE project_id = ?")
+        .get(projectId) as { status: string } | undefined;
+      if (row?.status === status) return;
+    } finally {
+      database.close();
+    }
+    if (Date.now() - startedAt > 5_000) throw new Error("Development admission did not settle.");
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }

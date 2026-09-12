@@ -12,6 +12,7 @@ import type {
   ModuleRepositoryDefaultBranchLookup,
   ProjectRepositoryIdentity,
 } from "../../../../packages/module-sdk/src/index.js";
+import { ModuleDeliveryDeferredError } from "../../../../packages/module-sdk/src/index.js";
 
 export type ModulePublishedContract = Pick<ModuleHandlerPublishInput, "type" | "version" | "kind">;
 
@@ -114,7 +115,7 @@ export interface ConsumeResult {
   /** `null` on a redelivery: no second Execution is created (acceptance
    * criterion 3), so there is no new id to report. */
   readonly executionId: string | null;
-  readonly status: "completed" | "failed" | "cancelled" | "timed-out";
+  readonly status: "completed" | "failed" | "cancelled" | "timed-out" | "deferred";
   readonly result: unknown;
   readonly redelivered: boolean;
   /** Ticket #60: the Ledger row this call just committed, in the REST
@@ -429,16 +430,18 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
                     attempt,
                     true,
                   )
-                : this.recordFailure(
-                    delivery,
-                    envelope,
-                    executionId,
-                    startedAt,
-                    error,
-                    failurePublications,
-                    attempt,
-                    true,
-                  ),
+                : error instanceof ModuleDeliveryDeferredError
+                  ? this.deferDelivery(delivery, executionId, error)
+                  : this.recordFailure(
+                      delivery,
+                      envelope,
+                      executionId,
+                      startedAt,
+                      error,
+                      failurePublications,
+                      attempt,
+                      true,
+                    ),
           )
           .catch((error: unknown) => {
             if (error instanceof DeliveryLeaseLostError) return this.leaseLostResult();
@@ -453,6 +456,9 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
     } catch (error) {
       transactionOpen = false;
       if (error instanceof DeliveryLeaseLostError) return this.leaseLostResult();
+      if (error instanceof ModuleDeliveryDeferredError) {
+        return this.deferDelivery(delivery, executionId, error);
+      }
       return this.recordFailure(
         delivery,
         envelope,
@@ -746,6 +752,63 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
       result,
       redelivered: false,
       executionSummary: { ...executionRow, correlationId: envelope.correlationId },
+    };
+  }
+
+  private deferDelivery(
+    delivery: ClaimedDelivery,
+    executionId: string,
+    deferred: ModuleDeliveryDeferredError,
+  ): ConsumeResult {
+    this.db.transaction(() => {
+      this.db
+        .prepare("DELETE FROM executions WHERE id = ? AND status = 'running'")
+        .run(executionId);
+      this.db
+        .prepare(
+          `INSERT INTO development_admissions (delivery_id, project_id, status, reason, updated_at)
+           VALUES ((SELECT id FROM deliveries WHERE project_id = @projectId
+                     AND module_instance_id = @moduleInstanceId AND event_id = @eventId),
+                   @projectId, @status, @reason, @updatedAt)
+           ON CONFLICT (delivery_id) DO UPDATE SET
+             status = excluded.status, reason = excluded.reason, updated_at = excluded.updated_at`,
+        )
+        .run({
+          projectId: delivery.projectId,
+          moduleInstanceId: delivery.moduleInstanceId,
+          eventId: delivery.eventId,
+          status: deferred.status,
+          reason: deferred.reason,
+          updatedAt: this.clock.now().toISOString(),
+        });
+      const nextAttemptAt =
+        deferred.status === "waiting-capacity"
+          ? null
+          : new Date(this.clock.now().getTime() + 60_000).toISOString();
+      const written = this.db
+        .prepare(
+          `UPDATE deliveries
+           SET next_attempt_at = @nextAttemptAt, lease_owner = NULL, lease_expires_at = NULL
+           WHERE project_id = @projectId AND module_instance_id = @moduleInstanceId AND event_id = @eventId
+             AND consumed_at IS NULL AND (@leaseOwner IS NULL OR lease_owner = @leaseOwner)`,
+        )
+        .run({
+          projectId: delivery.projectId,
+          moduleInstanceId: delivery.moduleInstanceId,
+          eventId: delivery.eventId,
+          nextAttemptAt,
+          leaseOwner: delivery.leaseOwner ?? null,
+        });
+      if (delivery.leaseOwner !== undefined && written.changes !== 1) {
+        throw new DeliveryLeaseLostError();
+      }
+    })();
+    return {
+      executionId: null,
+      status: "deferred",
+      result: { admission: { status: deferred.status, reason: deferred.reason } },
+      redelivered: false,
+      executionSummary: null,
     };
   }
 

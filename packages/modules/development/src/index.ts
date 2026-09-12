@@ -4,6 +4,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 import type { AgentRun, AgentRunResult, AgentRuntime } from "../../../agent-runtime/src/index.js";
 import { buildAgentRunRequest } from "../../../agent-runtime/src/request-builder.js";
 import { GitRunner, type GitCommandResult } from "../../../workspace/src/git-runner.js";
+import { ModuleDeliveryDeferredError } from "../../../module-sdk/src/index.js";
 import type {
   ModuleHandler,
   ModuleHandlerContext,
@@ -126,6 +127,7 @@ interface ImplementationRequest {
   readonly workItemRef: string;
   readonly repositoryId: string;
   readonly baseBranch: string;
+  readonly tag?: string;
 }
 
 interface DevelopmentExecutionState {
@@ -234,26 +236,62 @@ async function runImplementationRequested(
     MAX_OUTPUT_LIMIT_BYTES,
   );
   let checkpointSequence = ctx.lastCheckpointSequence?.() ?? 0;
+  if (requiresGitHubWorkItem && workItems?.assessReadiness !== undefined) {
+    const readiness = await workItems.assessReadiness({
+      ref: request.workItemRef,
+      repositoryId: request.repositoryId,
+      tag: request.tag ?? "",
+    });
+    if (readiness.status !== "ready") {
+      throw new ModuleDeliveryDeferredError(
+        readiness.status === "impossible"
+          ? "impossible"
+          : readiness.reason === "work-item-closed" || readiness.reason === "ready-label-missing"
+            ? "ineligible"
+            : "blocked",
+        readiness.reason,
+      );
+    }
+  }
   const workItem =
     !requiresGitHubWorkItem || workItems === undefined
       ? undefined
       : await readWorkItem(workItems, request.workItemRef, ctx.repositoryId);
 
-  const allocation = await workspace.allocate({
-    executionId: ctx.executionId,
-    repositoryId: request.repositoryId,
-    baseRevision: request.baseBranch,
-    branchContext: {
-      workItemId:
-        workItem === undefined
-          ? branchValue(request.workItemRef)
-          : branchValue(String(workItem.number)),
-      slug:
-        workItem === undefined
-          ? branchValue(`implementation-${ctx.executionId}`)
-          : workItemSlug(workItem.title, ctx.executionId),
-    },
-  });
+  let allocation;
+  try {
+    allocation = await workspace.allocate({
+      executionId: ctx.executionId,
+      repositoryId: request.repositoryId,
+      baseRevision: request.baseBranch,
+      branchContext: {
+        workItemId:
+          workItem === undefined
+            ? branchValue(request.workItemRef)
+            : branchValue(String(workItem.number)),
+        slug:
+          workItem === undefined
+            ? branchValue(`implementation-${ctx.executionId}`)
+            : workItemSlug(workItem.title, ctx.executionId),
+      },
+    });
+  } catch (error: unknown) {
+    if (
+      error instanceof Error &&
+      ((error as { code?: unknown }).code === "workspace.concurrency-limit" ||
+        (error as { code?: unknown }).code === "workspace.admission-denied")
+    ) {
+      throw new ModuleDeliveryDeferredError(
+        (error as { code?: unknown }).code === "workspace.admission-denied"
+          ? "suspended"
+          : "waiting-capacity",
+        (error as { code?: unknown }).code === "workspace.admission-denied"
+          ? "admission-suspended"
+          : "workspace-concurrency-limit",
+      );
+    }
+    throw error;
+  }
   state.workspaceAllocated = true;
   let releaseOutcome: "success" | "failure" | "cancelled" = "failure";
   let run: AgentRun | undefined;
@@ -1116,6 +1154,7 @@ function readImplementationRequest(
   const workItemRef = payload["workItemRef"];
   const repositoryId = payload["repositoryId"];
   const baseBranch = payload["baseBranch"];
+  const tag = payload["tag"];
   if (
     typeof workItemRef !== "string" ||
     workItemRef.trim() === "" ||
@@ -1129,7 +1168,12 @@ function readImplementationRequest(
       "The implementation request payload is invalid.",
     );
   }
-  return { workItemRef, repositoryId, baseBranch };
+  return {
+    workItemRef,
+    repositoryId,
+    baseBranch,
+    ...(typeof tag === "string" && tag.trim() !== "" ? { tag } : {}),
+  };
 }
 
 function branchValue(value: string): string {

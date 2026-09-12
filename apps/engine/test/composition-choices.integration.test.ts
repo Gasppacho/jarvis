@@ -158,9 +158,9 @@ describe("project composition choices", () => {
     expect(template.modules[1]?.["configuration"]).toEqual({
       rules: [
         {
-          id: "ready-label-starts-development",
+          id: "ready-work-item-starts-development",
           when: {
-            eventType: "scm.work-item.tag-added",
+            eventType: "scm.work-item.ready",
             equals: { "payload.tag": "ready-for-agent" },
           },
           emit: {

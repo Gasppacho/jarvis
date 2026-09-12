@@ -108,6 +108,7 @@ L'Inbox possède une contrainte unique `(consumer_instance_id, event_id)`. Une r
 ## Retry and dead letters
 
 - Le handler fournit une classification structurée quand elle est sûre ; les erreurs de validation, permission et autres erreurs manifestement permanentes sont non retryables. Une erreur non classifiée reste retryable par défaut afin de ne pas perdre une panne transitoire.
+- Une admission Development différée n'est pas un retry : la Delivery conserve son identité et son compteur de tentatives, sans Inbox ni Dead Letter, jusqu'à ce qu'une capacité et une revérification provider l'autorisent.
 - Une erreur retryable marque l'Execution de l'essai `failed`, n'écrit pas d'Inbox et laisse la Delivery non consommée jusqu'à `next_attempt_at`.
 - Une erreur permanente est dead-letterée immédiatement avec son code structuré, son message nettoyé, le nombre d'essais et le lien vers la dernière Execution lorsqu'elle a pu être enregistrée ; elle n'écrit pas d'Inbox.
 - Après épuisement, le code de la Dead Letter devient `delivery.retry-exhausted`.

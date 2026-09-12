@@ -88,6 +88,29 @@ export interface ProjectRepositoryIdentity {
 
 export interface WorkItemsCapability {
   read(ref: string, repositoryId?: string): Promise<WorkItem>;
+  assessReadiness?(input: {
+    readonly ref: string;
+    readonly repositoryId: string;
+    readonly tag: string;
+  }): Promise<WorkItemReadinessAssessment>;
+}
+
+export interface WorkItemReadinessAssessment {
+  readonly status: "ready" | "blocked" | "impossible";
+  readonly reason: string;
+  readonly blockerRefs: readonly string[];
+}
+
+/** A handler may defer durable admission without spending a Delivery retry. */
+export class ModuleDeliveryDeferredError extends Error {
+  public constructor(
+    public readonly status:
+      "waiting-capacity" | "blocked" | "impossible" | "ineligible" | "suspended",
+    public readonly reason: string,
+  ) {
+    super(reason);
+    this.name = "ModuleDeliveryDeferredError";
+  }
 }
 
 export interface ExternalMappingRecord {
