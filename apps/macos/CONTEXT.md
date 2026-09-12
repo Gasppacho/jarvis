@@ -18,6 +18,12 @@ One authenticated lifetime shared by a shell launch and one Engine process.
 ### Local API
 The versioned loopback contract used by the shell to command and observe the Engine.
 
+### Project Overview
+The first operational read model shown after Project activation: workflow progress,
+GitHub readiness, polling health and pause state for one Project.
+
+_Avoid_: recomputing eligibility in the Shell; the Engine owns reasons and claims.
+
 ### Repository Grant
 User-approved local access to a repository folder, represented by a durable local reference.
 

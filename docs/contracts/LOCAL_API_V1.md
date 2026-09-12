@@ -136,6 +136,31 @@ Depuis l'ADR 0014, chaque ligne de Slot porte aussi un champ optionnel `ineligib
 Ces ressources restent sous le préfixe Local API `/v1`, conformément à la pratique de
 versioning de cette API.
 
+`GET /v1/projects/{projectId}/overview` expose le read model project-scoped attendu
+après activation. `ProjectOverviewV1` rassemble le statut du Project, l'action
+principale, le workflow `GitHub → Rules → Development → Pull Request`, l'étape suivante,
+l'état du polling (`live`, `reconnecting`, `failed`, `paused` ou `unavailable`), le
+dernier polling réussi et sa raison d'erreur éventuelle. Il expose aussi les issues
+observées par GitHub avec leur numéro, titre, label de readiness, statut
+(`eligible`, `waiting`, `in-progress`, `blocked`, `ineligible` ou `unavailable`), raison
+contractuelle, explication lisible et références des dépendances ouvertes.
+
+L'Engine reste l'autorité pour l'éligibilité et la claim. Une issue sans label de
+readiness apparaît comme en attente et ne peut pas être claimée; une issue `blocked`
+doit porter au moins une dépendance native GitHub ouverte (`blocked_by`). Une autre
+issue active dans le même Project est représentée comme `in-progress`, et les autres
+issues attendent tant que la règle d'une seule issue à la fois est satisfaite. Le nom
+lisible du label est renvoyé dans `readinessLabel`; le template courant utilise
+`ready-for-agent` et une configuration existante qui utilise `agent:ready` reste
+inchangée.
+
+`POST /v1/projects/{projectId}/overview/refresh` déclenche un polling immédiat si le
+poller est disponible puis renvoie le même snapshot. En cas d'erreur GitHub, le dernier
+snapshot reste servi avec l'état de connexion et une raison sûre à afficher. Les
+commandes `POST /v1/projects/{projectId}/pause` et `POST
+/v1/projects/{projectId}/resume` suspendent ou réactivent les nouveaux claims du
+Project; les exécutions déjà actives restent observables et ne sont pas annulées.
+
 ### Modules
 
 Catalogue global et instances par projet.

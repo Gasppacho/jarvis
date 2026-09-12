@@ -29,6 +29,7 @@ import type {
 } from "../projects/repository-resolution.js";
 import { configuredRepositoryReferences } from "../projects/repository-resolution.js";
 import type { EventPublisher } from "./publisher.js";
+import type { GitHubPollingStatusStore } from "./polling-status.js";
 import { failpoint } from "../test-support/failpoint.js";
 
 declare const __JARVIS_TEST_HOOKS__: boolean | undefined;
@@ -63,12 +64,16 @@ export interface GitHubPollingDependencies {
   readonly ids: Pick<IdGenerator, "next">;
   readonly clock: Pick<Clock, "now">;
   readonly repositoryResolver: Pick<ProjectRepositoryResolver, "resolve">;
+  readonly pollingStatus?: Pick<
+    GitHubPollingStatusStore,
+    "reconnecting" | "succeeded" | "failed" | "failModule"
+  >;
   readonly pollIntervalMs?: number;
 }
 
 /** Polls active Project-bound GitHub Module Instances without retaining credentials. */
 export class GitHubPollingScheduler {
-  private readonly inFlight = new Set<string>();
+  private readonly inFlight = new Map<string, Promise<void>>();
   private readonly nextPollAt = new Map<string, number>();
 
   public constructor(private readonly dependencies: GitHubPollingDependencies) {}
@@ -94,12 +99,25 @@ export class GitHubPollingScheduler {
         const intervalMs = effectivePollIntervalMs(instance, this.dependencies.pollIntervalMs);
         if (now < (this.nextPollAt.get(key) ?? 0)) continue;
         this.nextPollAt.set(key, now + intervalMs);
-        this.inFlight.add(key);
-        void this.pollInstance(project.id, snapshot, instance).finally(() =>
-          this.inFlight.delete(key),
-        );
+        const operation = this.pollInstance(project.id, snapshot, instance);
+        this.inFlight.set(key, operation);
+        void operation.finally(() => {
+          if (this.inFlight.get(key) === operation) this.inFlight.delete(key);
+        });
       }
     }
+  }
+
+  /** Runs the current Project targets immediately and waits for their result. */
+  public async pollNow(projectId: string): Promise<void> {
+    for (const key of this.nextPollAt.keys()) {
+      if (key.startsWith(`${projectId}:`)) this.nextPollAt.set(key, 0);
+    }
+    await this.tick();
+    const operations = [...this.inFlight]
+      .filter(([key]) => key.startsWith(`${projectId}:`))
+      .map(([, operation]) => operation);
+    await Promise.allSettled(operations);
   }
 
   private shouldPoll(instance: ProjectModuleInstanceConfiguration): boolean {
@@ -124,26 +142,51 @@ export class GitHubPollingScheduler {
       );
     } catch {
       logPollingFailure(projectId, instance.instanceId, "capability", "capability-unavailable");
+      this.dependencies.pollingStatus?.failModule(
+        projectId,
+        instance.instanceId,
+        "capability-unavailable",
+      );
       return;
     }
     const githubApi = capabilities.githubApi;
     if (githubApi === undefined) {
       logPollingFailure(projectId, instance.instanceId, "capability", "capability-unavailable");
+      this.dependencies.pollingStatus?.failModule(
+        projectId,
+        instance.instanceId,
+        "capability-unavailable",
+      );
       return;
     }
     const pollCursor = capabilities.pollCursor;
     if (pollCursor === undefined) {
       logPollingFailure(projectId, instance.instanceId, "capability", "capability-unavailable");
+      this.dependencies.pollingStatus?.failModule(
+        projectId,
+        instance.instanceId,
+        "capability-unavailable",
+      );
       return;
     }
     const externalMappings = capabilities.externalMappings;
     if (externalMappings === undefined) {
       logPollingFailure(projectId, instance.instanceId, "capability", "capability-unavailable");
+      this.dependencies.pollingStatus?.failModule(
+        projectId,
+        instance.instanceId,
+        "capability-unavailable",
+      );
       return;
     }
     const workItemReadiness = capabilities.workItemReadiness;
     if (workItemReadiness === undefined) {
       logPollingFailure(projectId, instance.instanceId, "capability", "readiness-unavailable");
+      this.dependencies.pollingStatus?.failModule(
+        projectId,
+        instance.instanceId,
+        "readiness-unavailable",
+      );
       return;
     }
 
@@ -159,6 +202,11 @@ export class GitHubPollingScheduler {
           );
         } catch {
           logPollingFailure(projectId, instance.instanceId, "unresolved", "repository-unresolved");
+          this.dependencies.pollingStatus?.failModule(
+            projectId,
+            instance.instanceId,
+            "repository-unresolved",
+          );
           return;
         }
         if (resolution.status !== "resolved") {
@@ -166,6 +214,11 @@ export class GitHubPollingScheduler {
             projectId,
             instance.instanceId,
             "unresolved",
+            `repository-${resolution.status}`,
+          );
+          this.dependencies.pollingStatus?.failModule(
+            projectId,
+            instance.instanceId,
             `repository-${resolution.status}`,
           );
           return;
@@ -198,6 +251,9 @@ export class GitHubPollingScheduler {
   ): Promise<void> {
     const repositoryId = repository.repositoryId;
     const githubRepositoryId = `${repository.owner}/${repository.name}`;
+    this.dependencies.pollingStatus?.reconnecting(projectId, moduleInstanceId, repositoryId);
+    let failed = false;
+    let failureReason: string | undefined;
     try {
       await scanReadiness(
         githubApi,
@@ -211,12 +267,9 @@ export class GitHubPollingScheduler {
         snapshot,
       );
     } catch (error: unknown) {
-      logPollingFailure(
-        projectId,
-        moduleInstanceId,
-        githubRepositoryId,
-        `readiness-${classifyPollingFailure(error)}`,
-      );
+      failed = true;
+      failureReason = `readiness-${classifyPollingFailure(error)}`;
+      logPollingFailure(projectId, moduleInstanceId, githubRepositoryId, failureReason);
     }
     try {
       if (repository.provider !== "github") throw new Error("unsupported repository provider");
@@ -243,10 +296,29 @@ export class GitHubPollingScheduler {
         const newestAfterCursor =
           observed.newest !== undefined && isAfterCursor(observed.newest, cursor);
         const position = newestAfterCursor ? observed.newest! : cursorPosition(cursor);
-        if (pending.length === 0 && !newestAfterCursor) return;
+        if (pending.length !== 0 || newestAfterCursor) {
+          publishAndAdvance(
+            pending,
+            position,
+            projectId,
+            moduleInstanceId,
+            repositoryId,
+            pollCursor,
+            externalMappings,
+            this.dependencies,
+          );
+        }
+      } else {
+        const bootstrapEvents =
+          bootstrapLabelPolicy(configuration) === "emit-existing"
+            ? existingBootstrapEvents(translated)
+            : [];
+        const pending = bootstrapEvents.filter(
+          (event) => externalMappings.read(event.externalEventId) === undefined,
+        );
         publishAndAdvance(
           pending,
-          position,
+          observed.newest ?? EMPTY_BOOTSTRAP_POSITION,
           projectId,
           moduleInstanceId,
           repositoryId,
@@ -254,33 +326,21 @@ export class GitHubPollingScheduler {
           externalMappings,
           this.dependencies,
         );
-        return;
       }
-
-      const bootstrapEvents =
-        bootstrapLabelPolicy(configuration) === "emit-existing"
-          ? existingBootstrapEvents(translated)
-          : [];
-      const pending = bootstrapEvents.filter(
-        (event) => externalMappings.read(event.externalEventId) === undefined,
-      );
-      publishAndAdvance(
-        pending,
-        observed.newest ?? EMPTY_BOOTSTRAP_POSITION,
+    } catch (error: unknown) {
+      failed = true;
+      failureReason = classifyPollingFailure(error);
+      logPollingFailure(projectId, moduleInstanceId, githubRepositoryId, failureReason);
+    }
+    if (failed) {
+      this.dependencies.pollingStatus?.failed(
         projectId,
         moduleInstanceId,
         repositoryId,
-        pollCursor,
-        externalMappings,
-        this.dependencies,
+        failureReason ?? "poll-failed",
       );
-    } catch (error: unknown) {
-      logPollingFailure(
-        projectId,
-        moduleInstanceId,
-        githubRepositoryId,
-        classifyPollingFailure(error),
-      );
+    } else {
+      this.dependencies.pollingStatus?.succeeded(projectId, moduleInstanceId, repositoryId);
     }
   }
 }
@@ -304,8 +364,27 @@ async function scanReadiness(
 ): Promise<void> {
   if (repository.provider !== "github") throw new Error("unsupported repository provider");
   const candidates = await readCurrentIssues(githubApi, githubRepositoryId);
+  const rules = snapshot.moduleInstances
+    .filter(
+      (instance) => instance.enabled && instance.moduleId === "jarvis.module.automation-rules",
+    )
+    .flatMap((instance) => readRules(instance.configuration ?? {}))
+    .filter((rule) => rule.when.eventType === "scm.work-item.ready");
+  const observations: Array<{
+    readonly candidate: CurrentGitHubIssue;
+    readonly assessment: Awaited<ReturnType<typeof assessGitHubWorkItemReadiness>>;
+    readonly observedAt: string;
+    readonly payload: {
+      readonly repositoryId: string;
+      readonly workItemRef: string;
+      readonly issueProvider: "github";
+      readonly tag: string;
+      readonly observedAt: string;
+    };
+    readonly admit: boolean;
+    readonly workItemRef: string;
+  }> = [];
   for (const candidate of candidates) {
-    if (!candidate.labels.includes(tag)) continue;
     const workItemRef = `github://${repository.owner}/${repository.name}/issues/${candidate.number}`;
     const observedAt = dependencies.clock.now().toISOString();
     const assessment = await assessGitHubWorkItemReadiness({
@@ -318,32 +397,33 @@ async function scanReadiness(
     const payload = {
       repositoryId: repository.repositoryId,
       workItemRef,
-      issueProvider: "github",
+      issueProvider: "github" as const,
       tag,
       observedAt,
     };
-    const rules = snapshot.moduleInstances
-      .filter(
-        (instance) => instance.enabled && instance.moduleId === "jarvis.module.automation-rules",
-      )
-      .flatMap((instance) => readRules(instance.configuration ?? {}))
-      .filter((rule) => rule.when.eventType === "scm.work-item.ready");
     const admit =
       rules.length === 0 ||
       rules.some((rule) =>
         matchesRuleEvent(rule, { kind: "fact", type: "scm.work-item.ready", payload }),
       );
-    dependencies.transaction(() => {
+    observations.push({ candidate, assessment, observedAt, payload, admit, workItemRef });
+  }
+  dependencies.transaction(() => {
+    for (const observation of observations) {
       const admitted = readiness.observe({
         repositoryId: repository.repositoryId,
-        workItemRef,
-        status: assessment.status,
-        reason: assessment.reason,
-        blockerRefs: assessment.blockerRefs,
-        observedAt,
-        admit,
+        workItemRef: observation.workItemRef,
+        status: observation.assessment.status,
+        reason: observation.assessment.reason,
+        blockerRefs: observation.assessment.blockerRefs,
+        observedAt: observation.observedAt,
+        issueNumber: observation.candidate.number,
+        title: observation.candidate.title,
+        tag,
+        ruleMatches: observation.admit,
+        admit: observation.admit,
       });
-      if (!admitted) return;
+      if (!admitted) continue;
       dependencies.publisher.publish({
         type: "scm.work-item.ready",
         version: 1,
@@ -351,14 +431,18 @@ async function scanReadiness(
         projectId,
         repositoryId: repository.repositoryId,
         producer: { moduleId: GITHUB_MODULE_ID, moduleInstanceId },
-        subject: { type: "work-item", ref: workItemRef },
+        subject: { type: "work-item", ref: observation.workItemRef },
         correlationId: `corr_${dependencies.ids.next()}`,
         causationId: null,
-        idempotencyKey: readinessIdentity(projectId, repository.repositoryId, workItemRef),
-        payload,
+        idempotencyKey: readinessIdentity(
+          projectId,
+          repository.repositoryId,
+          observation.workItemRef,
+        ),
+        payload: observation.payload,
       });
-    });
-  }
+    }
+  });
 }
 
 function readinessIdentity(projectId: string, repositoryId: string, workItemRef: string): string {

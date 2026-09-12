@@ -138,6 +138,25 @@ Draft → Valid → Active → Paused → Archived
 - `Degraded` : ressource devenue indisponible ; chemins impactés suspendus.
 - `Archived` : historique consultable, aucun travail.
 
+## Project Overview read model
+
+Après activation, `GET /v1/projects/{projectId}/overview` projette à la demande l'état
+du Project, du poller GitHub, des admissions de Development et des exécutions actives.
+Il ne crée pas de seconde source de vérité : les issues viennent de la readiness
+observée par le Module GitHub, l'état de connexion vient du statut durable du polling,
+et la présence d'une exécution active vient du Ledger et de l'Event subject associé.
+
+L'Overview conserve le dernier snapshot observable lorsque GitHub échoue. Un refresh
+peut demander un polling immédiat; il retourne alors l'état `failed` ou `reconnecting`
+avec une raison filtrée. Un Project en pause expose `paused`, bloque les nouveaux claims
+dans la boucle de dispatch et continue à montrer les exécutions déjà actives.
+
+Les raisons d'éligibilité sont contractuelles et affichées par le shell sans être
+recalculées. L'état `blocked` est réservé aux références `blocked_by` GitHub ouvertes;
+un label absent produit une attente, et une règle non correspondante produit une
+non-éligibilité. Le template de projet utilise `ready-for-agent`; la valeur historique
+`agent:ready` reste conservée dans les projets existants.
+
 ## Validation report
 
 Le rapport `jarvis.dev/project-validation/v1` est calculé par le Project Runtime, derrière son port de validation et son input explicite, uniquement depuis la Portable Configuration et les Local Bindings sauvegardés, avec les métadonnées des Module Packages embarqués. L'adapter Engine charge cet état, fournit les grants et l'accessibilité locale, puis adapte le résultat à la Local API sans posséder la politique de composition. Il contient les routes de requests résolues, les capabilities satisfaites et des findings actionnables ciblant slots, instances ou extrémités d'une edge. Une Request dotée de métadonnées de targeting mais sans émission configurée ne crée ni route ni finding ; une déclaration sans targeting reste soumise à la résolution normale. Toute capability, optionnelle ou requise, est résolue : une optionnelle résolue apparaît dans `satisfiedCapabilities`, tandis que seule son absence de résolution est silencieuse. Chaque capability satisfaite nomme séparément sa cible (`slot` ou `module-instance`) et la ressource source qui la fournit ; un repository utilise le source kind `repository`, et un identifiant de binding ou de candidate n'est jamais présenté comme un `instanceId`. Les routes, capabilities, candidats et findings sont triés par leurs identifiants contractuels ; aucun timestamp ni identifiant aléatoire n'est ajouté. `valid` vaut `true` seulement en l'absence de finding `error`.

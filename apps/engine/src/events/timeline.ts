@@ -104,6 +104,33 @@ export class EventJournalReader {
     }[];
     return new Map(rows.map((row) => [row.id, row.correlationId]));
   }
+
+  public subjectRefsByEventId(
+    projectId: string,
+    eventIds: readonly string[],
+  ): ReadonlyMap<string, string> {
+    if (eventIds.length === 0) return new Map();
+    const rows = this.db
+      .prepare(
+        `SELECT id, envelope FROM events
+         WHERE project_id = @projectId
+           AND id IN (SELECT value FROM json_each(@eventIds))`,
+      )
+      .all({ projectId, eventIds: JSON.stringify(eventIds) }) as {
+      readonly id: string;
+      readonly envelope: string;
+    }[];
+    return new Map(
+      rows.flatMap((row) => {
+        try {
+          const subject = (JSON.parse(row.envelope) as { subject?: { ref?: unknown } }).subject;
+          return typeof subject?.ref === "string" ? [[row.id, subject.ref] as const] : [];
+        } catch {
+          return [];
+        }
+      }),
+    );
+  }
 }
 
 function toSummary(row: EventRow): EventSummary {

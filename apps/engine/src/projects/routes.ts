@@ -3,6 +3,7 @@ import type { ActivateProjectRequest } from "../../../../packages/kernel/src/pro
 import type { PortableProjectConfiguration } from "./types.js";
 import type { FastifyInstance } from "fastify";
 import type { DatabaseState } from "../db/open.js";
+import type { DevelopmentAdmissions } from "../executions/development-admissions.js";
 import { EngineError } from "../errors.js";
 import type {
   ProjectRegistry,
@@ -17,6 +18,7 @@ import type {
   ProjectDetail,
   ProjectResourceCandidateRegistry,
   ProjectSummary,
+  ProjectOverview,
   ProjectValidationReport,
   RepositoryDiscovery,
   EventSummary,
@@ -55,6 +57,9 @@ export type LocalProjectRegistry = ProjectRegistry<
       query: ListExecutionsQuery,
     ): { readonly items: ExecutionSummary[] };
     listProjectDeadLetters(id: unknown): { readonly items: DeadLetterSummary[] };
+    getProjectOverview(id: unknown): ProjectOverview;
+    pauseProject(id: unknown): ProjectSummary;
+    resumeProject(id: unknown): ProjectSummary;
   };
 export type LocalRepositoryDiscovery = RepositoryDiscoveryPort<RepositoryDiscovery>;
 
@@ -70,6 +75,8 @@ export interface ProjectRouteDependencies {
   readonly repositoryDiscovery: LocalRepositoryDiscovery;
   /** `undefined` while the engine runs without a database (degraded). */
   readonly projects: LocalProjectRegistry | undefined;
+  readonly refreshProjectOverview?: (projectId: string) => Promise<void>;
+  readonly developmentAdmissions?: Pick<DevelopmentAdmissions, "resume">;
 }
 
 export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDependencies): void {
@@ -126,12 +133,12 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
     const service = requireDatabaseReady(deps);
     const params = request.params as { projectId?: string };
     const body = request.body as { compositionFingerprint?: unknown } | undefined;
-    return reply.code(200).send(
-      service.activatePreflightProject({
-        projectId: params.projectId,
-        compositionFingerprint: body?.compositionFingerprint,
-      }),
-    );
+    const summary = service.activatePreflightProject({
+      projectId: params.projectId,
+      compositionFingerprint: body?.compositionFingerprint,
+    });
+    deps.developmentAdmissions?.resume(summary.id);
+    return reply.code(200).send(summary);
   });
 
   app.post("/v1/projects/:projectId/validation-report", async (request, reply) => {
@@ -144,12 +151,26 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
     const service = requireDatabaseReady(deps);
     const params = request.params as { projectId?: unknown } | undefined;
     const body = request.body as { compositionFingerprint?: unknown } | undefined;
-    return reply.code(200).send(
-      service.activateProject({
-        projectId: params?.projectId,
-        compositionFingerprint: body?.compositionFingerprint,
-      }),
-    );
+    const summary = service.activateProject({
+      projectId: params?.projectId,
+      compositionFingerprint: body?.compositionFingerprint,
+    });
+    deps.developmentAdmissions?.resume(summary.id);
+    return reply.code(200).send(summary);
+  });
+
+  app.get("/v1/projects/:projectId/overview", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    return reply.code(200).send(service.getProjectOverview(params?.projectId));
+  });
+
+  app.post("/v1/projects/:projectId/overview/refresh", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    const projectId = typeof params?.projectId === "string" ? params.projectId : "";
+    await deps.refreshProjectOverview?.(projectId);
+    return reply.code(200).send(service.getProjectOverview(projectId));
   });
 
   app.get("/v1/projects/:projectId/subscriptions", async (request, reply) => {

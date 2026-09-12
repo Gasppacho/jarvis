@@ -391,6 +391,60 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /v1/projects/{projectId}/overview:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    get:
+      operationId: getProjectOverview
+      responses:
+        "200":
+          description: Durable Project Overview read model.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectOverviewV1"
+        default:
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /v1/projects/{projectId}/resume:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      operationId: resumeProject
+      responses:
+        "200":
+          description: Resumed project.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectSummary"
+        default:
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /v1/projects/{projectId}/overview/refresh:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      operationId: refreshProjectOverview
+      responses:
+        "200":
+          description: Refreshed Project Overview read model.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectOverviewV1"
+        default:
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /v1/projects/{projectId}/modules:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -1856,6 +1910,71 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/PreflightCandidate'
+    ProjectOverviewV1:
+      type: object
+      additionalProperties: false
+      required: [apiVersion, kind, projectId, name, status, primaryAction, polling, workflow, issues, activeExecutionCount, activeWorkItemRefs, readinessHelp]
+      properties:
+        apiVersion: { const: jarvis.dev/project-overview/v1 }
+        kind: { const: ProjectOverview }
+        projectId: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [draft, ready, running, paused, degraded] }
+        primaryAction: { type: string, enum: [activate, pause, resume, refresh] }
+        polling:
+          type: object
+          additionalProperties: false
+          required: [state, lastPollAt, errorReason]
+          properties:
+            state: { type: string, enum: [live, reconnecting, failed, paused, unavailable] }
+            lastPollAt: { type: [string, 'null'], format: date-time }
+            errorReason: { type: [string, 'null'] }
+        workflow:
+          type: object
+          additionalProperties: false
+          required: [available, stages, nextStep]
+          properties:
+            available: { type: boolean }
+            stages:
+              type: array
+              items:
+                $ref: '#/components/schemas/ProjectOverviewStage'
+            nextStep: { type: string, minLength: 1 }
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProjectOverviewIssue'
+        activeExecutionCount: { type: integer, minimum: 0 }
+        activeWorkItemRefs:
+          type: array
+          items: { type: string }
+        readinessHelp: { type: string, minLength: 1 }
+    ProjectOverviewStage:
+      type: object
+      additionalProperties: false
+      required: [id, label, status, detail]
+      properties:
+        id: { type: string, enum: [github, rules, development, pull-request] }
+        label: { type: string, minLength: 1 }
+        status: { type: string, enum: [ready, active, waiting, complete, unavailable] }
+        detail: { type: string, minLength: 1 }
+    ProjectOverviewIssue:
+      type: object
+      additionalProperties: false
+      required: [workItemRef, title, issueNumber, repositoryId, status, reason, explanation, openDependencyCount, blockerRefs, readinessLabel]
+      properties:
+        workItemRef: { type: string }
+        title: { type: string, minLength: 1 }
+        issueNumber: { type: integer, minimum: 1 }
+        repositoryId: { type: string }
+        status: { type: string, enum: [eligible, waiting, in-progress, blocked, ineligible, unavailable] }
+        reason: { type: string, minLength: 1 }
+        explanation: { type: string, minLength: 1 }
+        openDependencyCount: { type: integer, minimum: 0 }
+        blockerRefs:
+          type: array
+          items: { type: string }
+        readinessLabel: { type: string, minLength: 1 }
     PreflightScopeRequest:
       type: object
       additionalProperties: false

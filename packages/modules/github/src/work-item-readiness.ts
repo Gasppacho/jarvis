@@ -6,6 +6,21 @@ import type { GitHubApi, WorkItemReadinessAssessment } from "../../../module-sdk
 const MAX_PAGES = 100;
 const PAGE_SIZE = 100;
 
+export interface WorkItemReadinessSnapshot {
+  readonly moduleInstanceId: string;
+  readonly repositoryId: string;
+  readonly workItemRef: string;
+  readonly issueNumber: number | null;
+  readonly title: string | null;
+  readonly tag: string | null;
+  readonly ruleMatches: boolean;
+  readonly status: "ready" | "blocked" | "impossible";
+  readonly reason: string;
+  readonly blockerRefs: readonly string[];
+  readonly observedAt: string;
+  readonly admittedAt: string | null;
+}
+
 /** Public provider policy used both by polling and Development admission. */
 export async function assessGitHubWorkItemReadiness(input: {
   readonly api: GitHubApi;
@@ -107,6 +122,33 @@ export class WorkItemReadinessStore {
     );
   }
 
+  public list(projectId: string, limit = 100): readonly WorkItemReadinessSnapshot[] {
+    const rows = this.db
+      .prepare(
+        `SELECT module_instance_id, repository_id, work_item_ref, issue_number, title, tag,
+                rule_matches, status, reason, blocker_refs, observed_at, admitted_at
+         FROM github_work_item_readiness
+         WHERE project_id = @projectId
+         ORDER BY observed_at DESC, repository_id, work_item_ref
+         LIMIT @limit`,
+      )
+      .all({ projectId, limit }) as ReadinessRow[];
+    return rows.map((row) => ({
+      moduleInstanceId: row.module_instance_id,
+      repositoryId: row.repository_id,
+      workItemRef: row.work_item_ref,
+      issueNumber: row.issue_number,
+      title: row.title,
+      tag: row.tag,
+      ruleMatches: row.rule_matches === 1,
+      status: row.status,
+      reason: row.reason,
+      blockerRefs: parseBlockerRefs(row.blocker_refs),
+      observedAt: row.observed_at,
+      admittedAt: row.admitted_at,
+    }));
+  }
+
   public bind(projectId: string, moduleInstanceId: string): WorkItemReadinessCapability {
     return {
       observe: ({
@@ -116,14 +158,24 @@ export class WorkItemReadinessStore {
         reason,
         blockerRefs,
         observedAt,
+        issueNumber,
+        title,
+        tag,
+        ruleMatches = true,
         admit = true,
       }) => {
         this.db
           .prepare(
             `INSERT INTO github_work_item_readiness
-               (project_id, module_instance_id, repository_id, work_item_ref, status, reason, blocker_refs, observed_at, admitted_at)
-             VALUES (@projectId, @moduleInstanceId, @repositoryId, @workItemRef, @status, @reason, @blockerRefs, @observedAt, NULL)
+               (project_id, module_instance_id, repository_id, work_item_ref, issue_number, title, tag,
+                rule_matches, status, reason, blocker_refs, observed_at, admitted_at)
+             VALUES (@projectId, @moduleInstanceId, @repositoryId, @workItemRef, @issueNumber, @title, @tag,
+                     @ruleMatches, @status, @reason, @blockerRefs, @observedAt, NULL)
              ON CONFLICT (project_id, repository_id, work_item_ref) DO UPDATE SET
+               issue_number = COALESCE(excluded.issue_number, github_work_item_readiness.issue_number),
+               title = COALESCE(excluded.title, github_work_item_readiness.title),
+               tag = COALESCE(excluded.tag, github_work_item_readiness.tag),
+               rule_matches = excluded.rule_matches,
                status = excluded.status,
                reason = excluded.reason,
                blocker_refs = excluded.blocker_refs,
@@ -134,6 +186,10 @@ export class WorkItemReadinessStore {
             moduleInstanceId,
             repositoryId,
             workItemRef,
+            issueNumber: issueNumber ?? null,
+            title: title ?? null,
+            tag: tag ?? null,
+            ruleMatches: ruleMatches ? 1 : 0,
             status,
             reason,
             blockerRefs: JSON.stringify(blockerRefs),
@@ -159,5 +215,29 @@ export class WorkItemReadinessStore {
         );
       },
     };
+  }
+}
+
+interface ReadinessRow {
+  readonly module_instance_id: string;
+  readonly repository_id: string;
+  readonly work_item_ref: string;
+  readonly issue_number: number | null;
+  readonly title: string | null;
+  readonly tag: string | null;
+  readonly rule_matches: number;
+  readonly status: WorkItemReadinessSnapshot["status"];
+  readonly reason: string;
+  readonly blocker_refs: string;
+  readonly observed_at: string;
+  readonly admitted_at: string | null;
+}
+
+function parseBlockerRefs(value: string): readonly string[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.every((ref) => typeof ref === "string") ? parsed : [];
+  } catch {
+    return [];
   }
 }

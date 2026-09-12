@@ -1,4 +1,7 @@
-import type { WorkItemReadinessStore } from "../../../../packages/modules/github/src/work-item-readiness.js";
+import type {
+  WorkItemReadinessSnapshot,
+  WorkItemReadinessStore,
+} from "../../../../packages/modules/github/src/work-item-readiness.js";
 import { preflightGitHub, check, workflowRule, type ProjectPreflight } from "./preflight.js";
 import type { GitHubApi } from "../../../../packages/module-sdk/src/index.js";
 import { readFileSync, statSync } from "node:fs";
@@ -25,6 +28,8 @@ import { deriveProjectSubscriptions } from "../../../../packages/project-runtime
 import { EventJournalReader, type ListEventsQuery } from "../events/timeline.js";
 import type { DeadLetterReader } from "../events/dead-letters.js";
 import { ExecutionLedgerReader, type ListExecutionsQuery } from "../executions/ledger.js";
+import type { DevelopmentAdmissions } from "../executions/development-admissions.js";
+import type { GitHubPollingStatusStore, GitHubPollingStatus } from "../events/polling-status.js";
 import type {
   ActivateProjectRequest,
   ImportProjectRequest,
@@ -66,6 +71,9 @@ import type {
   ProjectValidationReport,
   ProjectDetail,
   ProjectSummary,
+  ProjectOverview,
+  ProjectOverviewIssue,
+  ProjectOverviewStage,
   StoredPortableProjectConfiguration,
   RepositoryDiscovery,
   EventSummary,
@@ -117,7 +125,10 @@ export class ProjectService implements ProjectRegistry<
     private readonly repositoryResolver: ProjectRepositoryResolver = new ProjectRepositoryResolver(),
     private readonly agentRuntimes?: LocalAgentRuntimeRegistry,
     private readonly preflightApi?: (ref: string) => GitHubApi | undefined,
-    private readonly readiness?: Pick<WorkItemReadinessStore, "wasAdmitted">,
+    private readonly readiness?: Pick<WorkItemReadinessStore, "wasAdmitted"> &
+      Partial<Pick<WorkItemReadinessStore, "list">>,
+    private readonly developmentAdmissions?: Pick<DevelopmentAdmissions, "read">,
+    private readonly pollingStatus?: Pick<GitHubPollingStatusStore, "read">,
   ) {}
 
   importProject(request: ImportProjectRequest): ProjectDetail {
@@ -170,6 +181,112 @@ export class ProjectService implements ProjectRegistry<
 
   getProject(id: unknown): ProjectDetail {
     return toDetail(this.requireProject(id), this.repositoryAccessibility);
+  }
+
+  getProjectOverview(id: unknown): ProjectOverview {
+    const project = this.requireProject(id);
+    const readiness = this.readiness?.list?.(project.id) ?? [];
+    const admission = this.developmentAdmissions?.read(project.id) ?? {
+      suspended: false,
+      items: [],
+    };
+    const paused = project.status === "paused" || admission.suspended;
+    const fallbackReadinessLabel = project.portableConfig.modules.find(
+      (module) => module.moduleId === "jarvis.module.github",
+    )?.configuration?.["readyLabel"];
+    const activeExecutions = this.executionLedger.listActive(project.id);
+    const hasActiveExecution = activeExecutions.length > 0;
+    const activeSubjects = this.eventJournal.subjectRefsByEventId(
+      project.id,
+      activeExecutions.map((execution) => execution.inputEventId),
+    );
+    const activeRefs = new Set(
+      [...activeSubjects.values()].filter((ref): ref is string => typeof ref === "string"),
+    );
+    const admissionByRef = new Map(
+      admission.items.flatMap((item) =>
+        item.workItemRef === undefined ? [] : [[item.workItemRef, item] as const],
+      ),
+    );
+    const issues = readiness
+      .map((snapshot) =>
+        overviewIssue(snapshot, {
+          activeRefs,
+          admission: admissionByRef.get(snapshot.workItemRef),
+          paused,
+          hasActiveExecution,
+          fallbackReadinessLabel:
+            typeof fallbackReadinessLabel === "string" && fallbackReadinessLabel.trim() !== ""
+              ? fallbackReadinessLabel.trim()
+              : "ready-for-agent",
+        }),
+      )
+      .filter((issue): issue is ProjectOverviewIssue => issue !== undefined)
+      .slice(0, 100);
+    const polling = aggregatePolling(paused, this.pollingStatus?.read(project.id) ?? []);
+    const overviewStatus = overviewStatusFor(
+      project.status,
+      activeExecutions.length,
+      polling.state,
+    );
+    const eligible = issues.some((issue) => issue.status === "eligible");
+    const stages = overviewStages(polling.state, hasActiveExecution, eligible, project.status);
+    return {
+      apiVersion: "jarvis.dev/project-overview/v1",
+      kind: "ProjectOverview",
+      projectId: project.id,
+      name: project.name,
+      status: overviewStatus,
+      primaryAction:
+        overviewStatus === "degraded"
+          ? "refresh"
+          : project.status === "paused"
+            ? "resume"
+            : project.status === "active" || project.status === "degraded"
+              ? "pause"
+              : "activate",
+      polling,
+      workflow: {
+        available:
+          project.status === "active" ||
+          project.status === "paused" ||
+          project.status === "degraded",
+        stages,
+        nextStep: nextOverviewStep(overviewStatus, hasActiveExecution, eligible, polling.state),
+      },
+      issues,
+      activeExecutionCount: activeExecutions.length,
+      activeWorkItemRefs: [...activeRefs].sort(),
+      readinessHelp: readinessHelp(project, readiness),
+    };
+  }
+
+  pauseProject(id: unknown): ProjectSummary {
+    const project = this.requireProject(id);
+    if (project.status !== "active" && project.status !== "paused") {
+      throw new EngineError(
+        "project.active",
+        409,
+        `Project "${project.id}" must be active before it can be paused.`,
+      );
+    }
+    const updated = this.store.setStatus(project.id, "paused");
+    if (updated === undefined) throw notFound(project.id);
+    return toSummary(updated);
+  }
+
+  resumeProject(id: unknown): ProjectSummary {
+    const project = this.requireProject(id);
+    if (project.status !== "active" && project.status !== "paused") {
+      throw new EngineError(
+        "project.active",
+        409,
+        `Project "${project.id}" must be active or paused before it can resume.`,
+      );
+    }
+    const updated = this.store.setStatus(project.id, "active");
+    if (updated === undefined) throw notFound(project.id);
+    return toSummary(updated);
   }
 
   private readonly preflights = new Map<string, ProjectPreflight>();
@@ -1034,6 +1151,302 @@ export class ProjectService implements ProjectRegistry<
     if (row === undefined) throw notFound(projectId || "(empty)");
     return row;
   }
+}
+
+type OverviewAdmission = ReturnType<DevelopmentAdmissions["read"]>["items"][number];
+
+function overviewIssue(
+  snapshot: WorkItemReadinessSnapshot,
+  input: {
+    readonly activeRefs: ReadonlySet<string>;
+    readonly admission: OverviewAdmission | undefined;
+    readonly paused: boolean;
+    readonly hasActiveExecution: boolean;
+    readonly fallbackReadinessLabel: string;
+  },
+): ProjectOverviewIssue | undefined {
+  const issueNumber =
+    snapshot.issueNumber ?? Number(/\/issues\/(\d+)$/.exec(snapshot.workItemRef)?.[1] ?? NaN);
+  if (!Number.isSafeInteger(issueNumber) || issueNumber < 1) return undefined;
+  const blockerRefs = [...snapshot.blockerRefs];
+  const base = {
+    workItemRef: snapshot.workItemRef,
+    title: snapshot.title?.trim() || `Issue #${issueNumber}`,
+    issueNumber,
+    repositoryId: snapshot.repositoryId,
+    openDependencyCount: blockerRefs.length,
+    blockerRefs,
+    readinessLabel: snapshot.tag?.trim() || input.fallbackReadinessLabel,
+  };
+
+  if (input.activeRefs.has(snapshot.workItemRef)) {
+    return {
+      ...base,
+      status: "in-progress",
+      reason: "execution-active",
+      explanation: "An execution is already active for this issue.",
+    };
+  }
+  if (snapshot.admittedAt !== null) {
+    return {
+      ...base,
+      status: "ineligible",
+      reason: "already-admitted",
+      explanation: "This issue has already been admitted and will not start twice.",
+    };
+  }
+
+  const admission = input.admission;
+  if (admission !== undefined) {
+    if (admission.status === "waiting-capacity" || admission.status === "suspended") {
+      const executionActive =
+        admission.status === "waiting-capacity" && input.hasActiveExecution && !input.paused;
+      return {
+        ...base,
+        status: "waiting",
+        reason:
+          admission.status === "suspended" || input.paused
+            ? "project-paused"
+            : executionActive
+              ? "execution-active"
+              : admission.reason,
+        explanation:
+          admission.status === "suspended" || input.paused
+            ? "New work is paused. Active work continues to be monitored."
+            : executionActive
+              ? "An execution is already active for this Project; this issue is waiting."
+              : "This issue is waiting for the current development capacity.",
+      };
+    }
+    if (admission.status === "impossible") {
+      return {
+        ...base,
+        status: "unavailable",
+        reason: admission.reason,
+        explanation: "Jarvis could not verify this issue on the latest admission check.",
+      };
+    }
+    if (admission.status === "ineligible") {
+      return {
+        ...base,
+        status: "ineligible",
+        reason: admission.reason,
+        explanation: "This issue does not match the active workflow rule.",
+      };
+    }
+    if (admission.status === "blocked") {
+      if (snapshot.reason === "ready-label-missing") {
+        return {
+          ...base,
+          status: "waiting",
+          reason: snapshot.reason,
+          explanation: "Waiting for the configured readiness label before this issue can start.",
+        };
+      }
+      if (blockerRefs.length > 0) {
+        return {
+          ...base,
+          status: "blocked",
+          reason: "open-native-blockers",
+          explanation: `Blocked by ${blockerRefs.length} open GitHub native dependenc${blockerRefs.length === 1 ? "y" : "ies"}.`,
+        };
+      }
+      return {
+        ...base,
+        status: "unavailable",
+        reason: admission.reason,
+        explanation: "Jarvis could not verify this issue on the latest admission check.",
+      };
+    }
+  }
+
+  if (snapshot.reason === "ready-label-missing") {
+    return {
+      ...base,
+      status: "waiting",
+      reason: snapshot.reason,
+      explanation: "Waiting for the configured readiness label before this issue can start.",
+    };
+  }
+  if (snapshot.reason === "open-native-blockers" && blockerRefs.length > 0) {
+    return {
+      ...base,
+      status: "blocked",
+      reason: snapshot.reason,
+      explanation: `Blocked by ${blockerRefs.length} open GitHub native dependenc${blockerRefs.length === 1 ? "y" : "ies"}.`,
+    };
+  }
+  if (snapshot.reason === "work-item-closed" || snapshot.reason === "work-item-is-pull-request") {
+    return {
+      ...base,
+      status: "ineligible",
+      reason: snapshot.reason,
+      explanation:
+        snapshot.reason === "work-item-closed"
+          ? "This GitHub issue is closed."
+          : "Pull requests cannot be admitted as work items.",
+    };
+  }
+  if (snapshot.status === "impossible") {
+    return {
+      ...base,
+      status: "unavailable",
+      reason: snapshot.reason,
+      explanation: "Jarvis could not verify this issue on the latest poll.",
+    };
+  }
+  if (snapshot.status === "ready" && !snapshot.ruleMatches) {
+    return {
+      ...base,
+      status: "ineligible",
+      reason: "rule-not-matched",
+      explanation: "The issue is ready in GitHub but does not match an active workflow rule.",
+    };
+  }
+  if (input.paused && snapshot.status === "ready") {
+    return {
+      ...base,
+      status: "waiting",
+      reason: "project-paused",
+      explanation: "New work is paused. Resume the Project to admit this issue.",
+    };
+  }
+  if (input.hasActiveExecution && snapshot.status === "ready") {
+    return {
+      ...base,
+      status: "waiting",
+      reason: "execution-active",
+      explanation: "An execution is already active for this Project; this issue is waiting.",
+    };
+  }
+  if (snapshot.status === "ready") {
+    return {
+      ...base,
+      status: "eligible",
+      reason: snapshot.reason,
+      explanation:
+        "Eligible: the readiness label is present and there are no open native blockers.",
+    };
+  }
+  return {
+    ...base,
+    status: "unavailable",
+    reason: snapshot.reason,
+    explanation: "Jarvis could not determine whether this issue can start.",
+  };
+}
+
+function aggregatePolling(
+  paused: boolean,
+  rows: readonly GitHubPollingStatus[],
+): ProjectOverview["polling"] {
+  const lastPollAt =
+    rows
+      .map((row) => row.lastPollAt)
+      .filter((value): value is string => value !== null)
+      .sort()
+      .at(-1) ?? null;
+  if (paused) return { state: "paused", lastPollAt, errorReason: null };
+  const failed = rows.find((row) => row.state === "failed");
+  if (failed !== undefined) {
+    return { state: "failed", lastPollAt, errorReason: failed.errorReason };
+  }
+  if (rows.some((row) => row.state === "reconnecting")) {
+    return { state: "reconnecting", lastPollAt, errorReason: null };
+  }
+  return {
+    state: rows.length === 0 ? "unavailable" : "live",
+    lastPollAt,
+    errorReason: null,
+  };
+}
+
+function overviewStatusFor(
+  projectStatus: ProjectRow["status"],
+  activeExecutionCount: number,
+  pollingState: ProjectOverview["polling"]["state"],
+): ProjectOverview["status"] {
+  if (projectStatus === "paused") return "paused";
+  if (projectStatus === "degraded" || pollingState === "failed") return "degraded";
+  if (projectStatus === "draft" || projectStatus === "invalid" || projectStatus === "archived") {
+    return "draft";
+  }
+  return activeExecutionCount > 0 ? "running" : "ready";
+}
+
+function overviewStages(
+  pollingState: ProjectOverview["polling"]["state"],
+  active: boolean,
+  eligible: boolean,
+  projectStatus: ProjectRow["status"],
+): ProjectOverviewStage[] {
+  return [
+    {
+      id: "github",
+      label: "GitHub",
+      status:
+        pollingState === "live" || pollingState === "paused"
+          ? "ready"
+          : pollingState === "reconnecting"
+            ? "active"
+            : "unavailable",
+      detail:
+        pollingState === "paused" ? "Polling paused with the Project." : "Issues and dependencies",
+    },
+    {
+      id: "rules",
+      label: "Rules",
+      status:
+        projectStatus === "active" || projectStatus === "paused" || projectStatus === "degraded"
+          ? "ready"
+          : "unavailable",
+      detail: "Workflow eligibility",
+    },
+    {
+      id: "development",
+      label: "Development",
+      status: active ? "active" : eligible ? "ready" : "waiting",
+      detail: active ? "Active execution" : "One issue at a time",
+    },
+    {
+      id: "pull-request",
+      label: "Pull Request",
+      status: "waiting",
+      detail: "Created after development completes",
+    },
+  ];
+}
+
+function nextOverviewStep(
+  status: ProjectOverview["status"],
+  active: boolean,
+  eligible: boolean,
+  pollingState: ProjectOverview["polling"]["state"],
+): string {
+  if (status === "draft") return "Complete validation before activating this Project.";
+  if (status === "paused") return "Resume the Project to admit new work.";
+  if (status === "degraded" || pollingState === "failed")
+    return "Refresh the GitHub connection and retry polling.";
+  if (active) return "Monitor the active Development execution.";
+  if (eligible) return "Jarvis will claim the first eligible issue.";
+  return "Waiting for an eligible issue.";
+}
+
+function readinessHelp(
+  project: ProjectRow,
+  snapshots: readonly WorkItemReadinessSnapshot[],
+): string {
+  const labels = new Set(
+    project.portableConfig.modules
+      .filter((module) => module.moduleId === "jarvis.module.github")
+      .map((module) => module.configuration?.["readyLabel"])
+      .filter((label): label is string => typeof label === "string" && label.trim() !== ""),
+  );
+  for (const snapshot of snapshots) {
+    if (snapshot.tag?.trim()) labels.add(snapshot.tag.trim());
+  }
+  if (labels.size === 0) labels.add("ready-for-agent");
+  return `An issue can start when it has the ${[...labels].map((label) => `“${label}”`).join(" or ")} label and no open GitHub native blockers.`;
 }
 
 function validateBindingReferences(

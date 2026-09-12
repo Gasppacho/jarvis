@@ -242,6 +242,13 @@ export class ProjectStore {
     return result.changes === 0 ? undefined : this.findById(projectId);
   }
 
+  setStatus(projectId: string, status: ProjectStatus): ProjectRow | undefined {
+    const result = this.db
+      .prepare("UPDATE projects SET status = ?, updated_at = ? WHERE id = ?")
+      .run(status, this.clock.now().toISOString(), projectId);
+    return result.changes === 0 ? undefined : this.findById(projectId);
+  }
+
   list(): ProjectRow[] {
     const records = this.db
       .prepare(`${SELECT_PROJECT} ORDER BY p.name COLLATE NOCASE, p.id`)

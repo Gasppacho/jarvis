@@ -63,6 +63,7 @@ import {
 } from "./events/dispatcher.js";
 import { DEFAULT_DELIVERY_LEASE_MS, startEventLoop } from "./events/dispatch-loop.js";
 import { GitHubPollingScheduler } from "./events/github-polling.js";
+import { GitHubPollingStatusStore } from "./events/polling-status.js";
 import {
   DeliveryConsumer,
   type ExecutionCancellationPort,
@@ -175,6 +176,7 @@ async function main(): Promise<void> {
   let announced = false;
   let stopEventLoop: (() => void) | undefined;
   let stopGitHubPolling: (() => void) | undefined;
+  let githubPollingScheduler: GitHubPollingScheduler | undefined;
   let workspaceManager: WorkspaceManager | undefined;
   let developmentAdmissions: DevelopmentAdmissions | undefined;
 
@@ -307,6 +309,13 @@ async function main(): Promise<void> {
   const repositoryResolver = new ProjectRepositoryResolver();
   const readinessStore =
     database === undefined ? undefined : new WorkItemReadinessStore(database.db, new SystemClock());
+  const pollingStatusStore =
+    database === undefined
+      ? undefined
+      : new GitHubPollingStatusStore(database.db, new SystemClock());
+  const developmentAdmissionsStore =
+    database === undefined ? undefined : new DevelopmentAdmissions(database.db, new SystemClock());
+  developmentAdmissions = developmentAdmissionsStore;
   const projects =
     database === undefined || projectStore === undefined
       ? undefined
@@ -338,6 +347,8 @@ async function main(): Promise<void> {
             });
           },
           readinessStore,
+          developmentAdmissionsStore,
+          pollingStatusStore,
         );
 
   // SYSTEM.md startup protocol: migrations are complete, then stale Workspace
@@ -442,7 +453,7 @@ async function main(): Promise<void> {
     const externalMappings = new ExternalMappingStore(database.db, clock);
     const pollCursors = new PollCursorStore(database.db, clock);
     const workItemReadiness = readinessStore!;
-    developmentAdmissions = new DevelopmentAdmissions(database.db, clock);
+    developmentAdmissions = developmentAdmissionsStore!;
     const fixtures = testFixtures;
     const sampleProbeHandler = fixtures?.createSampleProbeHandler(database.db);
     const openSubscriptions: OpenSubscriptionsPort = (projectId) =>
@@ -578,7 +589,7 @@ async function main(): Promise<void> {
       deliveryLeaseMs,
       liveUpdates,
     });
-    stopGitHubPolling = new GitHubPollingScheduler({
+    githubPollingScheduler = new GitHubPollingScheduler({
       projects: projectStore,
       modules,
       capabilities,
@@ -587,8 +598,10 @@ async function main(): Promise<void> {
       ids,
       clock,
       repositoryResolver,
+      ...(pollingStatusStore === undefined ? {} : { pollingStatus: pollingStatusStore }),
       ...(githubPollIntervalMs === undefined ? {} : { pollIntervalMs: githubPollIntervalMs }),
-    }).start();
+    });
+    stopGitHubPolling = githubPollingScheduler.start();
     if (testHooksEnabled && projects !== undefined && workspaceManager !== undefined) {
       durabilityTestHooks = {
         db: database.db,
@@ -615,6 +628,9 @@ async function main(): Promise<void> {
     executionCancellation,
     deadLetterReplay,
     developmentAdmissions,
+    ...(githubPollingScheduler === undefined
+      ? {}
+      : { refreshProjectOverview: githubPollingScheduler.pollNow.bind(githubPollingScheduler) }),
     onShutdownRequested: () => {
       void shutdown(0);
     },

@@ -200,15 +200,28 @@ liste inventée par le shell — avec un nom saisi explicitement sous `Advanced`
 
 ## Overview projet
 
-Affiche :
+Après l'activation, l'utilisateur arrive sur une Overview opérationnelle du Project
+sélectionné. Elle affiche :
 
-- statut actif/inactif/dégradé ;
-- dernière activité ;
-- exécutions en cours ;
-- requests sans consommateur ;
-- dead letters ;
-- liens repository et provider ;
-- actions `Pause`, `Validate`, `Run diagnostics`.
+- le nom du Project et son statut `Draft`, `Ready`, `Running`, `Paused` ou `Degraded` ;
+- l'action cohérente avec ce statut (`Activate`, `Pause`, `Resume` ou `Refresh`) ;
+- le parcours `GitHub → Rules → Development → Pull Request` et la prochaine étape attendue ;
+- les issues GitHub pertinentes, avec numéro, titre, statut (`Eligible`, `En attente`,
+  `Déjà en cours`, `Bloquée par des dépendances`, `Non éligible` ou `Impossible de
+  vérifier`) et explication lisible ;
+- le nombre et les liens des dépendances ouvertes signalées par GitHub via
+  `blocked_by`. Aucun label de blocage local n'est interprété comme une dépendance ;
+- le dernier polling, son état (`live`, `reconnecting`, `failed`, `paused`) et une
+  action de nouvelle tentative. Une erreur conserve le dernier snapshot d'issues ;
+- l'aide indiquant le label de readiness configuré (`ready-for-agent` dans le nouveau
+  template, `agent:ready` conservé pour les Projects existants) ;
+- les exécutions actives et l'action `Pause`, qui bloque les nouveaux claims tout en
+  laissant l'exécution active sous surveillance. `Resume` réactive polling et claims.
+
+Les cartes utilisent les contrôles natifs macOS, une icône accompagnée d'un texte pour
+chaque état, des libellés accessibles et une représentation textuelle complète. Le
+contraste clair/sombre, le clavier et VoiceOver ne dépendent donc pas de la couleur ni
+du tronquage visuel.
 
 Cette surface reste limitée pour le statut global, la dernière activité et les dead letters, qui relèvent encore de #6. En revanche, #18 livre la visibilité runtime de Project Detail dans les onglets Graph et Timeline, avec l'annulation d'une Execution depuis la Timeline. #52 ne l'invente pas partiellement ; la seconde surface qu'il livre est décrite dans « Graphe émergent » → « Sélection et deuxième surface ».
 

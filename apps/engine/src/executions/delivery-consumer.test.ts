@@ -261,6 +261,28 @@ describe("DeliveryConsumer", () => {
     expect(claimDueDeliveries(state.db, state.clock)).toEqual([]);
   });
 
+  it("limits an active GitHub workflow to one development claim", () => {
+    const state = harness();
+    activate(state.store, "github-project", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+      { instanceId: "github", moduleId: "jarvis.module.github", enabled: true },
+    ]);
+    for (const ref of ["first", "second"])
+      state.publisher.publish(pingInput("github-project", { subject: { type: "work-item", ref } }));
+    state.dispatcher.dispatchPending();
+    state.db.prepare("UPDATE deliveries SET module_id = 'jarvis.module.development'").run();
+    state.db
+      .prepare(
+        "UPDATE projects SET portable_config = json_set(json_set(portable_config, '$.workspace.maxConcurrentExecutions', 2), '$.modules', json(?)) WHERE id = 'github-project'",
+      )
+      .run(
+        JSON.stringify([{ instanceId: "github", moduleId: "jarvis.module.github", enabled: true }]),
+      );
+
+    expect(claimDueDeliveries(state.db, state.clock)).toHaveLength(1);
+    expect(claimDueDeliveries(state.db, state.clock)).toEqual([]);
+  });
+
   it("reclaims an expired delivery with its own active workspace despite suspension and full capacity", async () => {
     let finish!: () => void;
     const gate = new Promise<void>((resolve) => {

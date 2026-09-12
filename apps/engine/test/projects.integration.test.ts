@@ -2974,7 +2974,8 @@ capabilities:
         // and the global Connection Registry table
         // #110 adds (connections), the External Mapping table ticket #122
         // adds (external_mappings), and the GitHub Cursor table ticket #130
-        // adds (github_cursors); ticket #193 adds durable readiness observations.
+        // adds (github_cursors); ticket #193 adds durable readiness observations;
+        // ticket #199 adds durable polling health.
         // All exist but stay empty — activation alone never
         // inserts a row into any of them.
         expect(tableNames(dataRoot)).toEqual([
@@ -2989,6 +2990,7 @@ capabilities:
           "executions",
           "external_mappings",
           "github_cursors",
+          "github_polling_status",
           "github_work_item_readiness",
           "inbox",
           "outbox",
@@ -3228,6 +3230,7 @@ capabilities:
             "executions",
             "external_mappings",
             "github_cursors",
+            "github_polling_status",
             "github_work_item_readiness",
             "inbox",
             "outbox",

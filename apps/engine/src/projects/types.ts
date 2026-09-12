@@ -21,6 +21,9 @@ import type { ExecutionApiStatus } from "../executions/ledger.js";
 
 /** The Local API contract is the source of truth for exposed lifecycle values. */
 export type ProjectStatus = components["schemas"]["ProjectSummary"]["status"];
+export type ProjectOverview = components["schemas"]["ProjectOverviewV1"];
+export type ProjectOverviewIssue = components["schemas"]["ProjectOverviewIssue"];
+export type ProjectOverviewStage = components["schemas"]["ProjectOverviewStage"];
 
 type Assert<T extends true> = T;
 type MutuallyAssignable<Left, Right> = [Left] extends [Right]

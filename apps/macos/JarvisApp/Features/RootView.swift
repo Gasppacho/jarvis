@@ -9,6 +9,7 @@ struct RootView: View {
     let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
     let timeline: ProjectTimelineModel
+    let overview: ProjectOverviewModel
     let projectGraph: ProjectGraphModel
     let deadLetters: ProjectDeadLettersModel
     let connections: ConnectionsModel
@@ -141,6 +142,7 @@ struct RootView: View {
                         projects: projects,
                         projectConfiguration: projectConfiguration,
                         moduleCatalog: moduleCatalog,
+                        overview: overview,
                         timeline: timeline,
                         projectGraph: projectGraph,
                         deadLetters: deadLetters,
@@ -157,6 +159,7 @@ struct RootView: View {
                     projects: projects,
                     projectConfiguration: projectConfiguration,
                     moduleCatalog: moduleCatalog,
+                    overview: overview,
                     timeline: timeline,
                     projectGraph: projectGraph,
                     deadLetters: deadLetters,

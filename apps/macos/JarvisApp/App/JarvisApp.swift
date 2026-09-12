@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
     let timeline: ProjectTimelineModel
+    let overview: ProjectOverviewModel
     let projectGraph: ProjectGraphModel
     let deadLetters: ProjectDeadLettersModel
     let connections: ConnectionsModel
@@ -23,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         projectConfiguration = ProjectConfigurationModel(session: session, projects: projects)
         moduleCatalog = ModuleCatalogModel(session: session)
         timeline = ProjectTimelineModel(session: session)
+        overview = ProjectOverviewModel(session: session)
         projectGraph = ProjectGraphModel(session: session)
         deadLetters = ProjectDeadLettersModel(session: session)
         connections = ConnectionsModel(session: session)
@@ -54,6 +56,7 @@ struct JarvisApp: App {
                 projectConfiguration: delegate.projectConfiguration,
                 moduleCatalog: delegate.moduleCatalog,
                 timeline: delegate.timeline,
+                overview: delegate.overview,
                 projectGraph: delegate.projectGraph,
                 deadLetters: delegate.deadLetters,
                 connections: delegate.connections)

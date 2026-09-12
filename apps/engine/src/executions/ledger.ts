@@ -84,6 +84,18 @@ export class ExecutionLedgerReader {
       .all({ projectId, limit: query.limit }) as ExecutionRow[];
     return rows.map(toSummary);
   }
+
+  public listActive(projectId: string): LedgerExecutionSummary[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, project_id, module_instance_id, status, attempt, created_at, error, completed_at, input_event_id, replayed
+         FROM executions
+         WHERE project_id = ? AND status IN ('queued', 'running', 'cancelling')
+         ORDER BY created_at DESC, id DESC`,
+      )
+      .all(projectId) as ExecutionRow[];
+    return rows.map(toSummary);
+  }
 }
 
 function toSummary(row: ExecutionRow): LedgerExecutionSummary {

@@ -1,0 +1,140 @@
+import Foundation
+import JarvisAPI
+import XCTest
+
+@testable import JarvisCore
+
+/// Ticket #199: Overview is a read model. These fixtures prove that the shell
+/// keeps every Engine eligibility reason, native blocker and polling state
+/// readable without reconstructing policy locally.
+@MainActor
+final class ProjectOverviewTests: XCTestCase {
+    func testFixtureMapsStatusesReasonsBlockersAndPolling() throws {
+        let overview = try decode(Self.fixture)
+
+        XCTAssertEqual(overview.status, .degraded)
+        XCTAssertEqual(overview.primaryAction, .refresh)
+        XCTAssertEqual(overview.polling.state, .failed)
+        XCTAssertEqual(overview.polling.lastPollAt, Date(timeIntervalSince1970: 1_700_000_000))
+        XCTAssertEqual(overview.polling.errorReason, "GitHub returned HTTP 503")
+        XCTAssertEqual(overview.stages.map(\.id), [.github, .rules, .development, .pullRequest])
+        XCTAssertEqual(overview.issues.map(\.status), [
+            .eligible, .waiting, .inProgress, .blocked, .ineligible, .unavailable,
+        ])
+
+        let blocked = try XCTUnwrap(overview.issues.first { $0.status == .blocked })
+        XCTAssertEqual(blocked.openDependencyCount, 2)
+        XCTAssertEqual(
+            blocked.blockerRefs,
+            [
+                "github://owner/repo/issues/10",
+                "github://owner/repo/issues/11",
+            ])
+        XCTAssertEqual(
+            ProjectOverviewPresentation.issueStatusLabel(blocked.status),
+            "Blocked by dependencies")
+        XCTAssertEqual(
+            ProjectOverviewPresentation.pollingLabel(overview.polling.state),
+            "Connection failed")
+    }
+
+    func testRefreshFailureKeepsTheLastSnapshotAsStale() async throws {
+        let snapshot = try decode(Self.fixture)
+        let attempts = CallCounter()
+        let model = ProjectOverviewModel(
+            session: EngineSessionModel(
+                supervisor: EngineSupervisor(resources: .developmentBuild())),
+            provider: { _ in
+                if await attempts.next() == 1 { return snapshot }
+                throw FixtureError.offline
+            })
+
+        await model.refresh(projectId: snapshot.projectId)
+        XCTAssertEqual(model.state(for: snapshot.projectId).overview, snapshot)
+
+        await model.refresh(projectId: snapshot.projectId)
+
+        let state = model.state(for: snapshot.projectId)
+        XCTAssertEqual(state.overview, snapshot)
+        XCTAssertFalse(state.isLoading)
+        XCTAssertNotNil(state.errorMessage)
+        XCTAssertEqual(
+            ProjectOverviewPresentation(state).state,
+            .stale(snapshot, state.errorMessage ?? ""))
+    }
+
+    func testInitialFailureIsSeparateFromAStaleSnapshot() async {
+        let model = ProjectOverviewModel(
+            session: EngineSessionModel(
+                supervisor: EngineSupervisor(resources: .developmentBuild())),
+            provider: { _ in throw FixtureError.offline })
+
+        await model.refresh(projectId: "offline")
+
+        let state = model.state(for: "offline")
+        XCTAssertNil(state.overview)
+        XCTAssertFalse(state.isLoading)
+        guard case .failed = ProjectOverviewPresentation(state).state else {
+            return XCTFail("an initial provider failure must render as failed")
+        }
+    }
+
+    private func decode(_ json: String) throws -> ProjectOverview {
+        let decoder = JSONDecoder()
+        let transcoder = FlexibleISO8601DateTranscoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            return try transcoder.decode(container.decode(String.self))
+        }
+        let payload = try decoder.decode(
+            Components.Schemas.ProjectOverviewV1.self,
+            from: Data(json.utf8))
+        return ProjectOverview(payload: payload)
+    }
+
+    private enum FixtureError: Error, Sendable {
+        case offline
+    }
+
+    private static let fixture = """
+        {
+          "apiVersion":"jarvis.dev/project-overview/v1",
+          "kind":"ProjectOverview",
+          "projectId":"project-199",
+          "name":"Jarvis",
+          "status":"degraded",
+          "primaryAction":"refresh",
+          "polling":{"state":"failed","lastPollAt":"2023-11-14T22:13:20Z","errorReason":"GitHub returned HTTP 503"},
+          "workflow":{
+            "available":true,
+            "stages":[
+              {"id":"github","label":"GitHub","status":"ready","detail":"Repository connected"},
+              {"id":"rules","label":"Rules","status":"ready","detail":"Rule is configured"},
+              {"id":"development","label":"Development","status":"active","detail":"One issue is running"},
+              {"id":"pull-request","label":"Pull Request","status":"waiting","detail":"The next expected state is a pull request"}
+            ],
+            "nextStep":"Retry GitHub polling"
+          },
+          "issues":[
+            {"workItemRef":"github://owner/repo/issues/1","title":"Ready issue","issueNumber":1,"repositoryId":"main","status":"eligible","reason":"ready","explanation":"Ready to start.","openDependencyCount":0,"blockerRefs":[],"readinessLabel":"ready-for-agent"},
+            {"workItemRef":"github://owner/repo/issues/2","title":"Missing label","issueNumber":2,"repositoryId":"main","status":"waiting","reason":"ready-label-missing","explanation":"Waiting for the readiness label.","openDependencyCount":0,"blockerRefs":[],"readinessLabel":"ready-for-agent"},
+            {"workItemRef":"github://owner/repo/issues/3","title":"Active issue","issueNumber":3,"repositoryId":"main","status":"in-progress","reason":"execution-active","explanation":"An execution is already active.","openDependencyCount":0,"blockerRefs":[],"readinessLabel":"ready-for-agent"},
+            {"workItemRef":"github://owner/repo/issues/4","title":"Blocked issue","issueNumber":4,"repositoryId":"main","status":"blocked","reason":"open-native-blockers","explanation":"Blocked by two open GitHub native dependencies.","openDependencyCount":2,"blockerRefs":["github://owner/repo/issues/10","github://owner/repo/issues/11"],"readinessLabel":"ready-for-agent"},
+            {"workItemRef":"github://owner/repo/issues/5","title":"Wrong rule","issueNumber":5,"repositoryId":"main","status":"ineligible","reason":"rule-mismatch","explanation":"This issue does not match the active workflow rule.","openDependencyCount":0,"blockerRefs":[],"readinessLabel":"ready-for-agent"},
+            {"workItemRef":"github://owner/repo/issues/6","title":"Unavailable issue","issueNumber":6,"repositoryId":"main","status":"unavailable","reason":"github-request-failed","explanation":"Jarvis could not verify this issue.","openDependencyCount":0,"blockerRefs":[],"readinessLabel":"ready-for-agent"}
+          ],
+          "activeExecutionCount":1,
+          "activeWorkItemRefs":["github://owner/repo/issues/3"],
+          "readinessHelp":"The readiness label is ready-for-agent."
+        }
+        """
+}
+
+private actor CallCounter {
+    private var count = 0
+
+    func next() -> Int {
+        count += 1
+        return count
+    }
+}

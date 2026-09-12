@@ -60,6 +60,7 @@ export interface ServerDependencies {
   readonly executionCancellation: ExecutionCancellationPort | undefined;
   readonly deadLetterReplay: DeadLetterReplayPort | undefined;
   readonly developmentAdmissions: DevelopmentAdmissions | undefined;
+  readonly refreshProjectOverview?: (projectId: string) => Promise<void>;
   /** Ticket #60: one per Engine Session, fed by the dispatch loop after a
    * commit. Registered unconditionally — `GET /v1/stream` exists even while
    * the engine runs degraded, the same as `/v1/health` — but it only ever
@@ -197,6 +198,43 @@ export function buildServer(deps: ServerDependencies): FastifyInstance {
     databaseState: deps.databaseState,
     repositoryDiscovery: deps.repositoryDiscovery,
     projects: deps.projects,
+    ...(deps.refreshProjectOverview === undefined
+      ? {}
+      : { refreshProjectOverview: deps.refreshProjectOverview }),
+    ...(deps.developmentAdmissions === undefined
+      ? {}
+      : { developmentAdmissions: deps.developmentAdmissions }),
+  });
+
+  app.post("/v1/projects/:projectId/pause", async (request, reply) => {
+    if (deps.databaseState() !== "ready" || deps.projects === undefined) {
+      throw new EngineError(
+        "engine.database-unavailable",
+        503,
+        "Project controls are unavailable.",
+      );
+    }
+    const projectId = (request.params as { projectId?: unknown } | undefined)?.projectId;
+    const summary = deps.projects.pauseProject(projectId);
+    deps.developmentAdmissions?.suspend(summary.id);
+    return reply.code(200).send(summary);
+  });
+
+  app.post("/v1/projects/:projectId/resume", async (request, reply) => {
+    if (deps.databaseState() !== "ready" || deps.projects === undefined) {
+      throw new EngineError(
+        "engine.database-unavailable",
+        503,
+        "Project controls are unavailable.",
+      );
+    }
+    const projectId = (request.params as { projectId?: unknown } | undefined)?.projectId;
+    if (typeof projectId !== "string" || projectId.trim() === "") {
+      throw new EngineError("api.invalid-request", 400, "Project id is required.");
+    }
+    const summary = deps.projects.resumeProject(projectId);
+    deps.developmentAdmissions?.resume(summary.id);
+    return reply.code(200).send(summary);
   });
 
   app.get("/v1/projects/:projectId/development-admission", async (request, reply) => {
@@ -237,7 +275,13 @@ export function buildServer(deps: ServerDependencies): FastifyInstance {
         throw new EngineError("api.invalid-request", 400, "Project id is required.");
       }
       deps.projects.getProject(projectId);
-      deps.developmentAdmissions[action](projectId);
+      if (action === "suspend") {
+        deps.projects.pauseProject(projectId);
+        deps.developmentAdmissions.suspend(projectId);
+      } else {
+        const summary = deps.projects.resumeProject(projectId);
+        deps.developmentAdmissions.resume(summary.id);
+      }
       return reply.code(200).send(deps.developmentAdmissions.read(projectId));
     });
   }

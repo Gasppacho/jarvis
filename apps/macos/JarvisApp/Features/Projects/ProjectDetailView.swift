@@ -5,10 +5,10 @@ import SwiftUI
 /// Project composition editor. All repeated controls are driven by the module
 /// catalogue, configuration schemas, Project slots and eligible candidate arrays.
 public struct ProjectDetailView: View {
-    /// Ticket #61: the Project detail's first sub-navigation — Composition
-    /// (everything this screen showed before) beside the read-only graph and
-    /// Timeline.
+    /// Ticket #199 puts the operational Overview first; Composition remains
+    /// the editable advanced surface beside the read-only graph and Timeline.
     private enum Tab: Hashable {
+        case overview
         case composition
         case graph
         case timeline
@@ -30,6 +30,7 @@ public struct ProjectDetailView: View {
     let projects: ProjectsModel
     let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
+    let overview: ProjectOverviewModel
     let timeline: ProjectTimelineModel
     let projectGraph: ProjectGraphModel
     let deadLetters: ProjectDeadLettersModel
@@ -43,12 +44,13 @@ public struct ProjectDetailView: View {
     // Not reset per Project: RootView constructs this view in the same
     // switch-case slot for every Project, so SwiftUI preserves this state
     // across a Project switch rather than losing the selected tab.
-    @State private var selectedTab: Tab = .composition
+    @State private var selectedTab: Tab = .overview
 
     public init(
         projects: ProjectsModel,
         projectConfiguration: ProjectConfigurationModel,
         moduleCatalog: ModuleCatalogModel,
+        overview: ProjectOverviewModel,
         timeline: ProjectTimelineModel,
         projectGraph: ProjectGraphModel,
         deadLetters: ProjectDeadLettersModel,
@@ -57,6 +59,7 @@ public struct ProjectDetailView: View {
         self.projects = projects
         self.projectConfiguration = projectConfiguration
         self.moduleCatalog = moduleCatalog
+        self.overview = overview
         self.timeline = timeline
         self.projectGraph = projectGraph
         self.deadLetters = deadLetters
@@ -66,6 +69,7 @@ public struct ProjectDetailView: View {
     public var body: some View {
         VStack(spacing: 0) {
             Picker("View", selection: $selectedTab) {
+                Text("Overview").tag(Tab.overview)
                 Text("Composition").tag(Tab.composition)
                 Text("Graph").tag(Tab.graph)
                 Text("Timeline").tag(Tab.timeline)
@@ -77,6 +81,8 @@ public struct ProjectDetailView: View {
             .padding(.bottom, 12)
 
             switch selectedTab {
+            case .overview:
+                ProjectOverviewView(model: overview, projects: projects, projectId: project.id)
             case .composition:
                 compositionTab
             case .graph:

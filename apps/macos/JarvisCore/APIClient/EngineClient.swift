@@ -276,6 +276,82 @@ public struct EngineClient: Sendable {
         }
     }
 
+    public func getProjectOverview(projectId: String) async throws -> ProjectOverview {
+        let operation = "GET /v1/projects/\(projectId)/overview"
+        let output = try await underlying.getProjectOverview(
+            .init(path: .init(projectId: projectId)))
+        switch output {
+        case .ok(let ok):
+            return ProjectOverview(payload: try ok.body.json)
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
+    public func refreshProjectOverview(projectId: String) async throws -> ProjectOverview {
+        let operation = "POST /v1/projects/\(projectId)/overview/refresh"
+        let output = try await underlying.refreshProjectOverview(
+            .init(path: .init(projectId: projectId)))
+        switch output {
+        case .ok(let ok):
+            return ProjectOverview(payload: try ok.body.json)
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
+    public func pauseProject(projectId: String) async throws -> Project {
+        let operation = "POST /v1/projects/\(projectId)/pause"
+        let output = try await underlying.pauseProject(
+            .init(path: .init(projectId: projectId)))
+        switch output {
+        case .ok(let ok):
+            let payload = try ok.body.json
+            return Project(
+                id: payload.id,
+                name: payload.name,
+                status: payload.status.asDomain,
+                moduleCount: payload.moduleCount,
+                activeExecutions: payload.activeExecutions)
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
+    public func resumeProject(projectId: String) async throws -> Project {
+        let operation = "POST /v1/projects/\(projectId)/resume"
+        let output = try await underlying.resumeProject(
+            .init(path: .init(projectId: projectId)))
+        switch output {
+        case .ok(let ok):
+            let payload = try ok.body.json
+            return Project(
+                id: payload.id,
+                name: payload.name,
+                status: payload.status.asDomain,
+                moduleCount: payload.moduleCount,
+                activeExecutions: payload.activeExecutions)
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
     /// Ticket #61: the Project's durable Event journal, newest first.
     public func listProjectEvents(projectId: String) async throws -> [TimelineEvent] {
         let operation = "GET /v1/projects/\(projectId)/events"

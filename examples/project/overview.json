@@ -1,0 +1,74 @@
+{
+  "apiVersion": "jarvis.dev/project-overview/v1",
+  "kind": "ProjectOverview",
+  "projectId": "token-warehouse",
+  "name": "Token Warehouse",
+  "status": "running",
+  "primaryAction": "pause",
+  "polling": {
+    "state": "live",
+    "lastPollAt": "2026-09-12T08:30:00Z",
+    "errorReason": null
+  },
+  "workflow": {
+    "available": true,
+    "stages": [
+      {
+        "id": "github",
+        "label": "GitHub",
+        "status": "ready",
+        "detail": "Repository connected"
+      },
+      {
+        "id": "rules",
+        "label": "Rules",
+        "status": "ready",
+        "detail": "The project rule is configured"
+      },
+      {
+        "id": "development",
+        "label": "Development",
+        "status": "active",
+        "detail": "One issue is being developed"
+      },
+      {
+        "id": "pull-request",
+        "label": "Pull Request",
+        "status": "waiting",
+        "detail": "The next expected state is a pull request"
+      }
+    ],
+    "nextStep": "Monitor the active issue"
+  },
+  "issues": [
+    {
+      "workItemRef": "github://owner/repo/issues/42",
+      "title": "Improve the import flow",
+      "issueNumber": 42,
+      "repositoryId": "main",
+      "status": "in-progress",
+      "reason": "execution-active",
+      "explanation": "An execution is already active for this issue.",
+      "openDependencyCount": 0,
+      "blockerRefs": [],
+      "readinessLabel": "ready-for-agent"
+    },
+    {
+      "workItemRef": "github://owner/repo/issues/43",
+      "title": "Document the retry path",
+      "issueNumber": 43,
+      "repositoryId": "main",
+      "status": "waiting",
+      "reason": "ready-label-missing",
+      "explanation": "Waiting for the configured readiness label before this issue can start.",
+      "openDependencyCount": 0,
+      "blockerRefs": [],
+      "readinessLabel": "ready-for-agent"
+    }
+  ],
+  "activeExecutionCount": 1,
+  "activeWorkItemRefs": [
+    "github://owner/repo/issues/42"
+  ],
+  "readinessHelp": "The project uses the ready-for-agent label to start new work."
+}

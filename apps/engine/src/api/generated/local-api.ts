@@ -237,6 +237,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{projectId}/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getProjectOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{projectId}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resumeProject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{projectId}/overview/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["refreshProjectOverview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{projectId}/modules": {
         parameters: {
             query?: never;
@@ -1042,6 +1096,55 @@ export interface components {
                 status: "empty" | "available" | "unavailable";
                 items: components["schemas"]["PreflightCandidate"][];
             };
+        };
+        ProjectOverviewV1: {
+            /** @constant */
+            apiVersion: "jarvis.dev/project-overview/v1";
+            /** @constant */
+            kind: "ProjectOverview";
+            projectId: string;
+            name: string;
+            /** @enum {string} */
+            status: "draft" | "ready" | "running" | "paused" | "degraded";
+            /** @enum {string} */
+            primaryAction: "activate" | "pause" | "resume" | "refresh";
+            polling: {
+                /** @enum {string} */
+                state: "live" | "reconnecting" | "failed" | "paused" | "unavailable";
+                /** Format: date-time */
+                lastPollAt: string | null;
+                errorReason: string | null;
+            };
+            workflow: {
+                available: boolean;
+                stages: components["schemas"]["ProjectOverviewStage"][];
+                nextStep: string;
+            };
+            issues: components["schemas"]["ProjectOverviewIssue"][];
+            activeExecutionCount: number;
+            activeWorkItemRefs: string[];
+            readinessHelp: string;
+        };
+        ProjectOverviewStage: {
+            /** @enum {string} */
+            id: "github" | "rules" | "development" | "pull-request";
+            label: string;
+            /** @enum {string} */
+            status: "ready" | "active" | "waiting" | "complete" | "unavailable";
+            detail: string;
+        };
+        ProjectOverviewIssue: {
+            workItemRef: string;
+            title: string;
+            issueNumber: number;
+            repositoryId: string;
+            /** @enum {string} */
+            status: "eligible" | "waiting" | "in-progress" | "blocked" | "ineligible" | "unavailable";
+            reason: string;
+            explanation: string;
+            openDependencyCount: number;
+            blockerRefs: string[];
+            readinessLabel: string;
         };
         PreflightScopeRequest: {
             compositionFingerprint: string;
@@ -1849,6 +1952,81 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectSummary"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getProjectOverview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Durable Project Overview read model. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectOverviewV1"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    resumeProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Resumed project. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectSummary"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    refreshProjectOverview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Refreshed Project Overview read model. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectOverviewV1"];
                 };
             };
             401: components["responses"]["Unauthorized"];

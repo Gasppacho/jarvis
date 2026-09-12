@@ -10,6 +10,7 @@ struct ContentView: View {
     let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
     let timeline: ProjectTimelineModel
+    let overview: ProjectOverviewModel
     let projectGraph: ProjectGraphModel
     let deadLetters: ProjectDeadLettersModel
     let connections: ConnectionsModel
@@ -25,6 +26,7 @@ struct ContentView: View {
                 projectConfiguration: projectConfiguration,
                 moduleCatalog: moduleCatalog,
                 timeline: timeline,
+                overview: overview,
                 projectGraph: projectGraph,
                 deadLetters: deadLetters,
                 connections: connections)
