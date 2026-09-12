@@ -81,12 +81,13 @@ esac
       projectA.id,
       "github://QServices/repo/issues/42",
     );
+    // Pin provider-assigned PR numbers explicitly: projects may run independently.
+    await waitForExecution(engine, projectA.id, createdA.id, "completed");
     const createdB = await publishCreationRequest(
       engine,
       projectB.id,
       "github://QServices/repo/issues/43",
     );
-    await waitForExecution(engine, projectA.id, createdA.id, "completed");
     await waitForExecution(engine, projectB.id, createdB.id, "completed");
 
     const redelivery = await engine.call("/test/redeliver", {

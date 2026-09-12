@@ -14,6 +14,9 @@ export async function assessGitHubWorkItemReadiness(input: {
   readonly number: number;
   readonly tag: string;
 }): Promise<WorkItemReadinessAssessment> {
+  if (input.tag.trim() === "") {
+    return { status: "impossible", reason: "ready-label-unknown", blockerRefs: [] };
+  }
   try {
     const issue = await input.api.get(
       `/repos/${input.owner}/${input.repository}/issues/${input.number}`,
@@ -57,11 +60,15 @@ export async function assessGitHubWorkItemReadiness(input: {
           typeof blocker["number"] !== "number" ||
           !Number.isSafeInteger(blocker["number"]) ||
           blocker["number"] < 1 ||
-          blocker["state"] !== "open"
+          (blocker["state"] !== "open" && blocker["state"] !== "closed")
         ) {
           return { status: "impossible", reason: "dependency-state-unavailable", blockerRefs: [] };
         }
-        blockerRefs.push(`github://${input.owner}/${input.repository}/issues/${blocker["number"]}`);
+        if (blocker["state"] === "open") {
+          blockerRefs.push(
+            `github://${input.owner}/${input.repository}/issues/${blocker["number"]}`,
+          );
+        }
       }
       if (!hasNextPage(response.headers)) {
         return blockerRefs.length === 0

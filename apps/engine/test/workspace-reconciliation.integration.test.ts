@@ -27,6 +27,26 @@ afterEach(async () => {
 });
 
 describe("workspace reconciliation at engine startup", () => {
+  it("preserves an unexpired workspace owned by a live process across restarts", async () => {
+    const fixture = makeRealGitRepositoryFixture();
+    const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-live-workspace-"));
+    roots.push(fixture.root, fixture.remoteRoot, dataRoot);
+    const seeded = seedProject(dataRoot, "live-project", fixture.root);
+    const allocated = await seeded.manager.allocate(
+      allocationInput("live-project", "live-execution", "live", fixture, seeded.project),
+    );
+    seeded.database.close();
+    for (let restart = 0; restart < 2; restart += 1) {
+      const engine = await startEngine({ dataRoot });
+      started.push(engine);
+      expect(existsSync(allocated.path)).toBe(true);
+      expect(readLeases(dataRoot)).toContainEqual(
+        expect.objectContaining({ execution_id: "live-execution", status: "active" }),
+      );
+      await stopEngine(engine);
+    }
+  });
+
   it("cleans leftover leases and directories, preserves valid retention, and is restart-safe", async () => {
     const fixture = makeRealGitRepositoryFixture();
     roots.push(fixture.root, fixture.remoteRoot);
@@ -38,6 +58,10 @@ describe("workspace reconciliation at engine startup", () => {
     const active = await seeded.manager.allocate(
       allocationInput(projectId, "exec-active", "active", fixture, seeded.project),
     );
+    // This fixture represents a crashed/unknown owner, not this live test worker.
+    seeded.database
+      .prepare("UPDATE workspace_leases SET owner_pid = NULL WHERE id = ?")
+      .run(active.lease.id);
     const expired = await seeded.manager.allocate(
       allocationInput(projectId, "exec-expired", "expired", fixture, seeded.project),
     );
@@ -149,6 +173,9 @@ describe("workspace reconciliation at engine startup", () => {
     const goodAllocation = await good.manager.allocate(
       allocationInput("project-73-good", "exec-good", "good", goodFixture, good.project),
     );
+    good.database
+      .prepare("UPDATE workspace_leases SET owner_pid = NULL WHERE id = ?")
+      .run(goodAllocation.lease.id);
 
     const badRepository = join(dataRoot, "missing-repository");
     insertProject(good.database, "project-73-bad", badRepository);

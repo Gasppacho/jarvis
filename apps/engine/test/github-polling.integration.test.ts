@@ -97,7 +97,8 @@ describe("GitHub polling Application Harness", () => {
     database.close();
     expect(JSON.parse(row.envelope)).toMatchObject({
       repositoryId: "main",
-      idempotencyKey: `${project.id}:github:main:github://Gasppacho/jarvis/issues/193:ready-v1`,
+      // Admission belongs to the Project repository even with multiple pollers.
+      idempotencyKey: `${project.id}:main:github://Gasppacho/jarvis/issues/193:ready-v1`,
       subject: { type: "work-item", ref: "github://Gasppacho/jarvis/issues/193" },
       payload: {
         repositoryId: "main",

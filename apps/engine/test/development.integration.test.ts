@@ -59,6 +59,264 @@ afterEach(async () => {
 });
 
 describe("Development Module tracer bullet", () => {
+  it("serializes three issues through real agents and PRs, preserving waiting identities across restart and suspension", async () => {
+    const { engine, fixture } = await admissionFixture("serial", "await-signal");
+    const database = new Database(join(engine.dataRoot, "jarvis.sqlite"));
+    try {
+      for (const number of [1, 2, 3]) {
+        seedReadyIssue(number);
+        await publishTag(
+          engine,
+          "serial",
+          `serial-${number}`,
+          1,
+          `github://Gasppacho/jarvis/issues/${number}`,
+        );
+        await expect
+          .poll(() =>
+            database
+              .prepare(
+                "SELECT count(*) AS n FROM deliveries WHERE module_id = 'jarvis.module.development'",
+              )
+              .get(),
+          )
+          .toEqual({ n: number });
+      }
+      const waiting = await admissionItems(engine, "serial");
+      expect(waiting.map((item) => item.workItemRef)).toEqual([
+        "github://Gasppacho/jarvis/issues/2",
+        "github://Gasppacho/jarvis/issues/3",
+      ]);
+      // Upgrade compatibility: Requests emitted before #194 omitted tag,
+      // but their original causal label Fact remains durable.
+      database
+        .prepare("UPDATE events SET envelope = json_remove(envelope, '$.payload.tag') WHERE id = ?")
+        .run(waiting[0]!.eventId);
+      const activeClaim = database
+        .prepare(
+          "SELECT lease_owner FROM deliveries WHERE module_id = 'jarvis.module.development' AND lease_owner IS NOT NULL",
+        )
+        .get();
+      expect(activeClaim).toMatchObject({ lease_owner: expect.any(String) });
+      // The test engine lease is 200ms; dispatching a further fact spans
+      // another tick and must renew the same running handler's ownership.
+      await publishTag(
+        engine,
+        "serial",
+        "unmatched-heartbeat",
+        1,
+        "fixture://heartbeat",
+        "not-ready",
+      );
+      await expect
+        .poll(() =>
+          database
+            .prepare(
+              "SELECT count(*) AS n FROM executions WHERE module_instance_id = 'automation-rules'",
+            )
+            .get(),
+        )
+        .toEqual({ n: 4 });
+      expect(
+        database
+          .prepare(
+            "SELECT lease_owner FROM deliveries WHERE module_id = 'jarvis.module.development' AND lease_owner IS NOT NULL",
+          )
+          .get(),
+      ).toEqual(activeClaim);
+      await engine.call("/v1/projects/serial/development-admission/suspend", { method: "POST" });
+      await releaseAdmissionAgent(engine, database, "serial", 1);
+      await expect.poll(() => servers[0]!.pullRequests.length).toBe(1);
+      expect(await admissionItems(engine, "serial")).toEqual(
+        waiting.map((item) => ({ ...item, status: "suspended", reason: "admission-suspended" })),
+      );
+
+      await engine.dispose();
+      await engine.waitForExit();
+      const restarted = await startEngine({
+        dataRoot: engine.dataRoot,
+        enginePath: testBundlePath,
+        env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
+      });
+      engines.push(restarted);
+      expect(await admissionItems(restarted, "serial")).toEqual(
+        waiting.map((item) => ({ ...item, status: "suspended", reason: "admission-suspended" })),
+      );
+      await restarted.call("/v1/projects/serial/development-admission/resume", { method: "POST" });
+      for (const number of [2, 3]) {
+        await releaseAdmissionAgent(restarted, database, "serial", number);
+        await expect.poll(() => servers[0]!.pullRequests.length).toBe(number);
+      }
+      expect(await admissionItems(restarted, "serial")).toEqual([]);
+      expect(
+        database
+          .prepare(
+            "SELECT attempt_count FROM deliveries WHERE module_id = 'jarvis.module.development'",
+          )
+          .all(),
+      ).toEqual([{ attempt_count: 1 }, { attempt_count: 1 }, { attempt_count: 1 }]);
+      expect(database.prepare("SELECT count(*) AS n FROM dead_letters").get()).toEqual({ n: 0 });
+      expect(
+        database
+          .prepare(
+            "SELECT count(*) AS n FROM executions WHERE module_id = 'jarvis.module.development'",
+          )
+          .get(),
+      ).toEqual({ n: 3 });
+      expect(servers[0]!.pullRequests.map((pr) => pr.head)).toEqual(
+        [1, 2, 3].map((number) =>
+          expect.stringMatching(new RegExp(`^agent/${number}-ready-${number}-exec-`)),
+        ),
+      );
+      for (const pr of servers[0]!.pullRequests)
+        expect(git(fixture.remoteRoot, ["rev-parse", `refs/heads/${pr.head}`])).toMatch(
+          /^[0-9a-f]{40}$/,
+        );
+      await restarted.call("/v1/projects/serial/development-admission/resume", { method: "POST" });
+      expect(await admissionItems(restarted, "serial")).toEqual([]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it.each(["closed", "label-removed", "blocked", "unavailable"] as const)(
+    "rechecks %s candidates without starving another ready issue",
+    async (change) => {
+      const { engine } = await admissionFixture(`recheck-${change}`, "await-signal");
+      const projectId = `recheck-${change}`;
+      const database = new Database(join(engine.dataRoot, "jarvis.sqlite"));
+      try {
+        for (const number of [1, 2, 3]) {
+          seedReadyIssue(number);
+          await publishTag(
+            engine,
+            projectId,
+            `${change}-${number}`,
+            1,
+            `github://Gasppacho/jarvis/issues/${number}`,
+          );
+          await expect
+            .poll(() =>
+              database
+                .prepare(
+                  "SELECT count(*) AS n FROM deliveries WHERE module_id = 'jarvis.module.development'",
+                )
+                .get(),
+            )
+            .toEqual({ n: number });
+        }
+        if (change === "closed" || change === "label-removed") seedReadyIssue(2, change);
+        else
+          servers[0]!.scriptRoute(
+            "GET",
+            change === "blocked"
+              ? "/repos/Gasppacho/jarvis/issues/2/dependencies/blocked_by?per_page=100&page=1"
+              : "/repos/Gasppacho/jarvis/issues/2",
+            {
+              status: change === "blocked" ? 200 : 503,
+              body:
+                change === "blocked" ? [{ number: 9, state: "open" }] : { message: "unavailable" },
+            },
+          );
+        await releaseAdmissionAgent(engine, database, projectId, 1);
+        await expect
+          .poll(
+            async () =>
+              (await admissionItems(engine, projectId)).find((item) =>
+                item.workItemRef.endsWith("/2"),
+              )?.status,
+          )
+          .toBe(
+            change === "blocked"
+              ? "blocked"
+              : change === "unavailable"
+                ? "impossible"
+                : "ineligible",
+          );
+        await releaseAdmissionAgent(engine, database, projectId, 3);
+        await expect.poll(() => servers[0]!.pullRequests.length).toBe(2);
+        expect(
+          database
+            .prepare(
+              "SELECT attempt_count FROM deliveries JOIN events ON events.id = deliveries.event_id WHERE deliveries.module_id = 'jarvis.module.development' AND json_extract(events.envelope, '$.payload.workItemRef') LIKE '%/2'",
+            )
+            .get(),
+        ).toEqual({ attempt_count: 0 });
+        expect(database.prepare("SELECT count(*) AS n FROM dead_letters").get()).toEqual({ n: 0 });
+        expect(servers[0]!.pullRequests.map((pr) => pr.head)).toEqual([
+          expect.stringMatching(/^agent\/1-ready-1-exec-/),
+          expect.stringMatching(/^agent\/3-ready-3-exec-/),
+        ]);
+        if (change === "blocked" || change === "unavailable") {
+          seedReadyIssue(2);
+          servers[0]!.scriptRoute("GET", "/repos/Gasppacho/jarvis/issues/2", {
+            status: 200,
+            body: {
+              number: 2,
+              title: "Ready 2",
+              body: "Complete",
+              state: "open",
+              labels: [{ name: "agent:ready" }],
+            },
+          });
+          servers[0]!.scriptRoute(
+            "GET",
+            "/repos/Gasppacho/jarvis/issues/2/dependencies/blocked_by?per_page=100&page=1",
+            { status: 200, body: [{ number: 9, state: "closed" }] },
+          );
+          await engine.call(`/v1/projects/${projectId}/development-admission/resume`, {
+            method: "POST",
+          });
+          await releaseAdmissionAgent(engine, database, projectId, 2);
+          await expect.poll(() => servers[0]!.pullRequests.length).toBe(3);
+        }
+      } finally {
+        database.close();
+      }
+    },
+  );
+
+  it("keeps other projects and facts progressing while a Development agent is active", async () => {
+    const first = makeRealGitRepositoryFixture();
+    const second = makeRealGitRepositoryFixture();
+    roots.push(first.root, first.remoteRoot, second.root, second.remoteRoot);
+    const engine = await startEngine({
+      enginePath: testBundlePath,
+      env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
+    });
+    engines.push(engine);
+    await activateProject(engine, "admission-a", first, "ignore-terminate");
+    await activateProject(engine, "admission-b", second);
+    await publishTag(engine, "admission-a", "held");
+    const running = await waitForExecution(engine, "admission-a", "development", "running");
+    await waitForPid(
+      join(
+        engine.dataRoot,
+        "projects",
+        "admission-a",
+        "workspaces",
+        running.id,
+        "fake-runtime-child.pid",
+      ),
+    );
+    try {
+      await publishTag(engine, "admission-b", "independent");
+      await waitForExecution(engine, "admission-b", "development", "completed");
+      await publishTag(engine, "admission-a", "queued");
+      await expect
+        .poll(async () => {
+          const response = await engine.call("/v1/projects/admission-a/development-admission");
+          return ((await response.json()) as { items: { workItemRef: string }[] }).items.map(
+            (item) => item.workItemRef,
+          );
+        })
+        .toEqual(["fixture://admission-a/queued"]);
+    } finally {
+      await engine.call(`/v1/executions/${running.id}/cancel`, { method: "POST" });
+      await waitForExecution(engine, "admission-a", "development", "cancelled");
+    }
+  });
+
   it("keeps a closed GitHub Issue pending without a workspace, retry, or dead letter", async () => {
     const fixture = makeRealGitRepositoryFixture({
       remoteUrl: "git@github.com:Gasppacho/jarvis.git",
@@ -119,6 +377,21 @@ describe("Development Module tracer bullet", () => {
     );
     expect(await resumed.json()).toMatchObject({ suspended: false });
 
+    github.seedIssue({
+      owner: "Gasppacho",
+      repository: "jarvis",
+      issue: {
+        number: 44,
+        title: "Reopened after removal",
+        body: "Complete",
+        state: "open",
+        labels: [{ name: "agent:ready" }],
+      },
+    });
+    await engine.call("/v1/projects/development-pending-closed/development-admission/resume", {
+      method: "POST",
+    });
+
     const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
     try {
       expect(
@@ -138,6 +411,13 @@ describe("Development Module tracer bullet", () => {
           )
           .get("development-pending-closed"),
       ).toEqual({ attempt_count: 0 });
+      expect(
+        database
+          .prepare(
+            "SELECT consumed_at FROM deliveries WHERE project_id = ? AND module_instance_id = 'development' AND event_id IN (SELECT id FROM events WHERE json_extract(envelope, '$.payload.workItemRef') = ?)",
+          )
+          .get("development-pending-closed", workItemRef),
+      ).toMatchObject({ consumed_at: expect.any(String) });
     } finally {
       database.close();
     }
@@ -1702,6 +1982,98 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
   });
 });
 
+async function admissionFixture(projectId: string, scenario: string) {
+  const dataRoot = mkdtempSync(join("/tmp", "jarvis-admission-"));
+  roots.push(dataRoot);
+  const fixture = makeRealGitRepositoryFixture({
+    additionalRemotes: [{ name: "github", url: "git@github.com:Gasppacho/jarvis.git" }],
+  });
+  roots.push(fixture.root, fixture.remoteRoot);
+  const engine = await startEngine({
+    dataRoot,
+    enginePath: testBundlePath,
+    env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
+  });
+  engines.push(engine);
+  await activateProject(
+    engine,
+    projectId,
+    fixture,
+    scenario,
+    300_000,
+    1_048_576,
+    { test: "node --test" },
+    ["test"],
+    false,
+    "origin",
+    0,
+    "runtime/fake-test",
+    { github: true },
+  );
+  return { engine, fixture };
+}
+
+function seedReadyIssue(number: number, change?: "closed" | "label-removed") {
+  servers[0]!.seedIssue({
+    owner: "Gasppacho",
+    repository: "jarvis",
+    issue: {
+      number,
+      title: `Ready ${number}`,
+      body: "Complete untrusted work item",
+      state: change === "closed" ? "closed" : "open",
+      labels: change === "label-removed" ? [] : [{ name: "agent:ready" }],
+    },
+  });
+}
+
+async function admissionItems(engine: Harness, projectId: string) {
+  const response = await engine.call(`/v1/projects/${projectId}/development-admission`);
+  expect(response.status).toBe(200);
+  return (
+    (await response.json()) as {
+      items: {
+        deliveryId: string;
+        eventId: string;
+        workItemRef: string;
+        status: string;
+        reason: string;
+      }[];
+    }
+  ).items;
+}
+
+async function releaseAdmissionAgent(
+  engine: Harness,
+  database: Database.Database,
+  projectId: string,
+  number: number,
+) {
+  let executionId = "";
+  await expect
+    .poll(
+      () => {
+        const rows = database
+          .prepare(
+            `SELECT execution.id, json_extract(events.envelope, '$.payload.workItemRef') AS ref
+      FROM executions execution JOIN events ON events.id = execution.input_event_id
+      JOIN workspace_leases lease ON lease.execution_id = execution.id
+      WHERE execution.project_id = ? AND execution.status = 'running' AND lease.status = 'active'`,
+          )
+          .all(projectId) as { id: string; ref: string }[];
+        expect(rows.length).toBeLessThanOrEqual(1);
+        executionId = rows[0]?.id ?? "";
+        return rows[0]?.ref;
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(`github://Gasppacho/jarvis/issues/${number}`);
+  const pid = await waitForPid(
+    join(engine.dataRoot, "projects", projectId, "workspaces", executionId, "fake-runtime.pid"),
+  );
+  process.kill(pid, "SIGUSR1");
+}
+
 async function activateProject(
   engine: Harness,
   projectId: string,
@@ -1715,30 +2087,42 @@ async function activateProject(
   pushRemote = "origin",
   maxRepairCycles = 0,
   runtimeRef = "runtime/fake-test",
+  admission: { readonly github?: boolean; readonly maxConcurrent?: number } = {},
 ): Promise<void> {
   const connection = await engine.call("/v1/connections", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      id: "connection/github-work-items",
+      id: `connection/github-work-items-${projectId}`,
       kind: "github",
       displayName: "Work Items",
       secretRef: "gh://WorkItems",
     }),
   });
   expect(connection.status, await connection.clone().text()).toBe(201);
-  const validated = await engine.call("/v1/connections/connection%2Fgithub-work-items/validate", {
-    method: "POST",
-  });
+  const validated = await engine.call(
+    `/v1/connections/connection%2Fgithub-work-items-${projectId}/validate`,
+    {
+      method: "POST",
+    },
+  );
   expect(validated.status, await validated.clone().text()).toBe(200);
   const portableConfig = {
     apiVersion: "jarvis.dev/project/v1",
     kind: "Project",
     metadata: { id: projectId, name: "Development tracer" },
-    repositories: [{ id: "main", root: ".", defaultBranch: "main", remote: "origin" }],
+    repositories: [
+      {
+        id: "main",
+        root: ".",
+        defaultBranch: "main",
+        remote: admission.github ? "github" : "origin",
+      },
+    ],
     slots: {
       agentRuntime: { requires: "agent.execute" },
       tickets: { requires: "work-items.read" },
+      ...(admission.github ? { sourceControl: { requires: "scm.change-request.manage" } } : {}),
     },
     commands,
     git: {
@@ -1749,7 +2133,7 @@ async function activateProject(
     },
     workspace: {
       strategy: "git-worktree",
-      maxConcurrentExecutions: 2,
+      maxConcurrentExecutions: admission.maxConcurrent ?? 1,
       retainOnFailureDays: 7,
     },
     modules: [
@@ -1794,11 +2178,27 @@ async function activateProject(
                 : ["JARVIS_FAKE_SCENARIO"],
         },
       },
-      {
-        instanceId: "request-worker",
-        moduleId: "jarvis.module.test-request-worker",
-        enabled: true,
-      },
+      ...(admission.github
+        ? [
+            {
+              instanceId: "github",
+              moduleId: "jarvis.module.github",
+              enabled: true,
+              bindings: { sourceControl: "sourceControl", tickets: "tickets" },
+              configuration: {
+                repositories: ["main"],
+                bootstrapLabelPolicy: "ignore-existing",
+                pollIntervalSeconds: 60,
+              },
+            },
+          ]
+        : [
+            {
+              instanceId: "request-worker",
+              moduleId: "jarvis.module.test-request-worker",
+              enabled: true,
+            },
+          ]),
     ],
   };
   const imported = await engine.call("/v1/projects", {
@@ -1843,7 +2243,15 @@ async function activateProject(
                 }
               : {}),
         },
-        tickets: { kind: "connection", ref: "connection/github-work-items" },
+        tickets: { kind: "connection", ref: `connection/github-work-items-${projectId}` },
+        ...(admission.github
+          ? {
+              sourceControl: {
+                kind: "connection",
+                ref: `connection/github-work-items-${projectId}`,
+              },
+            }
+          : {}),
       },
     }),
   });
@@ -1871,6 +2279,7 @@ async function publishTag(
   suffix = "first",
   generation = 1,
   workItemRef = `fixture://${projectId}/${suffix}`,
+  tag = "agent:ready",
 ): Promise<string> {
   const response = await engine.call("/test/events", {
     method: "POST",
@@ -1887,7 +2296,7 @@ async function publishTag(
       causationId: null,
       payload: {
         workItemRef,
-        tag: "agent:ready",
+        tag,
       },
       ...(generation === 1 ? {} : { metadata: { generation } }),
     }),

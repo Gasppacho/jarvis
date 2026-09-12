@@ -13,7 +13,7 @@ export interface EventLoopDependencies {
   readonly db: Database.Database;
   readonly clock: Clock;
   readonly dispatcher: OutboxDispatcher;
-  readonly consumer: DeliveryConsumer;
+  readonly consumer: Pick<DeliveryConsumer, "consumeAsync">;
   readonly ids?: Pick<IdGenerator, "next">;
   readonly deliveryLeaseMs?: number;
   /** Ticket #60: fed one Live Update per journaled Event and per recorded
@@ -79,60 +79,70 @@ export async function tickEventLoop(deps: EventLoopDependencies): Promise<void> 
     );
   }
 
-  for (const delivery of claimDueDeliveries(
-    deps.db,
-    deps.clock,
-    deps.deliveryLeaseMs,
-    undefined,
-    deps.ids,
-  )) {
-    try {
-      const outcome = await deps.consumer.consumeAsync(delivery);
-      process.stderr.write(
-        `jarvis-engine: delivery consumed project=${delivery.projectId} ` +
-          `moduleInstance=${delivery.moduleInstanceId} event=${delivery.eventId} ` +
-          `status=${outcome.status} redelivered=${String(outcome.redelivered)}\n`,
-      );
-      // Ticket #60: `null` on a redelivery — no new Execution was created,
-      // so there is nothing new to report (`consume()`'s doc comment). Also
-      // already committed, for the same reason the dispatch side above is.
-      if (outcome.executionSummary !== null) {
-        const summary = outcome.executionSummary;
-        deps.liveUpdates.publish({
-          type: "execution.changed",
-          projectId: delivery.projectId,
-          occurredAt: summary.completedAt ?? summary.createdAt,
-          payload: summary,
-        });
-      }
-    } catch (error) {
-      // A delivery this loop cannot consume must not take the whole engine
-      // down with it (no other tick depends on this one) or strand every
-      // other Delivery behind it — logged and retried next tick instead.
-      process.stderr.write(
-        `jarvis-engine: consuming delivery project=${delivery.projectId} ` +
-          `moduleInstance=${delivery.moduleInstanceId} event=${delivery.eventId} failed: ` +
-          `${String(error)}\n`,
-      );
-    }
-  }
+  await Promise.all(
+    claimDueDeliveries(deps.db, deps.clock, deps.deliveryLeaseMs, undefined, deps.ids).map(
+      async (delivery) => {
+        try {
+          const outcome = await deps.consumer.consumeAsync(delivery);
+          process.stderr.write(
+            `jarvis-engine: delivery consumed project=${delivery.projectId} ` +
+              `moduleInstance=${delivery.moduleInstanceId} event=${delivery.eventId} ` +
+              `status=${outcome.status} redelivered=${String(outcome.redelivered)}\n`,
+          );
+          // Ticket #60: `null` on a redelivery — no new Execution was created,
+          // so there is nothing new to report (`consume()`'s doc comment). Also
+          // already committed, for the same reason the dispatch side above is.
+          if (outcome.executionSummary !== null) {
+            const summary = outcome.executionSummary;
+            deps.liveUpdates.publish({
+              type: "execution.changed",
+              projectId: delivery.projectId,
+              occurredAt: summary.completedAt ?? summary.createdAt,
+              payload: summary,
+            });
+          }
+        } catch (error) {
+          // A delivery this loop cannot consume must not take the whole engine
+          // down with it (no other tick depends on this one) or strand every
+          // other Delivery behind it — logged and retried next tick instead.
+          process.stderr.write(
+            `jarvis-engine: consuming delivery project=${delivery.projectId} ` +
+              `moduleInstance=${delivery.moduleInstanceId} event=${delivery.eventId} failed: ` +
+              `${String(error)}\n`,
+          );
+        }
+      },
+    ),
+  );
 }
 
 /** Returns a function that stops the loop; call it before closing the database. */
 export function startEventLoop(deps: EventLoopDependencies, intervalMs = 200): () => void {
-  let inFlight: Promise<void> | undefined;
+  const active = new Map<string, ClaimedDelivery>();
+  const consumer = {
+    async consumeAsync(delivery: ClaimedDelivery) {
+      const key = `${delivery.projectId}/${delivery.moduleInstanceId}/${delivery.eventId}`;
+      active.set(key, delivery);
+      try {
+        return await deps.consumer.consumeAsync(delivery);
+      } finally {
+        active.delete(key);
+      }
+    },
+  };
+  const renew = deps.db.prepare(`UPDATE deliveries SET lease_expires_at = @expiresAt
+    WHERE project_id = @projectId AND module_instance_id = @moduleInstanceId
+      AND event_id = @eventId AND lease_owner = @leaseOwner AND consumed_at IS NULL`);
   const timer = setInterval(() => {
-    // An async handler must not be started twice while the previous tick is
-    // still waiting for it; the Delivery remains unconsumed until its one
-    // terminal transaction commits.
-    if (inFlight !== undefined) return;
-    inFlight = tickEventLoop(deps)
-      .catch((error: unknown) => {
-        process.stderr.write(`jarvis-engine: event loop tick failed: ${String(error)}\n`);
-      })
-      .finally(() => {
-        inFlight = undefined;
-      });
+    // These are running handlers, not a queue. SQLite owns admission and
+    // recovery; renewing only our fenced claims lets unrelated work proceed.
+    const expiresAt = new Date(
+      deps.clock.now().getTime() + (deps.deliveryLeaseMs ?? DEFAULT_DELIVERY_LEASE_MS),
+    ).toISOString();
+    for (const delivery of active.values()) renew.run({ ...delivery, expiresAt });
+    void tickEventLoop({ ...deps, consumer }).catch((error: unknown) => {
+      process.stderr.write(`jarvis-engine: event loop tick failed: ${String(error)}\n`);
+    });
   }, intervalMs);
   // Never keeps the process alive on its own — only `app.listen()` and open
   // connections do that, same as every other engine background timer.
@@ -166,18 +176,17 @@ export function claimDueDeliveries(
            AND (deliveries.lease_expires_at IS NULL OR deliveries.lease_expires_at <= @now)
            AND (
              deliveries.module_id <> 'jarvis.module.development'
+             OR EXISTS (
+               SELECT 1 FROM executions execution JOIN workspace_leases lease ON lease.execution_id = execution.id
+               WHERE execution.input_event_id = deliveries.event_id AND execution.project_id = deliveries.project_id
+                 AND execution.module_instance_id = deliveries.module_instance_id
+                 AND execution.status IN ('running', 'cancelling') AND lease.status = 'active'
+             )
              OR (
                NOT EXISTS (
                  SELECT 1 FROM development_admission_controls controls
                  WHERE controls.project_id = deliveries.project_id
                    AND controls.suspended_at IS NOT NULL
-               )
-               AND (
-                 SELECT COUNT(*) FROM workspace_leases leases
-                 WHERE leases.project_id = deliveries.project_id AND leases.status = 'active'
-               ) < COALESCE(
-                 CAST(json_extract(projects.portable_config, '$.workspace.maxConcurrentExecutions') AS INTEGER),
-                 1
                )
                AND (
                  SELECT COUNT(*) FROM deliveries earlier
@@ -194,6 +203,16 @@ export function claimDueDeliveries(
                ) - (
                  SELECT COUNT(*) FROM workspace_leases leases
                  WHERE leases.project_id = deliveries.project_id AND leases.status = 'active'
+               ) - (
+                 SELECT COUNT(*) FROM deliveries held
+                 WHERE held.project_id = deliveries.project_id
+                   AND held.module_id = 'jarvis.module.development' AND held.consumed_at IS NULL
+                   AND held.lease_expires_at > @now
+                   AND NOT EXISTS (
+                     SELECT 1 FROM executions execution JOIN workspace_leases lease ON lease.execution_id = execution.id
+                     WHERE execution.input_event_id = held.event_id AND execution.project_id = held.project_id
+                       AND execution.module_instance_id = held.module_instance_id AND lease.status = 'active'
+                   )
                )
              )
            )

@@ -760,9 +760,22 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
     executionId: string,
     deferred: ModuleDeliveryDeferredError,
   ): ConsumeResult {
+    const started =
+      this.db
+        .prepare("SELECT 1 FROM execution_checkpoints WHERE execution_id = ? LIMIT 1")
+        .get(executionId) !== undefined;
+    // Only a not-yet-started admission may leave the queue as ineligible.
+    // A recovered execution retains its identity and progress for recovery.
+    const admission =
+      started && deferred.status === "ineligible"
+        ? new ModuleDeliveryDeferredError("impossible", "work-item-recovery-required")
+        : deferred;
     this.db.transaction(() => {
       this.db
-        .prepare("DELETE FROM executions WHERE id = ? AND status = 'running'")
+        .prepare(
+          `DELETE FROM executions WHERE id = ? AND status = 'running'
+          AND NOT EXISTS (SELECT 1 FROM execution_checkpoints WHERE execution_id = executions.id)`,
+        )
         .run(executionId);
       this.db
         .prepare(
@@ -777,18 +790,19 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
           projectId: delivery.projectId,
           moduleInstanceId: delivery.moduleInstanceId,
           eventId: delivery.eventId,
-          status: deferred.status,
-          reason: deferred.reason,
+          status: admission.status,
+          reason: cleanHandlerFailureMessage(admission.reason),
           updatedAt: this.clock.now().toISOString(),
         });
       const nextAttemptAt =
-        deferred.status === "waiting-capacity"
+        admission.status === "waiting-capacity"
           ? null
           : new Date(this.clock.now().getTime() + 60_000).toISOString();
       const written = this.db
         .prepare(
           `UPDATE deliveries
-           SET next_attempt_at = @nextAttemptAt, lease_owner = NULL, lease_expires_at = NULL
+           SET next_attempt_at = @nextAttemptAt, lease_owner = NULL, lease_expires_at = NULL,
+               consumed_at = @consumedAt
            WHERE project_id = @projectId AND module_instance_id = @moduleInstanceId AND event_id = @eventId
              AND consumed_at IS NULL AND (@leaseOwner IS NULL OR lease_owner = @leaseOwner)`,
         )
@@ -797,6 +811,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
           moduleInstanceId: delivery.moduleInstanceId,
           eventId: delivery.eventId,
           nextAttemptAt,
+          consumedAt: admission.status === "ineligible" ? this.clock.now().toISOString() : null,
           leaseOwner: delivery.leaseOwner ?? null,
         });
       if (delivery.leaseOwner !== undefined && written.changes !== 1) {
@@ -806,7 +821,12 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
     return {
       executionId: null,
       status: "deferred",
-      result: { admission: { status: deferred.status, reason: deferred.reason } },
+      result: {
+        admission: {
+          status: admission.status,
+          reason: cleanHandlerFailureMessage(admission.reason),
+        },
+      },
       redelivered: false,
       executionSummary: null,
     };
@@ -1038,6 +1058,40 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
     capabilities: ModuleHandlerCapabilities,
   ): ModuleHandlerContext {
     const repository = this.repositoryIdentity(delivery.projectId, envelope.repositoryId);
+    const workItems = capabilities.workItems;
+    const assessReadiness = workItems?.assessReadiness;
+    if (
+      envelope.type === "development.implementation.requested" &&
+      workItems !== undefined &&
+      assessReadiness !== undefined
+    ) {
+      // Older v1 Requests omitted tag. Resolve only their original, scoped
+      // causal Fact, never a later label observation or a global default.
+      const source = this.db
+        .prepare(
+          `SELECT json_extract(envelope, '$.payload.tag') AS tag FROM events
+        WHERE id = ? AND project_id = ? AND type IN ('scm.work-item.tag-added', 'scm.work-item.ready')
+          AND json_extract(envelope, '$.payload.workItemRef') = ?
+          AND json_extract(envelope, '$.repositoryId') = ?`,
+        )
+        .get(
+          envelope.causationId,
+          delivery.projectId,
+          envelope.subject.ref,
+          envelope.repositoryId ?? null,
+        ) as { tag: unknown } | undefined;
+      capabilities = {
+        ...capabilities,
+        workItems: {
+          ...workItems,
+          assessReadiness: (input) =>
+            assessReadiness({
+              ...input,
+              tag: input.tag || (typeof source?.tag === "string" ? source.tag : ""),
+            }),
+        },
+      };
+    }
     return {
       projectId: delivery.projectId,
       executionId,

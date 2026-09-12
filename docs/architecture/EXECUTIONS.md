@@ -164,3 +164,29 @@ Un identifiant d'exécution ne doit jamais être placé dans un webhook pour « 
 ## Development admission
 
 Une Request Development qui ne peut pas encore obtenir sa capacité reste une Delivery durable non consommée. Son identité est la Delivery existante : elle ne consomme ni tentative de retry, ni budget de réparation, ni Dead Letter. L'admission est ordonnée par l'arrivée durable puis l'identifiant de Delivery, est limitée par projet, et revérifie l'issue provider avant l'allocation du Workspace. La suspension d'admission est durable et interdit les nouveaux départs sans annuler une Execution déjà active.
+
+Les claims Development réservent la capacité avant même l'allocation du
+Workspace. Les handlers actifs renouvellent leur Delivery lease avec son
+propriétaire ; les ticks continuent de traiter les faits, les autres projets
+et les créations de PR. Une PR à relire ne retient aucune capacité Development.
+
+La revérification et la lecture complète du Work Item précèdent l'allocation.
+Une dépendance ouverte ou une observation impossible diffère la Delivery sans
+budget d'échec ; elle ne bloque pas une candidate suivante vérifiable. Une issue
+fermée ou délabellisée termine son admission avec une raison `ineligible` : sa
+Delivery est consommée sans exécution échouée ni Dead Letter. Suspendre/reprendre
+ou rouvrir l'issue ne rejoue pas cette admission terminale.
+
+`GET /v1/projects/{projectId}/development-admission` expose les candidates en
+attente et les admissions retirées avec leur raison, en excluant les travaux
+qui possèdent déjà un Workspace actif. Les commandes `suspend` et `resume`
+portent uniquement sur le projet ; reprendre réévalue les admissions différées
+sans raccourcir le backoff d'un véritable échec. Une admission différée ne
+supprime jamais les checkpoints d'une Execution récupérée.
+
+Les anciennes Requests v1 sans `tag` réutilisent le label de leur Fact causal
+durable, avec le même projet, repository et Work Item. Si cette provenance
+manque, l'admission reste `impossible` (`ready-label-unknown`) ; aucun label par
+défaut n'est inventé. Une observation inéligible pendant une récupération déjà
+checkpointée conserve l'Execution et sa Delivery sous
+`work-item-recovery-required`, sans supprimer son progrès ni la déclarer terminée.

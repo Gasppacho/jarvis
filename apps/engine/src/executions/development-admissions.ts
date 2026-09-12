@@ -30,7 +30,12 @@ export class DevelopmentAdmissions {
          JOIN events ON events.id = deliveries.event_id
          LEFT JOIN development_admissions admissions ON admissions.delivery_id = deliveries.id
          WHERE deliveries.project_id = ? AND deliveries.module_id = 'jarvis.module.development'
-           AND deliveries.consumed_at IS NULL
+           AND (deliveries.consumed_at IS NULL OR admissions.status = 'ineligible')
+           AND NOT EXISTS (
+             SELECT 1 FROM executions execution JOIN workspace_leases lease ON lease.execution_id = execution.id
+             WHERE execution.input_event_id = deliveries.event_id AND execution.project_id = deliveries.project_id
+               AND execution.module_instance_id = deliveries.module_instance_id AND lease.status = 'active'
+           )
          ORDER BY deliveries.created_at, deliveries.id`,
       )
       .all(projectId) as {
@@ -47,11 +52,11 @@ export class DevelopmentAdmissions {
         eventId: row.event_id,
         ...references(row.envelope),
         status:
-          suspended?.suspended_at !== null && suspended !== undefined
+          row.status !== "ineligible" && suspended?.suspended_at !== null && suspended !== undefined
             ? "suspended"
             : (row.status ?? "waiting-capacity"),
         reason:
-          suspended?.suspended_at !== null && suspended !== undefined
+          row.status !== "ineligible" && suspended?.suspended_at !== null && suspended !== undefined
             ? "admission-suspended"
             : (row.reason ?? "awaiting-capacity"),
       })),
@@ -83,7 +88,9 @@ export class DevelopmentAdmissions {
       this.db
         .prepare(
           `UPDATE deliveries SET next_attempt_at = ?
-           WHERE project_id = ? AND module_id = 'jarvis.module.development' AND consumed_at IS NULL`,
+           WHERE project_id = ? AND module_id = 'jarvis.module.development' AND consumed_at IS NULL
+             AND attempt_count = 0
+             AND id IN (SELECT delivery_id FROM development_admissions WHERE status <> 'ineligible')`,
         )
         .run(now, projectId);
     })();

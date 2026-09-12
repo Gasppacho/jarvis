@@ -237,6 +237,13 @@ async function runImplementationRequested(
     MAX_OUTPUT_LIMIT_BYTES,
   );
   let checkpointSequence = ctx.lastCheckpointSequence?.() ?? 0;
+  if (
+    requiresGitHubWorkItem &&
+    request.tag !== undefined &&
+    workItems?.assessReadiness === undefined
+  ) {
+    throw new ModuleDeliveryDeferredError("impossible", "work-item-readiness-unavailable");
+  }
   if (requiresGitHubWorkItem && workItems?.assessReadiness !== undefined) {
     const readiness = await workItems.assessReadiness({
       ref: request.workItemRef,
@@ -1211,7 +1218,15 @@ async function readWorkItem(
   workItemRef: string,
   repositoryId: string | undefined,
 ): Promise<WorkItem> {
-  const item = await capability.read(workItemRef, repositoryId);
+  let item: WorkItem;
+  try {
+    item = await capability.read(workItemRef, repositoryId);
+  } catch (error: unknown) {
+    if (capability.assessReadiness !== undefined) {
+      throw new ModuleDeliveryDeferredError("impossible", "work-item-unavailable");
+    }
+    throw error;
+  }
   if (
     item.ref !== workItemRef ||
     !Number.isSafeInteger(item.number) ||
@@ -1221,12 +1236,18 @@ async function readWorkItem(
     typeof item.body !== "string" ||
     (item.state !== "open" && item.state !== "closed")
   ) {
+    if (capability.assessReadiness !== undefined) {
+      throw new ModuleDeliveryDeferredError("impossible", "work-item-data-incomplete");
+    }
     throw new DevelopmentExecutionError(
       "github.work-item-read-failed",
       "The Work Item reader returned an invalid Work Item.",
     );
   }
   if (item.state === "closed") {
+    if (capability.assessReadiness !== undefined) {
+      throw new ModuleDeliveryDeferredError("ineligible", "work-item-closed");
+    }
     throw new DevelopmentExecutionError(
       "github.work-item-read-failed",
       "The requested Work Item is closed.",

@@ -11,6 +11,7 @@ export interface WorkspaceReconciliationProject {
 }
 
 export type WorkspaceReconciliationCode =
+  | "workspace.reconciliation.active-lease-kept"
   | "workspace.reconciliation.active-lease-closed"
   | "workspace.reconciliation.expired-retained-lease-closed"
   | "workspace.reconciliation.retained-lease-kept"
@@ -109,6 +110,15 @@ export class WorkspaceReconciler {
       const pathState =
         rootState === "missing" ? "missing" : safePath(workspaceRoot, workspacePath);
       const expired = lease.status === "retained" && this.isExpired(lease);
+      if (
+        lease.status === "active" &&
+        !this.isExpired(lease) &&
+        pathState === "present" &&
+        ownerIsAlive(lease.ownerPid)
+      ) {
+        increment(counts, "workspace.reconciliation.active-lease-kept");
+        continue;
+      }
       if (lease.status === "retained" && !expired && pathState === "present") {
         increment(counts, "workspace.reconciliation.retained-lease-kept");
         continue;
@@ -197,6 +207,16 @@ export class WorkspaceReconciler {
     } catch {
       return [];
     }
+  }
+}
+
+function ownerIsAlive(pid: number | null): boolean {
+  if (pid === null) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: unknown) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH";
   }
 }
 

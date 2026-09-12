@@ -30,6 +30,7 @@ A path or Git worktree record left without a valid active or retained lease.
 ### Startup Reconciliation
 The startup pass that restores agreement between Workspace Leases, workspace
 directories and Git worktree records before the engine announces `ready`.
+An unexpired active lease with a live owner remains protected.
 
 ### Reconciliation Diagnostic
 A stable code and per-project count emitted for each startup cleanup action;

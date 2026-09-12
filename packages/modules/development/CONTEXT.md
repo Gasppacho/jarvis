@@ -15,6 +15,14 @@ The local attempt that transforms a Work Item into a validated pushed branch.
 
 _Avoid_: Pull Request; that resource is created later by an SCM provider.
 
+### Admission
+The project-scoped decision that allows a waiting Implementation Request to
+start Development once capacity and current Work Item eligibility permit it.
+
+### Admission Suspension
+A durable pause of new Development starts for one project. Running work and
+its Change Request creation continue; this is distinct from Cancellation.
+
 ### Validation Plan
 The ordered project commands that determine whether the change is acceptable.
 

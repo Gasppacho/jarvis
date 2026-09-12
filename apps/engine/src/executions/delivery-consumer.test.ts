@@ -13,6 +13,8 @@ import type {
 } from "../../../../packages/project-runtime/src/project-types.js";
 import { applyMigrations } from "../db/test-migrations.js";
 import { EngineError } from "../errors.js";
+import { ModuleDeliveryDeferredError } from "../../../../packages/module-sdk/src/index.js";
+import { DevelopmentAdmissions } from "./development-admissions.js";
 import { ProjectStore, type ResolvedProjectSnapshot } from "../projects/store.js";
 import { OutboxDispatcher, type OpenSubscriptionsPort } from "../events/dispatcher.js";
 import { EventPublisher } from "../events/publisher.js";
@@ -177,6 +179,121 @@ function harness(
 }
 
 describe("DeliveryConsumer", () => {
+  it.each(["impossible", "ineligible"] as const)(
+    "preserves checkpointed recovery when admission is %s, without consuming attempts",
+    async (status) => {
+      const state = harness(() => async (ctx) => {
+        ctx.recordCheckpoint?.({
+          type: "agent.started",
+          sequence: 1,
+          timestamp: "2026-09-06T08:00:00.000Z",
+        });
+        throw new ModuleDeliveryDeferredError(status, "dependency-state-unavailable");
+      });
+      activate(state.store, "project-a", [
+        { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+      ]);
+      state.publisher.publish(pingInput("project-a"));
+      state.dispatcher.dispatchPending();
+      await state.consumer.consumeAsync(claimDueDeliveries(state.db, state.clock)[0]!);
+      const execution = state.db.prepare("SELECT id, attempt FROM executions").get();
+      const checkpoint = state.db.prepare("SELECT * FROM execution_checkpoints").get();
+      expect(execution).toMatchObject({ id: expect.any(String), attempt: 1 });
+      expect(checkpoint).toMatchObject({ type: "agent.started" });
+      state.clock.advance(60_000);
+      await state.consumer.consumeAsync(claimDueDeliveries(state.db, state.clock)[0]!);
+      expect(state.db.prepare("SELECT id, attempt FROM executions").all()).toEqual([execution]);
+      expect(state.db.prepare("SELECT * FROM execution_checkpoints").all()).toEqual([checkpoint]);
+      expect(state.db.prepare("SELECT attempt_count FROM deliveries").get()).toEqual({
+        attempt_count: 0,
+      });
+      expect(state.db.prepare("SELECT consumed_at FROM deliveries").get()).toEqual({
+        consumed_at: null,
+      });
+    },
+  );
+
+  it("resumes admission deferrals without shortening the backoff of a real failure", async () => {
+    const state = harness(() => async () => {
+      throw new ModuleDeliveryDeferredError("impossible", "dependency-state-unavailable");
+    });
+    activate(state.store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+    state.publisher.publish(pingInput("project-a"));
+    state.dispatcher.dispatchPending();
+    await state.consumer.consumeAsync(claimDueDeliveries(state.db, state.clock)[0]!);
+    state.db
+      .prepare("UPDATE deliveries SET module_id = 'jarvis.module.development', attempt_count = 1")
+      .run();
+    const before = state.db.prepare("SELECT next_attempt_at FROM deliveries").get();
+    const admissions = new DevelopmentAdmissions(state.db, state.clock);
+    admissions.suspend("project-a");
+    admissions.resume("project-a");
+    expect(state.db.prepare("SELECT next_attempt_at FROM deliveries").get()).toEqual(before);
+    state.db.prepare("UPDATE deliveries SET attempt_count = 0").run();
+    admissions.resume("project-a");
+    expect(state.db.prepare("SELECT next_attempt_at FROM deliveries").get()).toEqual({
+      next_attempt_at: state.clock.now().toISOString(),
+    });
+  });
+
+  it("respects independently configured capacities and suspensions", async () => {
+    const state = harness();
+    for (const projectId of ["project-a", "project-b"]) {
+      activate(state.store, projectId, [
+        { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+      ]);
+      for (const ref of ["first", "second"])
+        state.publisher.publish(pingInput(projectId, { subject: { type: "work-item", ref } }));
+    }
+    state.dispatcher.dispatchPending();
+    state.db.prepare("UPDATE deliveries SET module_id = 'jarvis.module.development'").run();
+    state.db
+      .prepare(
+        "UPDATE projects SET portable_config = json_set(portable_config, '$.workspace.maxConcurrentExecutions', 2) WHERE id = 'project-b'",
+      )
+      .run();
+    new DevelopmentAdmissions(state.db, state.clock).suspend("project-a");
+    expect(claimDueDeliveries(state.db, state.clock).map((delivery) => delivery.projectId)).toEqual(
+      ["project-b", "project-b"],
+    );
+    expect(claimDueDeliveries(state.db, state.clock)).toEqual([]);
+  });
+
+  it("reclaims an expired delivery with its own active workspace despite suspension and full capacity", async () => {
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const state = harness(() => async () => {
+      await gate;
+      return {};
+    });
+    activate(state.store, "project-a", [
+      { instanceId: "probe-1", moduleId: SAMPLE_PROBE_MODULE_ID, enabled: true },
+    ]);
+    state.publisher.publish(pingInput("project-a"));
+    state.dispatcher.dispatchPending();
+    state.db.prepare("UPDATE deliveries SET module_id = 'jarvis.module.development'").run();
+    const first = claimDueDeliveries(state.db, state.clock)[0]!;
+    const running = state.consumer.consumeAsync(first);
+    const execution = state.db.prepare("SELECT id FROM executions").get() as { id: string };
+    state.db
+      .prepare(
+        `INSERT INTO workspace_leases (id, project_id, execution_id, repository_id, working_branch, base_revision_sha, workspace_path, status, expires_at, cleanup_policy, created_at, updated_at)
+      VALUES ('lease', 'project-a', ?, 'main', 'branch', 'sha', '/tmp/workspace', 'active', '9999-01-01', '{}', '2026-09-06', '2026-09-06')`,
+      )
+      .run(execution.id);
+    new DevelopmentAdmissions(state.db, state.clock).suspend("project-a");
+    expect(claimDueDeliveries(state.db, state.clock)).toEqual([]);
+    state.clock.advance(DEFAULT_DELIVERY_LEASE_MS + 1);
+    const recovered = claimDueDeliveries(state.db, state.clock);
+    expect(recovered).toMatchObject([{ eventId: first.eventId }]);
+    finish();
+    await running;
+  });
+
   it("passes project-scoped configuration alongside the event context and defaults missing configuration to empty", () => {
     const seen: ModuleHandlerContext[] = [];
     const handler = (context: ModuleHandlerContext) => {
@@ -724,7 +841,22 @@ describe("DeliveryConsumer", () => {
     const expected = database
       .prepare("SELECT event_id FROM deliveries ORDER BY id LIMIT 1")
       .get() as { event_id: string };
-    expect(claimDueDeliveries(database, clock)).toMatchObject([{ eventId: expected.event_id }]);
+    const claims = claimDueDeliveries(database, clock, 60 * 60_000);
+    expect(claims).toMatchObject([{ eventId: expected.event_id }]);
+    // Another worker cannot reserve the second candidate before the first
+    // has allocated its Workspace. Waiting longer than every normal retry
+    // window never increments the failure budget.
+    for (let minute = 0; minute < 10; minute += 1) {
+      clock.advance(60_000);
+      expect(claimDueDeliveries(database, clock)).toEqual([]);
+      expect(database.prepare("SELECT attempt_count FROM deliveries").all()).toEqual([
+        { attempt_count: 0 },
+        { attempt_count: 0 },
+      ]);
+    }
+    expect(database.prepare("SELECT count(*) AS n FROM dead_letters").get()).toEqual({ n: 0 });
+    harnessState.consumer.consume(claims[0]!);
+    expect(claimDueDeliveries(database, clock)).toHaveLength(1);
   });
 
   it("does not let an expired worker commit a terminal outcome", async () => {

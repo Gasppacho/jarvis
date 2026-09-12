@@ -143,9 +143,18 @@ delete process.env.__CF_USER_TEXT_ENCODING;
 let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", chunk => input += chunk);
-process.stdin.on("end", () => {
+process.stdin.on("end", async () => {
   const request = JSON.parse(input || "{}");
   const emit = record => process.stdout.write(JSON.stringify(record) + "\n");
+  if (request.scenario === "await-signal") {
+    await new Promise(resolve => {
+      process.once("SIGUSR1", resolve);
+      fs.writeFileSync("fake-runtime.pid", String(process.pid));
+      const keepAlive = setInterval(() => { if (process.ppid === 1) process.exit(1); }, 1000);
+      process.once("SIGUSR1", () => clearInterval(keepAlive));
+    });
+    fs.unlinkSync("fake-runtime.pid");
+  }
   if (request.scenario === "inspect") {
     const file = "fake-runtime-working-directory.txt";
     fs.writeFileSync(path.join(process.cwd(), file), process.cwd());
