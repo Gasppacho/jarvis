@@ -154,6 +154,21 @@ describe("project composition choices", () => {
       pollIntervalSeconds: 60,
       repositories: ["main"],
     });
+    expect(template.modules[1]?.["configuration"]).toEqual({
+      rules: [
+        {
+          id: "ready-label-starts-development",
+          when: {
+            eventType: "scm.work-item.tag-added",
+            equals: { "payload.tag": "ready-for-agent" },
+          },
+          emit: {
+            type: "development.implementation.requested",
+            target: { moduleInstanceId: "development" },
+          },
+        },
+      ],
+    });
 
     const guidedResponse = await preview(engine, project.id, template);
     expect(guidedResponse.status, await guidedResponse.clone().text()).toBe(200);

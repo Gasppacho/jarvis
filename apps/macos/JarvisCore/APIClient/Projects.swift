@@ -830,6 +830,26 @@ public struct RepositoryInspection: Sendable, Equatable {
     /// omits or the shell cannot decode it.
     public let suggested: SuggestedProjectConfig?
 
+    /// Test and preview seam for the Local API's read-only discovery response.
+    /// Production values are still decoded exclusively from the generated wire type.
+    public init(
+        isGitRepository: Bool,
+        remoteUrl: String? = nil,
+        provider: String? = nil,
+        defaultBranch: String? = nil,
+        packageManager: String? = nil,
+        scripts: [String: String] = [:],
+        suggested: SuggestedProjectConfig? = nil
+    ) {
+        self.isGitRepository = isGitRepository
+        self.remoteUrl = remoteUrl
+        self.provider = provider
+        self.defaultBranch = defaultBranch
+        self.packageManager = packageManager
+        self.scripts = scripts
+        self.suggested = suggested
+    }
+
     init(discovery: Components.Schemas.RepositoryDiscovery) {
         isGitRepository = discovery.isGitRepository
         remoteUrl = discovery.remoteUrl

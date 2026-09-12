@@ -23,6 +23,7 @@ public enum ProjectDeletionResult: Sendable, Equatable {
 @MainActor
 @Observable
 public final class ProjectsModel {
+    public typealias RepositoryDiscovery = @Sendable (String) async throws -> RepositoryInspection
     private static let logger = Logger(subsystem: "dev.jarvis.app", category: "RepositoryGrant")
 
     public private(set) var projects: [Project] = []
@@ -60,15 +61,21 @@ public final class ProjectsModel {
     /// Retaining these URLs retains security-scoped access for the Engine Session.
     private var activeRepositoryURLs: [String: URL] = [:]
     private let deletionOperation: (@MainActor (String) async throws -> Void)?
+    private let repositoryDiscovery: RepositoryDiscovery?
+    /// Each inspection owns one revision. A slow Local API response must never
+    /// replace a newer folder choice or a cancelled import flow.
+    private var importRevision = 0
 
     public init(
         session: EngineSessionModel,
         repositoryGrants: any RepositoryGrantStoring = RepositoryGrantStore(),
-        deletionOperation: (@MainActor (String) async throws -> Void)? = nil
+        deletionOperation: (@MainActor (String) async throws -> Void)? = nil,
+        repositoryDiscovery: RepositoryDiscovery? = nil
     ) {
         self.session = session
         self.repositoryGrants = repositoryGrants
         self.deletionOperation = deletionOperation
+        self.repositoryDiscovery = repositoryDiscovery
     }
 
     private var client: EngineClient? { session.client }
@@ -91,21 +98,39 @@ public final class ProjectsModel {
 
     /// UX step 1: inspect the picked folder read-only, then offer what was found.
     public func inspect(at url: URL) async {
-        guard let client else { return }
+        guard client != nil || repositoryDiscovery != nil else { return }
         let path = url.path(percentEncoded: false)
+        importRevision += 1
+        let revision = importRevision
         importState = .inspecting
         inspectedPath = path
         inspectedURL = url
         do {
             try retainAccess(to: url, key: "pending-import")
-            let inspection = try await client.discoverRepository(path: path)
+            let inspection: RepositoryInspection
+            if let repositoryDiscovery {
+                inspection = try await repositoryDiscovery(path)
+            } else if let client {
+                inspection = try await client.discoverRepository(path: path)
+            } else {
+                return
+            }
+            guard revision == importRevision else { return }
+            guard inspection.isGitRepository else {
+                importState = .failed(
+                    "This folder is not a Git repository. Choose another folder to import a repository.")
+                return
+            }
             importState = .confirm(inspection)
         } catch {
-            importState = .failed(Self.describe(error))
+            guard revision == importRevision else { return }
+            importState = .failed(
+                "Jarvis could not inspect this folder. No Draft was saved. Choose another folder or try again. \(Self.describe(error))")
         }
     }
 
     public func cancelImport() {
+        importRevision += 1
         importState = .idle
         inspectedPath = nil
         inspectedURL = nil

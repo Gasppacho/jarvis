@@ -7,6 +7,7 @@ import SwiftUI
 /// (tickets 03+), not part of the draft import.
 struct ProjectImportSheet: View {
     let projects: ProjectsModel
+    let chooseAnotherFolder: () -> Void
 
     var body: some View {
         Group {
@@ -46,7 +47,10 @@ struct ProjectImportSheet: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     HStack {
                         Spacer()
-                        Button("Close") { projects.cancelImport() }
+                        Button("Choose another folder") {
+                            projects.cancelImport()
+                            chooseAnotherFolder()
+                        }
                             .keyboardShortcut(.defaultAction)
                     }
                 }
@@ -70,9 +74,9 @@ struct ProjectImportSheet: View {
                     .foregroundStyle(.secondary)
             }
 
-            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
-                if inspection.isGitRepository {
-                    row("Git repository", "yes")
+            GroupBox("Repository detected") {
+                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+                    row("Git repository", "Yes")
                     if let remote = inspection.remoteUrl {
                         row("Remote", remote)
                     }
@@ -82,16 +86,16 @@ struct ProjectImportSheet: View {
                     if let branch = inspection.defaultBranch {
                         row("Default branch", branch)
                     }
-                } else {
-                    row("Git repository", "not found")
+                    if let packageManager = inspection.packageManager {
+                        row("Package manager", packageManager)
+                    }
                 }
-                if let packageManager = inspection.packageManager {
-                    row("Package manager", packageManager)
-                }
+                .font(.callout)
             }
-            .font(.callout)
 
-            if let commands = inspection.suggested?.commands, !commands.isEmpty {
+            if inspection.suggested?.commands?.isEmpty == false || inspection.suggested?.git?.branchPattern != nil {
+                DisclosureGroup("Advanced") {
+                    if let commands = inspection.suggested?.commands, !commands.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Proposed commands")
                         .font(.callout.weight(.semibold))
@@ -101,12 +105,13 @@ struct ProjectImportSheet: View {
                             .font(.callout.monospaced())
                     }
                 }
-            }
-
-            if let branchPattern = inspection.suggested?.git?.branchPattern {
-                Text("Branches: \(branchPattern)")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                    }
+                    if let branchPattern = inspection.suggested?.git?.branchPattern {
+                        Text("Branches: \(branchPattern)")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
 
             HStack {

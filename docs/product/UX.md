@@ -113,6 +113,23 @@ Un projet invalide peut être sauvegardé mais pas activé. Le rapport distingue
 
 Le bouton `Activate` (#55) transforme ce signal de présentation en requête réelle vers `POST /v1/projects/{projectId}/activate`. Il n'est actionnable que dans l'état `Ready to activate`, et transmet le `compositionFingerprint` exact du rapport affiché — jamais un rapport plus ancien, jamais deviné. Un rapport valide sans `compositionFingerprint` (le champ reste optionnel sur le contrat) refuse localement l'activation plutôt que d'omettre le champ ou d'en envoyer un faux, avec la même explication de principe que les autres états indisponibles. Une activation rejetée — aucun rapport courant (`project.activation-not-validated`), rapport périmé (`project.activation-report-stale`) ou échec de transport — s'affiche dans un encadré distinct, jamais mêlé aux findings du rapport de validation : une erreur d'activation ne ressemble jamais à une conclusion de validation. Un succès affiche le Project actif à la fois dans l'Assistant et dans la liste des Projects; un échec laisse l'état affiché cohérent avec celui de l'Engine, sans jamais montrer un Project actif qui ne l'est pas vraiment.
 
+### Première ouverture et import
+
+Quand le moteur est prêt mais qu'aucun Project n'est connu, le détail du split
+view explique le résultat attendu — issue prête, développement, puis Pull
+Request — et propose `Importer un repository`; la même action reste dans la
+toolbar. L'inspection est strictement en lecture seule : un dossier non Git ou
+une erreur reste visible avec son impact et l'action `Choose another folder`,
+et ne crée jamais un Project partiel.
+
+Après l'import, le shell présente quatre étapes persistantes : `Repository`,
+`Workflow`, `Connections` et `Review`. Chaque ligne porte une icône native et
+un état textuel (`À compléter`, `En cours`, `Prêt à revoir` ou `Terminé`). Le
+choix de l'étape est local au Project et survit à la relance sans réécrire les
+valeurs inconnues. `Review` reste accessible pour un Draft incomplet; seule
+l'activation dépend du rapport courant de l'Engine. Les contrôles experts et
+les identifiants techniques restent sous `Advanced`.
+
 ### Grammaire de composition guidée
 
 La grammaire retenue est un **parcours par étapes persistantes dans un split view natif** : `Starting point`, `Module Instances`, `Automation Rules`, `Resources`, puis `Review`. La liste d'étapes reste visible et signale les éléments complets, incomplets ou bloqués ; le panneau de détail édite une étape à la fois. L'utilisateur peut revenir à toute étape sans perdre les valeurs du Draft. La divulgation est progressive, mais `Review` reste toujours accessible et distingue un Draft sauvegardable de l'état de validation détenu par l'Engine.

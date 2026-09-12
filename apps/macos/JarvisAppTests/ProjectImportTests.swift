@@ -395,6 +395,47 @@ final class ProjectImportTests: XCTestCase {
     }
 
     @MainActor
+    func testLatestInspectionWinsWhenAnOlderLocalAPIResponseArrivesLate() async throws {
+        let first = temporaryDirectory(prefix: "jarvis-first-inspection")
+        let second = temporaryDirectory(prefix: "jarvis-second-inspection")
+        let discoveries = DelayedDiscoveries()
+        let projects = ProjectsModel(
+            session: EngineSessionModel(supervisor: EngineSupervisor(resources: .developmentBuild())),
+            repositoryDiscovery: { path in await discoveries.discover(path: path) })
+
+        let firstInspection = Task { await projects.inspect(at: first) }
+        await discoveries.waitForFirstRequest()
+        await projects.inspect(at: second)
+        await discoveries.releaseFirstRequest()
+        await firstInspection.value
+
+        guard case .confirm(let inspection) = projects.importState else {
+            return XCTFail("the current inspection was replaced by an older response")
+        }
+        XCTAssertEqual(inspection.remoteUrl, "https://example.test/current.git")
+        XCTAssertEqual(projects.inspectedPath, second.path())
+    }
+
+    @MainActor
+    func testNonGitFolderRemainsActionableWithoutCreatingAPartialDraft() async throws {
+        let folder = temporaryDirectory(prefix: "jarvis-not-a-repository")
+        let projects = ProjectsModel(
+            session: EngineSessionModel(supervisor: EngineSupervisor(resources: .developmentBuild())),
+            repositoryDiscovery: { _ in
+                RepositoryInspection(isGitRepository: false)
+            })
+
+        await projects.inspect(at: folder)
+
+        guard case .failed(let message) = projects.importState else {
+            return XCTFail("a non-Git folder must not reach draft confirmation")
+        }
+        XCTAssertTrue(message.contains("not a Git repository"))
+        XCTAssertTrue(message.contains("Choose another folder"))
+        XCTAssertTrue(projects.projects.isEmpty)
+    }
+
+    @MainActor
     private func withModels(
         _ body: (EngineSessionModel, ProjectsModel) async throws -> Void
     ) async throws {
@@ -445,6 +486,37 @@ final class ProjectImportTests: XCTestCase {
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         roots.append(root)
         return root
+    }
+}
+
+private actor DelayedDiscoveries {
+    private var firstStarted = false
+    private var firstStartWaiter: CheckedContinuation<Void, Never>?
+    private var firstRelease: CheckedContinuation<Void, Never>?
+
+    func discover(path: String) async -> RepositoryInspection {
+        if path.contains("jarvis-first-inspection") {
+            firstStarted = true
+            firstStartWaiter?.resume()
+            firstStartWaiter = nil
+            await withCheckedContinuation { firstRelease = $0 }
+            return RepositoryInspection(
+                isGitRepository: true,
+                remoteUrl: "https://example.test/stale.git")
+        }
+        return RepositoryInspection(
+            isGitRepository: true,
+            remoteUrl: "https://example.test/current.git")
+    }
+
+    func waitForFirstRequest() async {
+        guard !firstStarted else { return }
+        await withCheckedContinuation { firstStartWaiter = $0 }
+    }
+
+    func releaseFirstRequest() {
+        firstRelease?.resume()
+        firstRelease = nil
     }
 }
 

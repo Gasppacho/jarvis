@@ -32,21 +32,32 @@ struct RootView: View {
         .sheet(
             isPresented: Binding(
                 get: { pendingImport },
-                set: { if !$0 { projects.cancelImport() } }
+                set: {
+                    guard !$0 else { return }
+                    switch projects.importState {
+                    case .inspecting, .confirm, .failed:
+                        projects.cancelImport()
+                    case .idle, .saving:
+                        break
+                    }
+                }
             )
         ) {
-            ProjectImportSheet(projects: projects)
+            ProjectImportSheet(projects: projects, chooseAnotherFolder: presentFolderPicker)
         }
         .onChange(of: projects.importState) { _, newState in
             if case .idle = newState { pendingImport = false }
             if case .inspecting = newState, !pendingImport { pendingImport = true }
         }
         .onChange(of: projects.projects.map(\.id)) { _, projectIds in
-            guard case .project(let projectId) = selection else { return }
-            let reconciled = selectionPolicy.reconciledProjectID(
-                selectedProjectID: projectId,
-                availableProjectIDs: projectIds)
-            if reconciled == nil { selection = nil }
+            if let projectId = selectedProjectID {
+                let reconciled = selectionPolicy.reconciledProjectID(
+                    selectedProjectID: projectId,
+                    availableProjectIDs: projectIds)
+                if reconciled == nil { selection = nil }
+            } else if let firstProject = projects.projects.first {
+                selection = .project(firstProject.id)
+            }
         }
     }
 
@@ -89,7 +100,7 @@ struct RootView: View {
                 Button {
                     presentFolderPicker()
                 } label: {
-                    Label("Add a repository…", systemImage: "folder.badge.plus")
+                    Label("Importer un repository", systemImage: "folder.badge.plus")
                 }
                 .disabled(projects.isRefreshing || !importStateAllowsNewPicker)
             }
@@ -118,6 +129,29 @@ struct RootView: View {
             ConnectionsView(model: connections)
         case .project(let projectId):
             if let project = projects.projects.first(where: { $0.id == projectId }) {
+                if project.status == .draft {
+                    ProjectOnboardingView(
+                        projectConfiguration: projectConfiguration,
+                        moduleCatalog: moduleCatalog,
+                        project: project,
+                        openAdvanced: { selection = .projectAdvanced(project.id) })
+                } else {
+                    ProjectDetailView(
+                        projects: projects,
+                        projectConfiguration: projectConfiguration,
+                        moduleCatalog: moduleCatalog,
+                        timeline: timeline,
+                        projectGraph: projectGraph,
+                        deadLetters: deadLetters,
+                        project: project)
+                }
+            } else {
+                ContentUnavailableView(
+                    "Project unavailable", systemImage: "folder.badge.questionmark",
+                    description: Text("Refresh the project list and try again."))
+            }
+        case .projectAdvanced(let projectId):
+            if let project = projects.projects.first(where: { $0.id == projectId }) {
                 ProjectDetailView(
                     projects: projects,
                     projectConfiguration: projectConfiguration,
@@ -132,9 +166,20 @@ struct RootView: View {
                     description: Text("Refresh the project list and try again."))
             }
         case nil:
-            ContentUnavailableView(
-                "No selection", systemImage: "sidebar.left",
-                description: Text("Pick the module catalogue or a project in the sidebar."))
+            if projects.projects.isEmpty {
+                FirstLaunchView(importRepository: presentFolderPicker)
+            } else {
+                ContentUnavailableView(
+                    "No selection", systemImage: "sidebar.left",
+                    description: Text("Pick the module catalogue or a project in the sidebar."))
+            }
+        }
+    }
+
+    private var selectedProjectID: String? {
+        switch selection {
+        case .project(let projectID), .projectAdvanced(let projectID): projectID
+        case .moduleCatalog, .connections, nil: nil
         }
     }
 
@@ -156,6 +201,7 @@ private enum SidebarSelection: Hashable {
     case moduleCatalog
     case connections
     case project(String)
+    case projectAdvanced(String)
 }
 
 private struct ProjectRow: View {
@@ -165,7 +211,7 @@ private struct ProjectRow: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(project.name)
-                Text(project.id)
+                Text(project.status == .draft ? "Draft" : "Project")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

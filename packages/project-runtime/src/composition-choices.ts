@@ -151,7 +151,7 @@ function githubDevelopmentTemplate(
               id: "ready-label-starts-development",
               when: {
                 eventType: "scm.work-item.tag-added",
-                equals: { "payload.tag": "agent:ready" },
+                equals: { "payload.tag": "ready-for-agent" },
               },
               emit: {
                 type: "development.implementation.requested",
