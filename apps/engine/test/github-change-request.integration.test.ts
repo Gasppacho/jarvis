@@ -1120,6 +1120,7 @@ function githubProjectConfiguration(id: string): Record<string, unknown> {
       configuration: {
         validationOrder: ["test"],
         maxRepairCycles: 0,
+        preparation: "none",
         retainWorkspaceOnSuccess: false,
         timeoutMs: 300000,
         outputLimitBytes: 1048576,

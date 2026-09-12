@@ -172,6 +172,7 @@ function githubDevelopmentTemplate(
           sourceControl: "sourceControl",
         },
         configuration: {
+          preparation: "none",
           validationOrder: ["lint", "typecheck", "test", "build"],
           maxRepairCycles: 2,
           retainWorkspaceOnSuccess: false,

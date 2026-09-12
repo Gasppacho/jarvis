@@ -989,7 +989,34 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
       configuration: this.configurations(delivery.projectId, delivery.moduleInstanceId) ?? {},
       signal,
       capabilities,
+      hasCheckpoint: (type) => this.checkpointStore.has(delivery.projectId, executionId, type),
+      lastCheckpointSequence: () =>
+        this.checkpointStore.lastSourceSequence(delivery.projectId, executionId),
       recordCheckpoint: (checkpoint) => {
+        if (checkpoint.type === "preparation.failed") {
+          this.checkpointStore.record({
+            projectId: delivery.projectId,
+            executionId,
+            type: checkpoint.type,
+            sourceSequence: checkpoint.sequence,
+            occurredAt: checkpoint.timestamp,
+            output: checkpoint.output,
+          });
+          return;
+        }
+        if (
+          checkpoint.type === "preparation.started" ||
+          checkpoint.type === "preparation.completed"
+        ) {
+          this.checkpointStore.record({
+            projectId: delivery.projectId,
+            executionId,
+            type: checkpoint.type,
+            sourceSequence: checkpoint.sequence,
+            occurredAt: checkpoint.timestamp,
+          });
+          return;
+        }
         if (checkpoint.type === "agent.message") {
           this.checkpointStore.record({
             projectId: delivery.projectId,

@@ -2248,6 +2248,14 @@ components:
           type: string
           minLength: 1
           maxLength: 300
+        environment:
+          description: Local runtime profile values. Portable configuration contains only approved names; secret values and auth files are forbidden.
+          type: object
+          additionalProperties:
+            type: string
+            maxLength: 4096
+          propertyNames:
+            pattern: ^[A-Za-z_][A-Za-z0-9_]*$
     ProjectBindings:
       type: object
       additionalProperties: false

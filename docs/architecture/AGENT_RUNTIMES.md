@@ -10,7 +10,7 @@ Conceptuellement :
 
 ```ts
 interface AgentRuntime {
-  describe(): Promise<RuntimeDescriptor>;
+  describe(environment?: Readonly<Record<string, string>>): Promise<RuntimeDescriptor>;
   start(request: AgentRunRequest, signal: AbortSignal): Promise<AgentRun>;
 }
 
@@ -60,11 +60,18 @@ Le processus agent reçoit :
 - objectif et contexte du ticket ;
 - instructions du repository autorisées ;
 - variables nécessaires explicitement allowlistées ;
+- profil d'environnement local explicitement confirmé sur le Runtime Binding
+  (notamment `PATH` pour les outils projet) ;
 - MCP bindés au projet ;
 - aucun secret brut non requis ;
 - aucune connexion d'un autre projet.
 
-Le PATH d'une application GUI macOS n'est pas présumé. Le Runtime Detector résout les exécutables via chemins connus et, si autorisé, un login shell contrôlé. Le chemin final est sauvegardé dans le descriptor local.
+Le PATH d'une application GUI macOS n'est pas présumé. Le Runtime Detector
+résout les exécutables via chemins connus et, si autorisé, un login shell
+contrôlé. Le chemin final est sauvegardé dans le descriptor local. Development
+rejoue le preflight avec le profil final et revalide le grant local juste avant
+chaque start ; une
+disponibilité, authentification ou exécutabilité perdue bloque le spawn.
 
 ## Prompt construction
 

@@ -51,6 +51,14 @@
       "minimum": 0,
       "maximum": 5
     },
+    "preparation": {
+      "title": "Worktree preparation",
+      "description": "Confirmed preparation before the Agent Runtime: run the configured install command, or explicitly confirm that no preparation is necessary.",
+      "enum": [
+        "install",
+        "none"
+      ]
+    },
     "retainWorkspaceOnSuccess": {
       "title": "Retain successful workspace",
       "description": "Keep the temporary Git workspace after a successful execution.",

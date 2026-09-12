@@ -1,7 +1,6 @@
 import { constants } from "node:fs";
 import { access, stat } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
-import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   ChildProcessAgentRun,
@@ -42,11 +41,6 @@ const NOT_LOGGED_IN_OUTPUT = /^\s*Not logged in\s*$/m;
 const CODEX_VERSION_OUTPUT = /^\s*codex-cli\s+(\d+\.\d+\.\d+)\s*$/m;
 const AUTHENTICATION_REFUSAL =
   /(?:not\s+logged\s+in|not\s+authenticated|unauthenticated|authentication\s+required|login\s+required|sign(?:[-\s])?in\s+required|please\s+(?:log\s+in|sign\s+in|login))/i;
-const CODEX_PROBE_ENVIRONMENT = {
-  PATH: process.platform === "win32" ? "C:\\Windows\\System32" : "/usr/bin:/bin:/usr/sbin:/sbin",
-  CODEX_HOME: join(homedir(), ".codex"),
-};
-
 export interface CodexRuntimeOptions {
   readonly timeoutMs?: number;
   readonly outputLimitBytes?: number;
@@ -68,7 +62,9 @@ export class CodexRuntime implements AgentRuntime {
     );
   }
 
-  public async describe(): Promise<RuntimeDescriptor> {
+  public async describe(
+    environment: Readonly<Record<string, string>> = {},
+  ): Promise<RuntimeDescriptor> {
     const executablePath = this.validDescriptorPath();
     if (executablePath === null) return descriptor(null, null, "unavailable");
     if (!(await isExecutableFile(executablePath))) {
@@ -80,6 +76,7 @@ export class CodexRuntime implements AgentRuntime {
       VERSION_ARGS,
       this.timeoutMs,
       this.outputLimitBytes,
+      environment,
     );
     if (versionProbe.timedOut || versionProbe.error) {
       return descriptor(executablePath, null, "unavailable");
@@ -102,6 +99,7 @@ export class CodexRuntime implements AgentRuntime {
       LOGIN_STATUS_ARGS,
       this.timeoutMs,
       this.outputLimitBytes,
+      environment,
     );
     if (authProbe.timedOut || authProbe.error || authProbe.outputLimited) {
       return descriptor(executablePath, version, "unavailable");
@@ -474,12 +472,13 @@ function probe(
   args: readonly string[],
   timeoutMs: number,
   outputLimitBytes: number,
+  environment: Readonly<Record<string, string>>,
 ): Promise<ProbeResult> {
   return new Promise((resolve) => {
     let child: ChildProcess;
     try {
       child = spawn(executable, [...args], {
-        env: { ...CODEX_PROBE_ENVIRONMENT },
+        env: environment,
         detached: process.platform !== "win32",
         shell: false,
         stdio: ["ignore", "pipe", "pipe"],

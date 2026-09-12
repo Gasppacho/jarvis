@@ -132,6 +132,21 @@ export class LocalAgentRuntimeRegistry
     }
     return new CodexRuntime(descriptor.executablePath);
   }
+
+  public descriptor(_projectId: string, ref: string): RuntimeDescriptor | undefined {
+    if (ref === FAKE_RUNTIME_REF) {
+      return {
+        id: FAKE_RUNTIME_REF,
+        provider: "fake",
+        displayName: FAKE_RUNTIME_CANDIDATE.displayName,
+        executablePath: null,
+        version: null,
+        capabilities: [...FAKE_RUNTIME_CANDIDATE.capabilities],
+        status: "available",
+      };
+    }
+    return this.runtimes?.list().find((candidate) => candidate.id === ref);
+  }
 }
 
 /** Global GitHub connections become Project candidates only through this source. */

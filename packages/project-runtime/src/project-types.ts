@@ -170,6 +170,8 @@ export interface ProjectSlotBinding {
   readonly kind: "connection" | "runtime" | "mcp" | "module-instance" | "engine";
   /** Opaque local identifier; it does not prove that the resource exists. */
   readonly ref: string;
+  /** Local-only process values for this binding; secrets and auth files are forbidden. */
+  readonly environment?: Readonly<Record<string, string>>;
 }
 
 export interface ProjectBindings {

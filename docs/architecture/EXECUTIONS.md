@@ -90,6 +90,9 @@ Les modules peuvent publier des progrès éphémères vers l'UI et des checkpoin
 
 ```text
 workspace.allocated
+preparation.started
+preparation.completed
+preparation.failed
 agent.started
 agent.message
 validation.started
@@ -99,6 +102,9 @@ branch.pushed
 ```
 
 Ces progrès ne sont pas des événements intermodules sauf s'ils représentent un fait d'intégration déclaré. Le flux temps réel peut être perdu sans compromettre la vérité durable.
+Une préparation `install` possède des checkpoints durables : une reprise ne la
+relance jamais après son démarrage incomplet ; l'exécution reste retenue pour
+confirmation explicite.
 
 ## Cancellation
 

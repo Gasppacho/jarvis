@@ -22,6 +22,10 @@ The terminal normalized result; it is not proof that project validation passed.
 ### Runtime Binding
 The Local Binding that grants a Project access to one Agent Runtime.
 
+### Runtime Environment Profile
+The local, non-secret values bound to one Runtime and filtered by the portable
+environment allowlist for its preflight and child process.
+
 ### MCP Binding
 A project-scoped MCP connection exposed to an Agent Run.
 

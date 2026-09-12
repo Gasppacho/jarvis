@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
-import type { AgentRun, AgentRunResult } from "../../../agent-runtime/src/index.js";
+import type { AgentRun, AgentRunResult, AgentRuntime } from "../../../agent-runtime/src/index.js";
 import { buildAgentRunRequest } from "../../../agent-runtime/src/request-builder.js";
 import { GitRunner, type GitCommandResult } from "../../../workspace/src/git-runner.js";
 import type {
@@ -53,6 +53,8 @@ type DevelopmentFailureCode =
   | "event.payload-invalid"
   | "project.config-invalid"
   | "project.capability-unresolved"
+  | "project.preparation-unconfigured"
+  | "project.preparation-failed"
   | "workspace.allocation-failed"
   | "workspace.branch-conflict"
   | "workspace.concurrency-limit"
@@ -67,6 +69,7 @@ type DevelopmentFailureCode =
   | "agent.run-failed"
   | "agent.run-timed-out"
   | "agent.run-cancelled"
+  | "agent.runtime-preflight-failed"
   | "github.work-item-unavailable"
   | "github.work-item-unauthorized"
   | "github.work-item-read-failed"
@@ -105,7 +108,11 @@ function failureClass(
   code: DevelopmentFailureCode,
 ): "configuration" | "input" | "validation" | "workspace" | "agent" | "cancelled" | "internal" {
   if (code === "event.payload-invalid") return "input";
-  if (code === "project.config-invalid" || code === "project.capability-unresolved") {
+  if (
+    code === "project.config-invalid" ||
+    code === "project.capability-unresolved" ||
+    code === "project.preparation-unconfigured"
+  ) {
     return "configuration";
   }
   if (code === "git.validation-failed") return "validation";
@@ -226,7 +233,7 @@ async function runImplementationRequested(
     DEFAULT_OUTPUT_LIMIT_BYTES,
     MAX_OUTPUT_LIMIT_BYTES,
   );
-  let checkpointSequence = 0;
+  let checkpointSequence = ctx.lastCheckpointSequence?.() ?? 0;
   const workItem =
     !requiresGitHubWorkItem || workItems === undefined
       ? undefined
@@ -251,13 +258,37 @@ async function runImplementationRequested(
   let releaseOutcome: "success" | "failure" | "cancelled" = "failure";
   let run: AgentRun | undefined;
   try {
+    const preparation = readPreparation(ctx.configuration["preparation"]);
     const repositoryInstructionText = await repositoryInstructions(allocation.path);
     const ticketContent = workItemContent(request.workItemRef, workItem);
+    await runWorktreePreparation({
+      preparation,
+      commands: projectCommands.commands,
+      shell,
+      cwd: allocation.path,
+      signal: ctx.signal,
+      timeoutMs,
+      outputLimitBytes,
+      nextCheckpointSequence: () => ++checkpointSequence,
+      recordCheckpoint: ctx.recordCheckpoint,
+      hasCheckpoint: ctx.hasCheckpoint,
+    });
     const executeAgent = async (input: {
       readonly objective: string;
       readonly moduleContract: string;
       readonly ticketContent: string;
     }): Promise<{ readonly result: AgentRunResult; readonly changedFiles: readonly string[] }> => {
+      const runtimeGrant =
+        ctx.capabilities.revalidateAgentRuntime === undefined
+          ? { runtime, projectBindings }
+          : ctx.capabilities.revalidateAgentRuntime();
+      if (runtimeGrant === undefined) {
+        throw new DevelopmentExecutionError(
+          "agent.runtime-preflight-failed",
+          "The project-bound Agent Runtime grant is no longer resolved; rerun preflight after revalidation.",
+          true,
+        );
+      }
       const agentRequest = buildAgentRunRequest({
         projectId: ctx.projectId,
         executionId: ctx.executionId,
@@ -269,9 +300,8 @@ async function runImplementationRequested(
           repositoryInstructions: repositoryInstructionText,
           ticketContent: input.ticketContent,
         },
-        environment: process.env,
         environmentAllowlist: stringArray(ctx.configuration["environmentAllowlist"]),
-        projectBindings,
+        projectBindings: runtimeGrant.projectBindings,
         mcpSlotNames: [],
         timeoutMs,
         outputLimitBytes,
@@ -279,7 +309,8 @@ async function runImplementationRequested(
       });
       let result: AgentRunResult;
       try {
-        run = await runtime.start(agentRequest, ctx.signal);
+        await preflightRuntime(runtimeGrant.runtime, agentRequest.environment);
+        run = await runtimeGrant.runtime.start(agentRequest, ctx.signal);
         for await (const event of run.events()) {
           if (event.type === "started") {
             ctx.recordCheckpoint({
@@ -522,7 +553,14 @@ function readFailure(
 
 function stableFailureCode(code: string): DevelopmentFailureCode {
   if (code === "event.payload-invalid") return code;
-  if (code === "project.config-invalid" || code === "project.capability-unresolved") return code;
+  if (
+    code === "project.config-invalid" ||
+    code === "project.capability-unresolved" ||
+    code === "project.preparation-unconfigured" ||
+    code === "project.preparation-failed"
+  ) {
+    return code;
+  }
   if (
     code === "workspace.allocation-failed" ||
     code === "workspace.branch-conflict" ||
@@ -542,7 +580,13 @@ function stableFailureCode(code: string): DevelopmentFailureCode {
   ) {
     return code;
   }
-  if (code === "agent.run-failed" || code === "agent.run-timed-out") return code;
+  if (
+    code === "agent.run-failed" ||
+    code === "agent.run-timed-out" ||
+    code === "agent.runtime-preflight-failed"
+  ) {
+    return code;
+  }
   if (code === "agent.run-cancelled") return code;
   if (
     code === "github.work-item-unavailable" ||
@@ -563,6 +607,10 @@ function failureMessage(ctx: ModuleHandlerContext, code: DevelopmentFailureCode)
       return `${prefix} has invalid configuration; correct the Validation Plan or Git policy, then retry.`;
     case "project.capability-unresolved":
       return `${prefix} cannot resolve a required capability; repair the Project binding and activate it again.`;
+    case "project.preparation-unconfigured":
+      return `${prefix} has no confirmed worktree preparation; choose the configured install command or confirm that no preparation is necessary, then rerun preflight.`;
+    case "project.preparation-failed":
+      return `${prefix} worktree preparation failed; inspect the retained workspace and rerun preflight.`;
     case "git.validation-failed":
       return `${prefix} validation failed; fix the first failing Project command and retry.`;
     case "git.no-changes":
@@ -577,6 +625,8 @@ function failureMessage(ctx: ModuleHandlerContext, code: DevelopmentFailureCode)
       return `${prefix} agent run timed out; increase the timeout or reduce the Work Item scope, then retry.`;
     case "agent.run-cancelled":
       return `${prefix} implementation was cancelled; start a new run when ready.`;
+    case "agent.runtime-preflight-failed":
+      return `${prefix} Agent Runtime preflight is unavailable; revalidate its Project binding and rerun preflight.`;
     case "github.work-item-unavailable":
       return `${prefix} cannot read the GitHub Work Item because GitHub is temporarily unavailable; retry later.`;
     case "github.work-item-unauthorized":
@@ -749,6 +799,121 @@ function readMaxRepairCycles(value: unknown): number {
     );
   }
   return value;
+}
+
+function readPreparation(value: unknown): "install" | "none" {
+  if (value === "install" || value === "none") return value;
+  throw new DevelopmentExecutionError(
+    "project.preparation-unconfigured",
+    "Worktree preparation is not configured. Confirm the install command or explicitly confirm that no preparation is necessary.",
+  );
+}
+
+async function runWorktreePreparation(input: {
+  readonly preparation: "install" | "none";
+  readonly commands: ProjectCommandsCapability["commands"];
+  readonly shell: ModuleShell;
+  readonly cwd: string;
+  readonly signal: AbortSignal;
+  readonly timeoutMs: number;
+  readonly outputLimitBytes: number;
+  readonly nextCheckpointSequence: () => number;
+  readonly recordCheckpoint: ModuleHandlerContext["recordCheckpoint"];
+  readonly hasCheckpoint: ModuleHandlerContext["hasCheckpoint"];
+}): Promise<void> {
+  if (input.preparation === "none") return;
+  if (input.hasCheckpoint?.("preparation.completed") === true) return;
+  if (input.hasCheckpoint?.("preparation.started") === true) {
+    throw new DevelopmentExecutionError(
+      "project.preparation-failed",
+      "The previous worktree preparation did not complete; confirm it before retrying this work item.",
+      true,
+    );
+  }
+  const command = input.commands.install;
+  if (typeof command !== "string" || command.trim() === "") {
+    throw new DevelopmentExecutionError(
+      "project.preparation-unconfigured",
+      "Worktree preparation requires the configured install command.",
+    );
+  }
+  input.recordCheckpoint({
+    type: "preparation.started",
+    sequence: input.nextCheckpointSequence(),
+    timestamp: new Date().toISOString(),
+  });
+  let result: ModuleShellCommandResult;
+  try {
+    result = await input.shell.run({
+      command,
+      cwd: input.cwd,
+      signal: input.signal,
+      timeoutMs: input.timeoutMs,
+      outputLimitBytes: input.outputLimitBytes,
+    });
+  } catch {
+    input.recordCheckpoint({
+      type: "preparation.failed",
+      sequence: input.nextCheckpointSequence(),
+      timestamp: new Date().toISOString(),
+      output: "The configured worktree preparation command could not start.",
+    });
+    throw new DevelopmentExecutionError(
+      "project.preparation-failed",
+      "The configured worktree preparation command failed.",
+      !input.signal.aborted,
+    );
+  }
+  if (!result.ok) {
+    input.recordCheckpoint({
+      type: "preparation.failed",
+      sequence: input.nextCheckpointSequence(),
+      timestamp: new Date().toISOString(),
+      output: validationOutput(result, input.outputLimitBytes),
+    });
+    throw new DevelopmentExecutionError(
+      "project.preparation-failed",
+      "The configured worktree preparation command failed.",
+      !input.signal.aborted,
+    );
+  }
+  input.recordCheckpoint({
+    type: "preparation.completed",
+    sequence: input.nextCheckpointSequence(),
+    timestamp: new Date().toISOString(),
+  });
+}
+
+async function preflightRuntime(
+  runtime: AgentRuntime,
+  environment: Readonly<Record<string, string>>,
+): Promise<void> {
+  let descriptor;
+  try {
+    descriptor = await runtime.describe(environment);
+  } catch {
+    throw new DevelopmentExecutionError(
+      "agent.runtime-preflight-failed",
+      "The project-bound Agent Runtime could not complete preflight.",
+      true,
+    );
+  }
+  if (descriptor.status !== "available") {
+    throw new DevelopmentExecutionError(
+      "agent.runtime-preflight-failed",
+      "The project-bound Agent Runtime is no longer available; rerun preflight after revalidation.",
+      true,
+    );
+  }
+  if (
+    descriptor.provider === "codex" &&
+    (typeof environment["PATH"] !== "string" || environment["PATH"].trim() === "")
+  ) {
+    throw new DevelopmentExecutionError(
+      "agent.runtime-preflight-failed",
+      "The project-bound Codex Runtime has no approved tool-path profile; configure it and rerun preflight.",
+    );
+  }
 }
 
 function isValidationCheck(value: string): value is ValidationCheck {

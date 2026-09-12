@@ -124,6 +124,8 @@ export interface PollCursorCapability {
 /** Capabilities resolved for one Project and Module Instance only. */
 export interface ModuleHandlerCapabilities {
   readonly agentRuntime?: AgentRuntime;
+  /** Re-resolves the Project grant immediately before an Agent Runtime starts. */
+  readonly revalidateAgentRuntime?: () => AgentRuntimeGrant | undefined;
   readonly externalMappings?: ExternalMappingCapability;
   readonly pollCursor?: PollCursorCapability;
   readonly githubApi?: GitHubApi;
@@ -132,6 +134,11 @@ export interface ModuleHandlerCapabilities {
   readonly projectCommands?: ProjectCommandsCapability;
   readonly shell?: ModuleShell;
   readonly workspace?: ModuleWorkspace;
+}
+
+export interface AgentRuntimeGrant {
+  readonly runtime: AgentRuntime;
+  readonly projectBindings: AgentProjectBindings;
 }
 
 export type ModuleCapabilityLookup = (
@@ -163,6 +170,22 @@ export interface ModuleWorkspace {
 }
 
 export type ModuleExecutionCheckpoint =
+  | {
+      readonly type: "preparation.started";
+      readonly sequence: number;
+      readonly timestamp: string;
+    }
+  | {
+      readonly type: "preparation.completed";
+      readonly sequence: number;
+      readonly timestamp: string;
+    }
+  | {
+      readonly type: "preparation.failed";
+      readonly sequence: number;
+      readonly timestamp: string;
+      readonly output: string;
+    }
   | {
       readonly type: "agent.started";
       readonly sequence: number;
@@ -227,6 +250,10 @@ export interface ModuleHandlerContext {
   readonly signal: AbortSignal;
   readonly capabilities: ModuleHandlerCapabilities;
   readonly recordCheckpoint: (checkpoint: ModuleExecutionCheckpoint) => void;
+  /** Reads durable progress for recovery without exposing another module's state. */
+  readonly hasCheckpoint?: (type: ModuleExecutionCheckpoint["type"]) => boolean;
+  /** Continues source checkpoint numbering after a reclaimed delivery. */
+  readonly lastCheckpointSequence?: () => number;
   readonly publish: (input: ModuleHandlerPublishInput) => EventEnvelope;
   /** Buffers a fact for the terminal failure transaction instead of success. */
   readonly publishFailure: (input: ModuleHandlerPublishInput) => EventEnvelope;

@@ -784,6 +784,7 @@ function validateBindingReferences(
   candidates: readonly ProjectResourceCandidate[],
   modules: ModuleHost,
 ): void {
+  validateBindingEnvironmentProfiles(bindings.slots);
   validateSlotBindings(
     current.portableConfig,
     bindings.slots,
@@ -791,6 +792,34 @@ function validateBindingReferences(
     modules,
     "project.bindings-invalid",
   );
+}
+
+const SENSITIVE_ENVIRONMENT_NAME =
+  /(?:secret|token|password|passwd|credential|private[_-]?key|api[_-]?key)/i;
+const SENSITIVE_ENVIRONMENT_VALUE =
+  /(?:\b(?:github_pat_[A-Za-z0-9_]+|gh[opsu]_[A-Za-z0-9]+|sk-[A-Za-z0-9]+|bearer\s+\S+|token=|password=)|\/(?:\.codex\/(?:auth|credentials)|credentials|auth)(?:\/|$))/i;
+
+function validateBindingEnvironmentProfiles(bindings: ProjectBindings["slots"]): void {
+  for (const [slot, binding] of Object.entries(bindings)) {
+    if (binding.environment === undefined) continue;
+    if (binding.kind !== "runtime") {
+      throw new EngineError(
+        "project.bindings-invalid",
+        400,
+        `/slots/${slot}/environment is only valid for a runtime Local Binding.`,
+      );
+    }
+    if (
+      Object.keys(binding.environment).some((name) => SENSITIVE_ENVIRONMENT_NAME.test(name)) ||
+      Object.values(binding.environment).some((value) => SENSITIVE_ENVIRONMENT_VALUE.test(value))
+    ) {
+      throw new EngineError(
+        "project.bindings-invalid",
+        400,
+        `/slots/${slot}/environment must not contain secrets, credentials, or authentication-file paths.`,
+      );
+    }
+  }
 }
 
 function validateSlotBindings(

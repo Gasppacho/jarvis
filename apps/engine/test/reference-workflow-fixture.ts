@@ -141,6 +141,7 @@ function referenceProjectConfiguration(projectId: string): PortableProjectConfig
           ...module.configuration,
           validationOrder: ["test"],
           maxRepairCycles: 0,
+          preparation: "none",
         },
       };
     }

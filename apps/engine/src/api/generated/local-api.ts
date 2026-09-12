@@ -1118,6 +1118,10 @@ export interface components {
             /** @enum {string} */
             kind: "connection" | "runtime" | "mcp" | "module-instance" | "engine";
             ref: string;
+            /** @description Local runtime profile values. Portable configuration contains only approved names; secret values and auth files are forbidden. */
+            environment?: {
+                [key: string]: string;
+            };
         };
         ProjectBindings: {
             /** @constant */

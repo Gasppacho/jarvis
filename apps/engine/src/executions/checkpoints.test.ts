@@ -106,6 +106,21 @@ describe("ExecutionCheckpointStore", () => {
       message: "token=<redacted> cwd=<path>",
     });
   });
+
+  it("records preparation progress durably for recovery", () => {
+    db = seedDatabase();
+    const store = new ExecutionCheckpointStore(db);
+    const base = {
+      projectId: "project-a",
+      executionId: "execution-a",
+      occurredAt: "2026-09-08T21:00:00.000Z",
+    };
+    store.record({ ...base, type: "preparation.started", sourceSequence: 1 });
+    store.record({ ...base, type: "preparation.completed", sourceSequence: 2 });
+
+    expect(store.has("project-a", "execution-a", "preparation.completed")).toBe(true);
+    expect(store.lastSourceSequence("project-a", "execution-a")).toBe(2);
+  });
 });
 
 function seedDatabase(): Database.Database {

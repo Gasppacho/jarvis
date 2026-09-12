@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { FakeRuntime } from "../../../../packages/agent-runtime/src/index.js";
+import {
+  FakeRuntime,
+  type RuntimeDescriptor,
+} from "../../../../packages/agent-runtime/src/index.js";
 import { GitHubApiClient } from "../../../../packages/modules/github/src/index.js";
 import { EngineError } from "../errors.js";
 import { LocalAgentRuntimeRegistry } from "../projects/resource-grants.js";
@@ -130,6 +133,110 @@ describe("ProjectModuleCapabilityResolver", () => {
     expect(() => resolver.resolve("project-b", "development", "agent-module")).toThrow(
       "Project project-b cannot resolve agent.execute",
     );
+  });
+
+  it("refuses a runtime grant that is rebound after capability resolution", () => {
+    const snapshots = new Map([["project-a", snapshot("runtime/fake-test")]]);
+    const resolver = new ProjectModuleCapabilityResolver(
+      { getResolvedProject: (projectId) => snapshots.get(projectId) },
+      moduleComposition,
+      new LocalAgentRuntimeRegistry(),
+    );
+    const capabilities = resolver.resolve("project-a", "development", "agent-module");
+    snapshots.set("project-a", snapshot("runtime/unknown"));
+
+    expect(capabilities.revalidateAgentRuntime?.()).toBeUndefined();
+  });
+
+  it("uses the current local runtime profile when it revalidates an unchanged grant", () => {
+    const initial = {
+      ...snapshot("runtime/fake-test"),
+      bindings: {
+        ...snapshot("runtime/fake-test").bindings,
+        slots: {
+          agentRuntime: {
+            kind: "runtime" as const,
+            ref: "runtime/fake-test",
+            environment: { PATH: "/old/profile" },
+          },
+        },
+      },
+    };
+    const snapshots = new Map([["project-a", initial]]);
+    const resolver = new ProjectModuleCapabilityResolver(
+      { getResolvedProject: (projectId) => snapshots.get(projectId) },
+      moduleComposition,
+      new LocalAgentRuntimeRegistry(),
+    );
+    const capabilities = resolver.resolve("project-a", "development", "agent-module");
+    const current = {
+      ...snapshot("runtime/fake-test"),
+      bindings: {
+        ...snapshot("runtime/fake-test").bindings,
+        slots: {
+          agentRuntime: {
+            kind: "runtime" as const,
+            ref: "runtime/fake-test",
+            environment: { PATH: "/new/profile" },
+          },
+        },
+      },
+    };
+    snapshots.set("project-a", current);
+
+    expect(capabilities.revalidateAgentRuntime?.()).toMatchObject({
+      projectBindings: {
+        slots: {
+          agentRuntime: {
+            kind: "runtime",
+            ref: "runtime/fake-test",
+            environment: { PATH: "/new/profile" },
+          },
+        },
+      },
+    });
+  });
+
+  it("refuses a descriptor whose executable path changes after allocation", () => {
+    let descriptor: RuntimeDescriptor = {
+      id: "runtime/codex-default",
+      provider: "codex",
+      displayName: "Codex",
+      executablePath: "/approved/codex",
+      version: "0.153.4",
+      capabilities: ["agent.execute"],
+      status: "available",
+    };
+    const resolver = new ProjectModuleCapabilityResolver(
+      { getResolvedProject: () => snapshot("runtime/codex-default") },
+      moduleComposition,
+      new LocalAgentRuntimeRegistry({ list: () => [descriptor] }),
+    );
+    const capabilities = resolver.resolve("project-a", "development", "agent-module");
+    descriptor = { ...descriptor, executablePath: "/changed/codex" };
+
+    expect(capabilities.revalidateAgentRuntime?.()).toBeUndefined();
+  });
+
+  it("refuses a descriptor whose granted capabilities change after allocation", () => {
+    let descriptor: RuntimeDescriptor = {
+      id: "runtime/codex-default",
+      provider: "codex",
+      displayName: "Codex",
+      executablePath: "/approved/codex",
+      version: "0.153.4",
+      capabilities: ["agent.execute"],
+      status: "available",
+    };
+    const resolver = new ProjectModuleCapabilityResolver(
+      { getResolvedProject: () => snapshot("runtime/codex-default") },
+      moduleComposition,
+      new LocalAgentRuntimeRegistry({ list: () => [descriptor] }),
+    );
+    const capabilities = resolver.resolve("project-a", "development", "agent-module");
+    descriptor = { ...descriptor, capabilities: [] };
+
+    expect(capabilities.revalidateAgentRuntime?.()).toBeUndefined();
   });
 
   it("does not expose a runtime to modules that did not declare agent.execute", () => {

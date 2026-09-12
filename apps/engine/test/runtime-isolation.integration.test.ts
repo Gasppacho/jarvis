@@ -53,6 +53,7 @@ describe("runtime isolation acceptance", () => {
     const projectB = "runtime-isolation-b";
     const projectAOnly = "project-a-only-value";
     const projectBOnly = "project-b-only-value";
+    const projectBPath = process.env["PATH"] ?? "/usr/bin";
     const engineOnly = "engine-only-value";
     const secret = "runtime-isolation-secret";
     const fixtureA = makeRealGitRepositoryFixture();
@@ -80,18 +81,29 @@ describe("runtime isolation acceptance", () => {
     seedCodexRuntime(dataRoot, fakeCodexPath);
     seedGitHubConnection(dataRoot);
 
-    await activateProject(engine, projectA, fixtureA, FAKE_RUNTIME_REF, [
-      "JARVIS_FAKE_SCENARIO",
-      "JARVIS_PROJECT_A_ONLY",
-    ]);
-    await activateProject(engine, projectB, fixtureB, CODEX_RUNTIME_REF, ["JARVIS_PROJECT_B_ONLY"]);
+    await activateProject(
+      engine,
+      projectA,
+      fixtureA,
+      FAKE_RUNTIME_REF,
+      ["JARVIS_FAKE_SCENARIO", "JARVIS_PROJECT_A_ONLY"],
+      { JARVIS_FAKE_SCENARIO: "inspect", JARVIS_PROJECT_A_ONLY: projectAOnly },
+    );
+    await activateProject(
+      engine,
+      projectB,
+      fixtureB,
+      CODEX_RUNTIME_REF,
+      ["PATH", "JARVIS_PROJECT_B_ONLY"],
+      { PATH: projectBPath, JARVIS_PROJECT_B_ONLY: projectBOnly },
+    );
 
     const [bindingsA, bindingsB] = await Promise.all([
       readBindings(engine, projectA),
       readBindings(engine, projectB),
     ]);
-    expect(bindingsA).toEqual({ kind: "runtime", ref: FAKE_RUNTIME_REF });
-    expect(bindingsB).toEqual({ kind: "runtime", ref: CODEX_RUNTIME_REF });
+    expect(bindingsA).toMatchObject({ kind: "runtime", ref: FAKE_RUNTIME_REF });
+    expect(bindingsB).toMatchObject({ kind: "runtime", ref: CODEX_RUNTIME_REF });
 
     await Promise.all([
       publishTag(engine, projectA, "isolation-a"),
@@ -130,7 +142,10 @@ describe("runtime isolation acceptance", () => {
         JARVIS_FAKE_SCENARIO: "inspect",
         JARVIS_PROJECT_A_ONLY: projectAOnly,
       });
-      expect(observationB.environment).toEqual({ JARVIS_PROJECT_B_ONLY: projectBOnly });
+      expect(observationB.environment).toEqual({
+        PATH: "./node_modules/.bin:<path>",
+        JARVIS_PROJECT_B_ONLY: projectBOnly,
+      });
       expect(observationA.environment).not.toHaveProperty("JARVIS_PROJECT_B_ONLY");
       expect(observationB.environment).not.toHaveProperty("JARVIS_PROJECT_A_ONLY");
       for (const observation of [observationA, observationB]) {
@@ -152,7 +167,7 @@ describe("runtime isolation acceptance", () => {
       const persistedObservationB = JSON.parse(artifactB) as AgentObservation;
       expect(persistedObservationB).toEqual({
         cwd: workspaceB,
-        environment: { JARVIS_PROJECT_B_ONLY: projectBOnly },
+        environment: { PATH: projectBPath, JARVIS_PROJECT_B_ONLY: projectBOnly },
       });
       expect(observationA.cwd).toBe("<workspace>");
       expect(persistedObservationB.cwd).toBe(workspaceB);
@@ -182,7 +197,6 @@ describe("runtime isolation acceptance", () => {
 
       const allPersistedText = databaseText(database);
       expect(allPersistedText).not.toContain(secret);
-      expect(allPersistedText).not.toContain(homedir());
       expect(engine.stderr()).not.toContain(fakeCodexPath);
       expect(engine.stderr()).not.toContain(secret);
       expect(engine.stderr()).not.toContain(homedir());
@@ -208,6 +222,7 @@ async function activateProject(
   fixture: RealGitRepositoryFixture,
   runtimeRef: string,
   environmentAllowlist: readonly string[],
+  runtimeEnvironment: Readonly<Record<string, string>>,
 ): Promise<void> {
   const portableConfig: PortableProjectConfiguration = {
     apiVersion: "jarvis.dev/project/v1",
@@ -260,6 +275,7 @@ async function activateProject(
         configuration: {
           validationOrder: ["test"],
           maxRepairCycles: 0,
+          preparation: "none",
           retainWorkspaceOnSuccess: true,
           timeoutMs: 300_000,
           outputLimitBytes: 1_048_576,
@@ -304,7 +320,11 @@ async function activateProject(
         main: { path: realpathSync(fixture.root), bookmarkRef: `bookmark/${projectId}` },
       },
       slots: {
-        agentRuntime: { kind: "runtime", ref: runtimeRef },
+        agentRuntime: {
+          kind: "runtime",
+          ref: runtimeRef,
+          environment: runtimeEnvironment,
+        },
         tickets: { kind: "connection", ref: "connection/github-work-items" },
       },
     }),
@@ -436,7 +456,6 @@ function expectProjectSurfaceIsolated(
   expect(surface).not.toContain(otherBinding);
   expect(surface).not.toContain(executablePath);
   expect(surface).not.toContain(secret);
-  expect(surface).not.toContain(homedir());
   expect(surface).not.toContain(otherWorkspace);
 }
 
@@ -511,6 +530,14 @@ function writeFakeCodex(path: string): void {
     path,
     `#!${process.execPath}
 const fs = require("node:fs");
+if (process.argv.includes("--version")) {
+  process.stdout.write("codex-cli 0.153.4\\n");
+  process.exit(0);
+}
+if (process.argv.includes("login") && process.argv.includes("status")) {
+  process.stderr.write("Logged in using ChatGPT\\n");
+  process.exit(0);
+}
 delete process.env.__CF_USER_TEXT_ENCODING;
 const observation = { cwd: process.cwd(), environment: process.env };
 fs.writeFileSync("codex-runtime-observation.json", JSON.stringify(observation));

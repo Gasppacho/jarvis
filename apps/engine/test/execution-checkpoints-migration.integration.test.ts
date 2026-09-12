@@ -26,6 +26,21 @@ describe("execution checkpoint migration", () => {
     expectSchema(db);
     applyMigration(db, "0015");
     expectSchema(db);
+    db.close();
+    db = new Database(":memory:");
+    db.pragma("foreign_keys = ON");
+    applyMigrations(db, "0025");
+    applyMigration(db, "0026");
+    expectSchema(db);
+    expect(
+      (
+        db
+          .prepare(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'execution_checkpoints'",
+          )
+          .get() as { sql: string }
+      ).sql,
+    ).toContain("preparation.completed");
     const inbox = db
       .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'inbox'")
       .get() as { sql: string } | undefined;

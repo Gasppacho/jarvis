@@ -4,6 +4,21 @@ export type ExecutionCheckpointInput =
   | {
       readonly projectId: string;
       readonly executionId: string;
+      readonly type: "preparation.started" | "preparation.completed";
+      readonly sourceSequence: number;
+      readonly occurredAt: string;
+    }
+  | {
+      readonly projectId: string;
+      readonly executionId: string;
+      readonly type: "preparation.failed";
+      readonly sourceSequence: number;
+      readonly occurredAt: string;
+      readonly output: string;
+    }
+  | {
+      readonly projectId: string;
+      readonly executionId: string;
       readonly type: "agent.started";
       readonly sourceSequence: number;
       readonly occurredAt: string;
@@ -159,6 +174,32 @@ export class ExecutionCheckpointStore {
       .all({ projectId, executionId }) as ExecutionCheckpointRow[];
     return rows.map(toCheckpoint);
   }
+
+  public has(
+    projectId: string,
+    executionId: string,
+    type: ExecutionCheckpointInput["type"],
+  ): boolean {
+    return (
+      this.db
+        .prepare(
+          `SELECT 1 AS present FROM execution_checkpoints
+           WHERE project_id = @projectId AND execution_id = @executionId AND type = @type`,
+        )
+        .get({ projectId, executionId, type }) !== undefined
+    );
+  }
+
+  public lastSourceSequence(projectId: string, executionId: string): number {
+    return (
+      this.db
+        .prepare(
+          `SELECT COALESCE(MAX(source_sequence), 0) AS sequence FROM execution_checkpoints
+           WHERE project_id = @projectId AND execution_id = @executionId`,
+        )
+        .get({ projectId, executionId }) as { sequence: number }
+    ).sequence;
+  }
 }
 
 function validateInput(input: ExecutionCheckpointInput): void {
@@ -173,6 +214,7 @@ function validateInput(input: ExecutionCheckpointInput): void {
   }
   if (
     (input.type === "agent.message" && typeof input.message !== "string") ||
+    (input.type === "preparation.failed" && typeof input.output !== "string") ||
     ((input.type === "validation.started" || input.type === "validation.failed") &&
       (typeof input.check !== "string" || input.check === "")) ||
     (input.type === "validation.failed" && typeof input.output !== "string") ||
@@ -187,7 +229,16 @@ function validateInput(input: ExecutionCheckpointInput): void {
 }
 
 function checkpointPayload(input: ExecutionCheckpointInput): Readonly<Record<string, unknown>> {
-  if (input.type === "agent.started") return {};
+  if (
+    input.type === "agent.started" ||
+    input.type === "preparation.started" ||
+    input.type === "preparation.completed"
+  ) {
+    return {};
+  }
+  if (input.type === "preparation.failed") {
+    return { output: sanitizeCheckpointMessage(input.output) };
+  }
   if (input.type === "agent.message") {
     return { message: sanitizeCheckpointMessage(input.message) };
   }
@@ -200,10 +251,13 @@ function checkpointPayload(input: ExecutionCheckpointInput): Readonly<Record<str
       output: sanitizeCheckpointMessage(input.output),
     };
   }
-  return {
-    branch: sanitizeCheckpointMessage(input.branch),
-    sha: input.sha,
-  };
+  if (input.type === "commit.created" || input.type === "branch.pushed") {
+    return {
+      branch: sanitizeCheckpointMessage(input.branch),
+      sha: input.sha,
+    };
+  }
+  return {};
 }
 
 function sanitizeCheckpointMessage(message: string): string {

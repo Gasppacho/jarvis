@@ -62,7 +62,7 @@ export interface AgentRunResult {
 }
 
 export interface AgentRuntime {
-  describe(): Promise<RuntimeDescriptor>;
+  describe(environment?: Readonly<Record<string, string>>): Promise<RuntimeDescriptor>;
   start(request: AgentRunRequest, signal: AbortSignal): Promise<AgentRun>;
 }
 

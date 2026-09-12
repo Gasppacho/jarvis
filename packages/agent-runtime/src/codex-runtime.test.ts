@@ -44,6 +44,30 @@ describe("CodexRuntime", () => {
     }
   });
 
+  it("uses only the granted local authentication context for preflight", async () => {
+    const root = await makeRoot();
+    try {
+      const authHome = join(root, "project-codex-home");
+      const executable = await makeExecutable(root, {
+        version: print(VERSION),
+        auth: `if [ "$CODEX_HOME" = ${quote(authHome)} ]; then\n${print(
+          "Logged in using ChatGPT",
+          "stderr",
+        )}\nelse\n${print("Not logged in", "stderr")}\nexit 1\nfi`,
+      });
+      const runtime = new CodexRuntime(executable);
+
+      await expect(
+        runtime.describe({ PATH: process.env["PATH"] ?? "/usr/bin:/bin", CODEX_HOME: authHome }),
+      ).resolves.toMatchObject({ status: "available" });
+      await expect(
+        runtime.describe({ PATH: process.env["PATH"] ?? "/usr/bin:/bin" }),
+      ).resolves.toMatchObject({ status: "unauthenticated" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("reports an absent or non-runnable executable as unavailable", async () => {
     const root = await makeRoot();
     try {

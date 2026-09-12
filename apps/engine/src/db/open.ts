@@ -314,6 +314,7 @@ function lstatIfExists(path: string): Stats | undefined {
 const NON_TRIVIAL_MIGRATIONS = new Set([
   "0004_normalize_project_drafts",
   "0008_events_correlation_id",
+  "0026_preparation_checkpoints",
 ]);
 
 function migrate(db: Database.Database, databasePath: string): readonly string[] {

@@ -65,6 +65,12 @@ modules:
 
 The resolved Module Context receives only these objects.
 
+A runtime Local Binding may additionally hold a confirmed environment profile.
+Portable module configuration names the allowed variables; only that binding
+holds machine-local values such as `PATH`. Secret-named variables, tokens and
+authentication-file paths are not valid profile values and are never copied
+from the Engine environment.
+
 ## Read access versus external mutation
 
 A coding agent may use a project-bound MCP to read Work Item context. External mutations remain owned by modules and Events. For the MVP:

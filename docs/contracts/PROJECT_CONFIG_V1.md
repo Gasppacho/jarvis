@@ -19,10 +19,12 @@ La configuration portable définit la composition logique. Exemple complet : `ex
 - `workspace` : worktree et concurrence.
 - `modules` : instances, package, activation, config et bindings.
 
-L'instance Development peut également déclarer `timeoutMs`, `outputLimitBytes` et
-`environmentAllowlist` dans sa configuration validée. Ces valeurs sont
-transmises au Agent Runtime ; l'allowlist ne contient que des noms de variables
-et n'autorise jamais une valeur secrète brute.
+L'instance Development déclare aussi une décision `preparation` : `install`
+exécute l'unique `commands.install` confirmé dans le worktree, `none` confirme
+explicitement qu'aucune préparation n'est requise. Une valeur absente arrête
+l'exécution avant l'agent. Elle peut également déclarer `timeoutMs`,
+`outputLimitBytes` et `environmentAllowlist`. L'allowlist ne contient que des
+noms, jamais des valeurs ni des secrets.
 
 ## Local bindings
 
@@ -46,9 +48,16 @@ slots:
   agentRuntime:
     kind: runtime
     ref: runtime/codex-default
+    environment:
+      PATH: /opt/homebrew/bin:/usr/bin:/bin
 ```
 
-Le fichier est un exemple de forme ; l'implémentation stocke ces valeurs localement et ne les commit pas.
+Le profil `environment` est local au binding runtime : il fournit uniquement
+les valeurs nommées dans l'allowlist au child et au preflight. Il peut inclure
+un contexte d'authentification local tel que `CODEX_HOME`, jamais un token ni
+un chemin vers un fichier de credentials. Les noms secrets, tokens et chemins
+de fichiers d'authentification sont refusés. Le fichier est un exemple de
+forme ; l'implémentation stocke ces valeurs localement et ne les commit pas.
 
 Un import ou draft non résolu reste explicitement valide avec `slots: {}`. Un ancien import peut aussi porter `bookmarkRef: null` jusqu'à ce que le macOS Shell fournisse un Repository Grant. Un `ref` de slot n'est accepté que s'il désigne un candidat explicitement dans l'autorité du projet, du bon `kind`, et fournissant **toutes** les capabilities demandées par le Slot et par les Module Instances qui le référencent. Les descripteurs Connection et Runtime persistés alimentent les candidats globaux, mais aucun grant implicite n'est synthétisé : seule la liaison locale du Project autorise leur résolution. Les Module Instances déjà sélectionnées sont des candidats project-scoped uniquement pour les capabilities déclarées dans `provides` par leur Manifest.
 

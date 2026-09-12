@@ -35,7 +35,11 @@ type AgentRunRequest = {
 };
 ```
 
-`environment` est déjà filtré par le Project Runtime. Le module ne fournit pas de secret arbitraire.
+`environment` est construit depuis le profil local du Runtime Binding puis
+filtré par l'allowlist portable. Le module ne fournit pas de secret arbitraire,
+ne copie pas `process.env`, et utilise ce même profil au preflight et au start.
+Un `CODEX_HOME` local peut fournir le contexte d'authentification de la CLI ;
+le token lui-même ne quitte jamais son stockage local.
 
 ## Stream events
 

@@ -169,12 +169,160 @@ describe("Development Work Item context", () => {
     expect(first.commitSubject).toBe("feat: implement first-issue");
     expect(first.branchContext.slug).not.toBe(second.branchContext.slug);
   });
+
+  it("prepares the allocated worktree exactly once before starting the agent and validation", async () => {
+    const order: string[] = [];
+    await runDevelopment({
+      runtime: new CapturingRuntime(order),
+      workItem: openWorkItem(),
+      preparation: "install",
+      commands: { install: "prepare", test: "validate" },
+      shellOrder: order,
+    });
+
+    expect(order).toEqual(["prepare", "agent", "validate"]);
+  });
+
+  it("stops after allocation without starting the agent when preparation is not confirmed", async () => {
+    const runtime = new CapturingRuntime();
+    const allocations: number[] = [];
+
+    await expect(
+      runDevelopment({ runtime, workItem: openWorkItem(), preparation: "missing", allocations }),
+    ).rejects.toMatchObject({
+      code: "project.preparation-unconfigured",
+    });
+
+    expect(allocations).toEqual([1]);
+    expect(runtime.requests).toEqual([]);
+  });
+
+  it("does not start an unavailable runtime after preparation", async () => {
+    const runtime = new CapturingRuntime([], "unavailable");
+    const shellOrder: string[] = [];
+
+    await expect(
+      runDevelopment({
+        runtime,
+        workItem: openWorkItem(),
+        preparation: "install",
+        commands: { install: "prepare", test: "true" },
+        shellOrder,
+      }),
+    ).rejects.toMatchObject({ code: "agent.runtime-preflight-failed", retryable: true });
+
+    expect(shellOrder).toEqual(["prepare"]);
+    expect(runtime.requests).toEqual([]);
+  });
+
+  it("stops before the agent when the confirmed install command fails", async () => {
+    const runtime = new CapturingRuntime();
+    const shellOrder: string[] = [];
+
+    await expect(
+      runDevelopment({
+        runtime,
+        workItem: openWorkItem(),
+        preparation: "install",
+        commands: { install: "prepare", test: "true" },
+        failCommand: "prepare",
+        shellOrder,
+      }),
+    ).rejects.toMatchObject({ code: "project.preparation-failed", retryable: true });
+
+    expect(shellOrder).toEqual(["prepare"]);
+    expect(runtime.requests).toEqual([]);
+  });
+
+  it("does not rerun a preparation that was durably started before recovery", async () => {
+    const runtime = new CapturingRuntime();
+    const shellOrder: string[] = [];
+
+    await expect(
+      runDevelopment({
+        runtime,
+        workItem: openWorkItem(),
+        preparation: "install",
+        commands: { install: "prepare", test: "true" },
+        shellOrder,
+        preparationCheckpoints: new Set(["preparation.started"]),
+      }),
+    ).rejects.toMatchObject({ code: "project.preparation-failed", retryable: true });
+
+    expect(shellOrder).toEqual([]);
+    expect(runtime.requests).toEqual([]);
+  });
+
+  it("does not start an agent when the runtime grant disappears just before preflight", async () => {
+    const runtime = new CapturingRuntime();
+
+    await expect(
+      runDevelopment({
+        runtime,
+        workItem: openWorkItem(),
+        revalidateRuntime: () => undefined,
+      }),
+    ).rejects.toMatchObject({ code: "agent.runtime-preflight-failed", retryable: true });
+
+    expect(runtime.requests).toEqual([]);
+  });
+
+  it("uses the revalidated runtime profile rather than a stale binding profile", async () => {
+    const runtime = new CapturingRuntime();
+    await runDevelopment({
+      runtime,
+      workItem: openWorkItem(),
+      environmentAllowlist: ["RUNTIME_PROFILE"],
+      projectBindings: {
+        projectId: "work-item-test",
+        runtimeSlot: "agentRuntime",
+        slots: {
+          agentRuntime: {
+            kind: "runtime",
+            ref: "runtime/capturing",
+            environment: { RUNTIME_PROFILE: "stale" },
+          },
+        },
+      },
+      revalidateRuntime: () => ({
+        runtime,
+        projectBindings: {
+          projectId: "work-item-test",
+          runtimeSlot: "agentRuntime",
+          slots: {
+            agentRuntime: {
+              kind: "runtime",
+              ref: "runtime/capturing",
+              environment: { RUNTIME_PROFILE: "current" },
+            },
+          },
+        },
+      }),
+    });
+
+    expect(runtime.requests[0]?.environment).toEqual({ RUNTIME_PROFILE: "current" });
+  });
 });
 
 const WORK_ITEM_REF = "github://Gasppacho/jarvis/issues/16";
 
+function openWorkItem(): WorkItem {
+  return {
+    ref: WORK_ITEM_REF,
+    number: 16,
+    title: "Add a Health Endpoint",
+    body: "Body",
+    state: "open",
+  };
+}
+
 class CapturingRuntime implements AgentRuntime {
   readonly requests: AgentRunRequest[] = [];
+
+  public constructor(
+    private readonly order: string[] = [],
+    private readonly status: "available" | "unavailable" = "available",
+  ) {}
 
   async describe() {
     return {
@@ -184,11 +332,12 @@ class CapturingRuntime implements AgentRuntime {
       executablePath: null,
       version: null,
       capabilities: ["agent.execute"],
-      status: "available" as const,
+      status: this.status,
     };
   }
 
   async start(request: AgentRunRequest, _signal: AbortSignal): Promise<AgentRun> {
+    this.order.push("agent");
     this.requests.push(request);
     writeFileSync(`${request.workingDirectory}/runtime-change.txt`, "changed\n", "utf8");
     return {
@@ -213,6 +362,14 @@ async function runDevelopment(input: {
   readonly workItems?: ModuleHandlerContext["capabilities"]["workItems"];
   readonly checkpoints?: string[];
   readonly allocations?: number[];
+  readonly preparation?: "install" | "none" | "missing";
+  readonly commands?: { readonly install?: string; readonly test?: string };
+  readonly shellOrder?: string[];
+  readonly failCommand?: string;
+  readonly preparationCheckpoints?: ReadonlySet<string>;
+  readonly revalidateRuntime?: ModuleHandlerContext["capabilities"]["revalidateAgentRuntime"];
+  readonly environmentAllowlist?: string[];
+  readonly projectBindings?: NonNullable<ModuleHandlerContext["capabilities"]["projectBindings"]>;
 }): Promise<{
   readonly published: readonly ModuleHandlerPublishInput[];
   readonly branchContext: { readonly workItemId: string; readonly slug: string };
@@ -262,14 +419,18 @@ async function runDevelopment(input: {
       maxRepairCycles: 0,
       timeoutMs: 30_000,
       outputLimitBytes: 1_048_576,
-      environmentAllowlist: [],
+      environmentAllowlist: input.environmentAllowlist ?? [],
+      ...(input.preparation === "missing" ? {} : { preparation: input.preparation ?? "none" }),
     },
     signal: new AbortController().signal,
     capabilities: {
       agentRuntime: input.runtime,
-      projectBindings: { projectId: event.projectId, slots: {} },
+      ...(input.revalidateRuntime === undefined
+        ? {}
+        : { revalidateAgentRuntime: input.revalidateRuntime }),
+      projectBindings: input.projectBindings ?? { projectId: event.projectId, slots: {} },
       projectCommands: {
-        commands: { test: "true" },
+        commands: input.commands ?? { test: "true" },
         git: {
           branchPattern: "agent/{workItemId}-{slug}",
           commitStrategy: "conventional",
@@ -278,13 +439,27 @@ async function runDevelopment(input: {
         },
       },
       shell: {
-        run: async () => ({
-          ok: true,
-          exitCode: 0,
-          stdout: "",
-          stderr: "",
-          outputTruncated: false,
-        }),
+        run: async ({ command }) => {
+          input.shellOrder?.push(command);
+          if (command === input.failCommand) {
+            return {
+              ok: false as const,
+              code: "exit",
+              message: "install failed",
+              exitCode: 1,
+              stdout: "",
+              stderr: "install failed",
+              outputTruncated: false,
+            };
+          }
+          return {
+            ok: true,
+            exitCode: 0,
+            stdout: "",
+            stderr: "",
+            outputTruncated: false,
+          };
+        },
       },
       workspace: {
         allocate: async (allocation) => {
@@ -310,6 +485,9 @@ async function runDevelopment(input: {
     recordCheckpoint: (checkpoint) => {
       if (checkpoint.type === "agent.message") input.checkpoints?.push(checkpoint.message);
     },
+    ...(input.preparationCheckpoints === undefined
+      ? {}
+      : { hasCheckpoint: (type) => input.preparationCheckpoints?.has(type) ?? false }),
     publish,
     publishFailure: publish,
   };

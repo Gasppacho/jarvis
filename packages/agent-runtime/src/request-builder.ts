@@ -3,11 +3,15 @@ import type { AgentRunRequest } from "./types.js";
 export interface AgentProjectBinding {
   readonly kind: string;
   readonly ref: string;
+  /** Local-only runtime profile; portable configuration carries names, never values. */
+  readonly environment?: Readonly<Record<string, string>>;
 }
 
 export interface AgentProjectBindings {
   readonly projectId: string;
   readonly slots: Readonly<Record<string, AgentProjectBinding>>;
+  /** The resolved runtime slot for this Module Instance, not a global candidate. */
+  readonly runtimeSlot?: string;
 }
 
 export interface AgentPromptSections {
@@ -23,7 +27,6 @@ export interface BuildAgentRunRequestInput {
   readonly workingDirectory: string;
   readonly objective: string;
   readonly prompt: AgentPromptSections;
-  readonly environment: Readonly<Record<string, string | undefined>>;
   readonly environmentAllowlist: readonly string[];
   /** Bindings already resolved from this Project; no global registry is accepted. */
   readonly projectBindings: AgentProjectBindings;
@@ -99,10 +102,23 @@ export function buildAgentRunRequest(input: BuildAgentRunRequestInput): AgentRun
     ],
     contextArtifacts: (input.contextArtifacts ?? []).map(redacted),
     allowedMcpBindings: projectMcpBindings(input.projectBindings, input.mcpSlotNames, secrets),
-    environment: filteredEnvironment(input.environment, input.environmentAllowlist, secrets),
+    environment: filteredEnvironment(
+      runtimeEnvironment(input.projectBindings),
+      input.environmentAllowlist,
+      secrets,
+    ),
     timeoutMs: input.timeoutMs,
     outputLimitBytes: input.outputLimitBytes,
   };
+}
+
+function runtimeEnvironment(
+  projectBindings: AgentProjectBindings,
+): Readonly<Record<string, string | undefined>> {
+  const runtimeSlot = projectBindings.runtimeSlot;
+  if (runtimeSlot === undefined) return {};
+  const binding = projectBindings.slots[runtimeSlot];
+  return binding?.kind === "runtime" ? (binding.environment ?? {}) : {};
 }
 
 function filteredEnvironment(
@@ -185,7 +201,19 @@ function isProjectBinding(value: unknown): value is AgentProjectBinding {
     typeof record["kind"] === "string" &&
     RESOURCE_KINDS.has(record["kind"]) &&
     typeof record["ref"] === "string" &&
-    record["ref"].trim() !== ""
+    record["ref"].trim() !== "" &&
+    (record["environment"] === undefined || isEnvironment(record["environment"]))
+  );
+}
+
+function isEnvironment(value: unknown): value is Readonly<Record<string, string>> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.entries(value).every(
+      ([name, entry]) => ENVIRONMENT_NAME.test(name) && typeof entry === "string",
+    )
   );
 }
 

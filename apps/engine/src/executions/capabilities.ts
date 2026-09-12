@@ -2,6 +2,7 @@ import { EngineError } from "../errors.js";
 import type { ModuleCapabilityRequirement } from "../../../../packages/kernel/src/module-host.js";
 import type {
   ExternalMappingCapability,
+  AgentRuntimeGrant,
   ModuleHandlerCapabilities,
   ModuleShellCommandInput,
   ModuleShellCommandResult,
@@ -11,7 +12,10 @@ import type {
   ProjectCommandsCapability,
   WorkItemsCapability,
 } from "../../../../packages/module-sdk/src/index.js";
-import type { AgentRuntime } from "../../../../packages/agent-runtime/src/index.js";
+import type {
+  AgentRuntime,
+  RuntimeDescriptor,
+} from "../../../../packages/agent-runtime/src/index.js";
 import {
   GitHubApiClient,
   GitHubApiError,
@@ -40,6 +44,7 @@ export interface ModuleCompositionReader {
 
 export interface AgentRuntimeResolver {
   resolve(projectId: string, ref: string): AgentRuntime | undefined;
+  descriptor(projectId: string, ref: string): RuntimeDescriptor | undefined;
 }
 
 export interface ProjectWorkspaceResolver {
@@ -214,7 +219,23 @@ export class ProjectModuleCapabilityResolver {
           `runtime ${binding.ref} is unavailable`,
         );
       }
-      resolved = { ...resolved, agentRuntime: runtime };
+      const descriptor = this.runtimes.descriptor(projectId, binding.ref);
+      if (descriptor === undefined) {
+        throw unresolvedCapability(
+          projectId,
+          moduleInstanceId,
+          "agent.execute",
+          slot,
+          `runtime ${binding.ref} has no current descriptor`,
+        );
+      }
+      resolved = {
+        ...resolved,
+        agentRuntime: runtime,
+        revalidateAgentRuntime: () =>
+          this.revalidateAgentRuntime(projectId, moduleInstanceId, slot, binding.ref, descriptor),
+        projectBindings: { projectId, slots: snapshot.bindings.slots, runtimeSlot: slot },
+      };
     }
 
     if (workspaceRequired) {
@@ -292,6 +313,38 @@ export class ProjectModuleCapabilityResolver {
       }
     }
     return resolved;
+  }
+
+  private revalidateAgentRuntime(
+    projectId: string,
+    moduleInstanceId: string,
+    slot: string,
+    ref: string,
+    expectedDescriptor: RuntimeDescriptor,
+  ): AgentRuntimeGrant | undefined {
+    const snapshot = this.snapshots.getResolvedProject(projectId);
+    const instance = snapshot?.moduleInstances.find(
+      (candidate) => candidate.instanceId === moduleInstanceId,
+    );
+    if (snapshot === undefined || instance === undefined) return undefined;
+    const currentSlot = instance.runtimeSlot;
+    const binding = snapshot.bindings.slots[slot];
+    if (
+      currentSlot !== slot ||
+      binding === undefined ||
+      binding.kind !== "runtime" ||
+      binding.ref !== ref
+    ) {
+      return undefined;
+    }
+    const descriptor = this.runtimes.descriptor(projectId, ref);
+    if (!sameRuntimeDescriptor(descriptor, expectedDescriptor)) return undefined;
+    const runtime = this.runtimes.resolve(projectId, ref);
+    if (runtime === undefined) return undefined;
+    return {
+      runtime,
+      projectBindings: { projectId, slots: snapshot.bindings.slots, runtimeSlot: slot },
+    };
   }
 
   private resolveGitHubApi(
@@ -454,6 +507,27 @@ function capabilitySlot(
   return requirement.binding === "agentRuntime"
     ? (runtimeSlot ?? "agentRuntime")
     : requirement.binding;
+}
+
+function sameRuntimeDescriptor(
+  current: RuntimeDescriptor | undefined,
+  expected: RuntimeDescriptor,
+): boolean {
+  return (
+    current !== undefined &&
+    current.id === expected.id &&
+    current.provider === expected.provider &&
+    current.executablePath === expected.executablePath &&
+    current.version === expected.version &&
+    sameCapabilities(current.capabilities, expected.capabilities)
+  );
+}
+
+function sameCapabilities(current: readonly string[], expected: readonly string[]): boolean {
+  return (
+    current.length === expected.length &&
+    current.every((capability) => expected.includes(capability))
+  );
 }
 
 function unresolvedCapability(

@@ -131,6 +131,24 @@ describe("Project configuration replacement", () => {
     ).toMatchObject({
       slots: { agentRuntime: { kind: "runtime", ref: "runtime/codex-test" } },
     });
+    expect(() =>
+      service.replaceProjectBindings({
+        projectId: "token-warehouse",
+        bindings: {
+          apiVersion: "jarvis.dev/project-bindings/v1",
+          kind: "ProjectBindings",
+          projectId: "token-warehouse",
+          repositories: { main: { path: repository, bookmarkRef: null } },
+          slots: {
+            agentRuntime: {
+              kind: "runtime",
+              ref: "runtime/codex-test",
+              environment: { GH_PAT: "github_pat_0123456789_abcdefghijklmnopqrstuvwxyz" },
+            },
+          },
+        },
+      }),
+    ).toThrow("must not contain secrets");
     grantIsAccessible = false;
     expect(service.getProjectResourceChoices("token-warehouse").slots).toContainEqual(
       expect.objectContaining({ slotId: "agentRuntime", status: "inaccessible" }),

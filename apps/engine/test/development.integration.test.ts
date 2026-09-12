@@ -250,6 +250,15 @@ describe("Development Module tracer bullet", () => {
       executable,
       `#!${process.execPath}
 const fs = require("node:fs");
+if (process.argv.includes("--version")) {
+  process.stdout.write("codex-cli 0.153.4\\n");
+  process.exit(0);
+}
+if (process.argv.includes("login") && process.argv.includes("status")) {
+  process.stderr.write("Logged in using ChatGPT\\n");
+  process.exit(0);
+}
+fs.appendFileSync("run-order.txt", "agent\\n");
 fs.writeFileSync("codex-runtime-change.txt", "Codex runtime change\\n");
 const emit = (event) => process.stdout.write(JSON.stringify(event) + "\\n");
 emit({ type: "item.completed", item: { type: "file_change", id: "change-1", changes: [{ path: "codex-runtime-change.txt" }] } });
@@ -294,6 +303,10 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
 
     const before = repositoryState(fixture.root);
     const projectId = "development-codex";
+    const commands = {
+      install: `node -e "require('node:fs').writeFileSync('run-order.txt','install\\n')"`,
+      test: `node -e "const fs=require('node:fs'); if (fs.readFileSync('run-order.txt','utf8') !== 'install\\nagent\\n') process.exit(7); fs.appendFileSync('run-order.txt','validation\\n')"`,
+    };
     await activateProject(
       engine,
       projectId,
@@ -301,7 +314,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
       false,
       300_000,
       1_048_576,
-      { test: "node --test" },
+      commands,
       ["test"],
       false,
       "origin",
@@ -312,6 +325,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
     const executions = await waitForExecutions(engine, projectId, 2);
     expect(
       executions.find(({ moduleInstanceId }) => moduleInstanceId === "development"),
+      JSON.stringify(executions),
     ).toMatchObject({
       status: "completed",
     });
@@ -340,12 +354,161 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
       expect(
         execFileSync(
           "git",
+          ["--git-dir", fixture.remoteRoot, "show", `${result.headCommit}:run-order.txt`],
+          { encoding: "utf8" },
+        ),
+      ).toBe("install\nagent\nvalidation\n");
+      expect(
+        execFileSync(
+          "git",
           ["--git-dir", fixture.remoteRoot, "rev-parse", `refs/heads/${result.headBranch}`],
           { encoding: "utf8" },
         ).trim(),
       ).toBe(result.headCommit);
     } finally {
       readonly.close();
+    }
+  });
+
+  it("does not spawn Codex when its bound executable disappears before preflight", async () => {
+    const fixture = makeRealGitRepositoryFixture();
+    roots.push(fixture.root, fixture.remoteRoot);
+    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-codex-preflight-"));
+    roots.push(dataRoot);
+    const executable = join(dataRoot, "gone-codex");
+    const spawnMarker = join(dataRoot, "codex-spawned");
+    writeFileSync(
+      executable,
+      `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(spawnMarker)}, 'spawned')\n`,
+      "utf8",
+    );
+    chmodSync(executable, 0o755);
+
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
+    });
+    engines.push(engine);
+    const database = new Database(join(dataRoot, "jarvis.sqlite"));
+    database
+      .prepare(
+        `INSERT INTO runtime_descriptors
+           (id, provider, display_name, executable_path, version, capabilities, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET executable_path = excluded.executable_path, status = excluded.status`,
+      )
+      .run(
+        "runtime/codex-default",
+        "codex",
+        "Codex — default",
+        executable,
+        "0.153.4",
+        JSON.stringify(["agent.execute"]),
+        "available",
+      );
+    database.close();
+
+    const projectId = "development-codex-preflight";
+    await activateProject(
+      engine,
+      projectId,
+      fixture,
+      false,
+      300_000,
+      1_048_576,
+      { test: "node --test" },
+      ["test"],
+      false,
+      "origin",
+      0,
+      "runtime/codex-default",
+    );
+    chmodSync(executable, 0o644);
+    await publishTag(engine, projectId, "preflight");
+    const executions = await waitForExecutions(engine, projectId, 2);
+    const development = executions.find(
+      ({ moduleInstanceId }) => moduleInstanceId === "development",
+    );
+    expect(development).toMatchObject({ status: "failed" });
+    expect(existsSync(spawnMarker)).toBe(false);
+
+    const readonly = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
+    try {
+      expect(readFailureEvent(readonly, projectId)).toMatchObject({
+        payload: { code: "agent.runtime-preflight-failed", retryable: true },
+      });
+      expect(
+        readonly
+          .prepare("SELECT COUNT(*) AS count FROM execution_checkpoints WHERE execution_id = ?")
+          .get(development!.id),
+      ).toEqual({ count: 0 });
+    } finally {
+      readonly.close();
+    }
+  });
+
+  it("retains a failed preparation without starting, validating, committing, pushing, or requesting a PR", async () => {
+    const fixture = makeRealGitRepositoryFixture();
+    roots.push(fixture.root, fixture.remoteRoot);
+    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-preparation-failure-"));
+    roots.push(dataRoot);
+    const projectId = "development-preparation-failure";
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
+    });
+    engines.push(engine);
+
+    await activateProject(
+      engine,
+      projectId,
+      fixture,
+      false,
+      300_000,
+      1_048_576,
+      {
+        install: "node -e \"process.stderr.write('install failed'); process.exit(7)\"",
+        test: "false",
+      },
+      ["test"],
+    );
+    await publishTag(engine, projectId, "preparation-failure");
+    const executions = await waitForExecutions(engine, projectId, 2);
+    const development = executions.find(
+      ({ moduleInstanceId }) => moduleInstanceId === "development",
+    );
+    expect(development).toMatchObject({ status: "failed" });
+
+    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
+    try {
+      expect(readFailureEvent(database, projectId)).toMatchObject({
+        payload: { code: "project.preparation-failed", retryable: true },
+      });
+      expect(
+        database
+          .prepare(
+            "SELECT type FROM execution_checkpoints WHERE execution_id = ? ORDER BY sequence",
+          )
+          .all(development!.id),
+      ).toEqual([{ type: "preparation.started" }, { type: "preparation.failed" }]);
+      expect(
+        database
+          .prepare(
+            `SELECT COUNT(*) AS count FROM outbox
+             WHERE project_id = ?
+               AND json_extract(envelope, '$.type') IN ('development.implementation.completed', 'scm.change-request.creation-requested')`,
+          )
+          .get(projectId),
+      ).toEqual({ count: 0 });
+      expect(
+        database
+          .prepare("SELECT status FROM workspace_leases WHERE execution_id = ?")
+          .get(development!.id),
+      ).toEqual({ status: "retained" });
+    } finally {
+      database.close();
     }
   });
 
@@ -670,7 +833,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
     });
     engines.push(engine);
 
-    await activateProject(engine, projectId, fixture, true);
+    await activateProject(engine, projectId, fixture, "clean");
     await publishTag(engine, projectId, "no-changes");
     const executions = await waitForExecutions(engine, projectId, 2);
     const development = executions.find(
@@ -832,7 +995,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
     });
     engines.push(engine);
 
-    await activateProject(engine, projectId, fixture, true);
+    await activateProject(engine, projectId, fixture, "ignore-terminate");
     const graphResponse = await engine.call(`/v1/projects/${projectId}/graph`);
     expect(graphResponse.status, await graphResponse.clone().text()).toBe(200);
     const graph = (await graphResponse.json()) as {
@@ -959,7 +1122,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
     });
     engines.push(engine);
 
-    await activateProject(engine, projectId, fixture, true, 100);
+    await activateProject(engine, projectId, fixture, "ignore-terminate", 100);
     await publishTag(engine, projectId, "timed-out");
     const timedOut = await waitForExecution(engine, projectId, "development", "timed-out");
     const workspacePath = join(dataRoot, "projects", projectId, "workspaces", timedOut.id);
@@ -1014,7 +1177,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
     });
     engines.push(engine);
 
-    await activateProject(engine, projectId, fixture, true);
+    await activateProject(engine, projectId, fixture, "failure");
     await publishTag(engine, projectId, "agent-failure");
     const executions = await waitForExecutions(engine, projectId, 2);
     const development = executions.find(
@@ -1063,7 +1226,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
     });
     engines.push(engine);
 
-    await activateProject(engine, projectId, fixture, true, 300_000, 1_024);
+    await activateProject(engine, projectId, fixture, "oversized", 300_000, 1_024);
     await publishTag(engine, projectId, "output-limit");
     const executions = await waitForExecutions(engine, projectId, 2);
     const development = executions.find(
@@ -1201,7 +1364,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
       engine,
       projectId,
       fixture,
-      true,
+      "repair",
       300_000,
       outputLimitBytes,
       {
@@ -1280,7 +1443,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
       engine,
       projectId,
       fixture,
-      true,
+      "repair",
       300_000,
       1_024,
       {
@@ -1390,7 +1553,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
       engine,
       projectId,
       fixture,
-      true,
+      "repair-ignore-terminate",
       300_000,
       1_048_576,
       { test: `node -e "process.exit(7)"` },
@@ -1513,7 +1676,7 @@ async function activateProject(
   engine: Harness,
   projectId: string,
   fixture: RealGitRepositoryFixture,
-  cancellationTest = false,
+  fakeScenario: string | false = false,
   timeoutMs = 300_000,
   outputLimitBytes = 1_048_576,
   commands: PortableProjectConfiguration["commands"] = { test: "node --test" },
@@ -1589,10 +1752,16 @@ async function activateProject(
         configuration: {
           validationOrder,
           maxRepairCycles,
+          preparation: commands.install === undefined ? "none" : "install",
           retainWorkspaceOnSuccess,
           timeoutMs,
           outputLimitBytes,
-          environmentAllowlist: cancellationTest ? ["JARVIS_FAKE_SCENARIO"] : [],
+          environmentAllowlist:
+            runtimeRef === "runtime/codex-default"
+              ? ["PATH"]
+              : fakeScenario === false
+                ? []
+                : ["JARVIS_FAKE_SCENARIO"],
         },
       },
       {
@@ -1631,7 +1800,19 @@ async function activateProject(
         main: { path: realpathSync(fixture.root), bookmarkRef: "bookmark/development-tracer" },
       },
       slots: {
-        agentRuntime: { kind: "runtime", ref: runtimeRef },
+        agentRuntime: {
+          kind: "runtime",
+          ref: runtimeRef,
+          ...(runtimeRef === "runtime/codex-default"
+            ? { environment: { PATH: process.env["PATH"] ?? "/usr/bin" } }
+            : fakeScenario !== false
+              ? {
+                  environment: {
+                    JARVIS_FAKE_SCENARIO: fakeScenario,
+                  },
+                }
+              : {}),
+        },
         tickets: { kind: "connection", ref: "connection/github-work-items" },
       },
     }),

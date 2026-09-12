@@ -29,18 +29,22 @@ describe("buildAgentRunRequest", () => {
           repositoryInstructions: `Repository instructions; ${secret}`,
           ticketContent: `Ticket content; ${secret}`,
         },
-        environment: {
-          NODE_ENV: "test",
-          ENGINE_ONLY: "must-not-cross",
-          JARVIS_FAKE_SCENARIO: "inspect",
-          JARVIS_SECRET: secret,
-        },
         environmentAllowlist: ["NODE_ENV", "JARVIS_FAKE_SCENARIO", "JARVIS_SECRET"],
         projectBindings: {
           projectId: "project-a",
+          runtimeSlot: "runtime",
           slots: {
             tickets: { kind: "mcp", ref: "mcp/project-a-tickets" },
-            runtime: { kind: "runtime", ref: "runtime/fake-test" },
+            runtime: {
+              kind: "runtime",
+              ref: "runtime/fake-test",
+              environment: {
+                NODE_ENV: "test",
+                ENGINE_ONLY: "must-not-cross",
+                JARVIS_FAKE_SCENARIO: "inspect",
+                JARVIS_SECRET: secret,
+              },
+            },
           },
         },
         timeoutMs: 1_234,
@@ -99,7 +103,6 @@ describe("buildAgentRunRequest", () => {
         repositoryInstructions: "instructions",
         ticketContent: "ticket",
       },
-      environment: {},
       environmentAllowlist: [],
       timeoutMs: 1_000,
       outputLimitBytes: 1_024,
@@ -125,6 +128,45 @@ describe("buildAgentRunRequest", () => {
     expect(projectA.allowedMcpBindings).toEqual(["mcp/project-a"]);
     expect(projectA.allowedMcpBindings).not.toContain("mcp/project-b");
     expect(projectB.allowedMcpBindings).toEqual(["mcp/project-b"]);
+  });
+
+  it("uses only the selected runtime's local environment profile", () => {
+    const request = buildAgentRunRequest({
+      projectId: "project-a",
+      executionId: "execution-a",
+      workingDirectory: "/tmp/workspace",
+      objective: "Implement the request",
+      prompt: {
+        moduleContract: "contract",
+        projectConfiguration: "configuration",
+        repositoryInstructions: "instructions",
+        ticketContent: "ticket",
+      },
+      environmentAllowlist: ["PATH", "PROJECT_A", "PROJECT_B"],
+      projectBindings: {
+        projectId: "project-a",
+        runtimeSlot: "runtime-a",
+        slots: {
+          "runtime-a": {
+            kind: "runtime",
+            ref: "runtime/codex-default",
+            environment: { PATH: "/opt/homebrew/bin:/usr/bin", PROJECT_A: "allowed" },
+          },
+          "runtime-b": {
+            kind: "runtime",
+            ref: "runtime/other",
+            environment: { PATH: "/private/bin", PROJECT_B: "must-not-cross" },
+          },
+        },
+      },
+      timeoutMs: 1_000,
+      outputLimitBytes: 1_024,
+    });
+
+    expect(request.environment).toEqual({
+      PATH: "/opt/homebrew/bin:/usr/bin",
+      PROJECT_A: "allowed",
+    });
   });
 });
 

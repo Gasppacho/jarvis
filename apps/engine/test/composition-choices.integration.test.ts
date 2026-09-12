@@ -363,6 +363,7 @@ describe("project composition choices", () => {
     development["configuration"] = {
       validationOrder: ["typecheck", "test", "build"],
       maxRepairCycles: 3,
+      preparation: "none",
       retainWorkspaceOnSuccess: true,
       timeoutMs: 300000,
       outputLimitBytes: 1048576,

@@ -18,6 +18,11 @@ _Avoid_: Pull Request; that resource is created later by an SCM provider.
 ### Validation Plan
 The ordered project commands that determine whether the change is acceptable.
 
+### Worktree Preparation
+The confirmed `install` command, or explicit `none`, run once after workspace
+allocation and before the first agent start. Its durable checkpoints prevent a
+recovered execution from running install twice.
+
 ### Repair Cycle
 A bounded additional Agent Run using validation failure context.
 
