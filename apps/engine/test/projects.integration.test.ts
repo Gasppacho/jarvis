@@ -2025,10 +2025,10 @@ capabilities:
         required: false,
         items: [],
         readiness: {
-          status: "absent",
+          status: "unchecked",
           checkedAt: null,
           detail:
-            "Aucun runtime Codex découvert. Installez ou activez Codex avec les instructions locales, puis relancez la découverte.",
+            "Choisissez d’abord un workflow utilisant un agent, puis autorisez Codex pour ce projet.",
         },
       },
     });
@@ -2064,10 +2064,10 @@ capabilities:
         required: true,
         items: [],
         readiness: {
-          status: "absent",
+          status: "unchecked",
           checkedAt: null,
           detail:
-            "Aucun runtime Codex découvert. Installez ou activez Codex avec les instructions locales, puis relancez la découverte.",
+            "Recherchez Codex sur ce Mac, puis autorisez-le pour ce projet.",
         },
       },
       items: [

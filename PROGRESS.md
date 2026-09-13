@@ -495,3 +495,26 @@ README/UX/workflow/local/checklist distinguent recommandé ready-for-agent,
 historique agent:ready, préflight et validations exécutées, preuves Harness/natif/réel.
 Relecture Spec finale0 ; Standards initiale0 avec risque contraste identifié puis
 corrigé nativement ; Standards finale0. Aucun projet de fixture activé.
+
+
+## L10 — gate candidat et préparation du test réel
+
+Candidat537f86d, arbre propre : `rtk pnpm verify` lancé et arrêté sur une attente
+historique de projects.integration.test.ts:2021.366 unitaires verts ;388/389
+intégrations. Le test importait un projet sans workflow et exigeait Codex absent ;
+L06 exige correctement unchecked/choisir workflow. Attente complète mise à jour,
+sans retrait des assertions de bindings, grant ni validation de schéma.
+Log : `/tmp/jarvis-ux-reliability-evidence/l10/verify-candidate.log`.
+
+Audit préalable : #204 ouverte, needs-triage seulement, aucune issue ready-for-agent.
+Projet réel jarvis toujours paused et scope exact#204 (copie en lecture des fichiers
+SQLite pour inspection, aucune écriture dans les données réelles). Son worktree
+retient seulement le fichier non suivi SELF_HOSTING_SMOKE.md. Préparation du corps
+d’une nouvelle issue bornée PAUSE_AND_CANCEL.md sous l10/issue-body.md, pas encore publiée.
+
+Le même test comporte aussi l’état après choix du workflow mais avant toute
+découverte : attente historique absent remplacée par unchecked/Recherchez Codex,
+conformément au cas items vides L06. La vraie absence reste portée par un descripteur
+découvert indisponible. Aucune assertion n’est retirée.
+
+Test ciblé1/1 réussi ; relectures Spec/Standards finales0. Nouveau gate complet à lancer sur le commit corrigé.
