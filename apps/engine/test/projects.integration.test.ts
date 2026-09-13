@@ -2673,7 +2673,11 @@ capabilities:
       });
       expect(saved.status).toBe(409);
       expect(
-        (await (await engine.call(`/v1/projects/${projectId}`)).json()).portableConfig,
+        (
+          (await (await engine.call(`/v1/projects/${projectId}`)).json()) as {
+            portableConfig: Record<string, unknown>;
+          }
+        ).portableConfig,
       ).toEqual(beforeConfig.portableConfig);
       expect((await graph(projectId)).nodes).toEqual(firstGraph.nodes);
 
