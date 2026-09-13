@@ -31,10 +31,12 @@ public final class EngineSessionModel {
     }
 
     private let supervisor: EngineSupervisor
+    private let startupError: EngineStartError?
     private var session: EngineSession?
 
-    public init(supervisor: EngineSupervisor) {
+    public init(supervisor: EngineSupervisor, startupError: EngineStartError? = nil) {
         self.supervisor = supervisor
+        self.startupError = startupError
     }
 
     /// Reacts to an engine that dies on its own. `refresh()` alone was never
@@ -57,17 +59,38 @@ public final class EngineSessionModel {
     }
 
     /// Convenience for the app: the engine that ships inside this bundle.
-    public static func bundled() -> EngineSessionModel {
+    public static func bundled(dataRoot: URL? = nil, startupError: EngineStartError? = nil) -> EngineSessionModel {
         // Keyed on where the binary runs, not on how it was compiled. The repo
         // builds dist/Jarvis.app in debug by default, so `#if DEBUG` left the
         // #filePath-derived fallback live inside the only app artifact it
         // produces — which would silently run the build machine's dist/engine,
         // or name its home directory in the failure UI.
         let resources = EngineResources.bundled() ?? EngineResources.developmentFallback()
-        return EngineSessionModel(supervisor: EngineSupervisor(resources: resources))
+        return EngineSessionModel(supervisor: EngineSupervisor(resources: resources, dataRoot: dataRoot), startupError: startupError)
+    }
+
+    /// An explicit per-launch override; never persist it or infer it from HOME.
+    public nonisolated static func requestedDataRoot(arguments: [String]) -> Result<URL?, EngineStartError> {
+        let flags = arguments.indices.filter { arguments[$0].hasPrefix("--data-root") }
+        guard !flags.isEmpty else { return .success(nil) }
+        guard flags.count == 1, let index = flags.first, arguments[index] == "--data-root",
+            index + 1 < arguments.count, arguments[index + 1].hasPrefix("/"),
+            !arguments[index + 1].contains("\0")
+        else {
+            return .failure(EngineStartError(
+                headline: "Dossier de données invalide",
+                cause: "L’option --data-root exige un seul chemin absolu.",
+                impact: "Aucune donnée Jarvis n’a été ouverte.",
+                nextAction: "Corrigez l’option de lancement puis relancez Jarvis."))
+        }
+        return .success(URL(fileURLWithPath: arguments[index + 1]).standardizedFileURL)
     }
 
     public func start() async {
+        if let startupError {
+            state = .failed(startupError)
+            return
+        }
         await observeEngineExit()
         do {
             let session = try await supervisor.start()

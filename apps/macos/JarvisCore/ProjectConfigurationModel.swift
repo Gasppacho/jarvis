@@ -108,7 +108,7 @@ public final class ProjectConfigurationModel {
     public func state(for projectId: String) -> ProjectConfigurationState {
         if let state = states[projectId] { return state }
         var state = ProjectConfigurationState()
-        state.trialWorkItemRef = UserDefaults.standard.string(forKey: "dev.jarvis.project-trial.v1.\(projectId)")
+        state.trialWorkItemRef = UserDefaults.standard.string(forKey: "\(projects.preferenceNamespace)dev.jarvis.project-trial.v1.\(projectId)")
         return state
     }
 
@@ -642,7 +642,7 @@ public final class ProjectConfigurationModel {
             // The Engine returned a rule edit only. Saving it withdraws the old
             // active composition; the new scope still needs explicit activation.
             guard await saveDraft(projectId: projectId, writeToRepository: false) != nil else { return }
-            UserDefaults.standard.set(workItemRef, forKey: "dev.jarvis.project-trial.v1.\(projectId)")
+            UserDefaults.standard.set(workItemRef, forKey: "\(projects.preferenceNamespace)dev.jarvis.project-trial.v1.\(projectId)")
             update(projectId) {
                 $0.trialWorkItemRef = workItemRef
                 $0.pendingScopeDescription = workItemRef.map { "Essai limité à \($0)" } ?? "Surveillance de toutes les issues éligibles — relancez le préflight, puis activez explicitement."

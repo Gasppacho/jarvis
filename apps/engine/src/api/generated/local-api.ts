@@ -832,6 +832,8 @@ export interface components {
                     accessible: boolean;
                     /** @description Opaque reference to bookmark bytes owned by the macOS Shell. */
                     bookmarkRef: string | null;
+                    /** @description Current remote selected by the saved project configuration, with credentials and query metadata removed. Null when unavailable or ambiguous; no origin fallback. */
+                    remoteUrl?: string | null;
                 };
             };
         };
@@ -1791,6 +1793,8 @@ export interface operations {
             content: {
                 "application/json": {
                     repositoryPath: string;
+                    /** @description Optional display name, limited to 120 characters before trimming. Leading and trailing whitespace is removed; a blank result is rejected. Applied atomically to the imported configuration, preserving other discovered or committed values. */
+                    name?: string;
                     portableConfig?: components["schemas"]["PortableProjectConfiguration"];
                 };
             };

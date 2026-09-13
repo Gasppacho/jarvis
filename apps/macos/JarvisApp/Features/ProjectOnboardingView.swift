@@ -3,28 +3,31 @@ import SwiftUI
 
 /// One project navigation; the four setup steps stay in its content area.
 struct ProjectOnboardingView: View {
+    let projects: ProjectsModel
     let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
     let connections: ConnectionsModel
     let project: Project
     let openAdvanced: () -> Void
 
-    private let navigation = ProjectOnboardingNavigationStore()
+    private var navigation: ProjectOnboardingNavigationStore { projects.onboardingNavigation }
     @State private var step: ProjectOnboardingStep
 
     init(
+        projects: ProjectsModel,
         projectConfiguration: ProjectConfigurationModel,
         moduleCatalog: ModuleCatalogModel,
         connections: ConnectionsModel,
         project: Project,
         openAdvanced: @escaping () -> Void
     ) {
+        self.projects = projects
         self.projectConfiguration = projectConfiguration
         self.moduleCatalog = moduleCatalog
         self.connections = connections
         self.project = project
         self.openAdvanced = openAdvanced
-        _step = State(initialValue: navigation.currentStep(for: project.id))
+        _step = State(initialValue: projects.onboardingNavigation.currentStep(for: project.id))
     }
 
     var body: some View {
@@ -35,7 +38,11 @@ struct ProjectOnboardingView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(state.draft?.name ?? project.name).font(.title.bold())
-                        if let path = state.detail?.bindings.first?.path {
+                        if let remote = state.detail?.bindings.first?.remoteUrl {
+                            Label(remote, systemImage: "externaldrive.connected.to.line.below")
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        } else if let path = state.detail?.bindings.first?.path {
                             Label("Dépôt local : \(URL(fileURLWithPath: path).lastPathComponent)", systemImage: "folder")
                                 .foregroundStyle(.secondary)
                         }
@@ -156,15 +163,7 @@ struct ProjectOnboardingView: View {
     private var activeStep: some View {
         switch step {
         case .repository:
-            GroupBox("Dépôt") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Le dépôt est importé. Le workflow démarre uniquement après votre vérification et votre activation.")
-                    Button("Corriger le dépôt") { openAdvanced() }
-                    Text("L’accès au dépôt reste local à ce Mac.")
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            repositoryStep
         case .workflow:
             GroupBox("Workflow") {
                 VStack(alignment: .leading, spacing: 10) {
@@ -178,6 +177,47 @@ struct ProjectOnboardingView: View {
             runtimeCard
         case .review:
             review
+        }
+    }
+
+    private var repositoryStep: some View {
+        let state = projectConfiguration.state(for: project.id)
+        return GroupBox("Dépôt") {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Nom du projet").font(.callout.weight(.medium))
+                TextField("Nom du projet", text: Binding(
+                    get: { projectConfiguration.state(for: project.id).draft?.name ?? project.name },
+                    set: { name in projectConfiguration.editDraft(projectId: project.id) { $0.name = name } }))
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(state.draft == nil)
+                    .accessibilityIdentifier("project.name")
+                ForEach(state.detail?.bindings ?? []) { binding in
+                    if let remote = binding.remoteUrl {
+                        LabeledContent("Dépôt distant", value: remote).textSelection(.enabled)
+                    } else {
+                        Label("Dépôt distant non identifié : vérifiez son accès local.", systemImage: "exclamationmark.triangle")
+                    }
+                    if let repository = state.draft?.repositories.first(where: { $0.id == binding.repositoryId }) {
+                        LabeledContent("Branche de base", value: repository.defaultBranch)
+                    }
+                    Label(binding.accessible ? "Dossier accessible" : "Accès au dossier requis",
+                          systemImage: binding.accessible ? "folder.badge.checkmark" : "folder.badge.questionmark")
+                    Button("Choisir à nouveau le dossier") {
+                        presentRepositoryPicker(binding: binding, project: project, projects: projects,
+                                                configuration: projectConfiguration, packages: moduleCatalog.packages)
+                    }
+                    .accessibilityIdentifier("project.repository-access")
+                    DisclosureGroup("Détails du dossier") {
+                        Text(binding.path).textSelection(.enabled)
+                    }
+                }
+                if let message = projects.repositoryGrantMessages[project.id] {
+                    Label(message, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                }
+                Text("Le workflow démarre uniquement après votre vérification et votre activation. L’accès au dossier reste local à ce Mac.")
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

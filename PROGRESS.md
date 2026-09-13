@@ -12,7 +12,7 @@ un échec ultérieur du commit (7/7 tests de projection).
 L02 implémentée, relue et gate complet réussi au commit `5906e64` :
 366 unitaires, 385 intégration et 187 Swift ; app empaquetée en 3 min 53 s.
 Les deux échecs Development et le `listen EPERM` ont été reproduits séparément.
-L03 implémentée et relue ; L04–L10 restent à exécuter dans l’ordre. Aucun push, test GitHub ou merge effectué.
+L03 implémentée et relue, commit `ceb3759`. L04 implémentée, relue et vérifiée nativement ; L05–L10 restent à exécuter dans l’ordre. Aucun push, test GitHub ou merge effectué.
 Le projet réel et le travail retenu de #204 restent intacts.
 
 La session macOS est verrouillée (`IOConsoleLocked = Yes`, confirmé par `ioreg`).
@@ -37,8 +37,8 @@ Les captures natives tentées en L01 sont inutilisables, donc ne prouvent aucun 
 | --- | --- | --- |
 | L01 | Implémentée, tests et double relecture ; visuel en attente | `989b9b7` |
 | L02 | Implémentée, relue ; gate complet réussi, vrai run encore requis | `cb35979` → `5906e64` |
-| L03 | Implémentée, relue ; tests ciblés réussis, visuel en attente | Voir commit L03 |
-| L04 | À faire — import et navigation | — |
+| L03 | Implémentée, relue ; tests ciblés réussis, visuel en attente | `ceb3759` |
+| L04 | En cours — import, doublons, reprise et isolation native | — |
 | L05 | À faire — workflow guidé | — |
 | L06 | À faire — accès et agent | — |
 | L07 | À faire — vérification et démarrage | — |
@@ -227,3 +227,67 @@ Contrôle final L03 : **12/12 Swift** (onboarding, preflight, vraie sauvegarde
 et configuration refusée). Commande : `rtk proxy swift test --package-path apps/macos --filter 'ProjectOnboardingPresentationTests|ProjectPreflightTests|ProjectConfigurationTests/testReviewUsesEngineReadinessAndKeepsIncompleteDraftSaveable|ProjectConfigurationTests/testInvalidBundledPackageConfigurationIsActionableAndDoesNotReplaceTheDraft'`.
 Prettier réussi ; relectures Standards et Spec sans constat restant.
 Les captures aux deux tailles et apparences restent à produire, session verrouillée.
+
+## L04 — import et navigation
+
+Rouges : nom saisi ignoré à l’import (HTTP 201 au lieu de refuser un nom invalide),
+nom d’une configuration existante remplacé par la simple détection du dossier,
+absence d’ouverture explicite d’un doublon. POST accepte désormais un nom
+optionnel, validé puis enregistré atomiquement sans autre changement de configuration.
+L’inspection reprend le nom et les branches de la configuration existante.
+Les deux scénarios Engine passent ; Swift confirme nom et doublon sur vraie API.
+
+L’ancien test UI attendait une erreur pour un doublon. Ses assertions de conflit
+`project.already-imported` et de message restent contrôlées sur un vrai POST API ;
+la nouvelle surface propose explicitement le projet existant avant toute écriture.
+La sélection après import vise le résultat retourné, et les réglages avancés
+possedent un retour vers le guide. Le sélecteur de réautorisation est partagé.
+
+Un point de lancement isolé est en préparation : l’application supprimait
+JARVIS_DATA_ROOT hérité et aurait ouvert les données réelles. Aucun essai natif
+avec ce mécanisme ignoré n’a été lancé.
+
+L04 : 15/15 Swift import/lancement isolé, 2/2 intégration import ciblés,
+typecheck réussi. La session macOS a été observée déverrouillée (`ioreg`,
+13 septembre vers 13:27). Préparer le build puis exécuter les preuves natives.
+Lancement `--data-root` : Engine et bookmarks isolés ; les clés de navigation et
+de portée d’essai sont également préfixées par cette racine. C’est nécessaire
+car le dépôt Jarvis garde le même identifiant de projet dans chaque racine.
+Aucune dépendance ajoutée ; namespace de clés natif, sans nouveau stockage.
+
+
+Relecture L04 close sans constat restant après correction de quatre causes :
+nom trop long conservé et corrigible inline ; destination guide explicite ;
+publication de l’étape Workflow avant celle du nouveau projet ; remote du guide
+résolu depuis la configuration Engine sauvegardée. Le dernier projet et son
+étape sont conservés dans le namespace de la racine isolée. Un refresh tardif
+ne réécrit plus une sélection plus récente.
+
+Preuves finales de code L04 : 41/41 Swift sur import/configuration/navigation/
+preflight/lancement ; 144 scénarios Engine exécutés, deux attentes de contrat
+complétées pour le nouveau champ remoteUrl, puis les trois cas concernés verts.
+Typecheck, génération et contracts:check réussis. `rtk pnpm build:app` réussi.
+Le champ additif `bindingStatus[].remoteUrl` évite de relire le choix dans un YAML
+modifié après import ; une régression API couvre ce changement et la redaction.
+
+Essais natifs sur build de travail relu (HEAD ceb3759 + delta L04), manifeste
+`/tmp/jarvis-ux-reliability-evidence/l04/build-manifest-reviewed-wip.json`.
+Capture 04 reproduit l’ancien problème de destination ; capture 08 confirme la
+correction. Capture 07 : saisie clavier de 121 caractères, erreur inline et
+création désactivée ; correction du nom puis import du second dépôt par le vrai
+sélecteur. Capture 09 : édition non sauvegardée conservée après Catalogue puis
+retour au projet. Capture 10 : mode avancé ; retour actionné par AX.
+Captures 11–13 : guide à 1100×800 sombre/clair, puis 1512×949 clair ; capture 08
+couvre 1512×949 sombre. Apparence macOS initiale sombre rétablie après l’essai.
+Les contrôles de workflow restent la tranche L05, ces images ne les certifient pas.
+L09 : contraste du badge Brouillon sur la ligne sélectionnée claire à améliorer.
+
+Captures 14–16 : doublon explicitement proposé, ouverture du bon projet,
+sélection de Vérification, fermeture Cmd+Q puis relancement. Le même projet
+(deuxième dans la liste) et la même étape sont restaurés ; le nom sauvegardé
+de l’autre brouillon reste visible. La racine réelle n’a pas été activée.
+Racine de preuve : `/tmp/jarvis-ux-reliability-evidence/l04/data`.
+Commande de reprise native :
+`rtk proxy dist/Jarvis.app/Contents/MacOS/Jarvis --data-root /tmp/jarvis-ux-reliability-evidence/l04/data`.
+Deux dépôts factices ont uniquement servi à l’import et à la navigation ;
+aucune issue, exécution Development ou PR n’a été produite par cet essai.

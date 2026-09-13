@@ -53,10 +53,13 @@ export function slugify(name: string): string {
   return trimmed;
 }
 
-export function discoverRepository(root: unknown): RepositoryDiscovery {
+export function discoverRepository(
+  root: unknown,
+  remoteName?: string,
+): RepositoryDiscovery & { readonly suggested: SuggestedProjectConfig } {
   const canonical = requireRepositoryDirectory(root);
   const git = readGitDirectory(canonical);
-  const remote = git === undefined ? undefined : readRemote(git.commonDir);
+  const remote = git === undefined ? undefined : readRemote(git.commonDir, remoteName);
   const defaultBranch = git === undefined ? undefined : readHead(git.gitDir);
 
   const manifest = readPackageManifest(canonical);
@@ -138,8 +141,11 @@ export interface RepositoryRemote {
 }
 
 /** Remotes are parsed from the common directory's `config`, origin preferred. */
-function readRemote(commonDir: string): RepositoryRemote | undefined {
-  return selectRemote(readRemotes(commonDir));
+function readRemote(commonDir: string, remoteName?: string): RepositoryRemote | undefined {
+  const remotes = readRemotes(commonDir);
+  return remoteName === undefined
+    ? selectRemote(remotes)
+    : remotes.find((remote) => remote.name === remoteName);
 }
 
 /** Reads every configured remote without choosing one on the caller's behalf. */
@@ -190,7 +196,7 @@ function providerFor(remoteUrl: string): string | null {
   return providerForHost(remoteLocation(remoteUrl).host);
 }
 
-function publicRemoteUrl(remoteUrl: string): string {
+export function publicRemoteUrl(remoteUrl: string): string {
   const value = remoteUrl.trim();
   try {
     const parsed = new URL(value);

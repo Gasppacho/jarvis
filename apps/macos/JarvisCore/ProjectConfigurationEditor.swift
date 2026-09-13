@@ -271,6 +271,7 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
 
     public var commands: [String: String]
     private let base: Components.Schemas.PortableProjectConfiguration
+    public var repositories: [Components.Schemas.ProjectRepositoryConfiguration] { base.repositories }
 
     public init(
         configuration: Components.Schemas.PortableProjectConfiguration,

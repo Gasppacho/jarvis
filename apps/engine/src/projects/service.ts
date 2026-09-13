@@ -45,6 +45,8 @@ import type {
 import { EngineError } from "../errors.js";
 import {
   discoverRepository,
+  readRepositoryRemotes,
+  publicRemoteUrl,
   RepositoryPathError,
   requireRepositoryDirectory,
   slugify,
@@ -104,7 +106,19 @@ const INITIAL_STATUS = "draft" as const;
 export class RepositoryDiscoveryService implements RepositoryDiscoveryPort<RepositoryDiscovery> {
   discoverRepository(root: unknown): RepositoryDiscovery {
     try {
-      return discoverRepository(root);
+      const path = requireRepositoryDirectory(root);
+      const committed = readCommittedConfig(path);
+      const discovery = discoverRepository(path, committed?.repositories[0]?.remote);
+      return committed === undefined
+        ? discovery
+        : {
+            ...discovery,
+            suggested: {
+              ...discovery.suggested,
+              metadata: committed.metadata,
+              repositories: committed.repositories,
+            },
+          };
     } catch (error) {
       throw repositoryPathError(error);
     }
@@ -164,7 +178,20 @@ export class ProjectService implements ProjectRegistry<
       );
     }
     const resolved = resolvePortableConfig(repositoryPath, request.portableConfig, discovery);
-    const portableConfig = resolved.configuration;
+    let portableConfig = resolved.configuration;
+    if (request.name !== undefined) {
+      if (
+        typeof request.name !== "string" ||
+        request.name.trim() === "" ||
+        [...request.name].length > 120
+      ) {
+        throw configInvalid("Le nom du projet doit contenir entre 1 et 120 caractères.");
+      }
+      portableConfig = {
+        ...portableConfig,
+        metadata: { ...portableConfig.metadata, name: request.name.trim() },
+      };
+    }
     if (!resolved.isDiscoveredDraft) {
       requirePortableProjectConfiguration(portableConfig, this.modules);
     }
@@ -1962,15 +1989,25 @@ function toDetail(
   repositoryAccessibility: RepositoryAccessibilityPort,
 ): ProjectDetail {
   const accessible = repositoryAccessibility.isAccessibleDirectory(row.repositoryPath);
+  let remotes: ReturnType<typeof readRepositoryRemotes> = [];
+  try {
+    if (accessible) remotes = readRepositoryRemotes(row.repositoryPath);
+  } catch {
+    // A removed or inaccessible checkout has no current remote to display.
+  }
   const bindingStatus: BindingStatus = Object.fromEntries(
-    row.portableConfig.repositories.map((repository) => [
-      repository.id,
-      {
-        path: row.repositoryPath,
-        accessible,
-        bookmarkRef: row.bookmarkRef,
-      },
-    ]),
+    row.portableConfig.repositories.map((repository) => {
+      const url = remotes.find((remote) => remote.name === repository.remote)?.url;
+      return [
+        repository.id,
+        {
+          path: row.repositoryPath,
+          accessible,
+          bookmarkRef: row.bookmarkRef,
+          remoteUrl: url === undefined ? null : publicRemoteUrl(url),
+        },
+      ];
+    }),
   );
   return { ...toSummary(row), portableConfig: row.portableConfig, bindingStatus };
 }

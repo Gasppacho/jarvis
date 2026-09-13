@@ -102,3 +102,18 @@ Ne pas mocker SQLite, Git ou Eventing dans le test principal.
 - architecture rules ;
 - license/security scan ;
 - packaging smoke sur branche release.
+
+## Native checks with isolated data
+
+Build with `rtk pnpm build:app`, then launch a new app instance with
+`rtk proxy open -n dist/Jarvis.app --args --data-root /tmp/jarvis-native-check-unique`.
+Use a fresh absolute path for each independent run. The app passes it explicitly
+to its Engine Supervisor and stores repository bookmarks beneath that root.
+Navigation and trial preferences use a namespace derived from the same path,
+so an imported project with the same id cannot inherit the real project's scope.
+The default launch keeps the existing data and preference keys. A malformed
+`--data-root` stops before Engine startup; inherited `JARVIS_DATA_ROOT` remains
+ignored. Do not infer isolation from that environment variable.
+
+Identify the new process before interacting with its native window. Captures of
+a locked desktop or a fixture render do not establish successful app interaction.

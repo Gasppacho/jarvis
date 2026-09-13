@@ -111,9 +111,11 @@ public struct ProjectOnboardingPresentation: Sendable, Equatable {
 /// newer app can safely share this local store with an older one.
 public final class ProjectOnboardingNavigationStore {
     private let defaults: UserDefaults
+    private let namespace: String
 
-    public init(defaults: UserDefaults = .standard) {
+    public init(defaults: UserDefaults = .standard, namespace: String = "") {
         self.defaults = defaults
+        self.namespace = namespace
     }
 
     public func currentStep(for projectID: String) -> ProjectOnboardingStep {
@@ -127,7 +129,12 @@ public final class ProjectOnboardingNavigationStore {
         defaults.set(step.rawValue, forKey: key(for: projectID))
     }
 
+    public var lastProjectID: String? {
+        get { defaults.string(forKey: "\(namespace)dev.jarvis.last-project.v1") }
+        set { defaults.set(newValue, forKey: "\(namespace)dev.jarvis.last-project.v1") }
+    }
+
     public func key(for projectID: String) -> String {
-        "dev.jarvis.project-onboarding.v1.\(projectID)"
+        "\(namespace)dev.jarvis.project-onboarding.v1.\(projectID)"
     }
 }

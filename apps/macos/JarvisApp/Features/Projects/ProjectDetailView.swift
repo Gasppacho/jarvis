@@ -1273,7 +1273,8 @@ public struct ProjectDetailView: View {
                     $0.repositoryId == repositoryId
                     })
                 else { return }
-                chooseRepository(for: binding)
+                presentRepositoryPicker(binding: binding, project: project, projects: projects,
+                                        configuration: projectConfiguration, packages: moduleCatalog.packages)
             }
         case .confirmation:
             isDeleteConfirmationPresented = true
@@ -1477,27 +1478,6 @@ public struct ProjectDetailView: View {
                     .asynchronous(
                         .setLocalBinding(slot, selection.isEmpty ? nil : selection)))
             })
-    }
-
-    private func chooseRepository(for binding: ProjectBinding) {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Restore Access"
-        panel.message = "Choose the repository for \(project.name)."
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        Task {
-            if await projects.reauthorize(
-                projectId: project.id,
-                repositoryId: binding.repositoryId,
-                replacing: binding.bookmarkRef,
-                with: url
-            ) {
-                await projectConfiguration.refreshAfterRepositoryBindingChange(
-                    projectId: project.id, packages: moduleCatalog.packages)
-            }
-        }
     }
 
     private func row(_ label: String, _ value: String) -> some View {

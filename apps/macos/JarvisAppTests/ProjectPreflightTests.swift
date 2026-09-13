@@ -117,6 +117,9 @@ final class ProjectPreflightTests: XCTestCase {
         let reopened = model(api)
         await reopened.preflight(projectId: "project")
         XCTAssertTrue(reopened.state(for: "project").canRestoreTrial)
+        let isolated = model(api, preferenceNamespace: "isolated:fixture:")
+        await isolated.preflight(projectId: "project")
+        XCTAssertFalse(isolated.state(for: "project").canRestoreTrial, "an isolated data root must not inherit the real project's trial")
         UserDefaults.standard.set("github://owner/repo/issues/2", forKey: key)
         let changed = model(api)
         await changed.preflight(projectId: "project")
@@ -137,9 +140,9 @@ final class ProjectPreflightTests: XCTestCase {
         XCTAssertEqual(issueRequest["workItemRef"] as? String, "github://owner/repo/issues/1")
     }
 
-    @MainActor private func model(_ api: PreflightStub) -> ProjectConfigurationModel {
+    @MainActor private func model(_ api: PreflightStub, preferenceNamespace: String = "") -> ProjectConfigurationModel {
         let session = EngineSessionModel(supervisor: EngineSupervisor(resources: .developmentBuild()))
-        return ProjectConfigurationModel(session: session, projects: ProjectsModel(session: session), preflightAPI: api)
+        return ProjectConfigurationModel(session: session, projects: ProjectsModel(session: session, preferenceNamespace: preferenceNamespace), preflightAPI: api)
     }
 
     private func fixture(valid: Bool = true, blocked: Bool = false, empty: Bool = false) throws -> Components.Schemas.ProjectPreflightV1 {

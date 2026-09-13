@@ -37,7 +37,7 @@ struct RootView: View {
                 set: {
                     guard !$0 else { return }
                     switch projects.importState {
-                    case .inspecting, .confirm, .failed:
+                    case .inspecting, .confirm, .existing, .failed:
                         projects.cancelImport()
                     case .idle, .saving:
                         break
@@ -45,7 +45,14 @@ struct RootView: View {
                 }
             )
         ) {
-            ProjectImportSheet(projects: projects, chooseAnotherFolder: presentFolderPicker)
+            ProjectImportSheet(projects: projects, chooseAnotherFolder: presentFolderPicker) { project, newlyImported in
+                selection = .project(project.id)
+                Task {
+                    if !newlyImported {
+                        await projects.refresh()
+                    }
+                }
+            }
         }
         .onChange(of: projects.importState) { _, newState in
             if case .idle = newState { pendingImport = false }
@@ -57,15 +64,32 @@ struct RootView: View {
                     selectedProjectID: projectId,
                     availableProjectIDs: projectIds)
                 if reconciled == nil { selection = nil }
-            } else if let firstProject = projects.projects.first {
-                selection = .project(firstProject.id)
+            } else if selection == nil, let firstProject = projects.projects.first {
+                let previous = projects.onboardingNavigation.lastProjectID
+                selection = .project(previous.flatMap { projectIds.contains($0) ? $0 : nil } ?? firstProject.id)
             }
+        }
+        .onChange(of: selectedProjectID) { _, id in
+            if let id { projects.onboardingNavigation.lastProjectID = id }
         }
     }
 
     private var sidebar: some View {
-        List(selection: $selection) {
+        List(selection: Binding(
+            get: {
+                switch selection {
+                case .projectAdvanced(let id), .projectGuide(let id): return .project(id)
+                default: return selection
+                }
+            },
+            set: { selection = $0 }
+        )) {
             Section("Projets") {
+                Button(action: presentFolderPicker) {
+                    Label("Ajouter un projet", systemImage: "plus.circle")
+                }
+                .disabled(projects.isRefreshing || !importStateAllowsNewPicker)
+                .accessibilityIdentifier("project.add")
                 ForEach(projects.projects) { project in
                     ProjectRow(project: project).tag(SidebarSelection.project(project.id))
                 }
@@ -127,10 +151,11 @@ struct RootView: View {
             ModuleCatalogView(moduleCatalog: moduleCatalog)
         case .connections:
             ConnectionsView(model: connections)
-        case .project(let projectId):
+        case .project(let projectId), .projectGuide(let projectId):
             if let project = projects.projects.first(where: { $0.id == projectId }) {
-                if project.status == .draft {
+                if project.status == .draft || selection == .projectGuide(project.id) {
                     ProjectOnboardingView(
+                        projects: projects,
                         projectConfiguration: projectConfiguration,
                         moduleCatalog: moduleCatalog,
                         connections: connections,
@@ -156,16 +181,27 @@ struct RootView: View {
             }
         case .projectAdvanced(let projectId):
             if let project = projects.projects.first(where: { $0.id == projectId }) {
-                ProjectDetailView(
-                    projects: projects,
-                    projectConfiguration: projectConfiguration,
-                    moduleCatalog: moduleCatalog,
-                    overview: overview,
-                    timeline: timeline,
-                    executionDetail: executionDetail,
-                    projectGraph: projectGraph,
-                    deadLetters: deadLetters,
-                    project: project)
+                VStack(alignment: .leading, spacing: 0) {
+                    Button {
+                        selection = .projectGuide(project.id)
+                    } label: {
+                        Label("Revenir à la configuration guidée", systemImage: "arrow.left")
+                    }
+                    .padding(16)
+                    .accessibilityIdentifier("project.return-to-guide")
+                    Divider()
+                    ProjectDetailView(
+                        projects: projects,
+                        projectConfiguration: projectConfiguration,
+                        moduleCatalog: moduleCatalog,
+                        overview: overview,
+                        timeline: timeline,
+                        executionDetail: executionDetail,
+                        projectGraph: projectGraph,
+                        deadLetters: deadLetters,
+                        project: project)
+                }
+                .id(project.id)
             } else {
                 ContentUnavailableView(
                     "Projet indisponible", systemImage: "folder.badge.questionmark",
@@ -184,7 +220,7 @@ struct RootView: View {
 
     private var selectedProjectID: String? {
         switch selection {
-        case .project(let projectID), .projectAdvanced(let projectID): projectID
+        case .project(let projectID), .projectGuide(let projectID), .projectAdvanced(let projectID): projectID
         case .moduleCatalog, .connections, nil: nil
         }
     }
@@ -207,6 +243,7 @@ private enum SidebarSelection: Hashable {
     case moduleCatalog
     case connections
     case project(String)
+    case projectGuide(String)
     case projectAdvanced(String)
 }
 

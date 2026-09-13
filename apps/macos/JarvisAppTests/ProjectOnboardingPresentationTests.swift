@@ -64,6 +64,8 @@ final class ProjectOnboardingPresentationTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
 
         let store = ProjectOnboardingNavigationStore(defaults: defaults)
+        store.lastProjectID = "draft-1"
+        XCTAssertEqual(ProjectOnboardingNavigationStore(defaults: defaults).lastProjectID, "draft-1")
         store.set(.review, for: "draft-1")
         XCTAssertEqual(
             ProjectOnboardingNavigationStore(defaults: defaults).currentStep(for: "draft-1"),
@@ -72,5 +74,12 @@ final class ProjectOnboardingPresentationTests: XCTestCase {
         defaults.set("future-step", forKey: store.key(for: "draft-1"))
         XCTAssertEqual(store.currentStep(for: "draft-1"), .repository)
         XCTAssertEqual(defaults.string(forKey: store.key(for: "draft-1")), "future-step")
+        let isolated = ProjectOnboardingNavigationStore(defaults: defaults, namespace: "isolated:")
+        XCTAssertNil(isolated.lastProjectID)
+        isolated.lastProjectID = "draft-2"
+        XCTAssertEqual(store.lastProjectID, "draft-1")
+        isolated.set(.workflow, for: "draft-1")
+        XCTAssertEqual(defaults.string(forKey: store.key(for: "draft-1")), "future-step")
+        XCTAssertEqual(ProjectOnboardingNavigationStore(defaults: defaults, namespace: "isolated:").currentStep(for: "draft-1"), .workflow)
     }
 }

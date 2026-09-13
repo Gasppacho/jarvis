@@ -47,6 +47,18 @@ crée aucun binding : chaque Project doit toujours enregistrer son accord explic
 
 Import, liste, détail, validation, activation, pause et configuration locale.
 
+`POST /v1/projects` accepte un `name` optionnel (1 à 120 caractères reçus, puis
+retrait des espaces extérieurs ; un résultat vide est refusé). Il remplace uniquement le nom dans la configuration
+importée, dans la même transaction de création. Un nom invalide est refusé avant
+toute création ; les autres valeurs découvertes ou présentes dans le dépôt restent
+inchangées. Sans `name`, le comportement d’adoption existant est conservé.
+L’inspection propose le nom et les branches d’une configuration du dépôt existante,
+afin que la confirmation graphique ne remplace pas silencieusement ces valeurs.
+Après import, `bindingStatus[].remoteUrl` du détail projette le remote sélectionné
+par la configuration conservée dans l’Engine, sans identifiants ni paramètres
+d’URL. Ce champ additif optionnel vaut `null` si le remote est absent, ambigu ou
+illisible ; il ne relit pas le choix dans un YAML modifié depuis l’import.
+
 `POST /v1/projects/{projectId}/validate` est conservé pour compatibilité et sa réponse
 fermée reste exactement `{valid, issues}`. `issues` projette les `findings` avec
 `code`, `severity` et `message` (l'ancien `path` optionnel reste accepté par le contrat).

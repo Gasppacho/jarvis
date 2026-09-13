@@ -461,5 +461,6 @@ export interface BindingStatus {
     readonly path: string;
     readonly accessible: boolean;
     readonly bookmarkRef: string | null;
+    readonly remoteUrl?: string | null;
   };
 }

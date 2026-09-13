@@ -80,6 +80,7 @@ public struct ProjectBinding: Sendable, Equatable, Identifiable {
     public let path: String
     public let accessible: Bool
     public let bookmarkRef: String?
+    public var remoteUrl: String? = nil
 
     public var id: String { repositoryId }
 }
@@ -912,7 +913,8 @@ private extension ProjectDetail {
                     repositoryId: repositoryId,
                     path: entry.path,
                     accessible: entry.accessible,
-                    bookmarkRef: entry.bookmarkRef
+                    bookmarkRef: entry.bookmarkRef,
+                    remoteUrl: entry.remoteUrl
                 )
             }
     }
