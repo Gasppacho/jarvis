@@ -587,7 +587,7 @@ public final class ProjectConfigurationModel {
     public func preflight(projectId: String) async {
         guard state(for: projectId).preflight != .loading else { return }
         guard state(for: projectId).draft == nil || state(for: projectId).isDraftSaved else {
-            update(projectId) { $0.preflight = .stale($0.preflight.report); $0.errorMessage = "Enregistrez le brouillon avant de relancer le préflight." }
+            update(projectId) { $0.preflight = .stale($0.preflight.report); $0.errorMessage = "Enregistrez le brouillon avant de vérifier la configuration." }
             return
         }
         guard let api = preflightAPI else {
@@ -642,7 +642,7 @@ public final class ProjectConfigurationModel {
             UserDefaults.standard.set(workItemRef, forKey: "\(projects.preferenceNamespace)dev.jarvis.project-trial.v1.\(projectId)")
             update(projectId) {
                 $0.trialWorkItemRef = workItemRef
-                $0.pendingScopeDescription = workItemRef.map { "Essai limité à \($0)" } ?? "Surveillance de toutes les issues éligibles — relancez le préflight, puis activez explicitement."
+                $0.pendingScopeDescription = workItemRef.map { "Essai limité à \(ProjectPreflightState.issueLabel($0))" } ?? "Surveillance des issues prêtes — vérifiez à nouveau, puis activez explicitement."
                 $0.preflight = .stale(nil)
             }
             await projects.refresh()
@@ -655,7 +655,8 @@ public final class ProjectConfigurationModel {
 
     public func activateWorkflow(projectId: String) async {
         guard case .current(let report) = state(for: projectId).preflight,
-              report.projectId == projectId, state(for: projectId).preflight.canActivate,
+              report.projectId == projectId, state(for: projectId).preflight.canStartWorkflow,
+              (state(for: projectId).draft == nil || state(for: projectId).isDraftSaved),
               state(for: projectId).activation != .activating, state(for: projectId).runtimeAllowsActivation, let api = preflightAPI else { return }
         update(projectId) { $0.activation = .activating }
         do {

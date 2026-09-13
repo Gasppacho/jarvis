@@ -108,6 +108,8 @@ struct ProjectOnboardingView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(state.draft == nil || state.isSaving)
                     .accessibilityIdentifier("project.continue")
+                } else if step == .review {
+                    ProjectPreflightActivationButton(model: projectConfiguration, projectId: project.id)
                 }
             }
             .padding(16)
@@ -398,7 +400,7 @@ struct ProjectOnboardingView: View {
     }
 
     private var review: some View {
-        ProjectPreflightView(model: projectConfiguration, project: project, packages: moduleCatalog.packages) { destination in
+        ProjectPreflightView(model: projectConfiguration, project: project, packages: moduleCatalog.packages, showsActivation: false) { destination in
             step = destination
         }
     }

@@ -12,7 +12,7 @@ un échec ultérieur du commit (7/7 tests de projection).
 L02 implémentée, relue et gate complet réussi au commit `5906e64` :
 366 unitaires, 385 intégration et 187 Swift ; app empaquetée en 3 min 53 s.
 Les deux échecs Development et le `listen EPERM` ont été reproduits séparément.
-L03 implémentée et relue, commit `ceb3759`. L04 implémentée, relue et vérifiée nativement, commit `9289c1f`. L05 implémentée, relue et vérifiée nativement ; L06–L10 restent à exécuter dans l’ordre. Aucun push, test GitHub ou merge effectué.
+L03 implémentée et relue, commit `ceb3759`. L04 implémentée, relue et vérifiée nativement, commit `9289c1f`. L05 implémentée, relue et vérifiée nativement ; L06 implémentée, relue et vérifiée nativement, commit `86821da` ; L07 implémentée et relue, L08–L10 restent à exécuter dans l’ordre. Aucun push, test GitHub ou merge effectué.
 Le projet réel et le travail retenu de #204 restent intacts.
 
 La session macOS s'est déverrouillée pendant L04 puis reverrouillée pendant L05.
@@ -41,8 +41,8 @@ Les captures natives tentées en L01 sont inutilisables, donc ne prouvent aucun 
 | L03 | Implémentée, relue ; cadre natif aux deux tailles et apparences en L04 | `ceb3759` |
 | L04 | Implémentée, relue ; import, doublon, navigation et reprise natifs vérifiés | `9289c1f` |
 | L05 | Implémentée, double relecture ; parcours natif et reprise vérifiés | `6238cc4` |
-| L06 | En cours — accès et agent ; correction de compatibilité et cartes | — |
-| L07 | À faire — vérification et démarrage | — |
+| L06 | Implémentée, relue ; compte réel, découverte et contrôle Codex natifs | `86821da` |
+| L07 | Implémentée, relue ; Swift 24/24, API 11/11, erreur/reprise/liste vide natifs | Ce commit |
 | L08 | À faire — supervision | — |
 | L09 | À faire — accessibilité et documentation | — |
 | L10 | À faire — gate complet, UI et issue réelle → PR | — |
@@ -389,3 +389,32 @@ est maintenant unchecked, les descripteurs réellement absents restent absent.
 App fermée proprement. Réveil temporaire caffeinate lié au PID de Jarvis ; aucune
 configuration globale modifiée. Les captures 00 ne sont pas des preuves Jarvis.
 Matrice exhaustive des tailles, modes et erreurs maintenue en L09.
+
+
+## L07 — vérification et intention de démarrage
+
+Base 86821da. Surface Vérification : erreurs avec correction vers l’étape,
+contrôles techniques repliés, commandes exactes encore à exécuter, accès confirmés
+uniquement sur rapport courant. Première exécution avec numéro d’issue, nombre
+d’issues prêtes, liste indisponible distincte d’une liste vide. Bouton final partagé
+avec Advanced, fixé au pied du guide ; il reprend l’intention et le numéro choisi.
+Le test mono-issue refuse une issue absente, bloquée ou non vérifiée ; la surveillance
+reste disponible sans candidat sur rapport réussi. Fingerprint/routage Engine inchangés.
+Tests Swift 24/24 après premier rouge sur nouvelle présentation ; API preflight 11/11,
+dont A seule puis B après restauration explicite et restart. Premier build réussi.
+Relecture Standards sans finding ; Spec a demandé le résumé accès/commandes désormais
+ajouté, et suppression de l’URI brute dans la portée en attente. Vérification finale
+et preuve native encore en cours.
+
+
+L07 contrôle natif effectué sur build base 86821da + delta relu, manifeste et
+captures vues dans `/tmp/jarvis-ux-reliability-evidence/l07/` : 02 accès réels
+valides mais label absent (activation bloquée), 03 Corriger ouvre Workflow,
+04 modification sauvegardée invalide le rapport, 05 vérification terminée après
+correction UI vers ready-for-agent avec vraie liste vide, 06 même vue claire à
+1100×800. Action finale fixe, résumé lisible, aucune activation effectuée.
+Swift final 24/24, API 11/11, deux relectures sans finding après correction,
+build final réussi. Cas natif avec une issue éligible et une bloquée encore à
+compléter en L09/L10 ; leur portée et admission sont prouvées par Harness.
+Projet fixture garde ready-for-agent, reste draft ; ne jamais l’activer.
+App fermée et apparence sombre restaurée.

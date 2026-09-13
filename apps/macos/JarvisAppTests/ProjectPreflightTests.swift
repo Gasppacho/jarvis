@@ -9,7 +9,7 @@ final class ProjectPreflightTests: XCTestCase {
     func testReadinessStatesEmptyCandidatesBlockersAndRepairDestinations() throws {
         let empty = try fixture(empty: true)
         XCTAssertTrue(ProjectPreflightState.current(empty).canActivate)
-        XCTAssertEqual(ProjectPreflightState.current(empty).title, "Prêt à activer")
+        XCTAssertEqual(ProjectPreflightState.current(empty).title, "Configuration vérifiée")
         XCTAssertEqual(empty.candidateEligibility.status, .empty)
         let blocked = try fixture(blocked: true)
         XCTAssertTrue(ProjectPreflightState.current(blocked).canActivate, "A blocker affects the candidate, not configuration readiness")
@@ -24,6 +24,22 @@ final class ProjectPreflightTests: XCTestCase {
             XCTAssertFalse(state.canActivate)
             XCTAssertFalse(state.title.isEmpty)
         }
+    }
+
+    func testFinalActionKeepsExactIssueIntentAndRejectsUnverifiedCandidates() throws {
+        var report = try fixture()
+        XCTAssertEqual(ProjectPreflightState.current(report).activationTitle, "Surveiller les issues prêtes")
+        report.rule = .init(instanceId: "rules", ruleId: "ready", label: "ready-for-agent", selectedWorkItemRef: "github://owner/repo/issues/1")
+        XCTAssertEqual(ProjectPreflightState.current(report).activationTitle, "Tester avec l’issue #1")
+        XCTAssertTrue(ProjectPreflightState.current(report).canStartWorkflow)
+        report.candidateEligibility.items[0].status = .ineligible
+        XCTAssertFalse(ProjectPreflightState.current(report).canStartWorkflow)
+        report.candidateEligibility.items = []
+        XCTAssertFalse(ProjectPreflightState.current(report).canStartWorkflow)
+        XCTAssertEqual(ProjectPreflightState.stale(report).activationTitle, "Tester avec l’issue #1")
+        XCTAssertFalse(ProjectPreflightState.stale(report).canStartWorkflow)
+        report.rule = nil
+        XCTAssertTrue(ProjectPreflightState.current(report).canStartWorkflow, "No candidate does not prevent explicit monitoring")
     }
 
     @MainActor
