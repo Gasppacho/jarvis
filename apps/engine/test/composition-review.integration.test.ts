@@ -164,7 +164,7 @@ describe("project composition review", () => {
     )!.template;
     expect((await preview(template)).githubDevelopmentFlow).toBe(true);
 
-    for (const defect of ["legacy", "label", "target", "override", "concurrency", "extra-module"]) {
+    for (const defect of ["remove-github", "disable-development", "concurrency", "extra-module"]) {
       const proposed = structuredClone(template);
       const modules = proposed["modules"] as Array<{
         moduleId: string;
@@ -173,15 +173,11 @@ describe("project composition review", () => {
         configuration: Record<string, unknown>;
       }>;
       const github = modules.find((module) => module.moduleId === "jarvis.module.github")!;
-      const rules = modules.find((module) => module.moduleId === "jarvis.module.automation-rules")!
-        .configuration["rules"] as Array<{
-        when: { eventType: string };
-        emit: { type: string; target: { moduleInstanceId: string }; payload?: object };
-      }>;
-      if (defect === "legacy") rules[0]!.when.eventType = "scm.work-item.tag-added";
-      if (defect === "label") github.configuration["readyLabel"] = "different-label";
-      if (defect === "target") rules[0]!.emit.target.moduleInstanceId = "absent";
-      if (defect === "override") rules[0]!.emit.payload = { workItemRef: "github://a/b/issues/1" };
+      const development = modules.find(
+        (module) => module.moduleId === "jarvis.module.development",
+      )!;
+      if (defect === "remove-github") modules.splice(modules.indexOf(github), 1);
+      if (defect === "disable-development") development.enabled = false;
       if (defect === "concurrency")
         (proposed["workspace"] as Record<string, unknown>)["maxConcurrentExecutions"] = 2;
       if (defect === "extra-module")

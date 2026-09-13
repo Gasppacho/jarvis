@@ -44,6 +44,45 @@ afterEach(() => {
 });
 
 describe("Project configuration replacement", () => {
+  it("refuses structural changes while the Project is active and preserves its saved config", () => {
+    const repository = mkdtempSync(join(tmpdir(), "jarvis-active-composition-"));
+    roots.push(repository);
+    const db = projectDatabase();
+    databases.push(db);
+    const store = new ProjectStore(db, clock);
+    const configuration = exampleConfiguration();
+    store.createProject({
+      id: "active-project",
+      name: configuration.metadata.name,
+      status: "active",
+      portableConfig: configuration,
+      repositoryPath: repository,
+    });
+    const service = new ProjectService(
+      store,
+      moduleHost(),
+      new AtomicProjectConfigurationWriter(),
+      new EmptyProjectResourceGrants(),
+      new SavedProjectCompositionValidator(moduleHost()),
+      new LocalRepositoryAccessibility(),
+      new EventJournalReader(db),
+      new ExecutionLedgerReader(db),
+    );
+    const proposed = {
+      ...configuration,
+      modules: configuration.modules.slice(1),
+    };
+
+    expect(() =>
+      service.replaceProjectConfiguration({
+        projectId: "active-project",
+        portableConfig: proposed,
+        writeToRepository: false,
+      }),
+    ).toThrowError(expect.objectContaining({ code: "project.active" }));
+    expect(store.findById("active-project")?.portableConfig).toEqual(configuration);
+  });
+
   it("rejects a symlinked destination before reading or replacing it", () => {
     const repository = mkdtempSync(join(tmpdir(), "jarvis-symlinked-config-"));
     roots.push(repository);

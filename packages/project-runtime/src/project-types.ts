@@ -270,11 +270,11 @@ export type ProjectRequestAttempt =
       readonly candidates: readonly ProjectValidationInstanceTarget[];
     };
 
-/** A compatible fact producer to consumer delivery. */
+/** A compatible fact delivery, or an orphaned fact output when consumer is absent. */
 export interface ProjectFactDelivery {
   readonly contract: ProjectFactContract;
   readonly producer: ProjectValidationInstanceTarget;
-  readonly consumer: ProjectValidationInstanceTarget;
+  readonly consumer?: ProjectValidationInstanceTarget;
 }
 
 export type ProjectSatisfiedCapabilityTarget =

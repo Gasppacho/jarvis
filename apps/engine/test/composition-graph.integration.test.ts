@@ -225,6 +225,75 @@ describe("project composition graph", () => {
     await assertDeterministicAndUnmutated(engine, project.id, undefined, body);
   });
 
+  it("projects fixed GitHub to Development facts, both requests, and orphan outputs", async () => {
+    const { engine, project } = await setupCanonicalProject();
+    const fixed = structuredClone(project.portableConfig);
+    fixed["compositionMode"] = "fixed-modules";
+    fixed["slots"] = {
+      agentRuntime: { requires: "agent.execute" },
+      sourceControl: { requires: "scm.change-request.manage" },
+    };
+    fixed["modules"] = (fixed["modules"] as Array<Record<string, unknown>>)
+      .filter((module) => module["moduleId"] !== "jarvis.module.automation-rules")
+      .map((module) => {
+        const copy = structuredClone(module);
+        if (copy["instanceId"] === "github") copy["bindings"] = { sourceControl: "sourceControl" };
+        if (copy["instanceId"] === "development") copy["bindings"] = { repository: "main" };
+        return copy;
+      });
+
+    const response = await graph(engine, project.id, fixed);
+    expect(response.status, await response.clone().text()).toBe(200);
+    const body = (await response.json()) as {
+      edges: Array<{
+        kind: string;
+        contract: { type: string };
+        from: { instanceId: string };
+        to?: { instanceId: string };
+        routing?: { status: string };
+      }>;
+    };
+    expect(body.edges).toContainEqual(
+      expect.objectContaining({
+        kind: "fact",
+        contract: { type: "scm.work-item.observed", version: 1, kind: "fact" },
+        from: { instanceId: "github", moduleId: "jarvis.module.github" },
+        to: { instanceId: "development", moduleId: "jarvis.module.development" },
+      }),
+    );
+    expect(body.edges).toContainEqual(
+      expect.objectContaining({
+        kind: "request",
+        contract: { type: "development.implementation.requested", version: 1, kind: "request" },
+        from: { instanceId: "development", moduleId: "jarvis.module.development" },
+        to: { instanceId: "development", moduleId: "jarvis.module.development" },
+        routing: expect.objectContaining({ status: "resolved" }),
+      }),
+    );
+    expect(body.edges).toContainEqual(
+      expect.objectContaining({
+        kind: "request",
+        contract: { type: "scm.change-request.creation-requested", version: 1, kind: "request" },
+        from: { instanceId: "development", moduleId: "jarvis.module.development" },
+        to: { instanceId: "github", moduleId: "jarvis.module.github" },
+        routing: expect.objectContaining({ status: "resolved" }),
+      }),
+    );
+    for (const type of ["scm.work-item.ready", "scm.work-item.tag-added"]) {
+      expect(body.edges).toContainEqual(
+        expect.objectContaining({
+          kind: "fact",
+          contract: expect.objectContaining({ type }),
+          from: { instanceId: "github", moduleId: "jarvis.module.github" },
+        }),
+      );
+      expect(
+        body.edges.find((edge) => edge.kind === "fact" && edge.contract.type === type)?.to,
+      ).toBeUndefined();
+    }
+    expect(body.edges.some((edge) => edge.from.instanceId === "automation-rules")).toBe(false);
+  });
+
   it("projects an orphaned request and a disabled node for a proposed configuration", async () => {
     const { engine, project } = await setupCanonicalProject();
     const proposed = structuredClone(project.portableConfig);

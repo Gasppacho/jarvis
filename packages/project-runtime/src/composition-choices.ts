@@ -38,6 +38,8 @@ interface Declaration {
   readonly contract: ProjectModuleContractDescriptor;
 }
 
+const FIXED_MODULE_IDS = new Set(["jarvis.module.github", "jarvis.module.development"]);
+
 export function previewProjectCompositionChoices(
   modules: ProjectCompositionChoicePackagePort,
   input: ProjectCompositionChoiceInput,
@@ -88,7 +90,13 @@ export function previewProjectCompositionChoices(
     kind: "ProjectCompositionChoices",
     projectId: input.projectId,
     startingPoints: startingPoints(input.configuration, input.repositoryMappings ?? []),
-    modulePackages: [...modules.catalog()].sort(compareJson),
+    modulePackages: [...modules.catalog()]
+      .filter(
+        (modulePackage) =>
+          input.configuration.compositionMode !== "fixed-modules" ||
+          FIXED_MODULE_IDS.has(modulePackage.moduleId),
+      )
+      .sort(compareJson),
     moduleInstances: moduleInstances(input.configuration, input.validationFindings ?? [], modules),
     choices,
   };
@@ -121,6 +129,7 @@ function githubDevelopmentTemplate(
   const repository = base.repositories[0];
   return {
     ...base,
+    compositionMode: "fixed-modules",
     repositories: base.repositories.map((item) => ({
       ...item,
       defaultBranch: item.defaultBranch ?? "main",
@@ -130,14 +139,13 @@ function githubDevelopmentTemplate(
     slots: {
       agentRuntime: { requires: "agent.execute" },
       sourceControl: { requires: "scm.change-request.manage" },
-      tickets: { requires: "work-items.read" },
     },
     modules: [
       {
         instanceId: "github",
         moduleId: "jarvis.module.github",
         enabled: true,
-        bindings: { sourceControl: "sourceControl", tickets: "tickets" },
+        bindings: { sourceControl: "sourceControl" },
         configuration: {
           bootstrapLabelPolicy: "ignore-existing",
           pollIntervalSeconds: 60,
@@ -146,34 +154,12 @@ function githubDevelopmentTemplate(
         },
       },
       {
-        instanceId: "automation-rules",
-        moduleId: "jarvis.module.automation-rules",
-        enabled: true,
-        configuration: {
-          rules: [
-            {
-              id: "ready-work-item-starts-development",
-              when: {
-                eventType: "scm.work-item.ready",
-                equals: { "payload.tag": "ready-for-agent" },
-              },
-              emit: {
-                type: "development.implementation.requested",
-                target: { moduleInstanceId: "development" },
-              },
-            },
-          ],
-        },
-      },
-      {
         instanceId: "development",
         moduleId: "jarvis.module.development",
         enabled: true,
         runtimeSlot: "agentRuntime",
         bindings: {
-          tickets: "tickets",
           repository: repository?.id ?? "main",
-          sourceControl: "sourceControl",
         },
         configuration: {
           validationOrder: [],

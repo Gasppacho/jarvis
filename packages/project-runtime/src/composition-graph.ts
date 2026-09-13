@@ -200,7 +200,7 @@ export function buildProjectCompositionGraph(
     kind: "fact" as const,
     contract: delivery.contract,
     from: delivery.producer,
-    to: delivery.consumer,
+    ...(delivery.consumer === undefined ? {} : { to: delivery.consumer }),
     findings: [],
   }));
 

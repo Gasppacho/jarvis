@@ -146,36 +146,21 @@ describe("project composition choices", () => {
     );
 
     const template = fresh.startingPoints[0]?.template as {
+      compositionMode: string;
       slots: Record<string, unknown>;
       modules: Array<Record<string, unknown>>;
     };
-    expect(Object.keys(template.slots)).toEqual(["agentRuntime", "sourceControl", "tickets"]);
-    expect(template.modules.map(({ instanceId }) => instanceId)).toEqual([
-      "github",
-      "automation-rules",
-      "development",
-    ]);
+    expect(template.compositionMode).toBe("fixed-modules");
+    expect(Object.keys(template.slots)).toEqual(["agentRuntime", "sourceControl"]);
+    expect(template.modules.map(({ instanceId }) => instanceId)).toEqual(["github", "development"]);
     expect(template.modules[0]?.["configuration"]).toEqual({
       bootstrapLabelPolicy: "ignore-existing",
       pollIntervalSeconds: 60,
       repositories: ["main"],
       readyLabel: "ready-for-agent",
     });
-    expect(template.modules[1]?.["configuration"]).toEqual({
-      rules: [
-        {
-          id: "ready-work-item-starts-development",
-          when: {
-            eventType: "scm.work-item.ready",
-            equals: { "payload.tag": "ready-for-agent" },
-          },
-          emit: {
-            type: "development.implementation.requested",
-            target: { moduleInstanceId: "development" },
-          },
-        },
-      ],
-    });
+    expect(template.modules[0]?.["bindings"]).toEqual({ sourceControl: "sourceControl" });
+    expect(template.modules[1]?.["bindings"]).toEqual({ repository: "main" });
 
     const guidedResponse = await preview(engine, project.id, template);
     expect(guidedResponse.status, await guidedResponse.clone().text()).toBe(200);
@@ -190,12 +175,6 @@ describe("project composition choices", () => {
     };
     expect(guided.moduleInstances).toEqual([
       expect.objectContaining({
-        instanceId: "automation-rules",
-        displayName: "Automation Rules",
-        compatibility: "compatible",
-        missingResources: [],
-      }),
-      expect.objectContaining({
         instanceId: "development",
         displayName: "Development",
         compatibility: "compatible",
@@ -205,7 +184,6 @@ describe("project composition choices", () => {
           "git.commit",
           "git.push",
           "repository.write",
-          "work-items.read",
         ],
       }),
       expect.objectContaining({
@@ -229,6 +207,52 @@ describe("project composition choices", () => {
     };
     expect(unchanged.portableConfig.modules).toEqual([]);
     expect(unchanged.portableConfig.slots).toEqual({});
+  });
+
+  it("keeps fixed internal capability routing and reports duplicate packages without mutation", async () => {
+    const { engine, project } = await setup();
+    const initial = (await (await preview(engine, project.id)).json()) as {
+      startingPoints: Array<{ id: string; template: Record<string, unknown> }>;
+    };
+    const template = initial.startingPoints.find(({ id }) => id === "github-development")!.template;
+    const fixed = structuredClone(template);
+    const modules = fixed["modules"] as Array<Record<string, unknown>>;
+    modules.push({ ...structuredClone(modules[0]), instanceId: "github-disabled", enabled: false });
+
+    const reviewResponse = await engine.call(`/v1/projects/${project.id}/composition-review`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ portableConfig: fixed }),
+    });
+    expect(reviewResponse.status, await reviewResponse.clone().text()).toBe(200);
+    const review = (await reviewResponse.json()) as {
+      validation: {
+        findings: Array<{
+          code: string;
+          target: { kind: string; instanceId?: string; field?: string };
+        }>;
+        satisfiedCapabilities: Array<{ capability: string; source: { kind: string; ref: string } }>;
+      };
+      composition: { choices: Array<{ type: string; routing: { status: string } }> };
+    };
+    expect(review.validation.findings).toContainEqual(
+      expect.objectContaining({
+        code: "project.instance-config-invalid",
+        target: { kind: "module-instance", instanceId: "github-disabled", field: "/moduleId" },
+      }),
+    );
+    expect(review.validation.satisfiedCapabilities).toContainEqual({
+      capability: "work-items.read",
+      target: { kind: "module-instance", instanceId: "development" },
+      source: { kind: "module-instance", ref: "github" },
+    });
+    expect(
+      review.composition.choices.find(({ type }) => type === "development.implementation.requested")
+        ?.routing.status,
+    ).toBe("resolved");
+    expect(await (await engine.call(`/v1/projects/${project.id}`)).json()).toMatchObject({
+      portableConfig: project.portableConfig,
+    });
   });
 
   it("previews deterministic contract-owned choices for the canonical composition without mutation", async () => {

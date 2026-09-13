@@ -89,14 +89,8 @@ export async function startReferenceWorkflowFixture(
     await createConnection(engine);
     const project = await importProject(engine, repository.root);
     if (guidedDraft) {
-      const response = await engine.call(`/v1/projects/${project.id}/composition-choices`, {
-        method: "POST",
-      });
-      const choices = (await response.json()) as {
-        startingPoints: { template?: PortableProjectConfiguration }[];
-      };
-      const template = choices.startingPoints[0]?.template;
-      if (template === undefined) throw new Error("guided template missing");
+      const fixedTemplate = await fixedStartingPointTemplate(engine, project.id);
+      const template = fixedModules ? fixedTemplate : legacyGuidedTemplate(fixedTemplate);
       // Explicit local choices: GitHub identity from the named GitHub remote;
       // pushes still use the local bare origin. Never rewrite the poller's ID.
       const saved = await engine.call(`/v1/projects/${project.id}/configuration`, {
@@ -176,6 +170,72 @@ export async function startReferenceWorkflowFixture(
     }
     throw error;
   }
+}
+
+async function fixedStartingPointTemplate(
+  engine: Harness,
+  projectId: string,
+): Promise<PortableProjectConfiguration> {
+  const response = await engine.call(`/v1/projects/${projectId}/composition-choices`, {
+    method: "POST",
+  });
+  const choices = (await response.json()) as {
+    startingPoints: { template?: PortableProjectConfiguration }[];
+  };
+  const template = choices.startingPoints[0]?.template;
+  if (template === undefined) throw new Error("guided template missing");
+  return template;
+}
+
+function legacyGuidedTemplate(
+  fixedTemplate: PortableProjectConfiguration,
+): PortableProjectConfiguration {
+  const { compositionMode: _compositionMode, ...legacy } = fixedTemplate;
+  const github = fixedTemplate.modules.find((module) => module.instanceId === "github");
+  const development = fixedTemplate.modules.find((module) => module.instanceId === "development");
+  if (github === undefined || development === undefined)
+    throw new Error("legacy guided template modules missing");
+  return {
+    ...legacy,
+    slots: {
+      ...fixedTemplate.slots,
+      tickets: { requires: "work-items.read" },
+    },
+    modules: [
+      {
+        ...github,
+        bindings: { ...github.bindings, tickets: "tickets" },
+      },
+      {
+        instanceId: "automation-rules",
+        moduleId: "jarvis.module.automation-rules",
+        enabled: true,
+        configuration: {
+          rules: [
+            {
+              id: "ready-work-item-starts-development",
+              when: {
+                eventType: "scm.work-item.ready",
+                equals: { "payload.tag": "ready-for-agent" },
+              },
+              emit: {
+                type: "development.implementation.requested",
+                target: { moduleInstanceId: "development" },
+              },
+            },
+          ],
+        },
+      },
+      {
+        ...development,
+        bindings: {
+          ...development.bindings,
+          tickets: "tickets",
+          sourceControl: "sourceControl",
+        },
+      },
+    ],
+  };
 }
 
 function referenceProjectConfiguration(projectId: string): PortableProjectConfiguration {

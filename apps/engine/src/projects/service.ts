@@ -1086,6 +1086,16 @@ export class ProjectService implements ProjectRegistry<
       Object.keys(supplied.slots).length === 0
         ? requirePortableProjectDraft(request.portableConfig)
         : requirePortableProjectConfiguration(request.portableConfig, this.modules);
+    if (
+      structuralCompositionChanged(current.portableConfig, configuration) &&
+      (current.status === "active" || this.executionLedger.listActive(current.id).length > 0)
+    ) {
+      throw new EngineError(
+        "project.active",
+        409,
+        `Project "${current.id}" must be paused and quiescent before its module composition can change.`,
+      );
+    }
     for (const slot of Object.keys(current.slotBindings)) {
       if (!(slot in configuration.slots)) {
         throw new EngineError(
@@ -1324,6 +1334,28 @@ export class ProjectService implements ProjectRegistry<
     if (row === undefined) throw notFound(projectId || "(empty)");
     return row;
   }
+}
+
+function structuralCompositionChanged(
+  current: StoredPortableProjectConfiguration,
+  proposed: StoredPortableProjectConfiguration,
+): boolean {
+  const instances = (configuration: StoredPortableProjectConfiguration) =>
+    configuration.modules.map(({ configuration: _moduleConfiguration, ...instance }) => instance);
+  return (
+    JSON.stringify({
+      compositionMode: current.compositionMode,
+      repositories: current.repositories,
+      slots: current.slots,
+      modules: instances(current),
+    }) !==
+    JSON.stringify({
+      compositionMode: proposed.compositionMode,
+      repositories: proposed.repositories,
+      slots: proposed.slots,
+      modules: instances(proposed),
+    })
+  );
 }
 
 type OverviewAdmission = ReturnType<DevelopmentAdmissions["read"]>["items"][number];

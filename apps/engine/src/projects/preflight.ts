@@ -53,6 +53,35 @@ export function isGitHubDevelopmentFlow(
   configuration: StoredPortableProjectConfiguration,
   validation: ProjectValidationReport,
 ): boolean {
+  if (configuration.compositionMode === "fixed-modules") {
+    const enabled = configuration.modules.filter((module) => module.enabled);
+    const github = enabled.find((module) => module.moduleId === "jarvis.module.github");
+    const development = enabled.find((module) => module.moduleId === "jarvis.module.development");
+    const route = (type: string, producer: string, consumer: string) =>
+      validation.requestRoutes.some(
+        (item) =>
+          item.contract.type === type &&
+          item.contract.version === 1 &&
+          item.producer.instanceId === producer &&
+          item.consumer.instanceId === consumer,
+      );
+    return (
+      enabled.length === 2 &&
+      github !== undefined &&
+      development !== undefined &&
+      configuration.workspace.maxConcurrentExecutions === 1 &&
+      route(
+        "development.implementation.requested",
+        development.instanceId,
+        development.instanceId,
+      ) &&
+      route("scm.change-request.creation-requested", development.instanceId, github.instanceId) &&
+      validation.requestAttempts !== undefined &&
+      !validation.requestAttempts.some(
+        (item) => item.contract.type === "scm.change-request.merge-requested",
+      )
+    );
+  }
   try {
     const { instance, rule, tag } = workflowRule(configuration);
     const enabled = configuration.modules.filter((module) => module.enabled);

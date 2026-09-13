@@ -120,6 +120,25 @@ export class SavedProjectCompositionValidator implements ProjectCompositionValid
       }
     }
 
+    const firstInstanceByPackage = new Map<string, string>();
+    for (const instance of allInstances) {
+      const firstInstanceId = firstInstanceByPackage.get(instance.moduleId);
+      if (firstInstanceId === undefined) {
+        firstInstanceByPackage.set(instance.moduleId, instance.instanceId);
+        continue;
+      }
+      findings.push({
+        code: "project.instance-config-invalid",
+        severity: "error",
+        message: `Module Package ${instance.moduleId} is already used by Module Instance ${firstInstanceId}; a Project may contain only one instance of a package, including disabled instances.`,
+        target: {
+          kind: "module-instance",
+          instanceId: instance.instanceId,
+          field: "/moduleId",
+        },
+      });
+    }
+
     for (const instance of instances) {
       if (instance.moduleId !== "jarvis.module.development") continue;
       const order = instance.configuration?.["validationOrder"];
@@ -175,12 +194,14 @@ export class SavedProjectCompositionValidator implements ProjectCompositionValid
           const relatedConsumers = consumers.filter(
             ({ contract }) => contract.type === produced.type,
           );
+          let compatibleDelivery = false;
           for (const candidate of relatedConsumers) {
             if (
               candidate.contract.type === produced.type &&
               candidate.contract.version === produced.version &&
               candidate.contract.kind === produced.kind
             ) {
+              compatibleDelivery = true;
               factDeliveries.push({
                 contract: { type: produced.type, version: produced.version, kind: "fact" },
                 producer: instanceTarget(producer),
@@ -189,6 +210,12 @@ export class SavedProjectCompositionValidator implements ProjectCompositionValid
               continue;
             }
             findings.push(contractIncompatibleFinding(producer, produced, candidate));
+          }
+          if (!compatibleDelivery) {
+            factDeliveries.push({
+              contract: { type: produced.type, version: produced.version, kind: "fact" },
+              producer: instanceTarget(producer),
+            });
           }
           continue;
         }
@@ -349,6 +376,23 @@ export class SavedProjectCompositionValidator implements ProjectCompositionValid
         const reference =
           instance.bindings?.[requirement.binding] ??
           (requirement.binding === "agentRuntime" ? instance.runtimeSlot : undefined);
+        const inferred =
+          reference === undefined && configuration.compositionMode === "fixed-modules"
+            ? inferInternalCapabilityProvider(
+                configuration,
+                modules,
+                instance.instanceId,
+                requirement.id,
+              )
+            : undefined;
+        if (inferred !== undefined) {
+          satisfiedCapabilities.push({
+            capability: requirement.id,
+            target: { kind: "module-instance", instanceId: instance.instanceId },
+            source: { kind: "module-instance", ref: inferred.instanceId },
+          });
+          continue;
+        }
         if (reference === undefined) {
           addCapabilityFinding(
             findings,
@@ -392,7 +436,11 @@ export class SavedProjectCompositionValidator implements ProjectCompositionValid
         const slotBinding = project.slotBindings[reference];
         const resolved =
           slotBinding === undefined
-            ? undefined
+            ? resolveCapabilityCandidate(
+                candidates,
+                { kind: "module-instance", ref: reference },
+                requirement.id,
+              )
             : resolveCapabilityCandidate(candidates, slotBinding, requirement.id);
         if (resolved === undefined) {
           addCapabilityFinding(
@@ -444,6 +492,19 @@ export class SavedProjectCompositionValidator implements ProjectCompositionValid
       compositionFingerprint: fingerprintComposition(project),
     };
   }
+}
+
+function inferInternalCapabilityProvider(
+  configuration: StoredPortableProjectConfiguration,
+  modules: ProjectModulePackageValidationPort,
+  consumerInstanceId: string,
+  capability: string,
+): { readonly instanceId: string } | undefined {
+  const providers = configuration.modules.filter((instance) => {
+    if (!instance.enabled || instance.instanceId === consumerInstanceId) return false;
+    return modules.package(instance.moduleId)?.provides.includes(capability) ?? false;
+  });
+  return providers.length === 1 ? { instanceId: providers[0]!.instanceId } : undefined;
 }
 
 /**
