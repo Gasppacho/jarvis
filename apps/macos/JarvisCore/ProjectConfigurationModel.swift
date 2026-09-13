@@ -22,6 +22,7 @@ public struct ProjectConfigurationState: Sendable, Equatable {
     public var compositionReview: ProjectCompositionReview?
     public var compositionGraph: ProjectCompositionGraph?
     public var preflight: ProjectPreflightState = .unchecked
+    public var preflightReceivedAt: Date?
     public var trialWorkItemRef: String?
     public var pendingScopeDescription: String?
     public var canRestoreTrial: Bool { trialWorkItemRef != nil && trialWorkItemRef == preflight.report?.rule?.selectedWorkItemRef }
@@ -603,6 +604,7 @@ public final class ProjectConfigurationModel {
             lastValidationReports[projectId] = validation
             update(projectId) {
                 $0.preflight = .current(report)
+                $0.preflightReceivedAt = Date()
                 $0.pendingScopeDescription = nil
                 $0.validation = report.valid ? .valid(validation) : .invalid(validation)
                 $0.agentRuntimes = report.runtime
@@ -974,6 +976,10 @@ public final class ProjectConfigurationModel {
         projectId: String,
         connectionID: String
     ) async -> LocalProjectBindings? {
+        guard !state(for: projectId).isSaving else { return nil }
+        if state(for: projectId).draft != nil && !state(for: projectId).isDraftSaved {
+            guard await saveDraft(projectId: projectId, writeToRepository: false) != nil else { return nil }
+        }
         let current = state(for: projectId)
         guard var payload = current.localBindings?.wirePayload else {
             update(projectId) {
@@ -1017,9 +1023,7 @@ public final class ProjectConfigurationModel {
             guard bindings[choice.slotId]?.kind == .connection,
                 bindings[choice.slotId]?.ref == connectionID
             else { return false }
-            return choice.candidates.contains {
-                $0.kind == .connection && $0.ref == connectionID
-            }
+            return true
         }
     }
 

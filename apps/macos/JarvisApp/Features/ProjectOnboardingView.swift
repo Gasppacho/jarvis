@@ -12,6 +12,8 @@ struct ProjectOnboardingView: View {
 
     private var navigation: ProjectOnboardingNavigationStore { projects.onboardingNavigation }
     @State private var step: ProjectOnboardingStep
+    @State private var editingGitHub = false
+    @State private var editingRuntime = false
 
     init(
         projects: ProjectsModel,
@@ -217,65 +219,98 @@ struct ProjectOnboardingView: View {
     }
 
     private var connectionsStep: some View {
-        GroupBox("Compte GitHub") {
+        let state = projectConfiguration.state(for: project.id)
+        let selected = connections.connections.filter { projectConfiguration.hasLocalBinding(projectId: project.id, connectionID: $0.id) }
+        return GroupBox("Compte GitHub") {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Choisissez explicitement le compte GitHub utilisable par ce projet. Ce choix ne le rend pas disponible aux autres projets.")
+                if state.resourceChoices.isEmpty {
+                    Text("Choisissez d’abord un workflow pour définir les accès nécessaires.")
+                    Button("Choisir le workflow") { step = .workflow }
+                }
                 switch connections.discoveryState {
                 case .searching:
-                    Label("Recherche des comptes", systemImage: "magnifyingglass")
+                    ProgressView("Recherche des comptes…")
                 case .none:
-                    Text(ConnectionsModel.emptyDiscoveryMessage)
-                        .foregroundStyle(.secondary)
-                    Button("Réessayer") {
-                        Task { await refreshConnections() }
-                    }
-                    Link("Aide de connexion", destination: URL(string: "https://cli.github.com/manual/gh_auth_login")!)
+                    Text(ConnectionsModel.emptyDiscoveryMessage).foregroundStyle(.secondary)
+                    Link("Aide de connexion GitHub", destination: URL(string: "https://cli.github.com/manual/gh_auth_login")!)
                 case .unavailable:
-                    Label(
-                        connections.errorMessage ?? "Impossible de vérifier les comptes GitHub.",
-                        systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                    Label(connections.errorMessage ?? "Impossible de vérifier les comptes GitHub.",
+                          systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                 case .accounts:
-                    ForEach(connections.connections) { connection in
-                        let presentation = connections.presentation(for: connection)
+                    ForEach(editingGitHub || selected.isEmpty ? connections.connections : selected) { connection in
+                        let bound = projectConfiguration.hasLocalBinding(projectId: project.id, connectionID: connection.id)
+                        let presentation = connections.presentation(for: connection, isBound: bound)
                         VStack(alignment: .leading, spacing: 6) {
                             Text(connection.accountLabel).font(.headline)
-                            Text("GitHub · \(presentation.status)")
-                                .font(.callout.weight(.medium))
-                            Text(presentation.diagnostic)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                            if projectConfiguration.hasLocalBinding(
-                                projectId: project.id, connectionID: connection.id
-                            ) {
-                                Text("Binding du projet : ce compte n’est pas rendu disponible aux autres projets.")
-                                    .font(.callout)
-                                    .foregroundStyle(.secondary)
-                            }
-                            if presentation.isSelectable {
-                                Button(presentation.action) {
+                            Label(presentation.status, systemImage: bound && presentation.isSelectable ? "checkmark.circle" : "info.circle")
+                            Text(presentation.diagnostic).font(.callout).foregroundStyle(.secondary)
+                            if presentation.isSelectable && !bound {
+                                Button("Utiliser pour ce projet") {
                                     Task {
-                                        _ = await projectConfiguration.bindGitHubConnection(
-                                            projectId: project.id, connectionID: connection.id)
+                                        if await projectConfiguration.bindGitHubConnection(projectId: project.id, connectionID: connection.id) != nil {
+                                            editingGitHub = false
+                                        }
                                     }
                                 }
-                                .disabled(projectConfiguration.state(for: project.id).isSaving)
-                            } else if presentation.status == "Accès requis" {
-                                Link(
-                                    presentation.action,
-                                    destination: URL(string: "https://cli.github.com/manual/gh_auth_login")!)
+                                .disabled(state.isSaving || !state.resourceChoices.contains { choice in
+                                    choice.candidates.contains { $0.kind == .connection && $0.ref == connection.id }
+                                })
+                                .accessibilityLabel("Utiliser le compte GitHub \(connection.accountLabel) pour ce projet")
+                                .accessibilityIdentifier("project.github.choose.\(connection.id)")
+                            } else if !presentation.isSelectable {
+                                Link("Reconnecter GitHub", destination: URL(string: "https://cli.github.com/manual/gh_auth_login")!)
                             }
                         }
-                        .padding(12)
-                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if !selected.isEmpty {
+                        Button(editingGitHub ? "Conserver le compte choisi" : "Modifier") { editingGitHub.toggle() }
+                            .accessibilityLabel("Modifier le compte GitHub de ce projet")
+                            .accessibilityIdentifier("project.github.modify")
+                        accountAccess
+                        Button("Vérifier l’accès au dépôt") {
+                            Task {
+                                if !state.isDraftSaved {
+                                    guard await projectConfiguration.saveDraft(projectId: project.id, writeToRepository: false) != nil else { return }
+                                }
+                                await projectConfiguration.preflight(projectId: project.id)
+                            }
+                        }
+                        .disabled(state.isSaving || state.preflight == .loading)
+                        .accessibilityIdentifier("project.github.check")
                     }
                 }
-                Button("Actualiser les comptes") {
-                    Task { await refreshConnections() }
-                }
-                .disabled(connections.isRefreshing)
+                Button("Actualiser les comptes") { Task { await refreshConnections() } }
+                    .disabled(connections.isRefreshing || state.isSaving)
+                    .accessibilityIdentifier("project.github.refresh")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private var accountAccess: some View {
+        let state = projectConfiguration.state(for: project.id)
+        switch state.preflight {
+        case .current(let report):
+            let checks = report.checks.filter { $0.id.hasPrefix("repository:") }
+            if checks.isEmpty { Text("Accès au dépôt non vérifié : vérifiez aussi le workflow.").foregroundStyle(.secondary) }
+            ForEach(checks, id: \.id) { check in
+                Label(check.status == .passed ? "\(check.title) : dépôt accessible" : "\(check.title) : accès à corriger",
+                      systemImage: check.status == .passed ? "checkmark.circle" : "exclamationmark.triangle")
+                if check.status == .failed { Text(check.impact).font(.callout).foregroundStyle(.orange) }
+            }
+            if !checks.isEmpty, let date = state.preflightReceivedAt {
+                Text("Dernier contrôle reçu : \(date.formatted(date: .abbreviated, time: .standard))").font(.caption)
+            }
+        case .loading:
+            ProgressView("Vérification des accès…")
+        case .stale:
+            Text("Le dernier contrôle est périmé. Vérifiez à nouveau les accès.").foregroundStyle(.secondary)
+        case .failed(let message):
+            Label(message, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+        case .unchecked:
+            Text("Accès au dépôt : pas encore vérifié.").foregroundStyle(.secondary)
         }
     }
 
@@ -285,50 +320,78 @@ struct ProjectOnboardingView: View {
     }
 
     private var runtimeCard: some View {
-        let runtime = projectConfiguration.state(for: project.id).runtimePresentation
+        let state = projectConfiguration.state(for: project.id)
+        let runtime = state.runtimePresentation
+        let selected = runtime.candidates.filter(\.bound)
         return GroupBox(runtime.title) {
             VStack(alignment: .leading, spacing: 12) {
-                Label(runtime.status, systemImage: runtime.icon)
-                    .font(.headline)
+                Label(runtime.status, systemImage: runtime.icon).font(.headline)
                 if runtime.isBusy { ProgressView().accessibilityLabel(runtime.status) }
-                Text(runtime.impact)
-                Text(runtime.detail).foregroundStyle(.secondary)
-                if let checkedAt = runtime.checkedAt {
-                    Text("Dernier contrôle : \(checkedAt.formatted(date: .abbreviated, time: .standard))")
-                        .font(.caption)
+                if runtime.requiresWorkflow {
+                    Button("Choisir le workflow") { step = .workflow }
                 } else {
-                    Text("Dernier contrôle : aucun").font(.caption)
-                }
-                Text(runtime.approval).font(.callout)
-                ForEach(runtime.candidates) { candidate in
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(candidate.name).font(.headline)
-                        Text(candidate.subtitle)
-                        Label(candidate.bound ? "Choisi pour ce projet" : candidate.status,
-                              systemImage: candidate.bound ? "checkmark.circle" : "info.circle")
-                        Text(candidate.detail).font(.callout).foregroundStyle(.secondary)
-                        Button("Choisir") {
-                            Task { await projectConfiguration.chooseRuntime(projectId: project.id, ref: candidate.id) }
-                        }
-                        .disabled(!candidate.selectable || projectConfiguration.state(for: project.id).isSaving)
-                        .accessibilityLabel("Choisir \(candidate.name), \(candidate.subtitle)")
-                        .accessibilityHint(runtime.approval)
-                        DisclosureGroup("Détails techniques") {
-                            Text(candidate.id).font(.caption.monospaced())
+                    ForEach(editingRuntime || selected.isEmpty ? runtime.candidates : selected) { candidate in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(candidate.name).font(.headline)
+                            Text(candidate.subtitle).font(.callout).foregroundStyle(.secondary)
+                            if candidate.bound {
+                                Label("Utilisé par ce projet", systemImage: "checkmark.circle")
+                                Text(runtime.modelLabel).font(.callout)
+                            }
+                            if !candidate.bound || candidate.needsAttention {
+                                Label(candidate.status, systemImage: "info.circle")
+                                Text(candidate.detail).font(.callout).foregroundStyle(.secondary)
+                            }
+                            if !candidate.bound || editingRuntime {
+                                Button(candidate.bound ? "Confirmer à nouveau les accès" : "Utiliser pour ce projet") {
+                                    Task {
+                                        await projectConfiguration.chooseRuntime(projectId: project.id, ref: candidate.id)
+                                        if projectConfiguration.state(for: project.id).runtimePresentation.candidates.contains(where: { $0.id == candidate.id && $0.bound }) {
+                                            editingRuntime = false
+                                        }
+                                    }
+                                }
+                                .disabled(!candidate.selectable || state.isSaving)
+                                .accessibilityLabel(candidate.bound ? "Confirmer à nouveau les accès de \(candidate.name) pour ce projet" : "Utiliser \(candidate.name), \(candidate.subtitle), pour ce projet")
+                                .accessibilityHint(runtime.approval)
+                                .accessibilityIdentifier("project.runtime.choose.\(candidate.id)")
+                            }
                         }
                     }
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                    if !selected.isEmpty {
+                        Text(runtime.detail).font(.callout).foregroundStyle(.secondary)
+                        if let checkedAt = runtime.checkedAt {
+                            Text("Dernier contrôle : \(checkedAt.formatted(date: .abbreviated, time: .standard))").font(.caption)
+                        } else { Text("Agent à vérifier pour ce projet.").font(.caption) }
+                        HStack {
+                            Button(editingRuntime ? "Conserver l’agent choisi" : "Modifier") { editingRuntime.toggle() }
+                                .accessibilityLabel("Modifier l’agent de ce projet")
+                                .accessibilityIdentifier("project.runtime.modify")
+                            Button("Vérifier l’agent") {
+                                Task { await projectConfiguration.checkRuntime(projectId: project.id) }
+                            }
+                            .disabled(!runtime.canCheck || state.isSaving)
+                            .accessibilityIdentifier("project.runtime.check")
+                        }
+                    } else if runtime.candidates.isEmpty {
+                        Text(runtime.detail).foregroundStyle(.secondary)
+                    }
+                    if selected.isEmpty || editingRuntime { Text(runtime.approval).font(.callout).foregroundStyle(.secondary) }
                 }
-                Button("Découvrir les runtimes") {
-                    Task { await projectConfiguration.refreshRuntimeCandidates(projectId: project.id, discover: true) }
+                if case .current(let report) = state.preflight {
+                    ForEach(report.checks.filter { $0.id.hasPrefix("tool:") && $0.status == .failed }, id: \.id) { check in
+                        Label("Outil manquant ou inaccessible — \(check.title)", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                        Text(check.impact).font(.callout)
+                    }
                 }
-                .disabled(runtime.isBusy)
-                Button("Vérifier le runtime") {
-                    Task { await projectConfiguration.checkRuntime(projectId: project.id) }
+                HStack {
+                    Button("Rechercher Codex") {
+                        Task { await projectConfiguration.refreshRuntimeCandidates(projectId: project.id, discover: true) }
+                    }
+                    .disabled(runtime.isBusy || state.isSaving)
+                    .accessibilityIdentifier("project.runtime.refresh")
+                    Link("Aide Codex", destination: URL(string: "https://developers.openai.com/codex/cli")!)
                 }
-                .disabled(!runtime.canCheck)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

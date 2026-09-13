@@ -33,12 +33,14 @@ final class ProjectPreflightTests: XCTestCase {
         await api.setFailure(true)
         await model.preflight(projectId: "project")
         guard case .failed = model.state(for: "project").preflight else { return XCTFail("transport failure must not become findings") }
+        XCTAssertNil(model.state(for: "project").preflightReceivedAt)
         await model.activateWorkflow(projectId: "project")
         let rejectedCalls = await api.activations
         XCTAssertTrue(rejectedCalls.isEmpty)
         await api.setFailure(false)
         await model.preflight(projectId: "project")
         XCTAssertTrue(model.state(for: "project").preflight.canActivate)
+        XCTAssertNotNil(model.state(for: "project").preflightReceivedAt)
         await model.activateWorkflow(projectId: "project")
         let calls = await api.activations
         XCTAssertEqual(calls, [String(repeating: "a", count: 64)])

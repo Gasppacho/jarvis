@@ -129,7 +129,7 @@ export function projectAgentRuntimeChoices(
       const missingCapabilities = [
         ...new Set(requiredSlots.flatMap((slot) => slot.requiredCapabilities)),
       ].filter((capability) => !descriptor.capabilities.includes(capability));
-      const compatible = missingCapabilities.length === 0 && requiredSlots.length > 0;
+      const compatible = missingCapabilities.length === 0;
       const status =
         !compatible || descriptor.status === "degraded"
           ? "incompatible"
@@ -152,13 +152,13 @@ export function projectAgentRuntimeChoices(
             project.slotBindings[slot.slotId]?.kind === "runtime" &&
             project.slotBindings[slot.slotId]?.ref === descriptor.id,
         ),
-        selectable: compatible && descriptor.status === "available",
+        selectable: requiredSlots.length > 0 && compatible && descriptor.status === "available",
         readiness: runtimeReadiness(
           status,
           missingCapabilities.length > 0
             ? `Capabilities manquantes : ${missingCapabilities.join(", ")}. Choisissez un runtime compatible.`
             : status === "incompatible"
-              ? "La version ou le workflow est incompatible. Choisissez un runtime compatible ou configurez le workflow."
+              ? "La version de Codex n’est pas prise en charge. Installez une version compatible, puis relancez la découverte."
               : status === "access-denied"
                 ? "Autorisez la connexion locale Codex, puis relancez la découverte."
                 : status === "absent"
@@ -178,10 +178,12 @@ export function projectAgentRuntimeChoices(
     required: requiredSlots.length > 0,
     items,
     readiness: runtimeReadiness(
-      items.length === 0 ? "absent" : "unchecked",
-      items.length === 0
-        ? "Aucun runtime Codex découvert. Installez ou activez Codex avec les instructions locales, puis relancez la découverte."
-        : "Choisissez explicitement un runtime et vérifiez ses accès pour ce projet.",
+      "unchecked",
+      requiredSlots.length === 0
+        ? "Choisissez d’abord un workflow utilisant un agent, puis autorisez Codex pour ce projet."
+        : items.length === 0
+          ? "Recherchez Codex sur ce Mac, puis autorisez-le pour ce projet."
+          : "Choisissez explicitement un runtime et vérifiez ses accès pour ce projet.",
     ),
   };
 }

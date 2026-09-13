@@ -40,8 +40,8 @@ Les captures natives tentées en L01 sont inutilisables, donc ne prouvent aucun 
 | L02 | Implémentée, relue ; gate complet réussi, vrai run encore requis | `cb35979` → `5906e64` |
 | L03 | Implémentée, relue ; cadre natif aux deux tailles et apparences en L04 | `ceb3759` |
 | L04 | Implémentée, relue ; import, doublon, navigation et reprise natifs vérifiés | `9289c1f` |
-| L05 | Implémentée, double relecture ; parcours natif et reprise vérifiés | À enregistrer |
-| L06 | À faire — accès et agent | — |
+| L05 | Implémentée, double relecture ; parcours natif et reprise vérifiés | `6238cc4` |
+| L06 | En cours — accès et agent ; correction de compatibilité et cartes | — |
 | L07 | À faire — vérification et démarrage | — |
 | L08 | À faire — supervision | — |
 | L09 | À faire — accessibilité et documentation | — |
@@ -347,3 +347,45 @@ App fermée proprement, absence de processus Jarvis vérifiée, apparence sombre
 Relectures finales : Standards 0 finding, Spec 0 finding. Typecheck, contrats,
 build empaqueté et dernier test API 4/4 réussis. Tests Swift 21/21 réussis.
 Le fallback legacy est prouvé à l'API ; sa matrice visuelle complète reste L09.
+
+## L06 — accès et agent
+
+Base 6238cc4. Rouge API observé : sans workflow consommant un runtime, Codex
+available était présenté incompatible. La compatibilité dépend maintenant du
+descripteur et des capacités ; l'absence de workflow empêche séparément toute
+sélection/autorisation. API 4/4 verts, dont rejet d'une association sans workflow,
+profil explicite isolé entre deux projets, absence/authentification/version/probe.
+Commande : `rtk pnpm exec vitest run --project integration apps/engine/test/project-runtime-bindings.integration.test.ts`.
+
+Deux cartes présentent le compte choisi et l'agent, avec Modifier, diagnostic,
+contrôle explicite, date de réception du rapport et réparation. L'accès au dépôt
+n'est affirmé que depuis un check repository courant du preflight Engine.
+Un compte expiré reste lié mais ne devient pas disponible. Une association
+GitHub sauvegarde d'abord le draft comme l'association du runtime.
+
+Le runner Codex local transmet --ignore-user-config et aucun --model : affichage
+« Modèle par défaut de Codex », sans lecture de configuration globale. Aide
+officielle contrôlée via Context7 /openai/codex et
+https://developers.openai.com/codex/cli (redirige vers https://learn.chatgpt.com/docs/codex/cli).
+Aucun outil installé ni configuration globale modifiée.
+
+Relecture : la carte choisie masquait un diagnostic de découverte et empêchait
+de réautoriser le même profil local. Correction : diagnostic conservé et bouton
+Confirmer à nouveau les accès sous Modifier. Tests Swift successifs 25/25,
+41/41, puis suite après correction. Build natif et preuve avec compte réel en cours.
+
+
+L06 vérifié : Swift 42/42, API runtime 4/4, typecheck/lint et build empaqueté
+réussis. Deux relectures finales sans finding, y compris correction incrémentale.
+Preuves natives vues dans `/tmp/jarvis-ux-reliability-evidence/l06/` :
+01 comptes non accordés, 02 découverte Codex 0.154.0, 03 autorisations explicites,
+04 contrôle GitHub terminé « dépôt accessible », 05 réautorisation proposée,
+06 réautorisation terminée (rapport dépôt correctement périmé), 07 second projet
+sans workflow, sans accès accordé et sans fausse incompatibilité. Aucun projet activé.
+Manifest base 6238cc4 + L06 ; le dernier delta Engine (inventaire vide non vérifié)
+est prouvé par test API rouge puis vert et sera inclus au prochain build natif.
+L'inventaire jamais recherché affichait à tort Codex non installé ; le diagnostic
+est maintenant unchecked, les descripteurs réellement absents restent absent.
+App fermée proprement. Réveil temporaire caffeinate lié au PID de Jarvis ; aucune
+configuration globale modifiée. Les captures 00 ne sont pas des preuves Jarvis.
+Matrice exhaustive des tailles, modes et erreurs maintenue en L09.

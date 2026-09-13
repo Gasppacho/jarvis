@@ -5,6 +5,31 @@ import XCTest
 @testable import JarvisCore
 
 final class ProjectRuntimeTests: XCTestCase {
+    func testNoWorkflowKeepsCodexDiscoverySeparateFromProjectAuthorization() {
+        var payload = choices()
+        payload.required = false
+        payload.items[0].selectable = false
+        let presentation = ProjectRuntimePresentation(choices: payload, isBusy: false)
+        XCTAssertEqual(presentation.status, "Choisissez d’abord un workflow")
+        XCTAssertEqual(presentation.candidates.first?.status, "Non vérifié")
+        XCTAssertFalse(presentation.canCheck)
+        XCTAssertFalse(presentation.candidates.first?.selectable ?? true)
+    }
+
+    func testChosenAgentKeepsDiscoveryFailureAndCanReconfirmAnAvailableProfile() {
+        var payload = choices(bound: true)
+        var presentation = ProjectRuntimePresentation(choices: payload, isBusy: false)
+        XCTAssertTrue(presentation.candidates[0].bound)
+        XCTAssertTrue(presentation.candidates[0].selectable, "the same available candidate can be explicitly reconfirmed")
+        payload.items[0].readiness = .init(status: .access_hyphen_denied, checkedAt: nil, detail: "Reconnectez Codex.")
+        payload.items[0].selectable = false
+        presentation = ProjectRuntimePresentation(choices: payload, isBusy: false)
+        XCTAssertTrue(presentation.candidates[0].bound)
+        XCTAssertTrue(presentation.candidates[0].needsAttention)
+        XCTAssertFalse(presentation.candidates[0].selectable)
+        XCTAssertEqual(presentation.candidates[0].detail, "Reconnectez Codex.")
+    }
+
     @MainActor
     func testZeroOneAndSeveralCandidatesNeverChooseImplicitly() async {
         for names in [[], ["Codex personnel"], ["Codex personnel", "Codex travail"]] {
@@ -24,8 +49,8 @@ final class ProjectRuntimeTests: XCTestCase {
     @MainActor
     func testEveryReadinessStateHasTextImpactAndActivationPolicy() async {
         let cases: [(Components.Schemas.ProjectRuntimeReadiness.statusPayload, String)] = [
-            (.ready, "Prêt"), (.absent, "Absent"), (.access_hyphen_denied, "Accès refusé"),
-            (.incompatible, "Version incompatible"), (.checking, "Vérification en cours"),
+            (.ready, "Prêt"), (.absent, "Codex non installé"), (.access_hyphen_denied, "Connexion ou autorisation requise"),
+            (.incompatible, "Agent non compatible"), (.checking, "Vérification en cours"),
             (.engine_hyphen_error, "Erreur du moteur"), (.unchecked, "Non vérifié")
         ]
         for (status, label) in cases {

@@ -526,6 +526,8 @@ final class ProjectConfigurationTests: XCTestCase {
             state.compositionGuide?.startingPoints.map(\.displayName),
             ["GitHub Development", "Custom composition"])
         XCTAssertEqual(state.compositionGuide?.modulePackages.count, 4)
+        XCTAssertEqual(state.agentRuntimes?.required, false)
+        XCTAssertEqual(state.runtimePresentation.status, "Choisissez d’abord un workflow")
 
         configuration.apply(.addSlot(name: "custom-slot", requirement: "agent.execute"), projectId: imported.id, packages: catalog.packages)
         let slotsOnly = configuration.state(for: imported.id).draft
@@ -542,6 +544,7 @@ final class ProjectConfigurationTests: XCTestCase {
             state.draft?.modules.map(\.instanceId),
             ["github", "automation-rules", "development"])
         XCTAssertEqual(state.localBindings?.slots, [])
+        XCTAssertEqual(state.agentRuntimes?.required, true)
         let proposedDevelopment = try XCTUnwrap(state.draft?.modules.first { $0.instanceId == "development" })
         XCTAssertEqual(proposedDevelopment.configurationValues["validationOrder"], "[]")
         XCTAssertTrue(proposedDevelopment.configurationValues["preparation", default: ""].isEmpty)
