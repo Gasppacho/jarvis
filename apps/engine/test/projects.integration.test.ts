@@ -2654,16 +2654,38 @@ capabilities:
         portableConfig: Record<string, unknown>;
       };
       const proposed = structuredClone(beforeConfig.portableConfig);
-      (proposed["modules"] as Record<string, unknown>[]).push(
-        structuredClone(workerInstance("later-worker")),
-      );
+      const proposedModules = proposed["modules"] as Record<string, unknown>[];
+      const automation = proposedModules.find(
+        (module) => module["instanceId"] === "automation-rules",
+      )!;
+      const rules = (automation["configuration"] as Record<string, unknown>)["rules"] as Record<
+        string,
+        unknown
+      >[];
+      ((rules[0]!["emit"] as Record<string, unknown>)["target"] as Record<string, unknown>)[
+        "moduleInstanceId"
+      ] = "later-worker";
+      proposed["modules"] = [automation, structuredClone(workerInstance("later-worker"))];
       const saved = await engine.call(`/v1/projects/${projectId}/configuration`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ portableConfig: proposed, writeToRepository: false }),
       });
-      expect(saved.status).toBe(200);
+      expect(saved.status).toBe(409);
+      expect(
+        (await (await engine.call(`/v1/projects/${projectId}`)).json()).portableConfig,
+      ).toEqual(beforeConfig.portableConfig);
       expect((await graph(projectId)).nodes).toEqual(firstGraph.nodes);
+
+      expect(
+        (await engine.call(`/v1/projects/${projectId}/pause`, { method: "POST" })).status,
+      ).toBe(200);
+      const savedAfterPause = await engine.call(`/v1/projects/${projectId}/configuration`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ portableConfig: proposed, writeToRepository: false }),
+      });
+      expect(savedAfterPause.status).toBe(200);
 
       const updatedReport = (await (
         await engine.call(`/v1/projects/${projectId}/validation-report`, { method: "POST" })
@@ -2679,7 +2701,6 @@ capabilities:
       expect((await graph(projectId)).nodes.map((node) => node.instanceId)).toEqual([
         "automation-rules",
         "later-worker",
-        "request-worker",
       ]);
     });
 
@@ -2724,11 +2745,34 @@ capabilities:
       const report = (await (
         await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
       ).json()) as { valid: boolean; compositionFingerprint: string; findings: unknown[] };
-      expect(report.valid, JSON.stringify(report.findings)).toBe(true);
+      expect(report.valid, JSON.stringify(report.findings)).toBe(false);
+      expect(report.findings).toContainEqual(
+        expect.objectContaining({
+          code: "project.instance-config-invalid",
+          target: {
+            kind: "module-instance",
+            instanceId: "disabled-worker",
+            field: "/moduleId",
+          },
+        }),
+      );
+      const repaired = await engine.call(`/v1/projects/${created.id}/configuration`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          portableConfig: embeddedPortableConfig([automationInstance(), workerInstance()]),
+          writeToRepository: false,
+        }),
+      });
+      expect(repaired.status).toBe(200);
+      const validReport = (await (
+        await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+      ).json()) as { valid: boolean; compositionFingerprint: string; findings: unknown[] };
+      expect(validReport.valid, JSON.stringify(validReport.findings)).toBe(true);
       expect(
         (
           await activate(engine, created.id, {
-            compositionFingerprint: report.compositionFingerprint,
+            compositionFingerprint: validReport.compositionFingerprint,
           })
         ).status,
       ).toBe(200);
@@ -3180,11 +3224,34 @@ capabilities:
         const report = (await (
           await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
         ).json()) as { valid: boolean; compositionFingerprint: string; findings: unknown[] };
-        expect(report.valid, JSON.stringify(report.findings)).toBe(true);
+        expect(report.valid, JSON.stringify(report.findings)).toBe(false);
+        expect(report.findings).toContainEqual(
+          expect.objectContaining({
+            code: "project.instance-config-invalid",
+            target: {
+              kind: "module-instance",
+              instanceId: "disabled-worker",
+              field: "/moduleId",
+            },
+          }),
+        );
+        const repaired = await engine.call(`/v1/projects/${created.id}/configuration`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            portableConfig: embeddedPortableConfig([automationInstance(), workerInstance()]),
+            writeToRepository: false,
+          }),
+        });
+        expect(repaired.status).toBe(200);
+        const validReport = (await (
+          await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
+        ).json()) as { valid: boolean; compositionFingerprint: string; findings: unknown[] };
+        expect(validReport.valid, JSON.stringify(validReport.findings)).toBe(true);
         expect(
           (
             await activate(engine, created.id, {
-              compositionFingerprint: report.compositionFingerprint,
+              compositionFingerprint: validReport.compositionFingerprint,
             })
           ).status,
         ).toBe(200);
