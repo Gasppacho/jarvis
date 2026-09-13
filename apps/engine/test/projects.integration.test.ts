@@ -2066,8 +2066,7 @@ capabilities:
         readiness: {
           status: "unchecked",
           checkedAt: null,
-          detail:
-            "Recherchez Codex sur ce Mac, puis autorisez-le pour ce projet.",
+          detail: "Recherchez Codex sur ce Mac, puis autorisez-le pour ce projet.",
         },
       },
       items: [
