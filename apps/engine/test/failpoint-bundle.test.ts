@@ -56,6 +56,7 @@ const FORBIDDEN_STRINGS = [
   "after-github-observation-publish",
   "after-github-observation-commit",
   "after-lease-commit-before-response",
+  "after-development-delivery-claim",
   "jarvis.module.sample-probe",
   "jarvis.module.test-request-worker",
   "sample_probe_state",

@@ -405,6 +405,132 @@ describe("Development Module tracer bullet", () => {
     },
   );
 
+  it("reawakens a fixed dormant candidate only after a newer eligible observation", async () => {
+    const { engine } = await admissionFixture("fixed-reopen", "await-signal");
+    const projectId = "fixed-reopen";
+    const database = new Database(join(engine.dataRoot, "jarvis.sqlite"));
+    const firstRef = "github://Gasppacho/jarvis/issues/1";
+    const secondRef = "github://Gasppacho/jarvis/issues/2";
+    try {
+      for (const number of [1, 2]) {
+        servers[0]!.seedIssue({
+          owner: "Gasppacho",
+          repository: "jarvis",
+          issue: {
+            number,
+            title: `Fixed reopen ${number}`,
+            body: "Complete untrusted work item",
+            state: "open",
+            labels: [{ name: "agent:ready" }],
+            blockedBy: [],
+          },
+        });
+      }
+      await publishTag(engine, projectId, "fixed-first", 1, firstRef);
+      await expect.poll(() => activeAdmissionRef(database, projectId)).toBe(firstRef);
+      await publishTag(engine, projectId, "fixed-second", 1, secondRef);
+      await expect
+        .poll(() =>
+          database
+            .prepare(
+              "SELECT count(*) AS n FROM deliveries WHERE project_id = ? AND module_id = 'jarvis.module.development'",
+            )
+            .get(projectId),
+        )
+        .toEqual({ n: 2 });
+
+      database
+        .prepare(
+          `UPDATE events
+           SET envelope = json_set(json_set(envelope, '$.payload.tag', 'ready-to-dev'),
+                                   '$.payload.requestedGeneration', 1)
+           WHERE project_id = ? AND type = 'development.implementation.requested'
+             AND json_extract(envelope, '$.payload.workItemRef') = ?`,
+        )
+        .run(projectId, secondRef);
+      database
+        .prepare(
+          `INSERT INTO github_work_item_readiness
+             (project_id, module_instance_id, repository_id, work_item_ref, status, reason,
+              blocker_refs, observed_at, admitted_at, observation_revision)
+           VALUES (?, 'github', 'main', ?, 'ready', 'ready', '[]', ?, ?, 1)
+           ON CONFLICT(project_id, repository_id, work_item_ref) DO UPDATE SET
+             status = excluded.status,
+             reason = excluded.reason,
+             blocker_refs = excluded.blocker_refs,
+             observed_at = excluded.observed_at,
+             admitted_at = excluded.admitted_at,
+             observation_revision = excluded.observation_revision`,
+        )
+        .run(projectId, secondRef, "2026-09-14T00:00:01.000Z", "2026-09-14T00:00:01.000Z");
+      servers[0]!.seedIssue({
+        owner: "Gasppacho",
+        repository: "jarvis",
+        issue: {
+          number: 2,
+          title: "Fixed reopen 2",
+          body: "Complete untrusted work item",
+          state: "closed",
+          labels: [],
+          blockedBy: [],
+        },
+      });
+      await publishObserved(engine, projectId, secondRef, 2, "closed", []);
+      await releaseAdmissionAgent(engine, database, projectId, 1);
+      await expect.poll(() => admissionStatus(database, projectId, secondRef)).toBe("ineligible");
+      await expect
+        .poll(() => workItemReadinessStatus(database, projectId, secondRef))
+        .toBe("blocked");
+      const secondDelivery = database
+        .prepare(
+          `SELECT deliveries.consumed_at, deliveries.attempt_count
+           FROM deliveries JOIN events ON events.id = deliveries.event_id
+           WHERE deliveries.project_id = ?
+             AND events.type = 'development.implementation.requested'
+             AND json_extract(events.envelope, '$.payload.workItemRef') = ?`,
+        )
+        .get(projectId, secondRef) as {
+        readonly consumed_at: string | null;
+        readonly attempt_count: number;
+      };
+      expect(secondDelivery).toEqual({
+        consumed_at: null,
+        attempt_count: 0,
+      });
+      expect(activeAdmissionRef(database, projectId)).toBeUndefined();
+
+      servers[0]!.seedIssue({
+        owner: "Gasppacho",
+        repository: "jarvis",
+        issue: {
+          number: 2,
+          title: "Fixed reopen 2",
+          body: "Complete untrusted work item",
+          state: "open",
+          labels: [{ name: "ready-to-dev" }],
+          blockedBy: [],
+        },
+      });
+      await publishObserved(engine, projectId, secondRef, 3, "open", ["ready-to-dev"]);
+      await expect
+        .poll(() => workItemReadinessStatus(database, projectId, secondRef))
+        .toBe("ready");
+      await expect.poll(() => activeAdmissionRef(database, projectId)).toBe(secondRef);
+      expect(
+        database
+          .prepare(
+            `SELECT count(*) AS n FROM events
+             WHERE project_id = ? AND type = 'development.implementation.requested'
+               AND json_extract(envelope, '$.payload.workItemRef') = ?`,
+          )
+          .get(projectId, secondRef),
+      ).toEqual({ n: 1 });
+      await releaseAdmissionAgent(engine, database, projectId, 2);
+    } finally {
+      database.close();
+    }
+  });
+
   it("keeps other projects and facts progressing while a Development agent is active", async () => {
     const first = makeRealGitRepositoryFixture();
     const second = makeRealGitRepositoryFixture();
@@ -2528,6 +2654,90 @@ async function waitForAdmission(
     if (Date.now() - startedAt > 5_000) throw new Error("Development admission did not settle.");
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
+}
+
+function activeAdmissionRef(database: Database.Database, projectId: string): string | undefined {
+  const row = database
+    .prepare(
+      `SELECT json_extract(events.envelope, '$.payload.workItemRef') AS ref
+       FROM executions execution
+       JOIN workspace_leases lease ON lease.execution_id = execution.id
+       JOIN events ON events.id = execution.input_event_id
+       WHERE execution.project_id = ? AND execution.status = 'running' AND lease.status = 'active'`,
+    )
+    .get(projectId) as { readonly ref: string } | undefined;
+  return row?.ref;
+}
+
+function workItemReadinessStatus(
+  database: Database.Database,
+  projectId: string,
+  workItemRef: string,
+): string | undefined {
+  const row = database
+    .prepare(
+      `SELECT status FROM github_work_item_readiness
+       WHERE project_id = ? AND repository_id = 'main' AND work_item_ref = ?`,
+    )
+    .get(projectId, workItemRef) as { readonly status: string } | undefined;
+  return row?.status;
+}
+
+function admissionStatus(
+  database: Database.Database,
+  projectId: string,
+  workItemRef: string,
+): string | undefined {
+  const row = database
+    .prepare(
+      `SELECT status FROM development_admissions
+       WHERE project_id = ? AND delivery_id IN (
+         SELECT deliveries.id FROM deliveries JOIN events ON events.id = deliveries.event_id
+         WHERE deliveries.project_id = ?
+           AND json_extract(events.envelope, '$.payload.workItemRef') = ?
+       )`,
+    )
+    .get(projectId, projectId, workItemRef) as { readonly status: string } | undefined;
+  return row?.status;
+}
+
+async function publishObserved(
+  engine: Harness,
+  projectId: string,
+  workItemRef: string,
+  observationRevision: number,
+  state: "open" | "closed",
+  tags: readonly string[],
+): Promise<void> {
+  const response = await engine.call("/test/events", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "scm.work-item.observed",
+      version: 1,
+      kind: "fact",
+      projectId,
+      repositoryId: "main",
+      producer: { moduleId: "jarvis.module.github", moduleInstanceId: "github" },
+      subject: { type: "work-item", ref: workItemRef },
+      correlationId: `corr_fixed_observed_${observationRevision}`,
+      causationId: null,
+      idempotencyKey: `${projectId}:${workItemRef}:observed:${observationRevision}`,
+      payload: {
+        repositoryId: "main",
+        workItemRef,
+        title: "Fixed reopen 2",
+        state,
+        tags,
+        dependencies: { status: "complete", openWorkItemRefs: [] },
+        verification: "verified",
+        reasonCode: null,
+        observedAt: `2026-09-14T00:00:0${observationRevision}.000Z`,
+        observationRevision,
+      },
+    }),
+  });
+  expect(response.status, await response.clone().text()).toBe(201);
 }
 
 async function waitForPid(path: string): Promise<number> {

@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   startReferenceWorkflowFixture,
@@ -82,6 +83,89 @@ describe("fixed GitHub to Development workflow", () => {
           )
           .get(fixture.projectId, "main", "github://Gasppacho/jarvis/issues/222"),
       ).toEqual({ count: 1 });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("reclaims a delivery claimed immediately before a crash", async () => {
+    const fixture = await startReferenceWorkflowFixture(
+      "fixed-delivery-claim-recovery",
+      { JARVIS_FAILPOINT: "after-development-delivery-claim" },
+      false,
+      true,
+    );
+    fixtures.push(fixture);
+    fixture.fakeGitHub.seedIssue({
+      owner: "Gasppacho",
+      repository: "jarvis",
+      issue: {
+        number: 223,
+        title: "Delivery claim recovery",
+        body: "Recover the claimed delivery.",
+        state: "open",
+        labels: [{ name: "ready-to-dev" }],
+        blockedBy: [],
+      },
+    });
+    for (let poll = 0; poll < 10; poll += 1) {
+      const refreshed = await fixture.engine.call(
+        `/v1/projects/${fixture.projectId}/overview/refresh`,
+        { method: "POST" },
+      );
+      expect(refreshed.status, await refreshed.clone().text()).toBe(200);
+    }
+    expect(await fixture.engine.waitForExit()).toBe(128);
+
+    const database = new Database(`${fixture.engine.dataRoot}/jarvis.sqlite`);
+    try {
+      const claimed = database
+        .prepare(
+          `SELECT deliveries.consumed_at, deliveries.attempt_count, deliveries.lease_owner,
+                  executions.id AS execution_id
+           FROM deliveries
+           JOIN events ON events.id = deliveries.event_id
+           LEFT JOIN executions ON executions.input_event_id = deliveries.event_id
+           WHERE deliveries.project_id = ?
+             AND events.type = 'development.implementation.requested'`,
+        )
+        .get(fixture.projectId) as {
+        readonly consumed_at: string | null;
+        readonly attempt_count: number;
+        readonly lease_owner: string | null;
+        readonly execution_id: string | null;
+      };
+      expect(claimed).toMatchObject({ consumed_at: null, attempt_count: 0 });
+      expect(claimed.lease_owner).toEqual(expect.any(String));
+      expect(claimed.execution_id).toBeNull();
+
+      await fixture.restart({ JARVIS_FAILPOINT: "" });
+      const events = await waitForEvents(fixture, [
+        "development.implementation.requested",
+        "development.implementation.completed",
+        "scm.change-request.created",
+      ]);
+      expect(
+        events.filter((event) => event.type === "development.implementation.requested"),
+      ).toHaveLength(1);
+      expect(fixture.fakeGitHub.pullRequests).toHaveLength(1);
+      expect(readFileSync(fixture.runtimeCounterPath, "utf8").trim().split("\n")).toHaveLength(1);
+      expect(
+        database
+          .prepare(
+            `SELECT count(*) AS n FROM workspace_leases
+             WHERE project_id = ?`,
+          )
+          .get(fixture.projectId),
+      ).toEqual({ n: 1 });
+      expect(
+        database
+          .prepare(
+            `SELECT consumed_at, attempt_count FROM deliveries
+             WHERE project_id = ? AND consumed_at IS NOT NULL`,
+          )
+          .get(fixture.projectId),
+      ).toMatchObject({ consumed_at: expect.any(String), attempt_count: 1 });
     } finally {
       database.close();
     }

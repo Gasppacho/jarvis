@@ -8,6 +8,9 @@ import type { ClaimedDelivery, DeliveryConsumer } from "../executions/delivery-c
 import type { LiveUpdatePort } from "../stream/hub.js";
 import { summarizeEventEnvelope } from "./timeline.js";
 import type { OutboxDispatcher } from "./dispatcher.js";
+import { failpoint } from "../test-support/failpoint.js";
+
+declare const __JARVIS_TEST_HOOKS__: boolean | undefined;
 
 export interface EventLoopDependencies {
   readonly db: Database.Database;
@@ -79,40 +82,57 @@ export async function tickEventLoop(deps: EventLoopDependencies): Promise<void> 
     );
   }
 
+  const claimed = claimDueDeliveries(
+    deps.db,
+    deps.clock,
+    deps.deliveryLeaseMs,
+    undefined,
+    deps.ids,
+  );
+  if (
+    (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) &&
+    claimed.some((delivery) => {
+      if (delivery.moduleId !== "jarvis.module.development") return false;
+      const event = deps.db
+        .prepare("SELECT type FROM events WHERE id = ? AND project_id = ?")
+        .get(delivery.eventId, delivery.projectId) as { readonly type: string } | undefined;
+      return event?.type === "development.implementation.requested";
+    })
+  ) {
+    failpoint("after-development-delivery-claim");
+  }
   await Promise.all(
-    claimDueDeliveries(deps.db, deps.clock, deps.deliveryLeaseMs, undefined, deps.ids).map(
-      async (delivery) => {
-        try {
-          const outcome = await deps.consumer.consumeAsync(delivery);
-          process.stderr.write(
-            `jarvis-engine: delivery consumed project=${delivery.projectId} ` +
-              `moduleInstance=${delivery.moduleInstanceId} event=${delivery.eventId} ` +
-              `status=${outcome.status} redelivered=${String(outcome.redelivered)}\n`,
-          );
-          // Ticket #60: `null` on a redelivery — no new Execution was created,
-          // so there is nothing new to report (`consume()`'s doc comment). Also
-          // already committed, for the same reason the dispatch side above is.
-          if (outcome.executionSummary !== null) {
-            const summary = outcome.executionSummary;
-            deps.liveUpdates.publish({
-              type: "execution.changed",
-              projectId: delivery.projectId,
-              occurredAt: summary.completedAt ?? summary.createdAt,
-              payload: summary,
-            });
-          }
-        } catch (error) {
-          // A delivery this loop cannot consume must not take the whole engine
-          // down with it (no other tick depends on this one) or strand every
-          // other Delivery behind it — logged and retried next tick instead.
-          process.stderr.write(
-            `jarvis-engine: consuming delivery project=${delivery.projectId} ` +
-              `moduleInstance=${delivery.moduleInstanceId} event=${delivery.eventId} failed: ` +
-              `${String(error)}\n`,
-          );
+    claimed.map(async (delivery) => {
+      try {
+        const outcome = await deps.consumer.consumeAsync(delivery);
+        process.stderr.write(
+          `jarvis-engine: delivery consumed project=${delivery.projectId} ` +
+            `moduleInstance=${delivery.moduleInstanceId} event=${delivery.eventId} ` +
+            `status=${outcome.status} redelivered=${String(outcome.redelivered)}\n`,
+        );
+        // Ticket #60: `null` on a redelivery — no new Execution was created,
+        // so there is nothing new to report (`consume()`'s doc comment). Also
+        // already committed, for the same reason the dispatch side above is.
+        if (outcome.executionSummary !== null) {
+          const summary = outcome.executionSummary;
+          deps.liveUpdates.publish({
+            type: "execution.changed",
+            projectId: delivery.projectId,
+            occurredAt: summary.completedAt ?? summary.createdAt,
+            payload: summary,
+          });
         }
-      },
-    ),
+      } catch (error) {
+        // A delivery this loop cannot consume must not take the whole engine
+        // down with it (no other tick depends on this one) or strand every
+        // other Delivery behind it — logged and retried next tick instead.
+        process.stderr.write(
+          `jarvis-engine: consuming delivery project=${delivery.projectId} ` +
+            `moduleInstance=${delivery.moduleInstanceId} event=${delivery.eventId} failed: ` +
+            `${String(error)}\n`,
+        );
+      }
+    }),
   );
 }
 
