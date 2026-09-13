@@ -1,8 +1,7 @@
 import JarvisCore
 import SwiftUI
 
-/// The calm default surface for a Draft. Existing expert controls stay under
-/// Advanced so the first path does not require internal Jarvis vocabulary.
+/// One project navigation; the four setup steps stay in its content area.
 struct ProjectOnboardingView: View {
     let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
@@ -29,42 +28,82 @@ struct ProjectOnboardingView: View {
     }
 
     var body: some View {
-        let presentation = ProjectOnboardingPresentation(project: project)
-        NavigationSplitView {
-            List(selection: $step) {
-                ForEach(presentation.steps) { item in
-                    Label {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(item.title)
-                            Text(item.status.rawValue)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    } icon: {
-                        Image(systemName: icon(for: item.status))
-                    }
-                    .accessibilityLabel(item.accessibilityLabel)
-                    .tag(item.id)
-                }
-            }
-            .navigationTitle("Setup")
-        } detail: {
+        let state = projectConfiguration.state(for: project.id)
+        let presentation = ProjectOnboardingPresentation(project: project, configuration: state)
+        VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Text(project.name).font(.title2.bold())
-                    Text("Draft project")
-                        .font(.callout.weight(.medium))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 3)
-                        .background(.quaternary, in: Capsule())
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(state.draft?.name ?? project.name).font(.title.bold())
+                        if let path = state.detail?.bindings.first?.path {
+                            Label("Dépôt local : \(URL(fileURLWithPath: path).lastPathComponent)", systemImage: "folder")
+                                .foregroundStyle(.secondary)
+                        }
+                        Label("\(project.status == .draft ? "Brouillon" : "Configuration à revoir") · \(step.title)", systemImage: "slider.horizontal.3")
+                        Text(nextAction).foregroundStyle(.secondary)
+                    }
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 12) { stepButtons(presentation) }
+                            .fixedSize(horizontal: true, vertical: false)
+                        VStack(alignment: .leading, spacing: 8) { stepButtons(presentation) }
+                    }
+                    if state.isLoading {
+                        ProgressView("Chargement de la configuration…")
+                    }
+                    if let error = state.errorMessage {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                            .textSelection(.enabled)
+                    }
+                    if state.loadFailed && state.draft != nil {
+                        Button("Réessayer le chargement") {
+                            Task { await projectConfiguration.refresh(projectId: project.id, packages: moduleCatalog.packages) }
+                        }
+                        .disabled(state.isLoading)
+                        .accessibilityIdentifier("project.reload")
+                    }
                     activeStep
-                    saveDraftAction
                 }
+                .frame(maxWidth: 900, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(24)
             }
+            Divider()
+            HStack(spacing: 16) {
+                Text(state.isLoading ? "Chargement du brouillon…" : state.draft == nil ? "Configuration indisponible" : state.saveStatus)
+                    .font(.callout)
+                    .accessibilityIdentifier("project.save-status")
+                Spacer()
+                if state.draft == nil {
+                    Button("Réessayer le chargement") {
+                        Task { await projectConfiguration.refresh(projectId: project.id, packages: moduleCatalog.packages) }
+                    }
+                    .disabled(state.isLoading)
+                    .accessibilityIdentifier("project.reload")
+                } else {
+                    Button(state.saveFailed ? "Réessayer l’enregistrement" : "Enregistrer") {
+                        Task { await projectConfiguration.saveDraft(projectId: project.id, writeToRepository: false) }
+                    }
+                    .disabled(state.isSaving || (state.isDraftSaved && !state.saveFailed))
+                    .accessibilityIdentifier("project.save")
+                }
+                if let nextStep {
+                    Button("Continuer vers \(nextStep.title)") {
+                        Task {
+                            if !state.isDraftSaved {
+                                guard await projectConfiguration.saveDraft(projectId: project.id, writeToRepository: false) != nil else { return }
+                            }
+                            step = nextStep
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(state.draft == nil || state.isSaving)
+                    .accessibilityIdentifier("project.continue")
+                }
+            }
+            .padding(16)
+            .background(.bar)
         }
-        .id(project.id)
         .onChange(of: step) { _, value in navigation.set(value, for: project.id) }
         .task(id: project.id) {
             await connections.refresh()
@@ -73,15 +112,55 @@ struct ProjectOnboardingView: View {
         }
     }
 
+    private func stepButtons(_ presentation: ProjectOnboardingPresentation) -> some View {
+        ForEach(presentation.steps) { item in
+            Button { step = item.id } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: icon(for: item.status))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(item.title).fontWeight(step == item.id ? .semibold : .regular)
+                        Text(item.status.rawValue).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if step == item.id { Image(systemName: "chevron.down").font(.caption) }
+                }
+                .padding(8)
+                .background(step == item.id ? Color.accentColor.opacity(0.12) : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(item.accessibilityLabel)
+            .accessibilityAddTraits(step == item.id ? .isSelected : [])
+            .accessibilityIdentifier("project.step.\(item.id.rawValue)")
+        }
+    }
+
+    private var nextStep: ProjectOnboardingStep? {
+        switch step {
+        case .repository: .workflow
+        case .workflow: .connections
+        case .connections: .review
+        case .review: nil
+        }
+    }
+
+    private var nextAction: String {
+        switch step {
+        case .repository: "Confirmez le dépôt et le nom de votre projet."
+        case .workflow: "Choisissez ce que Jarvis développera et les vérifications à exécuter."
+        case .connections: "Autorisez un compte GitHub et choisissez l’agent de ce projet."
+        case .review: "Vérifiez la configuration, puis choisissez la portée du premier démarrage."
+        }
+    }
+
     @ViewBuilder
     private var activeStep: some View {
         switch step {
         case .repository:
-            GroupBox("Repository") {
+            GroupBox("Dépôt") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Imported as a Draft. Jarvis will not start a workflow until you validate and activate it.")
-                    Button("Corriger le repository") { openAdvanced() }
-                    Text("The repository access is kept locally on this Mac.")
+                    Text("Le dépôt est importé. Le workflow démarre uniquement après votre vérification et votre activation.")
+                    Button("Corriger le dépôt") { openAdvanced() }
+                    Text("L’accès au dépôt reste local à ce Mac.")
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -89,7 +168,7 @@ struct ProjectOnboardingView: View {
         case .workflow:
             GroupBox("Workflow") {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Choose the workflow details when you are ready. Your Draft is saved and can be resumed at any time.")
+                    Text("Choisissez votre workflow. Vous pouvez enregistrer un brouillon incomplet et le reprendre plus tard.")
                     advancedControls
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -103,13 +182,13 @@ struct ProjectOnboardingView: View {
     }
 
     private var advancedControls: some View {
-        Button("Advanced") {
+        Button("Réglages avancés") {
             openAdvanced()
         }
     }
 
     private var connectionsStep: some View {
-        GroupBox("Connections") {
+        GroupBox("Compte GitHub") {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Choisissez explicitement le compte GitHub utilisable par ce projet. Ce choix ne le rend pas disponible aux autres projets.")
                 switch connections.discoveryState {
@@ -166,8 +245,6 @@ struct ProjectOnboardingView: View {
                     Task { await refreshConnections() }
                 }
                 .disabled(connections.isRefreshing)
-                Button("Continuer vers Review") { step = .review }
-                Button("Advanced") { openAdvanced() }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -207,7 +284,7 @@ struct ProjectOnboardingView: View {
                         .disabled(!candidate.selectable || projectConfiguration.state(for: project.id).isSaving)
                         .accessibilityLabel("Choisir \(candidate.name), \(candidate.subtitle)")
                         .accessibilityHint(runtime.approval)
-                        DisclosureGroup("Technical details") {
+                        DisclosureGroup("Détails techniques") {
                             Text(candidate.id).font(.caption.monospaced())
                         }
                     }
@@ -223,17 +300,9 @@ struct ProjectOnboardingView: View {
                     Task { await projectConfiguration.checkRuntime(projectId: project.id) }
                 }
                 .disabled(!runtime.canCheck)
-                Button("Continuer vers Review") { step = .review }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-    }
-
-    private var saveDraftAction: some View {
-        Button("Save Draft") {
-            Task { await projectConfiguration.saveDraft(projectId: project.id, writeToRepository: false) }
-        }
-        .disabled(projectConfiguration.state(for: project.id).draft == nil)
     }
 
     private var review: some View {
@@ -248,6 +317,8 @@ struct ProjectOnboardingView: View {
         case .inProgress: "clock"
         case .readyForReview: "eye"
         case .complete: "checkmark.circle.fill"
+        case .failed: "exclamationmark.triangle.fill"
+        case .stale: "arrow.clockwise.circle"
         }
     }
 }
@@ -262,7 +333,7 @@ struct FirstLaunchView: View {
         } description: {
             Text(presentation.emptyState?.description ?? "")
         } actions: {
-            Button(presentation.emptyState?.primaryAction ?? "Importer un repository") {
+            Button(presentation.emptyState?.primaryAction ?? "Ajouter un projet") {
                 importRepository()
             }
             .buttonStyle(.borderedProminent)

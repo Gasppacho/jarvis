@@ -31,9 +31,17 @@ public struct ProjectConfigurationState: Sendable, Equatable {
     public var draft: ProjectConfigurationDraft?
     public var isDraftSaved = false
     public var isLoading = false
+    public var loadFailed = false
     public var isSaving = false
+    public var saveFailed = false
     public var pendingStartingPointID: String?
     public var errorMessage: String?
+    public var saveStatus: String {
+        if isSaving { return "Enregistrement…" }
+        if saveFailed { return "Échec — Réessayer" }
+        if isDraftSaved { return "Enregistré" }
+        return "Modifications à enregistrer"
+    }
     public var agentRuntimes: Components.Schemas.ProjectAgentRuntimeChoices?
     public var isRuntimeBusy = false
     public var runtimeMetadataUnavailable = false
@@ -121,9 +129,9 @@ public final class ProjectConfigurationModel {
         packages: [ModulePackage],
         preservingStaleValidation: Bool
     ) async {
-        invalidateRuntime(projectId: projectId)
+        markValidationStale(projectId: projectId)
         guard let client else {
-            update(projectId) { $0.errorMessage = Self.engineUnavailable }
+            update(projectId) { $0.loadFailed = true; $0.errorMessage = Self.engineUnavailable }
             return
         }
         refreshRevisions[projectId, default: 0] += 1
@@ -135,6 +143,7 @@ public final class ProjectConfigurationModel {
         }
         update(projectId) {
             $0.isLoading = true
+            $0.loadFailed = false
             if !preservingStaleValidation {
                 // A report evaluates the previously loaded snapshot. Reopening or
                 // reloading requires a fresh engine evaluation before it is current.
@@ -183,11 +192,13 @@ public final class ProjectConfigurationModel {
                 $0.compositionGraph = compositionGraph
                 $0.draft = preservedDraft ?? draft
                 $0.isDraftSaved = preservedDraft == nil
+                if preservedDraft == nil { $0.saveFailed = false }
                 $0.errorMessage = nil
             }
         } catch {
             guard refreshRevisions[projectId, default: 0] == refreshRevision else { return }
             update(projectId) {
+                $0.loadFailed = true
                 $0.errorMessage = ProjectsModel.describe(error)
             }
         }
@@ -206,6 +217,7 @@ public final class ProjectConfigurationModel {
             state.draft = draft
             state.compositionReview = nil
             state.isDraftSaved = false
+            state.saveFailed = false
             state.errorMessage = nil
             didEdit = true
         }
@@ -263,6 +275,7 @@ public final class ProjectConfigurationModel {
                 $0.draft = replacement
                 $0.compositionReview = nil
                 $0.isDraftSaved = false
+                $0.saveFailed = false
                 $0.errorMessage = nil
             }
             compositionRevisions[projectId, default: 0] += 1
@@ -777,6 +790,7 @@ public final class ProjectConfigurationModel {
         do {
             guard let draft = state(for: projectId).draft else {
                 update(projectId) {
+                    $0.saveFailed = true
                     $0.errorMessage =
                         "No editable Project Configuration is loaded. Reload this Project and try again."
                 }
@@ -787,7 +801,7 @@ public final class ProjectConfigurationModel {
                 portableConfig: try draft.payload(),
                 writeToRepository: writeToRepository)
         } catch {
-            update(projectId) { $0.errorMessage = error.localizedDescription }
+            update(projectId) { $0.saveFailed = true; $0.errorMessage = error.localizedDescription }
             return nil
         }
     }
@@ -800,10 +814,11 @@ public final class ProjectConfigurationModel {
     ) async -> ProjectDetail? {
         guard !state(for: projectId).isSaving else { return nil }
         guard let client else {
-            update(projectId) { $0.errorMessage = Self.engineUnavailable }
+            update(projectId) { $0.saveFailed = true; $0.errorMessage = Self.engineUnavailable }
             return nil
         }
-        update(projectId) { $0.isSaving = true }
+        let draftAtSaveStart = state(for: projectId).draft
+        update(projectId) { $0.isSaving = true; $0.saveFailed = false }
         defer { update(projectId) { $0.isSaving = false } }
         do {
             let detail = try await client.replaceProjectConfiguration(
@@ -823,6 +838,11 @@ public final class ProjectConfigurationModel {
             }
             update(projectId) {
                 $0.detail = detail
+                $0.saveFailed = false
+                guard $0.draft == draftAtSaveStart else {
+                    $0.isDraftSaved = false
+                    return
+                }
                 $0.compositionGuide = review?.compositionGuide ?? $0.compositionGuide
                 $0.compositionReview = review
                 $0.candidates = review?.resourceChoices.candidates ?? []
@@ -835,7 +855,7 @@ public final class ProjectConfigurationModel {
             await projects.refresh()
             return detail
         } catch {
-            update(projectId) { $0.errorMessage = ProjectsModel.describe(error) }
+            update(projectId) { $0.saveFailed = true; $0.errorMessage = ProjectsModel.describe(error) }
             return nil
         }
     }

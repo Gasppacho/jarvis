@@ -9,9 +9,10 @@ Branche : `codex/ux-reliability-20260913` ; base : `64eb2945b04755590ac7534ad0c7
 L01 implémentée et relue ; commit `989b9b7`. Contrôles ciblés réussis,
 y compris une dernière reproduction rouge/verte préservant les checks après
 un échec ultérieur du commit (7/7 tests de projection).
-L02 commitée (`cb35979`), gate complet en cours : les deux échecs du validateur Development sont reproduits
-avec les assertions inchangées ; le `listen EPERM` est reproduit séparément.
-L03–L10 restent à exécuter dans l'ordre. Aucun push, test GitHub ou merge effectué.
+L02 implémentée, relue et gate complet réussi au commit `5906e64` :
+366 unitaires, 385 intégration et 187 Swift ; app empaquetée en 3 min 53 s.
+Les deux échecs Development et le `listen EPERM` ont été reproduits séparément.
+L03 implémentée et relue ; L04–L10 restent à exécuter dans l’ordre. Aucun push, test GitHub ou merge effectué.
 Le projet réel et le travail retenu de #204 restent intacts.
 
 La session macOS est verrouillée (`IOConsoleLocked = Yes`, confirmé par `ioreg`).
@@ -27,16 +28,16 @@ Les captures natives tentées en L01 sont inutilisables, donc ne prouvent aucun 
 - `rtk pnpm install --frozen-lockfile` réussi dans ce worktree.
 - État initial : seuls le dossier du plan et `graft/` étaient non suivis.
   L'index graft généré reste local, hors commits.
-- Captures d'audit 19, 20 et 22 consultées. Les autres captures et la maquette
-  restent à examiner pour L03 et les étapes suivantes.
+- Captures d’audit 01, 02, 03, 11, 19, 20, 22, 23 et les trois captures
+  maquette consultées. Leurs données et états ne sont pas des preuves du nouveau build.
 
 ## Tranches
 
 | Tranche | Implémentation / preuve | Commit |
 | --- | --- | --- |
 | L01 | Implémentée, tests et double relecture ; visuel en attente | `989b9b7` |
-| L02 | Implémentée et relue ; gate complet en cours | `cb35979` |
-| L03 | À faire — contrat UX | — |
+| L02 | Implémentée, relue ; gate complet réussi, vrai run encore requis | `cb35979` → `5906e64` |
+| L03 | Implémentée, relue ; tests ciblés réussis, visuel en attente | Voir commit L03 |
 | L04 | À faire — import et navigation | — |
 | L05 | À faire — workflow guidé | — |
 | L06 | À faire — accès et agent | — |
@@ -176,3 +177,53 @@ de 500 ms et l'assertion totale de 2 s sont conservées. Aucun changement du
 runtime produit. La suite complète unitaire passe 366/366 après cet ajustement.
 Instrumentation retirée. Mesures : `l02/probe-instrumented-*.log` et
 `l02/probe-warm-prerequisite.log` dans le dossier temporaire.
+
+Gate complet final L02 au commit `5906e64`, worktree propre : **366/366 unitaires,
+385/385 intégration, 187/187 Swift**, génération, contrats, lint, typecheck,
+architecture, build Engine et app macOS empaquetée. Durée : **233 193 ms**.
+Commande : `rtk proxy node /tmp/jarvis-ux-reliability-evidence/l02/validator/run.mjs 'pnpm verify'`.
+Le helper appelle le même `runProjectCommand` que Development.
+Journal : `/tmp/jarvis-ux-reliability-evidence/l02/product-verify-passed.log`.
+Ce gate prouve le validateur ; les interactions natives et la nouvelle issue
+GitHub réelle restent à exécuter en L10.
+
+## L03 — contrat du guide et états
+
+Rouge Swift : le test `ProjectOnboardingPresentationTests` échoue sur les
+états de sauvegarde absents, la langue et les étapes statiques. Le guide lit
+désormais le brouillon et le preflight courant ; aucun contrôle non exécuté
+n’est déclaré réussi. Le contenu comporte une seule navigation projet et
+quatre boutons d’étape, une largeur limitée et un pied de page de sauvegarde.
+Le contrat UX canonique remplace les descriptions contradictoires.
+
+Fichiers : `docs/product/UX.md`, `ProjectOnboardingView.swift`, `RootView.swift`,
+`ProjectOnboardingPresentation.swift`, `ProjectConfigurationModel.swift`.
+Contrôle ciblé Swift : 4/4, dont sauvegarde via API réelle et invalidation après
+édition. Commande : `rtk proxy swift test --package-path apps/macos --filter 'ProjectOnboardingPresentationTests|ProjectConfigurationTests/testReviewUsesEngineReadinessAndKeepsIncompleteDraftSaveable'`.
+Prettier des deux documents réussi. Double relecture en cours.
+Visuel natif toujours en attente
+du déverrouillage macOS ; dernier contrôle `ioreg` : session verrouillée.
+
+Relecture L03 : faux succès du dépôt sans lecture, chargement permanent après
+échec et erreur d’association interprétée comme erreur de sauvegarde reproduits
+et corrigés. Un état `saveFailed` propre à l’opération évite cette confusion.
+Le contrôle API reproduit aussi une édition pendant la sauvegarde : le nouveau
+texte était annoncé « Enregistré » alors que seul l’ancien texte avait été écrit.
+La réponse de sauvegarde ne certifie plus un brouillon modifié entre-temps.
+Le graphe détaillé est explicitement avancé ; les états d’exécution du contrat
+UX correspondent à L01. Les relecteurs vérifient ces corrections.
+
+Dernier cas Spec : lecture positive puis moteur arrêté reproduit « Terminé »
+sur le snapshot conservé. L’échec de lecture est désormais identifié séparément :
+le dépôt reste visible avec « À revérifier » et une action de rechargement.
+Test utilisé : le même parcours API, suivi d’un vrai arrêt Engine et d’une lecture.
+
+Le refresh invalide aussi le preflight avant de vérifier la présence du client
+Engine. Repro complémentaire : un rapport valide restait courant après perte
+du client ; le test de preflight contrôle désormais le badge périmé et
+l’activation indisponible. Le seam existant et `markValidationStale` sont réutilisés.
+
+Contrôle final L03 : **12/12 Swift** (onboarding, preflight, vraie sauvegarde
+et configuration refusée). Commande : `rtk proxy swift test --package-path apps/macos --filter 'ProjectOnboardingPresentationTests|ProjectPreflightTests|ProjectConfigurationTests/testReviewUsesEngineReadinessAndKeepsIncompleteDraftSaveable|ProjectConfigurationTests/testInvalidBundledPackageConfigurationIsActionableAndDoesNotReplaceTheDraft'`.
+Prettier réussi ; relectures Standards et Spec sans constat restant.
+Les captures aux deux tailles et apparences restent à produire, session verrouillée.

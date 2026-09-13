@@ -43,6 +43,15 @@ final class ProjectPreflightTests: XCTestCase {
         let calls = await api.activations
         XCTAssertEqual(calls, [String(repeating: "a", count: 64)])
         XCTAssertEqual(model.state(for: "project").activation, .succeeded)
+        await model.refresh(projectId: "project")
+        let disconnected = model.state(for: "project")
+        XCTAssertFalse(disconnected.preflight.canActivate)
+        XCTAssertEqual(ProjectOnboardingPresentation(
+            project: Project(id: "project", name: "Project", status: .draft, moduleCount: 3, activeExecutions: 0),
+            configuration: disconnected).steps.last?.status, .stale)
+        await model.activateWorkflow(projectId: "project")
+        let afterDisconnect = await api.activations
+        XCTAssertEqual(afterDisconnect, calls, "a lost Engine client must invalidate the old report")
     }
 
     @MainActor

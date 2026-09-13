@@ -1044,6 +1044,7 @@ final class ProjectConfigurationTests: XCTestCase {
             portableConfig: invalid,
             writeToRepository: false)
         XCTAssertNil(saveResult)
+        XCTAssertTrue(configuration.state(for: imported.id).saveFailed)
         let message = try XCTUnwrap(
             configuration.state(for: imported.id).errorMessage)
         XCTAssertTrue(message.contains("project.config-invalid"))
@@ -1093,6 +1094,9 @@ final class ProjectConfigurationTests: XCTestCase {
         let freshState = configuration.state(for: imported.id)
         XCTAssertNotNil(freshState.compositionReview, freshState.errorMessage ?? "missing review")
         XCTAssertFalse(freshState.compositionReview?.readyToValidate ?? true)
+        XCTAssertEqual(freshState.saveStatus, "Enregistré")
+        XCTAssertEqual(ProjectOnboardingPresentation(project: imported, configuration: freshState).steps.first?.status, .complete)
+        XCTAssertEqual(ProjectOnboardingPresentation(project: imported, configuration: freshState).steps[1].status, .needsAction)
 
         let incomplete = try projectConfiguration(projectId: imported.id)
         let saveResult = await configuration.saveConfiguration(
@@ -1137,9 +1141,29 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertTrue(presentation.isSaveEnabled)
         XCTAssertFalse(presentation.isReadyForValidation)
         XCTAssertEqual(state.draft?.name, "Unsaved review edit")
+        XCTAssertEqual(state.saveStatus, "Modifications à enregistrer")
+        XCTAssertEqual(ProjectOnboardingPresentation(project: imported, configuration: state).steps.last?.status, .stale)
+
+        let saving = Task { await configuration.saveDraft(projectId: imported.id, writeToRepository: false) }
+        for _ in 0..<100 where !configuration.state(for: imported.id).isSaving {
+            await Task.yield()
+        }
+        XCTAssertTrue(configuration.state(for: imported.id).isSaving, "the real save must be in flight before editing")
+        configuration.editDraft(projectId: imported.id) { $0.name = "Edited while saving" }
+        let saved = await saving.value
+        XCTAssertEqual(saved?.project.name, "Unsaved review edit")
+        state = configuration.state(for: imported.id)
+        XCTAssertEqual(state.draft?.name, "Edited while saving")
+        XCTAssertEqual(state.saveStatus, "Modifications à enregistrer")
+        XCTAssertNotEqual(state.compositionReview?.compositionGuide.startingPoints.first?.template?.metadata.name,
+                          "Unsaved review edit", "the saved snapshot must not certify the newer edit")
 
         projects.releaseRepositoryAccess()
         await session.shutdown()
+        await configuration.refresh(projectId: imported.id)
+        state = configuration.state(for: imported.id)
+        XCTAssertNotNil(state.detail, "a lost connection keeps the last repository snapshot")
+        XCTAssertEqual(ProjectOnboardingPresentation(project: imported, configuration: state).steps.first?.status, .stale)
     }
 
     private func schemaFixturePackage(
