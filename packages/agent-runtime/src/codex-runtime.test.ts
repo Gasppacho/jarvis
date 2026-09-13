@@ -498,7 +498,8 @@ describe("CodexRuntime", () => {
   it("times out a Codex process group and terminates its grandchild", async () => {
     const root = await makeRoot();
     try {
-      const request = { ...agentRequest(root), timeoutMs: 500 };
+      // Allow the real Node fixture to start before testing process-group termination.
+      const request = { ...agentRequest(root), timeoutMs: 2_000 };
       const executable = await makeCancellationExecutable(root);
       const run = (await new CodexRuntime(executable).start(
         request,

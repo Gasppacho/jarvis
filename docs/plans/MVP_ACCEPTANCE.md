@@ -18,9 +18,12 @@ of older issue criteria from these observations.
   workflow commands and truthful empty preflight observed in isolated data (L03–L07).
 - [x] Failed work remains linked after label removal and restart (L08 Harness);
   packaged app shows the retained failure at 1100×800 (Harness data).
-- [ ] Complete keyboard and VoiceOver trial, with names and errors observed (L09).
-- [ ] One real bounded issue, real Codex, successful validations and one PR created
-  by the GitHub module, followed by pause without merge (L10).
+- [x] Complete keyboard configuration and activation observed on the real L10 run.
+- [ ] Complete VoiceOver error reading: names, values and card activation observed;
+  full error reading remains unproven (L09–L10).
+- [x] One real bounded issue [#205](https://github.com/Gasppacho/jarvis/issues/205),
+  real Codex, successful second validation and one [PR #206](https://github.com/Gasppacho/jarvis/pull/206)
+  created by the GitHub module, followed by pause without merge (L10).
 - [ ] Final clean-worktree `rtk pnpm verify` and identified packaged build (L10).
 
 ## Reference workflow acceptance

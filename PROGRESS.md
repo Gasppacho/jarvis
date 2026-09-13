@@ -518,3 +518,92 @@ conformément au cas items vides L06. La vraie absence reste portée par un desc
 découvert indisponible. Aucune assertion n’est retirée.
 
 Test ciblé1/1 réussi ; relectures Spec/Standards finales0. Nouveau gate complet à lancer sur le commit corrigé.
+
+
+47d6fbd : gate complet propre réussi (verify-candidate-3.log),366 unitaires,
+389 intégrations,196 Swift, contrats/lint/types/architecture/build. La tentative2
+avait seulement trouvé le formatage d’une attente, corrigé par47d6fbd. Branche
+poussée sans force ; relectures finales Spec/Standards0.
+
+Issue réelle205 créée, une page PAUSE_AND_CANCEL.md ; aucune PR ouverte avant
+l’essai, aucun bloqueur205. App production du commit47d6fbd lancée avec root
+`/tmp/jarvis-ux-reliability-evidence/l10/data`, PID91252. Import du worktree de cette
+branche, nom Jarvis essai205, base codex/ux-reliability-20260913. Installation gelée,
+verifyseul, compteGasppacho etCodex0.154 explicitement choisis depuisle guide.
+Configuration et activation au clavier (Tab/Espace, CmdN/CmdS, Entrée sélecteur),
+mode navigation macOS temporairement0→2 viaCtrlF7, à restaurer0 à lafin.
+
+Activation15:59:27 Europe/Paris, scope exactgithub://Gasppacho/jarvis/issues/205.
+Passagecontinu depuislancement15:54:14 :313s, captures et reprisescomprises,
+objectif<5min nonatteint. Captures01–11 l10vues ;11 : préparationréussie,
+Codexencours, validations/commit/PR noncommencés. Aucun Advanced utilisé. Le projet
+historique reste pausé. Exécutionréelle en cours, succèsnonencore revendiqué.
+
+
+16:00:47 : première validationréelleéchouée après19,47s surle testunitaire
+CodexRuntime/timeoutgrandchild : PIDmarkerpasécrit (deadline du run500ms).
+Sortie nettoyée conservée l10/validation-failed-1.log. L’appmontrel’échecrouge,
+réparationorange(capture12), puisverifytentative2encours(capture13), historique1
+conservé. Une request Development seulement ; secondrunCodexderéparation, aucun
+fichierdecode/testmodifiédansleworktree, seulementPAUSE_AND_CANCEL.md.
+Secondevalidationcommencée16:01:25 ; diagnosticdetemporisationàcontinueraprèsfin,
+pasdetestsVitestconcurrentsaveccegate.
+
+
+## L10 — essai réel terminé, 13 septembre 2026
+
+Build app et Engine : `47d6fbdffd4da6df5591ee0ef47fad4ceafa2b1e`,
+Node embarqué 24.16.0, schéma 0033. Issue [#205](https://github.com/Gasppacho/jarvis/issues/205)
+→ PR [#206](https://github.com/Gasppacho/jarvis/pull/206), créée par le module GitHub.
+Un seul Development, deux passages Codex (initial puis réparation), une branche,
+un commit `1e6f80c98efee524c647c1ad45eead8cc56545e5`, un fichier documentaire de 45 lignes.
+La PR vise la branche candidate ; aucun merge. Les issues historiques restent ouvertes.
+
+Heures UTC : préparation 13:59:33.679–34.636 ; Codex 13:59:34.658 ;
+validation 1 14:00:27.943–47.411 (échec) ; réparation 14:00:47.411 ;
+validation 2 14:01:25.954–14:05:56.575 (succès, 270621 ms) ;
+commit 14:05:56.656 ; push 14:05:59.925 ; Development terminé 14:06:00.999 ;
+GitHub terminé 14:06:02.406. `real-chain.json` contient les événements durables
+ready → implementation.requested → implementation.completed → creation-requested
+→ created. Le tag-added observé en parallèle ne crée aucun second Development.
+
+Capture native 16 : PR réelle et deux tentatives, la première reste rouge ;
+17 : projet en pause, dernier travail réussi accessible. Le bouton Copier le lien
+retourne exactement l’URL #206 ; le lien Ouvrir la PR a reçu AXPress.
+La lecture du contenu distant et le compte de commits/fichiers sont confirmés par
+`rtk gh pr view 206 --repo Gasppacho/jarvis --json commits,files,headRefOid`.
+Projet isolé confirmé `paused` par lecture SQLite ; app quittée. VoiceOver désactivé,
+navigation clavier macOS restaurée à 0, apparence sombre conservée.
+
+### Diagnostic complémentaire du test intermittent
+
+Le timeout de 500 ms inclut le démarrage du faux exécutable Node. Un retard injecté
+temporairement de 650 ms avant son initialisation reproduit exactement le marqueur
+PID absent. À 2000 ms, la même reproduction passe. Le délai de cette seule fixture
+est porté à 2000 ms ; toute instrumentation temporaire est retirée. Aucun code de
+production ni assertion de timeout, SIGTERM, drainage ou disparition du groupe ne change.
+Le retard reproduit le mécanisme ; aucune trace système ne permet d’attribuer la
+latence originale à un composant précis du système hôte.
+
+Preuves : `l10/timeout-startup-red.log`, `timeout-startup-green.log`, puis
+`runtime-final.log` : 26/26 tests CodexRuntime. Relectures complémentaires :
+Spec 0 défaut, Standards 0 défaut. Le vrai agent n’a modifié aucun test pour obtenir
+la PR. Dernier gate complet à exécuter sur le commit de ce diagnostic, app fermée :
+`rtk pnpm verify`, journal `l10/verify-final.log`.
+
+### Limites de la preuve
+
+Le passage de configuration dure 313 secondes, reprises et captures incluses :
+cible de moins de cinq minutes manquée de 13 secondes. Vingt et une actions métier
+comptées (ajout, choix du dossier, nom, création, navigation, choix et confirmations,
+vérifications, portée et activation), hors frappes de texte et navigation interne
+au sélecteur. Le passage inclut une navigation erronée vers Accès et un retour à
+Workflow. Aucun Advanced, JSON ni identifiant technique saisi dans le guide.
+
+La configuration et l’activation complètes sont faites au clavier. Les noms et
+valeurs ont été observés avec AX et sous-titres VoiceOver, dont une activation de
+carte par VO-Espace. La lecture VoiceOver de l’erreur complète n’a pas été établie ;
+aucune écoute humaine ni audit exhaustif d’accessibilité n’est revendiqué.
+Les scénarios coûteux de blocage/libération, concurrence, reprise, annulation,
+réponse périmée et custom restent des preuves Harness/Swift, pas des runs GitHub réels.
+Notarisation et Gatekeeper sur machine propre restent hors preuve.
