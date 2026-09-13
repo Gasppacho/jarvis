@@ -1290,6 +1290,7 @@ export interface components {
             checks: components["schemas"]["ExecutionDetailCheck"][];
             agentExcerpts: components["schemas"]["ExecutionDetailAgentExcerpt"][];
             workspace: {
+                /** @description Workspace location relative to the Jarvis data root; never an absolute user path. */
                 path: string;
                 repositoryId: string;
                 branch: string;

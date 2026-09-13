@@ -569,8 +569,8 @@ function buildFailure(
         ? "execution.cancelled"
         : "execution.failed");
   const message =
-    execution?.error ??
     stringValue(payload, "message") ??
+    execution?.error ??
     (execution?.status === "timed-out"
       ? "L’exécution a dépassé son délai."
       : execution?.status === "cancelled"
@@ -621,7 +621,7 @@ function latestWorkspace(
     const lease = leases.get(execution.id);
     if (lease !== undefined) {
       return {
-        path: lease.workspacePath,
+        path: `projects/${lease.projectId}/workspaces/${lease.executionId}`,
         repositoryId: lease.repositoryId,
         branch: lease.workingBranch,
         baseRevisionSha: lease.baseRevisionSha,

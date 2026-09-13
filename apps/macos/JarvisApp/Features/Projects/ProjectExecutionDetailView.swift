@@ -428,7 +428,7 @@ struct ProjectExecutionDetailView: View {
                 labeledIDs("Causation IDs", technical.causationIds)
                 labeledIDs("Retry delivery ID", retryDeliveryId.map { [$0] } ?? [])
                 if let workspace {
-                    Text("Path: \(workspace.path)")
+                    Text("Dossier dans les données Jarvis : \(workspace.path)")
                         .font(.caption.monospaced())
                         .textSelection(.disabled)
                     Text("Base revision: \(workspace.baseRevisionSha)")

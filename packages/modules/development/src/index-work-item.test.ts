@@ -70,6 +70,8 @@ describe("Development Work Item context", () => {
     expect(prompt).toContain("Body:");
     expect(prompt).toContain("[Work Item content truncated by Jarvis]");
     expect(prompt).toContain("push remote");
+    expect(prompt).toContain("Do not rerun the full project gate inside Codex");
+    expect(prompt).toContain("report unrelated failures instead");
     expect(prompt).not.toContain(body);
   });
 

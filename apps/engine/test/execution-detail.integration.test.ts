@@ -68,6 +68,8 @@ describe("execution detail", () => {
     expect(publicText).not.toContain("ghs_reference_fixture");
     expect(publicText).not.toContain("A bounded detail body.");
     expect(publicText).not.toContain("/private/tmp");
+    expect(publicText).not.toContain("<path>");
+    expect(publicText).not.toContain("<redacted>");
     expect(publicText).not.toMatch(/merge|auto-merge/i);
   });
 

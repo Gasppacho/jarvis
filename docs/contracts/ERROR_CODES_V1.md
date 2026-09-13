@@ -94,6 +94,10 @@ this public v1 catalog.
 | `git.base-not-found` | No | Configured base branch/revision is absent |
 | `git.no-changes` | No | Agent produced no committable change |
 | `git.validation-failed` | No | Required Project Commands remain failing |
+| `project.validation-tool-missing` | No | Validation executable is missing (shell exit 127 or an explicit package-manager command-not-found diagnostic); repair local tools before retrying |
+| `project.validation-access-denied` | No | Validation reports a permission failure (exit 126 or explicit OS access denial); repair local access |
+| `project.validation-timed-out` | No | Configured validation deadline expired; inspect the command and its limit |
+| `project.validation-runner-failed` | No | Validation could not start or its working directory is unavailable; inspect the Engine and local tools |
 | `git.commit-failed` | Maybe | Commit command failed |
 | `git.push-failed` | Maybe | Push failed without confirmed remote state |
 | `git.recovery-required` | No | Original workspace/local branch or remote differs from the push intent; preserve and inspect before replay |

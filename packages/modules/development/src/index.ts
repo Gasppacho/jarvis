@@ -50,7 +50,20 @@ const MAX_OUTPUT_LIMIT_BYTES = 10_485_760;
 const MAX_WORK_ITEM_CONTENT_BYTES = 64 * 1024;
 const VALIDATION_CHECKS = ["lint", "typecheck", "test", "build", "verify"] as const;
 type ValidationCheck = (typeof VALIDATION_CHECKS)[number];
+const VALIDATION_ENVIRONMENT_FAILURES = {
+  "project.validation-tool-missing":
+    "Un outil de validation est introuvable. Installez l’outil requis, vérifiez les commandes du projet puis relancez la vérification de configuration. Aucune réparation du code n’est demandée.",
+  "project.validation-access-denied":
+    "Le validateur rencontre une restriction d’accès. Corrigez l’autorisation locale nécessaire puis relancez la vérification de configuration. Aucune réparation du code n’est demandée.",
+  "project.validation-timed-out":
+    "La validation a atteint la durée limite configurée. Vérifiez la commande et ajustez sa durée limite avant de relancer. Aucune réparation du code n’est demandée.",
+  "project.validation-runner-failed":
+    "Le moteur n’a pas pu lancer la validation. Vérifiez le dossier et les outils locaux, puis relancez la vérification de configuration. Aucune réparation du code n’est demandée.",
+} as const;
+const VALIDATION_AUTHORITY =
+  "The Development module has handled the configured preparation and runs the full Validation Plan after your response, outside the agent sandbox. Do not rerun the full project gate inside Codex. You may run targeted checks that fit the sandbox; if access is denied, report the restriction and return your work for module validation. Change only files needed for the requested issue. Do not change unrelated tests or configuration to repair the environment; report unrelated failures instead.";
 type DevelopmentFailureCode =
+  | keyof typeof VALIDATION_ENVIRONMENT_FAILURES
   | "event.payload-invalid"
   | "project.config-invalid"
   | "project.capability-unresolved"
@@ -112,6 +125,7 @@ function failureClass(
   code: DevelopmentFailureCode,
 ): "configuration" | "input" | "validation" | "workspace" | "agent" | "cancelled" | "internal" {
   if (code === "event.payload-invalid") return "input";
+  if (Object.hasOwn(VALIDATION_ENVIRONMENT_FAILURES, code)) return "configuration";
   if (
     code === "project.config-invalid" ||
     code === "project.capability-unresolved" ||
@@ -437,8 +451,7 @@ async function runImplementationRequested(
     };
     let attempt = await executeAgent({
       objective: "Implement the requested work item in the allocated workspace.",
-      moduleContract:
-        "Development implements one requested work item in this workspace. Do not commit, push, or claim that validation passed.",
+      moduleContract: `Development implements one requested work item in this workspace. Do not commit, push, or claim that validation passed. ${VALIDATION_AUTHORITY}`,
       ticketContent,
     });
     let validation: DevelopmentRunResult["validation"];
@@ -478,8 +491,7 @@ async function runImplementationRequested(
         });
         attempt = await executeAgent({
           objective: "Repair the implementation after the Validation Plan failed.",
-          moduleContract:
-            "Development performs one bounded Repair Cycle in this workspace. Use the supplied validation failure, make the smallest fix, and do not commit, push, or claim that validation passed.",
+          moduleContract: `Development performs one bounded Repair Cycle in this workspace. Use the supplied validation failure, make the smallest fix, and do not commit, push, or claim that validation passed. ${VALIDATION_AUTHORITY}`,
           ticketContent: [
             ticketContent,
             "",
@@ -799,6 +811,8 @@ function readFailure(
 }
 
 function stableFailureCode(code: string): DevelopmentFailureCode {
+  if (Object.hasOwn(VALIDATION_ENVIRONMENT_FAILURES, code))
+    return code as keyof typeof VALIDATION_ENVIRONMENT_FAILURES;
   if (code === "event.payload-invalid") return code;
   if (
     code === "project.config-invalid" ||
@@ -846,6 +860,8 @@ function stableFailureCode(code: string): DevelopmentFailureCode {
 }
 
 function failureMessage(ctx: ModuleHandlerContext, code: DevelopmentFailureCode): string {
+  if (Object.hasOwn(VALIDATION_ENVIRONMENT_FAILURES, code))
+    return VALIDATION_ENVIRONMENT_FAILURES[code as keyof typeof VALIDATION_ENVIRONMENT_FAILURES];
   const prefix = `Project ${ctx.projectId} / Module ${ctx.moduleInstanceId}`;
   switch (code) {
     case "event.payload-invalid":
@@ -1018,6 +1034,13 @@ async function runValidationPlan(input: {
         check,
         output,
       });
+      const environmentCode = validationEnvironmentFailure(result);
+      if (environmentCode !== undefined) {
+        throw new DevelopmentExecutionError(
+          environmentCode,
+          VALIDATION_ENVIRONMENT_FAILURES[environmentCode],
+        );
+      }
       throw new DevelopmentExecutionError(
         "git.validation-failed",
         `Project command "${check}" failed (${result.code}).`,
@@ -1040,6 +1063,30 @@ async function runValidationPlan(input: {
     });
   }
   return passed;
+}
+
+function validationEnvironmentFailure(
+  result: Extract<ModuleShellCommandResult, { ok: false }>,
+): keyof typeof VALIDATION_ENVIRONMENT_FAILURES | undefined {
+  if (result.code === "process.timed-out") return "project.validation-timed-out";
+  if (result.code !== "process.non-zero-exit") return "project.validation-runner-failed";
+  const output = `${result.stdout}\n${result.stderr}`;
+  if (
+    result.exitCode === 127 ||
+    /\b(?:command not found|ERR_PNPM_COMMAND_NOT_FOUND)\b|\bCommand ["'][^"'\r\n]+["'] not found\b/i.test(
+      output,
+    )
+  )
+    return "project.validation-tool-missing";
+  // ponytail: recognize explicit OS denial diagnostics; other test failures keep the bounded repair cycle.
+  if (
+    result.exitCode === 126 ||
+    /\b(?:listen|bind|spawn|open|mkdir|exec)\s+(?:EPERM|EACCES)\b|\b(?:EPERM|EACCES):\s*(?:operation not permitted|permission denied)/i.test(
+      output,
+    )
+  )
+    return "project.validation-access-denied";
+  return undefined;
 }
 
 function readValidationOrder(value: unknown): readonly ValidationCheck[] {

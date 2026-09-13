@@ -90,6 +90,7 @@ import type { ProjectResourceGrant, ProjectResourceGrantDetailsPort } from "./re
 import {
   checkProjectRuntimeReadiness,
   runtimeSlots,
+  checkProjectTools,
   projectAgentRuntimeChoices,
 } from "./runtime-readiness.js";
 import { detectedRuntimeEnvironment } from "../runtimes/registry.js";
@@ -359,6 +360,7 @@ export class ProjectService implements ProjectRegistry<
         "Connections",
       ),
       ...github.checks,
+      ...checkProjectTools(project),
     ];
     if (
       this.preflightRevisions.get(project.id) !== revision ||

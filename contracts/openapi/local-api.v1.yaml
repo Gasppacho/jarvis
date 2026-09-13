@@ -2279,7 +2279,10 @@ components:
           additionalProperties: false
           required: [path, repositoryId, branch, baseRevisionSha, status, executionId]
           properties:
-            path: { type: string, maxLength: 4096 }
+            path:
+              type: string
+              maxLength: 4096
+              description: Workspace location relative to the Jarvis data root; never an absolute user path.
             repositoryId: { type: string }
             branch: { type: string, maxLength: 256 }
             baseRevisionSha: { type: string, maxLength: 256 }

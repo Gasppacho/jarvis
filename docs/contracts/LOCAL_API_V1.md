@@ -231,6 +231,11 @@ est présent uniquement pendant une Execution annulable, et `retryDeliveryId` pe
 replay explicite d'une Dead Letter existante. Le détail n'autorise ni fusion ni auto-fusion;
 la Pull Request est présentée comme soumise à revue manuelle.
 
+`workspace.path` est relatif à la racine des données Jarvis
+(`projects/{projectId}/workspaces/{executionId}`). Ce champ de diagnostic ne
+révèle pas de chemin absolu utilisateur et ne constitue pas une URL de fichier.
+Le stockage interne conserve le chemin réel pour la gestion du worktree.
+
 ### Stream
 
 Ticket #60 : `GET /v1/stream` tient une connexion SSE par Engine Session, protégée

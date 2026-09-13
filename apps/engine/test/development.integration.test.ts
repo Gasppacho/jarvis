@@ -62,6 +62,56 @@ afterEach(async () => {
 });
 
 describe("Development Module tracer bullet", () => {
+  it.each([
+    ["jarvis_tool_that_does_not_exist", "project.validation-tool-missing"],
+    ["pnpm exec jarvis_tool_that_does_not_exist", "project.validation-tool-missing"],
+    [
+      "node -e \"console.error('listen EPERM: operation not permitted');process.exit(1)\"",
+      "project.validation-access-denied",
+    ],
+  ])(
+    "stops an environmental validation failure without asking for unrelated repairs: %s",
+    async (command, code) => {
+      const fixture = makeRealGitRepositoryFixture();
+      roots.push(fixture.root, fixture.remoteRoot);
+      const engine = await startEngine({
+        enginePath: testBundlePath,
+        env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
+      });
+      engines.push(engine);
+      await activateProject(
+        engine,
+        "validation-environment",
+        fixture,
+        "success",
+        30_000,
+        4096,
+        { test: command },
+        ["test"],
+        false,
+        "origin",
+        2,
+      );
+      await publishTag(engine, "validation-environment", "environment");
+      const executions = await waitForExecutions(engine, "validation-environment", 2);
+      const development = executions.find(
+        (execution) => execution.moduleInstanceId === "development",
+      )!;
+      await expect
+        .poll(
+          async () =>
+            (await readExecutionDetail(engine, "validation-environment", development.id)).failure
+              ?.code,
+        )
+        .toBe(code);
+      const detail = await readExecutionDetail(engine, "validation-environment", development.id);
+      expect(detail.checks).toHaveLength(1);
+      expect(detail.checks[0]).toMatchObject({ status: "failed", attempt: 1 });
+      expect(detail.steps.find((step) => step.id === "commit-push")?.status).toBe("not-started");
+      expect(detail.failure?.code).toBe(code);
+    },
+  );
+
   it.each(["failed", "cancelled"])(
     "keeps a running validation and its %s result honest in the public execution detail",
     async (outcome) => {

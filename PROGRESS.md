@@ -6,9 +6,11 @@ Branche : `codex/ux-reliability-20260913` ; base : `64eb2945b04755590ac7534ad0c7
 
 ## État de reprise
 
-L01 implémentée et relue ; contrôles ciblés réussis. Commit en préparation.
-L02 est la prochaine tranche : reproduire séparément les deux échecs du
-validateur Development et le `listen EPERM` du Codex enfant.
+L01 implémentée et relue ; commit `989b9b7`. Contrôles ciblés réussis,
+y compris une dernière reproduction rouge/verte préservant les checks après
+un échec ultérieur du commit (7/7 tests de projection).
+L02 en cours : les deux échecs du validateur Development sont reproduits
+avec les assertions inchangées ; le `listen EPERM` est reproduit séparément.
 L03–L10 restent à exécuter dans l'ordre. Aucun push, test GitHub ou merge effectué.
 Le projet réel et le travail retenu de #204 restent intacts.
 
@@ -32,8 +34,8 @@ Les captures natives tentées en L01 sont inutilisables, donc ne prouvent aucun 
 
 | Tranche | Implémentation / preuve | Commit |
 | --- | --- | --- |
-| L01 | Implémentée, tests et double relecture ; visuel en attente | En préparation |
-| L02 | Prochaine — environnement des validations | — |
+| L01 | Implémentée, tests et double relecture ; visuel en attente | `989b9b7` |
+| L02 | En cours — deux causes reproduites, corrections et preuves | — |
 | L03 | À faire — contrat UX | — |
 | L04 | À faire — import et navigation | — |
 | L05 | À faire — workflow guidé | — |
@@ -80,3 +82,63 @@ Preuves exécutées :
 Preuve native encore requise : trois états, âge de la donnée et reconnexion.
 Les captures finales, clavier/AX/VoiceOver, clair/sombre et petite fenêtre
 restent à exécuter. Aucun résultat visuel nouveau n'est revendiqué.
+
+## L02 — corrections et preuves ciblées
+
+Comparatif sur le même checkout `989b9b7` : 6/6 tests passent dans le terminal ;
+4/6 passent dans l’environnement exact du module (`PATH`, `LANG=C`, `LC_ALL=C`).
+`HOME` absent provoque `access-denied` chez le faux Codex contrôlé. Sans TMPDIR,
+le chemin du worktree exposé par l’API commence par `/private/tmp` et viole
+l’assertion existante. Le marqueur `<path>` observé dans le journal d’audit
+remplaçait l’assertion et le résultat lors du nettoyage de la sortie.
+
+Repro locale conservée : `/tmp/jarvis-ux-reliability-evidence/l02/filtered-before.log`.
+Commande utile : les fichiers `execution-detail.integration.test.ts` et
+`project-runtime-bindings.integration.test.ts` avec Vitest intégration et env filtré.
+
+Probe Node loopback : succès sur hôte ; `EPERM` dans
+`rtk proxy codex sandbox -c 'sandbox_mode="workspace-write"' -c 'sandbox_workspace_write.network_access=false' -- node ...`.
+Journaux séparés `loopback-host.log` et `loopback-sandbox.log`. Aucun changement
+de configuration globale. La CLI installée expose `codex sandbox` directement,
+sans sous-commande `macos`.
+
+Corrections implémentées : profil HOME détecté depuis l’identité OS si absent ;
+validateur avec environnement minimal incluant HOME ; chemin relatif dans le
+détail public ; diagnostics outils au preflight ; erreurs environnementales
+sans cycle de réparation ; limite shell cohérente avec la durée configurée.
+Garde-fous Codex inchangés, prompt explicite sur l’autorité de Development.
+
+Relecture Standards : un gestionnaire peut exécuter du code du dépôt même
+avec `--version`. Le preflight inspecte donc uniquement présence et droits des
+exécutables dans le PATH du validateur. Il suit les scripts littéraux sélectionnés,
+sans rendre les autres scripts obligatoires. Version et fonctionnement restent
+explicitement non prouvés. Le test API avec faux pnpm/bun qui écriraient un
+marqueur passe sans exécuter ces fichiers ni démarrer l’agent.
+La relecture finale a reproduit un plantage sur un nom de script hérité
+(`toString`) ; propriété propre et valeur string sont désormais requises,
+avec ce cas ajouté au même test API. Aucun constat Standards ou Spec ouvert
+après ces correctifs ; la preuve native reste distincte et en attente.
+
+Relecture Spec : `pnpm exec` peut retourner 1 pour un outil absent. Son diagnostic
+explicite est désormais classifié comme indisponibilité d’outil, sans réparation,
+au même titre que le code shell 127. Les erreurs d’accès, timeout et panne du
+runner ont chacune un code et une action distincts.
+
+Contrôles exécutés :
+- intégration Development, détail, bindings runtime et preflight : 45/45 ;
+- après les correctifs de relecture : 9/9 ciblés (32 autres ignorés par filtre),
+  dont outils absents, shims non exécutés et états validation/réparation/annulation ;
+- tests unitaires ciblés : 43/43 ; contrat de prompt recontrôlé : 14/14 ;
+- assertions originales des deux fichiers en échec conservées : 6/6 avec
+  environnement filtré corrigé, puis 6/6 via le vrai helper `runProjectCommand` ;
+- six snapshots de détail recapturés depuis le harness avec chemins relatifs.
+- Swift `ProjectExecutionDetailTests` : 10/10 après recapture ; typecheck et
+  lint réussis. Contrats et frontières de modules contrôlés sans erreur.
+
+Commande du validateur réel (helper de production bundlé, aucun faux résultat) :
+`rtk proxy node /tmp/jarvis-ux-reliability-evidence/l02/validator/run.mjs`.
+Le journal `product-validator.log` conserve sa sortie. Gate complet à exécuter
+depuis ce même helper après commit, dans le worktree propre.
+
+Sources de plateforme et limites :
+`docs/plans/jarvis-ux-audit-2026-09-13/VALIDATION_ENVIRONMENT_SOURCES.md`.
