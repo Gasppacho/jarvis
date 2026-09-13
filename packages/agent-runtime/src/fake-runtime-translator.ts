@@ -176,6 +176,9 @@ process.stdin.on("end", async () => {
   }
   if (request.scenario === "ignore-terminate" ||
       (request.scenario === "repair-ignore-terminate" && request.repair)) {
+    if (request.repair) {
+      for (let index = 0; index < 110; index += 1) emit({ type: "message", message: "Repair progress " + index });
+    }
     const child = spawnChild(
       process.execPath,
       ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],

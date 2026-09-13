@@ -2356,7 +2356,7 @@ components:
       properties:
         id: { type: string, enum: [issue-received, eligibility-confirmed, workspace-prepared, agent-running, checks, commit-push, pull-request] }
         label: { type: string, minLength: 1 }
-        status: { type: string, enum: [proved, active, failed, cancelled, unavailable] }
+        status: { type: string, enum: [proved, active, repairing, failed, cancelled, not-started, unavailable] }
         occurredAt: { type: [string, "null"], format: date-time }
         completedAt: { type: [string, "null"], format: date-time }
         executionId: { type: [string, "null"] }
@@ -2364,10 +2364,11 @@ components:
     ExecutionDetailCheck:
       type: object
       additionalProperties: false
-      required: [name, status, durationMs, startedAt, completedAt, output, executionId]
+      required: [name, attempt, status, durationMs, startedAt, completedAt, output, executionId]
       properties:
         name: { type: string, minLength: 1, maxLength: 256 }
-        status: { type: string, enum: [passed, failed, unavailable] }
+        attempt: { type: integer, minimum: 1 }
+        status: { type: string, enum: [passed, running, failed, cancelled, unavailable] }
         durationMs: { type: [integer, "null"], minimum: 0 }
         startedAt: { type: [string, "null"], format: date-time }
         completedAt: { type: [string, "null"], format: date-time }

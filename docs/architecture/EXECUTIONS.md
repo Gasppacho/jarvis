@@ -94,8 +94,10 @@ preparation.started
 preparation.completed
 preparation.failed
 agent.started
+agent.repair-started
 agent.message
 validation.started
+validation.completed
 validation.failed
 commit.created
 branch.pushed
@@ -229,7 +231,7 @@ as a read projection owned by the API boundary. It resolves the anchor Execution
 input Event through project-scoped repositories, then joins only the Event journal, Ledger,
 Execution checkpoints, workspace lease and Dead Letter read APIs. It does not open another
 module's database or create a second workflow journal. The seven UI steps and Pull Request
-result are derived from durable facts; missing evidence is represented as unavailable.
+result are derived from durable facts; future steps are not-started, and missing proof is unavailable. Check outcomes and repair starts are durable checkpoints; failed attempts remain in the bounded check history after a successful repair.
 
 The projection keeps the existing finite Execution model: cancellation records a terminal
 result, while a retry replays an existing Dead Letter and starts the normal delivery path.

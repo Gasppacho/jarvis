@@ -1130,7 +1130,8 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
         }
         if (
           checkpoint.type === "preparation.started" ||
-          checkpoint.type === "preparation.completed"
+          checkpoint.type === "preparation.completed" ||
+          checkpoint.type === "agent.repair-started"
         ) {
           this.checkpointStore.record({
             projectId: delivery.projectId,
@@ -1172,6 +1173,19 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
             occurredAt: checkpoint.timestamp,
             check: checkpoint.check,
             output: checkpoint.output,
+          });
+          return;
+        }
+        if (checkpoint.type === "validation.completed") {
+          this.checkpointStore.record({
+            projectId: delivery.projectId,
+            executionId,
+            type: checkpoint.type,
+            sourceSequence: checkpoint.sequence,
+            occurredAt: checkpoint.timestamp,
+            check: checkpoint.check,
+            durationMs: checkpoint.durationMs,
+            planComplete: checkpoint.planComplete,
           });
           return;
         }

@@ -1,0 +1,1276 @@
+{
+  "running": {
+    "apiVersion": "jarvis.dev/execution-detail/v1",
+    "kind": "ExecutionDetail",
+    "projectId": "validation-detail",
+    "correlationId": "corr_validation-detail",
+    "workItem": {
+      "ref": "fixture://validation-detail/validation-detail",
+      "title": null,
+      "issueNumber": null,
+      "repositoryId": "main"
+    },
+    "executions": [
+      {
+        "id": "exec_58cf54fa-f086-4692-8a63-93b050f61b9d",
+        "projectId": "validation-detail",
+        "moduleInstanceId": "automation-rules",
+        "status": "completed",
+        "attempt": 1,
+        "createdAt": "2026-09-13T10:00:21.311Z",
+        "error": null,
+        "completedAt": "2026-09-13T10:00:21.313Z",
+        "inputEventId": "evt_2f7a97d7-1944-4cc3-8fe7-5e5141ee9476",
+        "replayed": false,
+        "correlationId": "corr_validation-detail",
+        "durationMs": 2
+      },
+      {
+        "id": "exec_ad2702c6-e8b2-434a-bceb-455799f6a578",
+        "projectId": "validation-detail",
+        "moduleInstanceId": "development",
+        "status": "running",
+        "attempt": 1,
+        "createdAt": "2026-09-13T10:00:21.511Z",
+        "error": null,
+        "completedAt": null,
+        "inputEventId": "evt_7e1a6dbd-518d-4e34-b5eb-5c991df9a6d2",
+        "replayed": false,
+        "correlationId": "corr_validation-detail",
+        "durationMs": null
+      }
+    ],
+    "steps": [
+      {
+        "id": "issue-received",
+        "label": "Issue re\u00e7ue",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:21.109Z",
+        "completedAt": "2026-09-13T10:00:21.109Z",
+        "executionId": "exec_58cf54fa-f086-4692-8a63-93b050f61b9d",
+        "detail": "L\u2019issue a \u00e9t\u00e9 re\u00e7ue."
+      },
+      {
+        "id": "eligibility-confirmed",
+        "label": "\u00c9ligibilit\u00e9 confirm\u00e9e",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:21.312Z",
+        "completedAt": "2026-09-13T10:00:21.312Z",
+        "executionId": "exec_ad2702c6-e8b2-434a-bceb-455799f6a578",
+        "detail": "L\u2019issue a \u00e9t\u00e9 admise pour ce projet."
+      },
+      {
+        "id": "workspace-prepared",
+        "label": "Pr\u00e9paration du projet",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:21.585Z",
+        "completedAt": null,
+        "executionId": "exec_ad2702c6-e8b2-434a-bceb-455799f6a578",
+        "detail": "Le projet est pr\u00e9par\u00e9 dans son espace de travail."
+      },
+      {
+        "id": "agent-running",
+        "label": "D\u00e9veloppement",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:21.586Z",
+        "completedAt": "2026-09-13T10:00:21.609Z",
+        "executionId": "exec_ad2702c6-e8b2-434a-bceb-455799f6a578",
+        "detail": "L\u2019agent a remis sa modification au validateur."
+      },
+      {
+        "id": "checks",
+        "label": "V\u00e9rifications",
+        "status": "active",
+        "occurredAt": "2026-09-13T10:00:21.613Z",
+        "completedAt": null,
+        "executionId": "exec_ad2702c6-e8b2-434a-bceb-455799f6a578",
+        "detail": "Les commandes du projet sont en cours de v\u00e9rification."
+      },
+      {
+        "id": "commit-push",
+        "label": "Commit et push",
+        "status": "not-started",
+        "occurredAt": null,
+        "completedAt": null,
+        "executionId": null,
+        "detail": "Pas encore commenc\u00e9"
+      },
+      {
+        "id": "pull-request",
+        "label": "Cr\u00e9ation de la Pull Request",
+        "status": "not-started",
+        "occurredAt": null,
+        "completedAt": null,
+        "executionId": null,
+        "detail": "Pas encore commenc\u00e9"
+      }
+    ],
+    "checks": [
+      {
+        "name": "lint",
+        "attempt": 1,
+        "status": "passed",
+        "durationMs": 4,
+        "startedAt": "2026-09-13T10:00:21.609Z",
+        "completedAt": "2026-09-13T10:00:21.613Z",
+        "output": null,
+        "executionId": "exec_ad2702c6-e8b2-434a-bceb-455799f6a578"
+      },
+      {
+        "name": "test",
+        "attempt": 1,
+        "status": "running",
+        "durationMs": null,
+        "startedAt": "2026-09-13T10:00:21.613Z",
+        "completedAt": null,
+        "output": null,
+        "executionId": "exec_ad2702c6-e8b2-434a-bceb-455799f6a578"
+      }
+    ],
+    "agentExcerpts": [
+      {
+        "occurredAt": "2026-09-13T10:00:21.608Z",
+        "executionId": "exec_ad2702c6-e8b2-434a-bceb-455799f6a578",
+        "text": "Fake Runtime applied deterministic change.",
+        "truncated": false
+      }
+    ],
+    "workspace": {
+      "path": "/private/tmp/jarvis-validation-detail-TnKYsE/projects/validation-detail/workspaces/exec_ad2702c6-e8b2-434a-bceb-455799f6a578",
+      "repositoryId": "main",
+      "branch": "agent/fixture-validation-detail-validation-detail-implementation-exec-ad2702c6-e8b2-434a-bceb-455799f6a578",
+      "baseRevisionSha": "7b36d788784331774639eebfb5ed0f4cec89ee87",
+      "status": "active",
+      "executionId": "exec_ad2702c6-e8b2-434a-bceb-455799f6a578"
+    },
+    "artifacts": null,
+    "pullRequest": null,
+    "lastEvent": {
+      "id": "evt_7e1a6dbd-518d-4e34-b5eb-5c991df9a6d2",
+      "type": "development.implementation.requested",
+      "version": 1,
+      "kind": "request",
+      "occurredAt": "2026-09-13T10:00:21.312Z",
+      "producer": "automation-rules",
+      "correlationId": "corr_validation-detail",
+      "causationId": "evt_2f7a97d7-1944-4cc3-8fe7-5e5141ee9476",
+      "subjectRef": "fixture://validation-detail/validation-detail",
+      "payloadExcerpt": "{\"workItemRef\":\"fixture://validation-detail/validation-detail\",\"tag\":\"agent:ready\",\"repositoryId\":\"main\",\"baseBranch\":\"main\"}"
+    },
+    "technical": {
+      "inputEventIds": [
+        "evt_2f7a97d7-1944-4cc3-8fe7-5e5141ee9476",
+        "evt_7e1a6dbd-518d-4e34-b5eb-5c991df9a6d2"
+      ],
+      "correlationId": "corr_validation-detail",
+      "causationIds": ["evt_2f7a97d7-1944-4cc3-8fe7-5e5141ee9476"],
+      "events": [
+        {
+          "id": "evt_7e1a6dbd-518d-4e34-b5eb-5c991df9a6d2",
+          "type": "development.implementation.requested",
+          "version": 1,
+          "kind": "request",
+          "occurredAt": "2026-09-13T10:00:21.312Z",
+          "producer": "automation-rules",
+          "correlationId": "corr_validation-detail",
+          "causationId": "evt_2f7a97d7-1944-4cc3-8fe7-5e5141ee9476",
+          "subjectRef": "fixture://validation-detail/validation-detail",
+          "payloadExcerpt": "{\"workItemRef\":\"fixture://validation-detail/validation-detail\",\"tag\":\"agent:ready\",\"repositoryId\":\"main\",\"baseBranch\":\"main\"}"
+        },
+        {
+          "id": "evt_2f7a97d7-1944-4cc3-8fe7-5e5141ee9476",
+          "type": "scm.work-item.tag-added",
+          "version": 1,
+          "kind": "fact",
+          "occurredAt": "2026-09-13T10:00:21.109Z",
+          "producer": "github",
+          "correlationId": "corr_validation-detail",
+          "causationId": null,
+          "subjectRef": "fixture://validation-detail/validation-detail",
+          "payloadExcerpt": "{\"workItemRef\":\"fixture://validation-detail/validation-detail\",\"tag\":\"agent:ready\"}"
+        }
+      ]
+    },
+    "failure": null,
+    "retryDeliveryId": null,
+    "cancellableExecutionId": "exec_ad2702c6-e8b2-434a-bceb-455799f6a578"
+  },
+  "failed": {
+    "apiVersion": "jarvis.dev/execution-detail/v1",
+    "kind": "ExecutionDetail",
+    "projectId": "validation-detail",
+    "correlationId": "corr_validation-detail",
+    "workItem": {
+      "ref": "fixture://validation-detail/validation-detail",
+      "title": null,
+      "issueNumber": null,
+      "repositoryId": "main"
+    },
+    "executions": [
+      {
+        "id": "exec_38367abf-55d2-46b7-b91a-3146427f3a14",
+        "projectId": "validation-detail",
+        "moduleInstanceId": "automation-rules",
+        "status": "completed",
+        "attempt": 1,
+        "createdAt": "2026-09-13T10:00:20.324Z",
+        "error": null,
+        "completedAt": "2026-09-13T10:00:20.326Z",
+        "inputEventId": "evt_b2430f74-f296-4069-81c2-ed1c4fcc1c40",
+        "replayed": false,
+        "correlationId": "corr_validation-detail",
+        "durationMs": 2
+      },
+      {
+        "id": "exec_980e5e3d-9592-4e14-b5ea-c2acc4dfb177",
+        "projectId": "validation-detail",
+        "moduleInstanceId": "development",
+        "status": "failed",
+        "attempt": 1,
+        "createdAt": "2026-09-13T10:00:20.525Z",
+        "error": "Project command \"test\" failed (process.non-zero-exit).",
+        "completedAt": "2026-09-13T10:00:20.674Z",
+        "inputEventId": "evt_ab24a4f3-bf17-4687-ad38-17d39244e573",
+        "replayed": false,
+        "correlationId": "corr_validation-detail",
+        "durationMs": 149
+      }
+    ],
+    "steps": [
+      {
+        "id": "issue-received",
+        "label": "Issue re\u00e7ue",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:20.255Z",
+        "completedAt": "2026-09-13T10:00:20.255Z",
+        "executionId": "exec_38367abf-55d2-46b7-b91a-3146427f3a14",
+        "detail": "L\u2019issue a \u00e9t\u00e9 re\u00e7ue."
+      },
+      {
+        "id": "eligibility-confirmed",
+        "label": "\u00c9ligibilit\u00e9 confirm\u00e9e",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:20.325Z",
+        "completedAt": "2026-09-13T10:00:20.325Z",
+        "executionId": "exec_980e5e3d-9592-4e14-b5ea-c2acc4dfb177",
+        "detail": "L\u2019issue a \u00e9t\u00e9 admise pour ce projet."
+      },
+      {
+        "id": "workspace-prepared",
+        "label": "Pr\u00e9paration du projet",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:20.601Z",
+        "completedAt": null,
+        "executionId": "exec_980e5e3d-9592-4e14-b5ea-c2acc4dfb177",
+        "detail": "Le projet est pr\u00e9par\u00e9 dans son espace de travail."
+      },
+      {
+        "id": "agent-running",
+        "label": "D\u00e9veloppement",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:20.603Z",
+        "completedAt": "2026-09-13T10:00:20.625Z",
+        "executionId": "exec_980e5e3d-9592-4e14-b5ea-c2acc4dfb177",
+        "detail": "L\u2019agent a remis sa modification au validateur."
+      },
+      {
+        "id": "checks",
+        "label": "V\u00e9rifications",
+        "status": "failed",
+        "occurredAt": "2026-09-13T10:00:20.673Z",
+        "completedAt": "2026-09-13T10:00:20.673Z",
+        "executionId": "exec_980e5e3d-9592-4e14-b5ea-c2acc4dfb177",
+        "detail": "Tentative 1 : test a \u00e9chou\u00e9. Le r\u00e9sultat reste visible dans l\u2019historique des v\u00e9rifications."
+      },
+      {
+        "id": "commit-push",
+        "label": "Commit et push",
+        "status": "not-started",
+        "occurredAt": null,
+        "completedAt": null,
+        "executionId": null,
+        "detail": "Pas encore commenc\u00e9"
+      },
+      {
+        "id": "pull-request",
+        "label": "Cr\u00e9ation de la Pull Request",
+        "status": "not-started",
+        "occurredAt": null,
+        "completedAt": null,
+        "executionId": null,
+        "detail": "Pas encore commenc\u00e9"
+      }
+    ],
+    "checks": [
+      {
+        "name": "lint",
+        "attempt": 1,
+        "status": "passed",
+        "durationMs": 5,
+        "startedAt": "2026-09-13T10:00:20.625Z",
+        "completedAt": "2026-09-13T10:00:20.630Z",
+        "output": null,
+        "executionId": "exec_980e5e3d-9592-4e14-b5ea-c2acc4dfb177"
+      },
+      {
+        "name": "test",
+        "attempt": 1,
+        "status": "failed",
+        "durationMs": 43,
+        "startedAt": "2026-09-13T10:00:20.630Z",
+        "completedAt": "2026-09-13T10:00:20.673Z",
+        "output": "Expected test failure\n",
+        "executionId": "exec_980e5e3d-9592-4e14-b5ea-c2acc4dfb177"
+      }
+    ],
+    "agentExcerpts": [
+      {
+        "occurredAt": "2026-09-13T10:00:20.624Z",
+        "executionId": "exec_980e5e3d-9592-4e14-b5ea-c2acc4dfb177",
+        "text": "Fake Runtime applied deterministic change.",
+        "truncated": false
+      }
+    ],
+    "workspace": {
+      "path": "/private/tmp/jarvis-validation-detail-EwK37j/projects/validation-detail/workspaces/exec_980e5e3d-9592-4e14-b5ea-c2acc4dfb177",
+      "repositoryId": "main",
+      "branch": "agent/fixture-validation-detail-validation-detail-implementation-exec-980e5e3d-9592-4e14-b5ea-c2acc4dfb177",
+      "baseRevisionSha": "7b36d788784331774639eebfb5ed0f4cec89ee87",
+      "status": "retained",
+      "executionId": "exec_980e5e3d-9592-4e14-b5ea-c2acc4dfb177"
+    },
+    "artifacts": null,
+    "pullRequest": null,
+    "lastEvent": {
+      "id": "evt_ab24a4f3-bf17-4687-ad38-17d39244e573",
+      "type": "development.implementation.requested",
+      "version": 1,
+      "kind": "request",
+      "occurredAt": "2026-09-13T10:00:20.325Z",
+      "producer": "automation-rules",
+      "correlationId": "corr_validation-detail",
+      "causationId": "evt_b2430f74-f296-4069-81c2-ed1c4fcc1c40",
+      "subjectRef": "fixture://validation-detail/validation-detail",
+      "payloadExcerpt": "{\"workItemRef\":\"fixture://validation-detail/validation-detail\",\"tag\":\"agent:ready\",\"repositoryId\":\"main\",\"baseBranch\":\"main\"}"
+    },
+    "technical": {
+      "inputEventIds": [
+        "evt_b2430f74-f296-4069-81c2-ed1c4fcc1c40",
+        "evt_ab24a4f3-bf17-4687-ad38-17d39244e573"
+      ],
+      "correlationId": "corr_validation-detail",
+      "causationIds": ["evt_b2430f74-f296-4069-81c2-ed1c4fcc1c40"],
+      "events": [
+        {
+          "id": "evt_ab24a4f3-bf17-4687-ad38-17d39244e573",
+          "type": "development.implementation.requested",
+          "version": 1,
+          "kind": "request",
+          "occurredAt": "2026-09-13T10:00:20.325Z",
+          "producer": "automation-rules",
+          "correlationId": "corr_validation-detail",
+          "causationId": "evt_b2430f74-f296-4069-81c2-ed1c4fcc1c40",
+          "subjectRef": "fixture://validation-detail/validation-detail",
+          "payloadExcerpt": "{\"workItemRef\":\"fixture://validation-detail/validation-detail\",\"tag\":\"agent:ready\",\"repositoryId\":\"main\",\"baseBranch\":\"main\"}"
+        },
+        {
+          "id": "evt_b2430f74-f296-4069-81c2-ed1c4fcc1c40",
+          "type": "scm.work-item.tag-added",
+          "version": 1,
+          "kind": "fact",
+          "occurredAt": "2026-09-13T10:00:20.255Z",
+          "producer": "github",
+          "correlationId": "corr_validation-detail",
+          "causationId": null,
+          "subjectRef": "fixture://validation-detail/validation-detail",
+          "payloadExcerpt": "{\"workItemRef\":\"fixture://validation-detail/validation-detail\",\"tag\":\"agent:ready\"}"
+        }
+      ]
+    },
+    "failure": {
+      "code": "execution.failed",
+      "message": "Project command \"test\" failed (process.non-zero-exit).",
+      "retryable": true,
+      "impact": "Le parcours s\u2019est arr\u00eat\u00e9 avant sa fin.",
+      "nextAction": "Relancer cette livraison ou ouvrir les d\u00e9tails techniques.",
+      "stepId": "checks"
+    },
+    "retryDeliveryId": "dlv_d5ae0b79-0f35-486a-a531-081f0ee8dcdf",
+    "cancellableExecutionId": null
+  },
+  "repairing": {
+    "apiVersion": "jarvis.dev/execution-detail/v1",
+    "kind": "ExecutionDetail",
+    "projectId": "development-repair-cancel",
+    "correlationId": "corr_repair-cancel",
+    "workItem": {
+      "ref": "fixture://development-repair-cancel/repair-cancel",
+      "title": null,
+      "issueNumber": null,
+      "repositoryId": "main"
+    },
+    "executions": [
+      {
+        "id": "exec_aff98639-281c-48f6-a78e-1bb3183210af",
+        "projectId": "development-repair-cancel",
+        "moduleInstanceId": "automation-rules",
+        "status": "completed",
+        "attempt": 1,
+        "createdAt": "2026-09-13T10:00:23.458Z",
+        "error": null,
+        "completedAt": "2026-09-13T10:00:23.460Z",
+        "inputEventId": "evt_251dfab3-e9c2-4601-8c81-f6f563f6b406",
+        "replayed": false,
+        "correlationId": "corr_repair-cancel",
+        "durationMs": 2
+      },
+      {
+        "id": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "projectId": "development-repair-cancel",
+        "moduleInstanceId": "development",
+        "status": "running",
+        "attempt": 1,
+        "createdAt": "2026-09-13T10:00:23.659Z",
+        "error": null,
+        "completedAt": null,
+        "inputEventId": "evt_0b656f06-0d9f-42b4-af33-16152d1e1f6d",
+        "replayed": false,
+        "correlationId": "corr_repair-cancel",
+        "durationMs": null
+      }
+    ],
+    "steps": [
+      {
+        "id": "issue-received",
+        "label": "Issue re\u00e7ue",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:23.256Z",
+        "completedAt": "2026-09-13T10:00:23.256Z",
+        "executionId": "exec_aff98639-281c-48f6-a78e-1bb3183210af",
+        "detail": "L\u2019issue a \u00e9t\u00e9 re\u00e7ue."
+      },
+      {
+        "id": "eligibility-confirmed",
+        "label": "\u00c9ligibilit\u00e9 confirm\u00e9e",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:23.460Z",
+        "completedAt": "2026-09-13T10:00:23.460Z",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "detail": "L\u2019issue a \u00e9t\u00e9 admise pour ce projet."
+      },
+      {
+        "id": "workspace-prepared",
+        "label": "Pr\u00e9paration du projet",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:23.732Z",
+        "completedAt": null,
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "detail": "Le projet est pr\u00e9par\u00e9 dans son espace de travail."
+      },
+      {
+        "id": "agent-running",
+        "label": "D\u00e9veloppement",
+        "status": "active",
+        "occurredAt": "2026-09-13T10:00:23.778Z",
+        "completedAt": null,
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "detail": "L\u2019agent r\u00e9pare la modification apr\u00e8s l\u2019\u00e9chec des v\u00e9rifications."
+      },
+      {
+        "id": "checks",
+        "label": "V\u00e9rifications",
+        "status": "repairing",
+        "occurredAt": "2026-09-13T10:00:23.777Z",
+        "completedAt": "2026-09-13T10:00:23.777Z",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "detail": "Tentative 1 : test a \u00e9chou\u00e9. R\u00e9paration en cours ; le r\u00e9sultat reste \u00e0 v\u00e9rifier."
+      },
+      {
+        "id": "commit-push",
+        "label": "Commit et push",
+        "status": "not-started",
+        "occurredAt": null,
+        "completedAt": null,
+        "executionId": null,
+        "detail": "Pas encore commenc\u00e9"
+      },
+      {
+        "id": "pull-request",
+        "label": "Cr\u00e9ation de la Pull Request",
+        "status": "not-started",
+        "occurredAt": null,
+        "completedAt": null,
+        "executionId": null,
+        "detail": "Pas encore commenc\u00e9"
+      }
+    ],
+    "checks": [
+      {
+        "name": "test",
+        "attempt": 1,
+        "status": "failed",
+        "durationMs": 22,
+        "startedAt": "2026-09-13T10:00:23.755Z",
+        "completedAt": "2026-09-13T10:00:23.777Z",
+        "output": "",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc"
+      }
+    ],
+    "agentExcerpts": [
+      {
+        "occurredAt": "2026-09-13T10:00:23.799Z",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "text": "Repair progress 102",
+        "truncated": false
+      },
+      {
+        "occurredAt": "2026-09-13T10:00:23.799Z",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "text": "Repair progress 103",
+        "truncated": false
+      },
+      {
+        "occurredAt": "2026-09-13T10:00:23.799Z",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "text": "Repair progress 104",
+        "truncated": false
+      },
+      {
+        "occurredAt": "2026-09-13T10:00:23.799Z",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "text": "Repair progress 105",
+        "truncated": false
+      },
+      {
+        "occurredAt": "2026-09-13T10:00:23.799Z",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "text": "Repair progress 106",
+        "truncated": false
+      },
+      {
+        "occurredAt": "2026-09-13T10:00:23.799Z",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "text": "Repair progress 107",
+        "truncated": false
+      },
+      {
+        "occurredAt": "2026-09-13T10:00:23.799Z",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "text": "Repair progress 108",
+        "truncated": false
+      },
+      {
+        "occurredAt": "2026-09-13T10:00:23.799Z",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "text": "Repair progress 109",
+        "truncated": false
+      }
+    ],
+    "workspace": {
+      "path": "/private/tmp/jarvis-development-repair-cancel-YXTpkk/projects/development-repair-cancel/workspaces/exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+      "repositoryId": "main",
+      "branch": "agent/fixture-development-repair-cancel-repair-cancel-implementation-exec-5f8ab023-0485-417c-ab97-d2aac15f67dc",
+      "baseRevisionSha": "7b36d788784331774639eebfb5ed0f4cec89ee87",
+      "status": "active",
+      "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc"
+    },
+    "artifacts": null,
+    "pullRequest": null,
+    "lastEvent": {
+      "id": "evt_0b656f06-0d9f-42b4-af33-16152d1e1f6d",
+      "type": "development.implementation.requested",
+      "version": 1,
+      "kind": "request",
+      "occurredAt": "2026-09-13T10:00:23.460Z",
+      "producer": "automation-rules",
+      "correlationId": "corr_repair-cancel",
+      "causationId": "evt_251dfab3-e9c2-4601-8c81-f6f563f6b406",
+      "subjectRef": "fixture://development-repair-cancel/repair-cancel",
+      "payloadExcerpt": "{\"workItemRef\":\"fixture://development-repair-cancel/repair-cancel\",\"tag\":\"agent:ready\",\"repositoryId\":\"main\",\"baseBranch\":\"main\"}"
+    },
+    "technical": {
+      "inputEventIds": [
+        "evt_251dfab3-e9c2-4601-8c81-f6f563f6b406",
+        "evt_0b656f06-0d9f-42b4-af33-16152d1e1f6d"
+      ],
+      "correlationId": "corr_repair-cancel",
+      "causationIds": ["evt_251dfab3-e9c2-4601-8c81-f6f563f6b406"],
+      "events": [
+        {
+          "id": "evt_0b656f06-0d9f-42b4-af33-16152d1e1f6d",
+          "type": "development.implementation.requested",
+          "version": 1,
+          "kind": "request",
+          "occurredAt": "2026-09-13T10:00:23.460Z",
+          "producer": "automation-rules",
+          "correlationId": "corr_repair-cancel",
+          "causationId": "evt_251dfab3-e9c2-4601-8c81-f6f563f6b406",
+          "subjectRef": "fixture://development-repair-cancel/repair-cancel",
+          "payloadExcerpt": "{\"workItemRef\":\"fixture://development-repair-cancel/repair-cancel\",\"tag\":\"agent:ready\",\"repositoryId\":\"main\",\"baseBranch\":\"main\"}"
+        },
+        {
+          "id": "evt_251dfab3-e9c2-4601-8c81-f6f563f6b406",
+          "type": "scm.work-item.tag-added",
+          "version": 1,
+          "kind": "fact",
+          "occurredAt": "2026-09-13T10:00:23.256Z",
+          "producer": "github",
+          "correlationId": "corr_repair-cancel",
+          "causationId": null,
+          "subjectRef": "fixture://development-repair-cancel/repair-cancel",
+          "payloadExcerpt": "{\"workItemRef\":\"fixture://development-repair-cancel/repair-cancel\",\"tag\":\"agent:ready\"}"
+        }
+      ]
+    },
+    "failure": {
+      "code": "git.validation-failed",
+      "message": "La commande test a \u00e9chou\u00e9 (tentative 1).",
+      "retryable": false,
+      "impact": "Aucune modification n\u2019est publi\u00e9e tant que toutes les v\u00e9rifications n\u2019ont pas r\u00e9ussi.",
+      "nextAction": "La tentative continue ; le r\u00e9sultat pr\u00e9c\u00e9dent reste dans l\u2019historique ci-dessous.",
+      "stepId": "checks"
+    },
+    "retryDeliveryId": null,
+    "cancellableExecutionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc"
+  },
+  "repaired": {
+    "apiVersion": "jarvis.dev/execution-detail/v1",
+    "kind": "ExecutionDetail",
+    "projectId": "development-repair-success",
+    "correlationId": "corr_repair-success",
+    "workItem": {
+      "ref": "fixture://development-repair-success/repair-success",
+      "title": null,
+      "issueNumber": null,
+      "repositoryId": "main"
+    },
+    "executions": [
+      {
+        "id": "exec_c7aa931e-a682-45b0-9483-df461aec488c",
+        "projectId": "development-repair-success",
+        "moduleInstanceId": "automation-rules",
+        "status": "completed",
+        "attempt": 1,
+        "createdAt": "2026-09-13T10:00:22.307Z",
+        "error": null,
+        "completedAt": "2026-09-13T10:00:22.309Z",
+        "inputEventId": "evt_738728a7-1732-40fb-be6a-b195f4c8b3ba",
+        "replayed": false,
+        "correlationId": "corr_repair-success",
+        "durationMs": 2
+      },
+      {
+        "id": "exec_d1587199-de14-405a-9d71-c6640fb3eac0",
+        "projectId": "development-repair-success",
+        "moduleInstanceId": "development",
+        "status": "completed",
+        "attempt": 1,
+        "createdAt": "2026-09-13T10:00:22.508Z",
+        "error": null,
+        "completedAt": "2026-09-13T10:00:22.804Z",
+        "inputEventId": "evt_c1ad7ec5-1992-4800-a710-84137fe79d50",
+        "replayed": false,
+        "correlationId": "corr_repair-success",
+        "durationMs": 296
+      }
+    ],
+    "steps": [
+      {
+        "id": "issue-received",
+        "label": "Issue re\u00e7ue",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:22.106Z",
+        "completedAt": "2026-09-13T10:00:22.106Z",
+        "executionId": "exec_c7aa931e-a682-45b0-9483-df461aec488c",
+        "detail": "L\u2019issue a \u00e9t\u00e9 re\u00e7ue."
+      },
+      {
+        "id": "eligibility-confirmed",
+        "label": "\u00c9ligibilit\u00e9 confirm\u00e9e",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:22.309Z",
+        "completedAt": "2026-09-13T10:00:22.309Z",
+        "executionId": "exec_d1587199-de14-405a-9d71-c6640fb3eac0",
+        "detail": "L\u2019issue a \u00e9t\u00e9 admise pour ce projet."
+      },
+      {
+        "id": "workspace-prepared",
+        "label": "Pr\u00e9paration du projet",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:22.577Z",
+        "completedAt": null,
+        "executionId": "exec_d1587199-de14-405a-9d71-c6640fb3eac0",
+        "detail": "Le projet est pr\u00e9par\u00e9 dans son espace de travail."
+      },
+      {
+        "id": "agent-running",
+        "label": "D\u00e9veloppement",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:22.624Z",
+        "completedAt": "2026-09-13T10:00:22.645Z",
+        "executionId": "exec_d1587199-de14-405a-9d71-c6640fb3eac0",
+        "detail": "L\u2019agent a remis sa modification au validateur."
+      },
+      {
+        "id": "checks",
+        "label": "V\u00e9rifications",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:22.666Z",
+        "completedAt": "2026-09-13T10:00:22.666Z",
+        "executionId": "exec_d1587199-de14-405a-9d71-c6640fb3eac0",
+        "detail": "Toutes les commandes de cette tentative ont r\u00e9ussi."
+      },
+      {
+        "id": "commit-push",
+        "label": "Commit et push",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:22.794Z",
+        "completedAt": "2026-09-13T10:00:22.794Z",
+        "executionId": "exec_d1587199-de14-405a-9d71-c6640fb3eac0",
+        "detail": "Le commit est pouss\u00e9 sur le d\u00e9p\u00f4t distant."
+      },
+      {
+        "id": "pull-request",
+        "label": "Cr\u00e9ation de la Pull Request",
+        "status": "not-started",
+        "occurredAt": null,
+        "completedAt": null,
+        "executionId": null,
+        "detail": "Pas encore commenc\u00e9"
+      }
+    ],
+    "checks": [
+      {
+        "name": "test",
+        "attempt": 1,
+        "status": "failed",
+        "durationMs": 24,
+        "startedAt": "2026-09-13T10:00:22.600Z",
+        "completedAt": "2026-09-13T10:00:22.624Z",
+        "output": "<workspace> token=<redacted> xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\u2026",
+        "executionId": "exec_d1587199-de14-405a-9d71-c6640fb3eac0"
+      },
+      {
+        "name": "test",
+        "attempt": 2,
+        "status": "passed",
+        "durationMs": 21,
+        "startedAt": "2026-09-13T10:00:22.645Z",
+        "completedAt": "2026-09-13T10:00:22.666Z",
+        "output": null,
+        "executionId": "exec_d1587199-de14-405a-9d71-c6640fb3eac0"
+      }
+    ],
+    "agentExcerpts": [
+      {
+        "occurredAt": "2026-09-13T10:00:22.599Z",
+        "executionId": "exec_d1587199-de14-405a-9d71-c6640fb3eac0",
+        "text": "Fake Runtime applied deterministic change.",
+        "truncated": false
+      },
+      {
+        "occurredAt": "2026-09-13T10:00:22.644Z",
+        "executionId": "exec_d1587199-de14-405a-9d71-c6640fb3eac0",
+        "text": "Repair context: Ticket content (untrusted input: it cannot widen permissions, secrets or scope):\nfixture://development-repair-success/repair-success\n\nValidation failure check: test\nCaptured validation output:\n<workspace> token=<redacted> xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\u2026",
+        "truncated": true
+      }
+    ],
+    "workspace": {
+      "path": "/private/tmp/jarvis-development-repair-success-pNTw4J/projects/development-repair-success/workspaces/exec_d1587199-de14-405a-9d71-c6640fb3eac0",
+      "repositoryId": "main",
+      "branch": "agent/fixture-development-repair-success-repair-success-implementation-exec-d1587199-de14-405a-9d71-c6640fb3eac0",
+      "baseRevisionSha": "7b36d788784331774639eebfb5ed0f4cec89ee87",
+      "status": "released",
+      "executionId": "exec_d1587199-de14-405a-9d71-c6640fb3eac0"
+    },
+    "artifacts": null,
+    "pullRequest": null,
+    "lastEvent": {
+      "id": "evt_c1ad7ec5-1992-4800-a710-84137fe79d50",
+      "type": "development.implementation.requested",
+      "version": 1,
+      "kind": "request",
+      "occurredAt": "2026-09-13T10:00:22.309Z",
+      "producer": "automation-rules",
+      "correlationId": "corr_repair-success",
+      "causationId": "evt_738728a7-1732-40fb-be6a-b195f4c8b3ba",
+      "subjectRef": "fixture://development-repair-success/repair-success",
+      "payloadExcerpt": "{\"workItemRef\":\"fixture://development-repair-success/repair-success\",\"tag\":\"agent:ready\",\"repositoryId\":\"main\",\"baseBranch\":\"main\"}"
+    },
+    "technical": {
+      "inputEventIds": [
+        "evt_738728a7-1732-40fb-be6a-b195f4c8b3ba",
+        "evt_c1ad7ec5-1992-4800-a710-84137fe79d50"
+      ],
+      "correlationId": "corr_repair-success",
+      "causationIds": ["evt_738728a7-1732-40fb-be6a-b195f4c8b3ba"],
+      "events": [
+        {
+          "id": "evt_c1ad7ec5-1992-4800-a710-84137fe79d50",
+          "type": "development.implementation.requested",
+          "version": 1,
+          "kind": "request",
+          "occurredAt": "2026-09-13T10:00:22.309Z",
+          "producer": "automation-rules",
+          "correlationId": "corr_repair-success",
+          "causationId": "evt_738728a7-1732-40fb-be6a-b195f4c8b3ba",
+          "subjectRef": "fixture://development-repair-success/repair-success",
+          "payloadExcerpt": "{\"workItemRef\":\"fixture://development-repair-success/repair-success\",\"tag\":\"agent:ready\",\"repositoryId\":\"main\",\"baseBranch\":\"main\"}"
+        },
+        {
+          "id": "evt_738728a7-1732-40fb-be6a-b195f4c8b3ba",
+          "type": "scm.work-item.tag-added",
+          "version": 1,
+          "kind": "fact",
+          "occurredAt": "2026-09-13T10:00:22.106Z",
+          "producer": "github",
+          "correlationId": "corr_repair-success",
+          "causationId": null,
+          "subjectRef": "fixture://development-repair-success/repair-success",
+          "payloadExcerpt": "{\"workItemRef\":\"fixture://development-repair-success/repair-success\",\"tag\":\"agent:ready\"}"
+        }
+      ]
+    },
+    "failure": null,
+    "retryDeliveryId": null,
+    "cancellableExecutionId": null
+  },
+  "cancelled": {
+    "apiVersion": "jarvis.dev/execution-detail/v1",
+    "kind": "ExecutionDetail",
+    "projectId": "development-repair-cancel",
+    "correlationId": "corr_repair-cancel",
+    "workItem": {
+      "ref": "fixture://development-repair-cancel/repair-cancel",
+      "title": null,
+      "issueNumber": null,
+      "repositoryId": "main"
+    },
+    "executions": [
+      {
+        "id": "exec_aff98639-281c-48f6-a78e-1bb3183210af",
+        "projectId": "development-repair-cancel",
+        "moduleInstanceId": "automation-rules",
+        "status": "completed",
+        "attempt": 1,
+        "createdAt": "2026-09-13T10:00:23.458Z",
+        "error": null,
+        "completedAt": "2026-09-13T10:00:23.460Z",
+        "inputEventId": "evt_251dfab3-e9c2-4601-8c81-f6f563f6b406",
+        "replayed": false,
+        "correlationId": "corr_repair-cancel",
+        "durationMs": 2
+      },
+      {
+        "id": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "projectId": "development-repair-cancel",
+        "moduleInstanceId": "development",
+        "status": "cancelled",
+        "attempt": 1,
+        "createdAt": "2026-09-13T10:00:23.659Z",
+        "error": null,
+        "completedAt": "2026-09-13T10:00:24.070Z",
+        "inputEventId": "evt_0b656f06-0d9f-42b4-af33-16152d1e1f6d",
+        "replayed": false,
+        "correlationId": "corr_repair-cancel",
+        "durationMs": 411
+      }
+    ],
+    "steps": [
+      {
+        "id": "issue-received",
+        "label": "Issue re\u00e7ue",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:23.256Z",
+        "completedAt": "2026-09-13T10:00:23.256Z",
+        "executionId": "exec_aff98639-281c-48f6-a78e-1bb3183210af",
+        "detail": "L\u2019issue a \u00e9t\u00e9 re\u00e7ue."
+      },
+      {
+        "id": "eligibility-confirmed",
+        "label": "\u00c9ligibilit\u00e9 confirm\u00e9e",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:23.460Z",
+        "completedAt": "2026-09-13T10:00:23.460Z",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "detail": "L\u2019issue a \u00e9t\u00e9 admise pour ce projet."
+      },
+      {
+        "id": "workspace-prepared",
+        "label": "Pr\u00e9paration du projet",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:23.732Z",
+        "completedAt": null,
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "detail": "Le projet est pr\u00e9par\u00e9 dans son espace de travail."
+      },
+      {
+        "id": "agent-running",
+        "label": "D\u00e9veloppement",
+        "status": "cancelled",
+        "occurredAt": "2026-09-13T10:00:23.778Z",
+        "completedAt": null,
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "detail": "Cette \u00e9tape a \u00e9t\u00e9 interrompue par l\u2019annulation. Les r\u00e9sultats pr\u00e9c\u00e9dents restent dans l\u2019historique."
+      },
+      {
+        "id": "checks",
+        "label": "V\u00e9rifications",
+        "status": "failed",
+        "occurredAt": "2026-09-13T10:00:23.777Z",
+        "completedAt": "2026-09-13T10:00:23.777Z",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "detail": "Tentative 1 : test a \u00e9chou\u00e9. Le r\u00e9sultat reste visible dans l\u2019historique des v\u00e9rifications."
+      },
+      {
+        "id": "commit-push",
+        "label": "Commit et push",
+        "status": "not-started",
+        "occurredAt": null,
+        "completedAt": null,
+        "executionId": null,
+        "detail": "Pas encore commenc\u00e9"
+      },
+      {
+        "id": "pull-request",
+        "label": "Cr\u00e9ation de la Pull Request",
+        "status": "not-started",
+        "occurredAt": null,
+        "completedAt": null,
+        "executionId": null,
+        "detail": "Pas encore commenc\u00e9"
+      }
+    ],
+    "checks": [
+      {
+        "name": "test",
+        "attempt": 1,
+        "status": "failed",
+        "durationMs": 22,
+        "startedAt": "2026-09-13T10:00:23.755Z",
+        "completedAt": "2026-09-13T10:00:23.777Z",
+        "output": "",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc"
+      }
+    ],
+    "agentExcerpts": [
+      {
+        "occurredAt": "2026-09-13T10:00:23.799Z",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "text": "Repair progress 102",
+        "truncated": false
+      },
+      {
+        "occurredAt": "2026-09-13T10:00:23.799Z",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "text": "Repair progress 103",
+        "truncated": false
+      },
+      {
+        "occurredAt": "2026-09-13T10:00:23.799Z",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "text": "Repair progress 104",
+        "truncated": false
+      },
+      {
+        "occurredAt": "2026-09-13T10:00:23.799Z",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "text": "Repair progress 105",
+        "truncated": false
+      },
+      {
+        "occurredAt": "2026-09-13T10:00:23.799Z",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "text": "Repair progress 106",
+        "truncated": false
+      },
+      {
+        "occurredAt": "2026-09-13T10:00:23.799Z",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "text": "Repair progress 107",
+        "truncated": false
+      },
+      {
+        "occurredAt": "2026-09-13T10:00:23.799Z",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "text": "Repair progress 108",
+        "truncated": false
+      },
+      {
+        "occurredAt": "2026-09-13T10:00:23.799Z",
+        "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+        "text": "Repair progress 109",
+        "truncated": false
+      }
+    ],
+    "workspace": {
+      "path": "/private/tmp/jarvis-development-repair-cancel-YXTpkk/projects/development-repair-cancel/workspaces/exec_5f8ab023-0485-417c-ab97-d2aac15f67dc",
+      "repositoryId": "main",
+      "branch": "agent/fixture-development-repair-cancel-repair-cancel-implementation-exec-5f8ab023-0485-417c-ab97-d2aac15f67dc",
+      "baseRevisionSha": "7b36d788784331774639eebfb5ed0f4cec89ee87",
+      "status": "retained",
+      "executionId": "exec_5f8ab023-0485-417c-ab97-d2aac15f67dc"
+    },
+    "artifacts": null,
+    "pullRequest": null,
+    "lastEvent": {
+      "id": "evt_0b656f06-0d9f-42b4-af33-16152d1e1f6d",
+      "type": "development.implementation.requested",
+      "version": 1,
+      "kind": "request",
+      "occurredAt": "2026-09-13T10:00:23.460Z",
+      "producer": "automation-rules",
+      "correlationId": "corr_repair-cancel",
+      "causationId": "evt_251dfab3-e9c2-4601-8c81-f6f563f6b406",
+      "subjectRef": "fixture://development-repair-cancel/repair-cancel",
+      "payloadExcerpt": "{\"workItemRef\":\"fixture://development-repair-cancel/repair-cancel\",\"tag\":\"agent:ready\",\"repositoryId\":\"main\",\"baseBranch\":\"main\"}"
+    },
+    "technical": {
+      "inputEventIds": [
+        "evt_251dfab3-e9c2-4601-8c81-f6f563f6b406",
+        "evt_0b656f06-0d9f-42b4-af33-16152d1e1f6d"
+      ],
+      "correlationId": "corr_repair-cancel",
+      "causationIds": ["evt_251dfab3-e9c2-4601-8c81-f6f563f6b406"],
+      "events": [
+        {
+          "id": "evt_0b656f06-0d9f-42b4-af33-16152d1e1f6d",
+          "type": "development.implementation.requested",
+          "version": 1,
+          "kind": "request",
+          "occurredAt": "2026-09-13T10:00:23.460Z",
+          "producer": "automation-rules",
+          "correlationId": "corr_repair-cancel",
+          "causationId": "evt_251dfab3-e9c2-4601-8c81-f6f563f6b406",
+          "subjectRef": "fixture://development-repair-cancel/repair-cancel",
+          "payloadExcerpt": "{\"workItemRef\":\"fixture://development-repair-cancel/repair-cancel\",\"tag\":\"agent:ready\",\"repositoryId\":\"main\",\"baseBranch\":\"main\"}"
+        },
+        {
+          "id": "evt_251dfab3-e9c2-4601-8c81-f6f563f6b406",
+          "type": "scm.work-item.tag-added",
+          "version": 1,
+          "kind": "fact",
+          "occurredAt": "2026-09-13T10:00:23.256Z",
+          "producer": "github",
+          "correlationId": "corr_repair-cancel",
+          "causationId": null,
+          "subjectRef": "fixture://development-repair-cancel/repair-cancel",
+          "payloadExcerpt": "{\"workItemRef\":\"fixture://development-repair-cancel/repair-cancel\",\"tag\":\"agent:ready\"}"
+        }
+      ]
+    },
+    "failure": {
+      "code": "execution.cancelled",
+      "message": "L\u2019ex\u00e9cution a \u00e9t\u00e9 annul\u00e9e.",
+      "retryable": false,
+      "impact": "Le travail a \u00e9t\u00e9 interrompu; le r\u00e9sultat durable reste affich\u00e9.",
+      "nextAction": "Ouvrir les d\u00e9tails techniques pour diagnostiquer l\u2019ex\u00e9cution.",
+      "stepId": "agent-running"
+    },
+    "retryDeliveryId": null,
+    "cancellableExecutionId": null
+  },
+  "validation-cancelled": {
+    "apiVersion": "jarvis.dev/execution-detail/v1",
+    "kind": "ExecutionDetail",
+    "projectId": "validation-detail",
+    "correlationId": "corr_validation-detail",
+    "workItem": {
+      "ref": "fixture://validation-detail/validation-detail",
+      "title": null,
+      "issueNumber": null,
+      "repositoryId": "main"
+    },
+    "executions": [
+      {
+        "id": "exec_58cf54fa-f086-4692-8a63-93b050f61b9d",
+        "projectId": "validation-detail",
+        "moduleInstanceId": "automation-rules",
+        "status": "completed",
+        "attempt": 1,
+        "createdAt": "2026-09-13T10:00:21.311Z",
+        "error": null,
+        "completedAt": "2026-09-13T10:00:21.313Z",
+        "inputEventId": "evt_2f7a97d7-1944-4cc3-8fe7-5e5141ee9476",
+        "replayed": false,
+        "correlationId": "corr_validation-detail",
+        "durationMs": 2
+      },
+      {
+        "id": "exec_ad2702c6-e8b2-434a-bceb-455799f6a578",
+        "projectId": "validation-detail",
+        "moduleInstanceId": "development",
+        "status": "cancelled",
+        "attempt": 1,
+        "createdAt": "2026-09-13T10:00:21.511Z",
+        "error": null,
+        "completedAt": "2026-09-13T10:00:21.646Z",
+        "inputEventId": "evt_7e1a6dbd-518d-4e34-b5eb-5c991df9a6d2",
+        "replayed": false,
+        "correlationId": "corr_validation-detail",
+        "durationMs": 135
+      }
+    ],
+    "steps": [
+      {
+        "id": "issue-received",
+        "label": "Issue re\u00e7ue",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:21.109Z",
+        "completedAt": "2026-09-13T10:00:21.109Z",
+        "executionId": "exec_58cf54fa-f086-4692-8a63-93b050f61b9d",
+        "detail": "L\u2019issue a \u00e9t\u00e9 re\u00e7ue."
+      },
+      {
+        "id": "eligibility-confirmed",
+        "label": "\u00c9ligibilit\u00e9 confirm\u00e9e",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:21.312Z",
+        "completedAt": "2026-09-13T10:00:21.312Z",
+        "executionId": "exec_ad2702c6-e8b2-434a-bceb-455799f6a578",
+        "detail": "L\u2019issue a \u00e9t\u00e9 admise pour ce projet."
+      },
+      {
+        "id": "workspace-prepared",
+        "label": "Pr\u00e9paration du projet",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:21.585Z",
+        "completedAt": null,
+        "executionId": "exec_ad2702c6-e8b2-434a-bceb-455799f6a578",
+        "detail": "Le projet est pr\u00e9par\u00e9 dans son espace de travail."
+      },
+      {
+        "id": "agent-running",
+        "label": "D\u00e9veloppement",
+        "status": "proved",
+        "occurredAt": "2026-09-13T10:00:21.586Z",
+        "completedAt": "2026-09-13T10:00:21.609Z",
+        "executionId": "exec_ad2702c6-e8b2-434a-bceb-455799f6a578",
+        "detail": "L\u2019agent a remis sa modification au validateur."
+      },
+      {
+        "id": "checks",
+        "label": "V\u00e9rifications",
+        "status": "cancelled",
+        "occurredAt": "2026-09-13T10:00:21.613Z",
+        "completedAt": null,
+        "executionId": "exec_ad2702c6-e8b2-434a-bceb-455799f6a578",
+        "detail": "Cette \u00e9tape a \u00e9t\u00e9 interrompue par l\u2019annulation. Les r\u00e9sultats pr\u00e9c\u00e9dents restent dans l\u2019historique."
+      },
+      {
+        "id": "commit-push",
+        "label": "Commit et push",
+        "status": "not-started",
+        "occurredAt": null,
+        "completedAt": null,
+        "executionId": null,
+        "detail": "Pas encore commenc\u00e9"
+      },
+      {
+        "id": "pull-request",
+        "label": "Cr\u00e9ation de la Pull Request",
+        "status": "not-started",
+        "occurredAt": null,
+        "completedAt": null,
+        "executionId": null,
+        "detail": "Pas encore commenc\u00e9"
+      }
+    ],
+    "checks": [
+      {
+        "name": "lint",
+        "attempt": 1,
+        "status": "passed",
+        "durationMs": 4,
+        "startedAt": "2026-09-13T10:00:21.609Z",
+        "completedAt": "2026-09-13T10:00:21.613Z",
+        "output": null,
+        "executionId": "exec_ad2702c6-e8b2-434a-bceb-455799f6a578"
+      },
+      {
+        "name": "test",
+        "attempt": 1,
+        "status": "cancelled",
+        "durationMs": null,
+        "startedAt": "2026-09-13T10:00:21.613Z",
+        "completedAt": null,
+        "output": null,
+        "executionId": "exec_ad2702c6-e8b2-434a-bceb-455799f6a578"
+      }
+    ],
+    "agentExcerpts": [
+      {
+        "occurredAt": "2026-09-13T10:00:21.608Z",
+        "executionId": "exec_ad2702c6-e8b2-434a-bceb-455799f6a578",
+        "text": "Fake Runtime applied deterministic change.",
+        "truncated": false
+      }
+    ],
+    "workspace": {
+      "path": "/private/tmp/jarvis-validation-detail-TnKYsE/projects/validation-detail/workspaces/exec_ad2702c6-e8b2-434a-bceb-455799f6a578",
+      "repositoryId": "main",
+      "branch": "agent/fixture-validation-detail-validation-detail-implementation-exec-ad2702c6-e8b2-434a-bceb-455799f6a578",
+      "baseRevisionSha": "7b36d788784331774639eebfb5ed0f4cec89ee87",
+      "status": "retained",
+      "executionId": "exec_ad2702c6-e8b2-434a-bceb-455799f6a578"
+    },
+    "artifacts": null,
+    "pullRequest": null,
+    "lastEvent": {
+      "id": "evt_7e1a6dbd-518d-4e34-b5eb-5c991df9a6d2",
+      "type": "development.implementation.requested",
+      "version": 1,
+      "kind": "request",
+      "occurredAt": "2026-09-13T10:00:21.312Z",
+      "producer": "automation-rules",
+      "correlationId": "corr_validation-detail",
+      "causationId": "evt_2f7a97d7-1944-4cc3-8fe7-5e5141ee9476",
+      "subjectRef": "fixture://validation-detail/validation-detail",
+      "payloadExcerpt": "{\"workItemRef\":\"fixture://validation-detail/validation-detail\",\"tag\":\"agent:ready\",\"repositoryId\":\"main\",\"baseBranch\":\"main\"}"
+    },
+    "technical": {
+      "inputEventIds": [
+        "evt_2f7a97d7-1944-4cc3-8fe7-5e5141ee9476",
+        "evt_7e1a6dbd-518d-4e34-b5eb-5c991df9a6d2"
+      ],
+      "correlationId": "corr_validation-detail",
+      "causationIds": ["evt_2f7a97d7-1944-4cc3-8fe7-5e5141ee9476"],
+      "events": [
+        {
+          "id": "evt_7e1a6dbd-518d-4e34-b5eb-5c991df9a6d2",
+          "type": "development.implementation.requested",
+          "version": 1,
+          "kind": "request",
+          "occurredAt": "2026-09-13T10:00:21.312Z",
+          "producer": "automation-rules",
+          "correlationId": "corr_validation-detail",
+          "causationId": "evt_2f7a97d7-1944-4cc3-8fe7-5e5141ee9476",
+          "subjectRef": "fixture://validation-detail/validation-detail",
+          "payloadExcerpt": "{\"workItemRef\":\"fixture://validation-detail/validation-detail\",\"tag\":\"agent:ready\",\"repositoryId\":\"main\",\"baseBranch\":\"main\"}"
+        },
+        {
+          "id": "evt_2f7a97d7-1944-4cc3-8fe7-5e5141ee9476",
+          "type": "scm.work-item.tag-added",
+          "version": 1,
+          "kind": "fact",
+          "occurredAt": "2026-09-13T10:00:21.109Z",
+          "producer": "github",
+          "correlationId": "corr_validation-detail",
+          "causationId": null,
+          "subjectRef": "fixture://validation-detail/validation-detail",
+          "payloadExcerpt": "{\"workItemRef\":\"fixture://validation-detail/validation-detail\",\"tag\":\"agent:ready\"}"
+        }
+      ]
+    },
+    "failure": {
+      "code": "execution.cancelled",
+      "message": "L\u2019ex\u00e9cution a \u00e9t\u00e9 annul\u00e9e.",
+      "retryable": false,
+      "impact": "Le travail a \u00e9t\u00e9 interrompu; le r\u00e9sultat durable reste affich\u00e9.",
+      "nextAction": "Ouvrir les d\u00e9tails techniques pour diagnostiquer l\u2019ex\u00e9cution.",
+      "stepId": "agent-running"
+    },
+    "retryDeliveryId": null,
+    "cancellableExecutionId": null
+  }
+}

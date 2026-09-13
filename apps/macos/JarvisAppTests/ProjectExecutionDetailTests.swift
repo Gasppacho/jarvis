@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import JarvisAPI
 
 @testable import JarvisCore
 
@@ -8,6 +9,54 @@ import XCTest
 @MainActor
 final class ProjectExecutionDetailTests: XCTestCase {
     private let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+
+    func testVisibleDetailRefreshesCheckpointsWithoutTimelineEventsAndRetainsItsSnapshotOnDisconnect() async throws {
+        let provider = DetailProbe(detail: makeDetail(status: .running))
+        let model = ProjectExecutionDetailModel(session: EngineSessionModel(supervisor: EngineSupervisor(resources: .developmentBuild())), provider: { _, _ in try await provider.load() })
+        let watch = Task { await model.watch(projectId: "project-a", executionId: "execution-a") }
+        defer { watch.cancel() }
+        while model.state(for: "project-a", executionId: "execution-a").detail == nil { await Task.yield() }
+        let retained = model.state(for: "project-a", executionId: "execution-a").detail
+        await provider.failLoads()
+        let deadline = Date().addingTimeInterval(3)
+        while model.state(for: "project-a", executionId: "execution-a").errorMessage == nil && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertNotNil(model.state(for: "project-a", executionId: "execution-a").errorMessage)
+        XCTAssertEqual(model.state(for: "project-a", executionId: "execution-a").detail, retained)
+    }
+
+    func testDecodesDurableEngineSnapshotsWithoutLosingFailureOrRepairHistory() throws {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "ExecutionDetailSnapshots", withExtension: "json", subdirectory: "Fixtures"))
+        let decoder = JSONDecoder()
+        let transcoder = FlexibleISO8601DateTranscoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            try transcoder.decode(decoder.singleValueContainer().decode(String.self))
+        }
+        let payloads = try decoder.decode([String: Components.Schemas.ExecutionDetailV1].self, from: Data(contentsOf: url))
+        let snapshots = payloads.mapValues(ProjectExecutionDetail.init(payload:))
+        let expected: [(String, ProjectExecutionDetail.Step.Status)] = [
+            ("running", .active), ("failed", .failed), ("repairing", .repairing), ("repaired", .proved),
+        ]
+        for (name, status) in expected {
+            let detail = try XCTUnwrap(snapshots[name])
+            XCTAssertEqual(detail.steps.first(where: { $0.id == .checks })?.status, status)
+            XCTAssertNotNil(detail.lastActivityAt)
+            XCTAssertEqual(Set(detail.checks.map(\.id)).count, detail.checks.count)
+        }
+        let repaired = try XCTUnwrap(snapshots["repaired"])
+        XCTAssertEqual(repaired.checks.map(\.status), [.failed, .passed])
+        XCTAssertEqual(repaired.checks.map(\.attempt), [1, 2])
+        XCTAssertNil(repaired.failure)
+        let repairing = try XCTUnwrap(snapshots["repairing"])
+        XCTAssertEqual(repairing.checks.first?.status, .failed)
+        XCTAssertNotNil(repairing.failure)
+        XCTAssertEqual(snapshots["cancelled"]?.steps.first(where: { $0.id == .agentRunning })?.status, .cancelled)
+        let disconnected = ProjectExecutionDetailPresentation(ProjectExecutionDetailState(detail: repairing), connection: .failed)
+        XCTAssertTrue(disconnected.isSnapshot)
+        guard case .loaded(let retained) = disconnected.state else { return XCTFail("Lost durable snapshot") }
+        XCTAssertEqual(retained.checks, repairing.checks)
+    }
 
     func testPresentsEveryExecutionLifecycleStateWithAStableLabel() {
         let cases: [(ProjectExecutionDetail.ExecutionStatus, String)] = [

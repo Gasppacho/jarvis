@@ -33,6 +33,7 @@ let package = Package(
         // imported by a test target.
         .target(name: "JarvisCore", dependencies: ["JarvisAPI"], path: "JarvisCore"),
         .executableTarget(name: "JarvisApp", dependencies: ["JarvisCore"], path: "JarvisApp"),
-        .testTarget(name: "JarvisAppTests", dependencies: ["JarvisCore"], path: "JarvisAppTests"),
+        .testTarget(name: "JarvisAppTests", dependencies: ["JarvisCore"], path: "JarvisAppTests",
+                    resources: [.copy("Fixtures")]),
     ]
 )

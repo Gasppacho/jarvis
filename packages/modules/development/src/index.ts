@@ -471,6 +471,11 @@ async function runImplementationRequested(
           throw error;
         }
         repairCycles += 1;
+        ctx.recordCheckpoint({
+          type: "agent.repair-started",
+          sequence: ++checkpointSequence,
+          timestamp: new Date().toISOString(),
+        });
         attempt = await executeAgent({
           objective: "Repair the implementation after the Validation Plan failed.",
           moduleContract:
@@ -1001,6 +1006,9 @@ async function runValidationPlan(input: {
       timeoutMs: input.timeoutMs,
       outputLimitBytes: input.outputLimitBytes,
     });
+    if (input.signal.aborted) {
+      throw new DevelopmentExecutionError("agent.run-cancelled", "The validation was cancelled.");
+    }
     if (!result.ok) {
       const output = validationOutput(result, input.outputLimitBytes);
       input.recordCheckpoint({
@@ -1020,7 +1028,16 @@ async function runValidationPlan(input: {
         },
       );
     }
-    passed.push({ name: check, status: "passed", durationMs: Math.max(0, Date.now() - startedAt) });
+    const durationMs = Math.max(0, Date.now() - startedAt);
+    passed.push({ name: check, status: "passed", durationMs });
+    input.recordCheckpoint({
+      type: "validation.completed",
+      sequence: input.nextCheckpointSequence(),
+      timestamp: new Date().toISOString(),
+      check,
+      durationMs,
+      planComplete: passed.length === input.order.length,
+    });
   }
   return passed;
 }

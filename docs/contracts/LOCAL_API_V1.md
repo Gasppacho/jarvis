@@ -206,11 +206,22 @@ déclarées dans OpenAPI : `GET /v1/projects/{projectId}/dead-letters` et
 une projection corrélée et durable d'une Execution. Le moteur retrouve l'Event d'entrée
 dans le même Project, suit son `correlationId`, puis regroupe les Executions, checkpoints,
 leases et faits de Pull Request prouvés par ces identifiants. La réponse expose toujours
-les sept étapes ordonnées `Issue reçue`, `Éligibilité confirmée`, `Workspace préparé`,
-`Agent en cours`, `Checks`, `Commit et push` et `Création de la Pull Request`; chaque
-étape indique `proved`, `active`, `failed`, `cancelled` ou `unavailable`. Une donnée
-absente reste `null` ou `Information indisponible` côté interface : aucun timestamp,
-résultat, artefact, payload ou diagnostic n'est fabriqué.
+les sept étapes ordonnées `Issue reçue`, `Éligibilité confirmée`, `Préparation du projet`,
+`Développement`, `Vérifications`, `Commit et push` et `Création de la Pull Request`.
+Une étape indique `not-started`, `active`, `proved`, `failed`, `repairing`, `cancelled`
+ou `unavailable`. `proved` exige le résultat réussi, jamais le seul démarrage.
+`not-started` concerne une étape future ; `unavailable` une preuve manquante.
+Les valeurs nouvelles sont ajoutées au contrat v1 avec le client généré et l’Engine
+embarqués ensemble. Aucun timestamp, résultat, artefact ou diagnostic n’est fabriqué.
+
+`checks` conserve les tentatives successives, identifiées par `executionId`, `name`
+et `attempt` (cycle de validation, distinct de la tentative de livraison). Un échec
+reste présent pendant une réparation ; la réussite de la nouvelle tentative retire
+l’alerte active et conserve l’historique. `running` et `cancelled` complètent les
+résultats `passed`, `failed`, `unavailable`. Les nouveaux checkpoints durables
+`agent.repair-started` et `validation.completed` séparent réparation et validation.
+Le dernier check réussi porte `planComplete`, attestant la fin du plan entier ;
+les anciens journaux utilisent le snapshot de validation attaché à `commit.created`.
 
 Les Executions et les Checks portent leur durée seulement quand une fin durable est
 enregistrée. Les extraits agentiques sont limités et nettoyés; les événements techniques

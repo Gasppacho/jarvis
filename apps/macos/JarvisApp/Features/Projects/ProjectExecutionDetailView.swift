@@ -57,8 +57,9 @@ struct ProjectExecutionDetailView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .task(id: "\(projectId):\(executionId)") {
-            await model.refresh(projectId: projectId, executionId: executionId)
-            await timeline.watchLive(projectId: projectId)
+            async let live: Void = timeline.watchLive(projectId: projectId)
+            await model.watch(projectId: projectId, executionId: executionId)
+            _ = await live
         }
         .onChange(of: timeline.state(for: projectId).executions) { _, _ in
             Task { await model.refresh(projectId: projectId, executionId: executionId) }
@@ -107,15 +108,15 @@ struct ProjectExecutionDetailView: View {
                     }
                 }
                 header(detail)
-                executionsCard(detail.executions)
                 if let failure = detail.failure {
                     failureCard(failure)
                 }
                 stepper(detail.steps)
+                checksCard(detail.checks)
                 if !detail.agentExcerpts.isEmpty {
                     excerptsCard(detail.agentExcerpts)
                 }
-                checksCard(detail.checks)
+                executionsCard(detail.executions)
                 workspaceCard(detail)
                 artifactsCard(detail.artifacts)
                 pullRequestCard(detail.pullRequest)
@@ -166,9 +167,10 @@ struct ProjectExecutionDetailView: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
-            if let lastEvent = detail.lastEvent {
+            if let lastActivity = detail.lastActivityAt {
                 Label {
-                    Text("Last event: \(lastEvent.type) · \(lastEvent.occurredAt, format: .dateTime)")
+                    Text("Dernière activité : \(lastActivity, format: .dateTime)")
+                    Text(lastActivity, style: .relative)
                 } icon: {
                     Image(systemName: "clock")
                 }
@@ -316,7 +318,7 @@ struct ProjectExecutionDetailView: View {
                             Image(systemName: checkSymbol(check.status))
                                 .foregroundStyle(checkColor(check.status))
                                 .accessibilityHidden(true)
-                            Text(check.name).font(.body.monospaced())
+                            Text("\(check.name) · tentative \(check.attempt)").font(.body.monospaced())
                             Spacer()
                             Text(ProjectExecutionDetailPresentation.checkStatusLabel(check.status))
                                 .foregroundStyle(checkColor(check.status))
@@ -335,7 +337,7 @@ struct ProjectExecutionDetailView: View {
                 }
             }
         } label: {
-            Label("Checks", systemImage: "checkmark.shield")
+            Label("Historique des vérifications", systemImage: "checkmark.shield")
         }
     }
 
@@ -495,6 +497,8 @@ struct ProjectExecutionDetailView: View {
         switch status {
         case .proved: "checkmark.circle.fill"
         case .active: "circle.dotted"
+        case .repairing: "wrench.and.screwdriver"
+        case .notStarted: "circle"
         case .failed: "xmark.octagon.fill"
         case .cancelled: "minus.circle"
         case .unavailable: "questionmark.circle"
@@ -505,6 +509,8 @@ struct ProjectExecutionDetailView: View {
         switch status {
         case .proved: .green
         case .active: .accentColor
+        case .repairing: .orange
+        case .notStarted: .secondary
         case .failed: .red
         case .cancelled: .orange
         case .unavailable: .secondary
@@ -514,6 +520,8 @@ struct ProjectExecutionDetailView: View {
     private func checkSymbol(_ status: ProjectExecutionDetail.Check.Status) -> String {
         switch status {
         case .passed: "checkmark.circle.fill"
+        case .running: "circle.dotted"
+        case .cancelled: "minus.circle"
         case .failed: "xmark.octagon.fill"
         case .unavailable: "questionmark.circle"
         }
@@ -522,6 +530,8 @@ struct ProjectExecutionDetailView: View {
     private func checkColor(_ status: ProjectExecutionDetail.Check.Status) -> Color {
         switch status {
         case .passed: .green
+        case .running: .accentColor
+        case .cancelled: .orange
         case .failed: .red
         case .unavailable: .secondary
         }
@@ -541,10 +551,11 @@ struct ProjectExecutionDetailView: View {
     }
 
     private func failureCard(_ failure: ProjectExecutionDetail.Failure) -> some View {
-        GroupBox {
+        let cancelled = failure.code.contains("cancelled")
+        return GroupBox {
             VStack(alignment: .leading, spacing: 6) {
                 Label(failure.message, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red)
+                    .foregroundStyle(cancelled ? .orange : .red)
                 Text(failure.impact).font(.callout)
                 Text(failure.nextAction).font(.callout).foregroundStyle(.secondary)
                 Button("Open technical details") {
@@ -559,7 +570,7 @@ struct ProjectExecutionDetailView: View {
                 }
             }
         } label: {
-            Label("Failure · \(failure.code)", systemImage: "xmark.octagon")
+            Label(cancelled ? "Exécution annulée" : "Vérification à traiter", systemImage: cancelled ? "minus.circle" : "xmark.octagon")
         }
     }
 }

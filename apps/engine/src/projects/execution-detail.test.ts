@@ -9,6 +9,35 @@ const projectId = "project-a";
 const startedAt = "2026-09-13T00:00:00.000Z";
 
 describe("buildExecutionDetail", () => {
+  it("keeps successful checks when a later operation fails before its fact is journaled", () => {
+    const detail = buildExecutionDetail({
+      projectId,
+      correlationId: "corr-commit-error",
+      anchor: execution({ status: "failed", error: "Commit creation failed" }),
+      executions: [],
+      events: [],
+      checkpoints: new Map([
+        [
+          "execution-anchor",
+          [
+            checkpoint({ type: "validation.started", payload: { check: "test" } }),
+            checkpoint({
+              type: "validation.completed",
+              sequence: 2,
+              payload: { check: "test", durationMs: 10, planComplete: true },
+            }),
+          ],
+        ],
+      ]),
+      leases: new Map(),
+      readiness: [],
+      retryDeliveryId: null,
+    });
+    expect(detail.checks[0]?.status).toBe("passed");
+    expect(detail.steps.find((step) => step.id === "checks")?.status).toBe("proved");
+    expect(detail.failure?.stepId).toBeNull();
+  });
+
   it("keeps cancellation and retry evidence explicit across all seven steps", () => {
     const detail = buildExecutionDetail({
       projectId,
@@ -32,9 +61,9 @@ describe("buildExecutionDetail", () => {
     expect(detail.steps.map((step) => step.label)).toEqual([
       "Issue reçue",
       "Éligibilité confirmée",
-      "Workspace préparé",
-      "Agent en cours",
-      "Checks",
+      "Préparation du projet",
+      "Développement",
+      "Vérifications",
       "Commit et push",
       "Création de la Pull Request",
     ]);
@@ -42,7 +71,7 @@ describe("buildExecutionDetail", () => {
     expect(
       detail.steps
         .filter((step) => step.id !== "agent-running")
-        .every((step) => step.status === "unavailable"),
+        .every((step) => step.status === "unavailable" || step.status === "not-started"),
     ).toBe(true);
     expect(detail.failure).toMatchObject({
       code: "execution.cancelled",

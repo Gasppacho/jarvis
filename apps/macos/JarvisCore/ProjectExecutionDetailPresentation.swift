@@ -56,18 +56,22 @@ public struct ProjectExecutionDetailPresentation: Sendable, Equatable {
 
     public static func stepStatusLabel(_ status: ProjectExecutionDetail.Step.Status) -> String {
         switch status {
-        case .proved: "Confirmed"
-        case .active: "In progress"
-        case .failed: "Failed"
-        case .cancelled: "Cancelled"
+        case .proved: "Réussi"
+        case .active: "En cours"
+        case .repairing: "Réparation en cours"
+        case .failed: "Échoué"
+        case .cancelled: "Annulé"
+        case .notStarted: "Pas encore commencé"
         case .unavailable: "Information indisponible"
         }
     }
 
     public static func checkStatusLabel(_ status: ProjectExecutionDetail.Check.Status) -> String {
         switch status {
-        case .passed: "Passed"
-        case .failed: "Failed"
+        case .passed: "Réussi"
+        case .running: "En cours"
+        case .failed: "Échoué"
+        case .cancelled: "Annulé"
         case .unavailable: "Information indisponible"
         }
     }

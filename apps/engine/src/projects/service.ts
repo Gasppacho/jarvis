@@ -133,7 +133,7 @@ export class ProjectService implements ProjectRegistry<
       Partial<Pick<WorkItemReadinessStore, "list">>,
     private readonly developmentAdmissions?: Pick<DevelopmentAdmissions, "read">,
     private readonly pollingStatus?: Pick<GitHubPollingStatusStore, "read">,
-    private readonly checkpoints?: Pick<ExecutionCheckpointStore, "list">,
+    private readonly checkpoints?: Pick<ExecutionCheckpointStore, "listForDetail">,
     private readonly workspaceLeases?: Pick<WorkspaceLeaseRepository, "findByExecution">,
   ) {}
 
@@ -612,7 +612,7 @@ export class ProjectService implements ProjectRegistry<
     const checkpoints = new Map(
       allExecutions.map(
         (execution) =>
-          [execution.id, this.checkpoints?.list(project.id, execution.id, 100) ?? []] as const,
+          [execution.id, this.checkpoints?.listForDetail(project.id, execution.id) ?? []] as const,
       ),
     );
     const leases = new Map(

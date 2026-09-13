@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -14,6 +15,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startEngine, startFakeGitHubApi, type FakeGitHubApi, type Harness } from "./harness.js";
 import { ExecutionCheckpointStore } from "../src/executions/checkpoints.js";
+import type { components } from "../src/api/generated/local-api.js";
+import { explain, localApiValidator } from "./contract.js";
 import type { PortableProjectConfiguration } from "../../../packages/project-runtime/src/project-types.js";
 import {
   makeRealGitRepositoryFixture,
@@ -59,6 +62,82 @@ afterEach(async () => {
 });
 
 describe("Development Module tracer bullet", () => {
+  it.each(["failed", "cancelled"])(
+    "keeps a running validation and its %s result honest in the public execution detail",
+    async (outcome) => {
+      const fixture = makeRealGitRepositoryFixture();
+      const dataRoot = mkdtempSync(join("/tmp", "jarvis-validation-detail-"));
+      roots.push(fixture.root, fixture.remoteRoot, dataRoot);
+      const projectId = "validation-detail";
+      const engine = await startEngine({
+        dataRoot,
+        enginePath: testBundlePath,
+        env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
+      });
+      engines.push(engine);
+      const release = join(dataRoot, "release-validation");
+      await activateProject(
+        engine,
+        projectId,
+        fixture,
+        "success",
+        30_000,
+        1_024,
+        {
+          lint: "true",
+          test: `node -e "const fs=require('node:fs'); setInterval(() => { if (fs.existsSync('${release}')) { console.error('Expected test failure'); process.exit(7); } }, 20)"`,
+        },
+        ["lint", "test"],
+        false,
+        "origin",
+        0,
+      );
+      await publishTag(engine, projectId, "validation-detail");
+      const readDetail = async (snapshot?: string) => {
+        const response = await engine.call(`/v1/projects/${projectId}/executions`);
+        const { items } = (await response.json()) as {
+          items: { id: string; moduleInstanceId: string }[];
+        };
+        const execution = items.find((item) => item.moduleInstanceId === "development");
+        if (execution === undefined) return undefined;
+        return readExecutionDetail(engine, projectId, execution.id, snapshot);
+      };
+      await expect
+        .poll(async () => (await readDetail())?.checks.some((check) => check.name === "test"))
+        .toBe(true);
+      const running = (await readDetail("running"))!;
+      expect(running.steps.find((step) => step.id === "checks")?.status).toBe("active");
+      expect(running.steps.find((step) => step.id === "agent-running")?.status).toBe("proved");
+      expect(running.checks).toEqual([
+        expect.objectContaining({ name: "lint", status: "passed" }),
+        expect.objectContaining({ name: "test", status: "running" }),
+      ]);
+      expect(running.steps.find((step) => step.id === "checks")?.completedAt).toBeNull();
+      expect(running.steps.find((step) => step.id === "agent-running")?.completedAt).toBe(
+        running.checks[0]?.startedAt,
+      );
+      if (outcome === "cancelled") {
+        const response = await engine.call(
+          `/v1/executions/${running.cancellableExecutionId}/cancel`,
+          { method: "POST" },
+        );
+        expect(response.status).toBe(202);
+      } else writeFileSync(release, "release");
+      await waitForExecutions(engine, projectId, 2);
+      const failed = (await readDetail(
+        outcome === "cancelled" ? "validation-cancelled" : "failed",
+      ))!;
+      expect(failed.steps.find((step) => step.id === "checks")?.status).toBe(outcome);
+      expect(failed.steps.find((step) => step.id === "agent-running")?.status).toBe("proved");
+      expect(failed.checks).toContainEqual(
+        expect.objectContaining({ name: "test", status: outcome }),
+      );
+      if (outcome === "failed")
+        expect(failed.checks.at(-1)?.output).toContain("Expected test failure");
+      expect(failed.steps.find((step) => step.id === "commit-push")?.status).toBe("not-started");
+    },
+  );
+
   it("serializes three issues through real agents and PRs, preserving waiting identities across restart and suspension", async () => {
     const { engine, fixture } = await admissionFixture("serial", "await-signal");
     const database = new Database(join(engine.dataRoot, "jarvis.sqlite"));
@@ -1106,11 +1185,14 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
         "agent.started",
         "agent.message",
         "validation.started",
+        "validation.completed",
         "commit.created",
         "branch.pushed",
       ]);
-      expect(checkpoints.map((checkpoint) => checkpoint.sequence)).toEqual([1, 2, 3, 4, 5]);
-      expect(checkpoints.map((checkpoint) => checkpoint.sourceSequence)).toEqual([1, 2, 3, 4, 5]);
+      expect(checkpoints.map((checkpoint) => checkpoint.sequence)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(checkpoints.map((checkpoint) => checkpoint.sourceSequence)).toEqual([
+        1, 2, 3, 4, 5, 6,
+      ]);
       expect(checkpoints[1]?.payload).toEqual({
         message: "Fake Runtime applied deterministic change.",
       });
@@ -1170,7 +1252,11 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
             "SELECT type FROM execution_checkpoints WHERE execution_id = ? ORDER BY sequence",
           )
           .all(development!.id),
-      ).toEqual([{ type: "agent.started" }, { type: "validation.started" }]);
+      ).toEqual([
+        { type: "agent.started" },
+        { type: "validation.started" },
+        { type: "validation.completed" },
+      ]);
       expect(
         database
           .prepare("SELECT status FROM workspace_leases WHERE project_id = ? AND execution_id = ?")
@@ -1280,6 +1366,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
         { type: "agent.started" },
         { type: "agent.message" },
         { type: "validation.started" },
+        { type: "validation.completed" },
         { type: "commit.created" },
       ]);
       expect(
@@ -1643,6 +1730,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
         { type: "agent.started" },
         { type: "agent.message" },
         { type: "validation.started" },
+        { type: "validation.completed" },
         { type: "validation.started" },
         { type: "validation.failed" },
       ]);
@@ -1694,6 +1782,14 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
     expect(development).toMatchObject({ status: "completed" });
     expect(development).toBeDefined();
 
+    const detail = await readExecutionDetail(engine, projectId, development!.id, "repaired");
+    expect(detail.steps.find((step) => step.id === "checks")?.status).toBe("proved");
+    expect(detail.checks).toEqual([
+      expect.objectContaining({ name: "test", status: "failed", attempt: 1 }),
+      expect.objectContaining({ name: "test", status: "passed", attempt: 2 }),
+    ]);
+    expect(detail.failure).toBeNull();
+
     const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
     try {
       const checkpoints = database
@@ -1706,8 +1802,10 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
         "agent.message",
         "validation.started",
         "validation.failed",
+        "agent.repair-started",
         "agent.message",
         "validation.started",
+        "validation.completed",
         "commit.created",
         "branch.pushed",
       ]);
@@ -1796,9 +1894,11 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
         "agent.message",
         "validation.started",
         "validation.failed",
+        "agent.repair-started",
         "agent.message",
         "validation.started",
         "validation.failed",
+        "agent.repair-started",
         "agent.message",
         "validation.started",
         "validation.failed",
@@ -1877,10 +1977,17 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
     const workspacePath = join(dataRoot, "projects", projectId, "workspaces", running.id);
     const childPid = await waitForPid(join(workspacePath, "fake-runtime-repair-child.pid"));
 
+    const repairing = await readExecutionDetail(engine, projectId, running.id, "repairing");
+    expect(repairing.steps.find((step) => step.id === "checks")?.status).toBe("repairing");
+    expect(repairing.checks).toEqual([expect.objectContaining({ status: "failed", attempt: 1 })]);
+    expect(repairing.failure?.code).toBe("git.validation-failed");
+
     const response = await engine.call(`/v1/executions/${running.id}/cancel`, { method: "POST" });
     expect(response.status).toBe(202);
     const cancelled = await waitForExecution(engine, projectId, "development", "cancelled");
     expect(cancelled.id).toBe(running.id);
+    const detail = await readExecutionDetail(engine, projectId, running.id, "cancelled");
+    expect(detail.steps.find((step) => step.id === "agent-running")?.status).toBe("cancelled");
     expect(existsSync(join(workspacePath, "fake-runtime-repair-child-interrupt.txt"))).toBe(true);
     await expectProcessGone(childPid);
 
@@ -2427,4 +2534,24 @@ function readFailureEvent(database: Database.Database, projectId: string): Recor
 
 function git(repositoryPath: string, args: readonly string[]): string {
   return execFileSync("git", args, { cwd: repositoryPath, encoding: "utf8" }).trim();
+}
+
+// Optional capture for the Swift contract/visual fixtures; ordinary test runs write nothing.
+async function readExecutionDetail(
+  engine: Harness,
+  projectId: string,
+  executionId: string,
+  snapshot?: string,
+): Promise<components["schemas"]["ExecutionDetailV1"]> {
+  const response = await engine.call(`/v1/projects/${projectId}/executions/${executionId}/detail`);
+  expect(response.status).toBe(200);
+  const detail = (await response.json()) as components["schemas"]["ExecutionDetailV1"];
+  const validate = localApiValidator("ExecutionDetailV1");
+  expect(validate(detail), explain(validate)).toBe(true);
+  const directory = process.env["JARVIS_DETAIL_SNAPSHOTS_DIR"];
+  if (directory !== undefined && snapshot !== undefined) {
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, `${snapshot}.json`), JSON.stringify(detail, null, 2) + "\n");
+  }
+  return detail;
 }

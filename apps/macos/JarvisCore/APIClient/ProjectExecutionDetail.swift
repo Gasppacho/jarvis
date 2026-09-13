@@ -40,7 +40,8 @@ public struct ProjectExecutionDetail: Sendable, Equatable {
         }
 
         public enum Status: String, Sendable, Equatable {
-            case proved, active, failed, cancelled, unavailable
+            case proved, active, repairing, failed, cancelled, unavailable
+            case notStarted = "not-started"
         }
 
         public let id: ID
@@ -54,17 +55,24 @@ public struct ProjectExecutionDetail: Sendable, Equatable {
 
     public struct Check: Identifiable, Sendable, Equatable {
         public enum Status: String, Sendable, Equatable {
-            case passed, failed, unavailable
+            case passed, running, failed, cancelled, unavailable
         }
 
-        public var id: String { "\(name):\(executionId ?? "unavailable")" }
+        public var id: String { "\(name):\(executionId ?? "unavailable"):\(attempt)" }
         public let name: String
+        public let attempt: Int
         public let status: Status
         public let durationMs: Int?
         public let startedAt: Date?
         public let completedAt: Date?
         public let output: String?
         public let executionId: String?
+    }
+
+    public var lastActivityAt: Date? {
+        (steps.flatMap { [$0.occurredAt, $0.completedAt].compactMap { $0 } }
+            + agentExcerpts.map(\.occurredAt)
+            + [lastEvent?.occurredAt].compactMap { $0 }).max()
     }
 
     public struct AgentExcerpt: Identifiable, Sendable, Equatable {
@@ -255,6 +263,8 @@ extension ProjectExecutionDetail.Step {
         switch value {
         case .proved: .proved
         case .active: .active
+        case .repairing: .repairing
+        case .not_hyphen_started: .notStarted
         case .failed: .failed
         case .cancelled: .cancelled
         case .unavailable: .unavailable
@@ -265,9 +275,12 @@ extension ProjectExecutionDetail.Step {
 extension ProjectExecutionDetail.Check {
     init(payload: Components.Schemas.ExecutionDetailCheck) {
         name = payload.name
+        attempt = payload.attempt
         status = switch payload.status {
         case .passed: .passed
+        case .running: .running
         case .failed: .failed
+        case .cancelled: .cancelled
         case .unavailable: .unavailable
         }
         durationMs = payload.durationMs

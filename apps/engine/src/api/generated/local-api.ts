@@ -1356,7 +1356,7 @@ export interface components {
             id: "issue-received" | "eligibility-confirmed" | "workspace-prepared" | "agent-running" | "checks" | "commit-push" | "pull-request";
             label: string;
             /** @enum {string} */
-            status: "proved" | "active" | "failed" | "cancelled" | "unavailable";
+            status: "proved" | "active" | "repairing" | "failed" | "cancelled" | "not-started" | "unavailable";
             /** Format: date-time */
             occurredAt: string | null;
             /** Format: date-time */
@@ -1366,8 +1366,9 @@ export interface components {
         };
         ExecutionDetailCheck: {
             name: string;
+            attempt: number;
             /** @enum {string} */
-            status: "passed" | "failed" | "unavailable";
+            status: "passed" | "running" | "failed" | "cancelled" | "unavailable";
             durationMs: number | null;
             /** Format: date-time */
             startedAt: string | null;
