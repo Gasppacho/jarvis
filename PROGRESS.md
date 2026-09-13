@@ -9,7 +9,7 @@ Branche : `codex/ux-reliability-20260913` ; base : `64eb2945b04755590ac7534ad0c7
 L01 implémentée et relue ; commit `989b9b7`. Contrôles ciblés réussis,
 y compris une dernière reproduction rouge/verte préservant les checks après
 un échec ultérieur du commit (7/7 tests de projection).
-L02 en cours : les deux échecs du validateur Development sont reproduits
+L02 commitée (`cb35979`), gate complet en cours : les deux échecs du validateur Development sont reproduits
 avec les assertions inchangées ; le `listen EPERM` est reproduit séparément.
 L03–L10 restent à exécuter dans l'ordre. Aucun push, test GitHub ou merge effectué.
 Le projet réel et le travail retenu de #204 restent intacts.
@@ -35,7 +35,7 @@ Les captures natives tentées en L01 sont inutilisables, donc ne prouvent aucun 
 | Tranche | Implémentation / preuve | Commit |
 | --- | --- | --- |
 | L01 | Implémentée, tests et double relecture ; visuel en attente | `989b9b7` |
-| L02 | En cours — deux causes reproduites, corrections et preuves | — |
+| L02 | Implémentée et relue ; gate complet en cours | `cb35979` |
 | L03 | À faire — contrat UX | — |
 | L04 | À faire — import et navigation | — |
 | L05 | À faire — workflow guidé | — |
@@ -142,3 +142,13 @@ depuis ce même helper après commit, dans le worktree propre.
 
 Sources de plateforme et limites :
 `docs/plans/jarvis-ux-audit-2026-09-13/VALIDATION_ENVIRONMENT_SOURCES.md`.
+
+Premier gate complet du commit `cb35979`, worktree propre : génération,
+contrats, lint, typecheck, architecture et build Engine passent. Suite unitaire :
+365/366 ; la sonde de version du test d’authentification dépasse 500 ms sous
+la concurrence par défaut (18 processeurs disponibles). Le fichier seul passe
+26/26 avec le même validateur ; la suite entière bornée à quatre workers passe
+366/366 en 7,63 s (contre 9,51 s au premier passage). `vitest.config.ts` borne
+donc les workers à quatre pour ces tests qui lancent eux-mêmes de vrais processus.
+Les assertions, les 500 ms et les délais du produit restent inchangés.
+Preuve rouge : `l02/product-verify-unit-failure.log` dans le dossier temporaire.
