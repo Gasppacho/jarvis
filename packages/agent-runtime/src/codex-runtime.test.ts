@@ -1,4 +1,5 @@
 import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -126,6 +127,15 @@ describe("CodexRuntime", () => {
         version: print(VERSION),
         auth: "trap '' TERM\nwhile :; do :; done",
       });
+      // Establish the version prerequisite before timing authentication. A
+      // newly written executable can start slowly on macOS under suite load.
+      expect(
+        execFileSync(executable, ["--version"], {
+          env: {},
+          timeout: 2_000,
+          encoding: "utf8",
+        }).trim(),
+      ).toBe(VERSION);
       const startedAt = Date.now();
 
       await expect(

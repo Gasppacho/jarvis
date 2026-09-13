@@ -165,3 +165,14 @@ la politique de retry reste inchangée. Preuve du gate :
 Correction contrôlée : 6/6 tests (création/récupération PR et absence des hooks
 dans le bundle produit), typecheck réussi. Gate complet à reprendre au commit
 suivant ; aucune PR GitHub réelle créée pendant ces contrôles Harness.
+
+Le gate suivant (`cb2be5e`) retrouve le timeout de sonde malgré quatre workers :
+la borne de concurrence ne suffisait pas. Instrumentation temporaire ciblée :
+le premier lancement du faux exécutable met 245–344 ms avant toute sortie,
+avec seulement 0–3 ms de retard de boucle Node. Après un appel de version
+préalable, la sonde réelle du test reçoit sa sortie en 3,1 ms. Le test établit
+donc ce prérequis avant de chronométrer l'authentification bloquée ; la sonde
+de 500 ms et l'assertion totale de 2 s sont conservées. Aucun changement du
+runtime produit. La suite complète unitaire passe 366/366 après cet ajustement.
+Instrumentation retirée. Mesures : `l02/probe-instrumented-*.log` et
+`l02/probe-warm-prerequisite.log` dans le dossier temporaire.
