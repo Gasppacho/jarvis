@@ -107,6 +107,7 @@ export interface ProjectResourceGrantPort {
 export interface SuggestedProjectConfig {
   readonly apiVersion: "jarvis.dev/project/v1";
   readonly kind: "Project";
+  readonly compositionMode?: "fixed-modules";
   readonly metadata: {
     readonly id: string;
     readonly name: string;
@@ -169,6 +170,7 @@ export interface ProjectModuleInstanceConfiguration {
 export interface PortableProjectConfiguration {
   readonly apiVersion: "jarvis.dev/project/v1";
   readonly kind: "Project";
+  readonly compositionMode?: "fixed-modules";
   readonly metadata: ProjectMetadata;
   readonly repositories: readonly ProjectRepositoryConfiguration[];
   readonly slots: Readonly<Record<string, ProjectSlotRequirement>>;

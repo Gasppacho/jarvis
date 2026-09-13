@@ -88,11 +88,24 @@ export interface ProjectRepositoryIdentity {
 
 export interface WorkItemsCapability {
   read(ref: string, repositoryId?: string): Promise<WorkItem>;
+  observeState?(ref: string, repositoryId: string): Promise<WorkItemStateObservation>;
   assessReadiness?(input: {
     readonly ref: string;
     readonly repositoryId: string;
     readonly tag: string;
   }): Promise<WorkItemReadinessAssessment>;
+}
+
+export interface WorkItemStateObservation {
+  readonly title: string;
+  readonly state: "open" | "closed" | "unknown";
+  readonly tags: readonly string[];
+  readonly dependencies: {
+    readonly status: "complete" | "unknown";
+    readonly openWorkItemRefs: readonly string[];
+  };
+  readonly verification: "verified" | "unavailable";
+  readonly reasonCode: string | null;
 }
 
 export interface WorkItemReadinessAssessment {

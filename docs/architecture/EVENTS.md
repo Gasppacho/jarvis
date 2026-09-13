@@ -22,6 +22,7 @@ Une request n'affirme jamais que l'action a réussi.
 Un fait qui s'est réellement produit :
 
 ```text
+scm.work-item.observed
 scm.work-item.tag-added
 scm.work-item.ready
 development.implementation.completed

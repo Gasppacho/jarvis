@@ -24,6 +24,11 @@ The durable position or timestamp used by the inbound observer.
 ### Observed Fact
 A canonical Fact emitted after detecting GitHub state, regardless of who caused it.
 
+`scm.work-item.observed` is provider-neutral: it contains a bounded title, unique
+tags, complete native dependencies or an explicit unavailable state, and a durable
+observation revision. Reading it never evaluates a readiness label or Automation
+Rule.
+
 ### Readiness Observation
 The durable complete assessment of one open GitHub Issue and all its native
 `blocked_by` dependencies, including whether its configured readiness label is

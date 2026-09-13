@@ -1,0 +1,26 @@
+{
+  "specVersion": "1.0",
+  "version": 1,
+  "occurredAt": "2026-09-13T08:00:00.000Z",
+  "projectId": "token-warehouse",
+  "repositoryId": "main",
+  "correlationId": "corr_issue_42_observed",
+  "id": "evt_work_item_observed_001",
+  "type": "scm.work-item.observed",
+  "kind": "fact",
+  "producer": { "moduleId": "jarvis.module.github", "moduleInstanceId": "github" },
+  "subject": { "type": "work-item", "ref": "github://QServices/token-warehouse/issues/42" },
+  "causationId": null,
+  "payload": {
+    "repositoryId": "main",
+    "workItemRef": "github://QServices/token-warehouse/issues/42",
+    "title": "Add a health endpoint",
+    "state": "open",
+    "tags": ["ready-for-agent"],
+    "dependencies": { "status": "complete", "openWorkItemRefs": [] },
+    "verification": "verified",
+    "reasonCode": null,
+    "observedAt": "2026-09-13T08:00:00.000Z",
+    "observationRevision": 1
+  }
+}

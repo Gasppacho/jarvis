@@ -2721,6 +2721,9 @@ components:
           const: jarvis.dev/project/v1
         kind:
           const: Project
+        compositionMode:
+          type: string
+          enum: [fixed-modules]
         metadata:
           $ref: "#/components/schemas/ProjectMetadata"
         repositories:
@@ -2753,6 +2756,9 @@ components:
           const: jarvis.dev/project/v1
         kind:
           const: Project
+        compositionMode:
+          type: string
+          enum: [fixed-modules]
         metadata:
           $ref: "#/components/schemas/ProjectMetadata"
         repositories:

@@ -20,6 +20,7 @@ import {
   GitHubApiError,
   GitHubTranslationError,
   assessGitHubWorkItemReadiness,
+  observeGitHubWorkItemState,
   type GitHubCredentialResolutionPort,
   parseGitHubWorkItemRef,
   translateGitHubWorkItemResponse,
@@ -267,25 +268,17 @@ export class ProjectModuleCapabilityResolver {
         shell: { run: runProjectCommand },
       };
     }
-    if (githubRequirement !== undefined) {
+    const workItemsApiRequirement = githubRequirement ?? workItemsRequirement;
+    if (workItemsApiRequirement !== undefined) {
       const githubApi = this.resolveGitHubApi(
         projectId,
         moduleInstanceId,
         snapshot,
-        githubRequirement,
-        "github.api",
-      );
-      if (githubApi !== undefined) resolved = { ...resolved, githubApi };
-    }
-    if (workItemsRequirement !== undefined) {
-      const githubApi = this.resolveGitHubApi(
-        projectId,
-        moduleInstanceId,
-        snapshot,
-        workItemsRequirement,
-        "work-items.read",
+        workItemsApiRequirement,
+        githubRequirement === undefined ? "work-items.read" : "github.api",
       );
       if (githubApi !== undefined) {
+        if (githubRequirement !== undefined) resolved = { ...resolved, githubApi };
         const workItems: WorkItemsCapability = {
           read: async (ref, repositoryId) => {
             const reference = parseGitHubWorkItemRef(ref);
@@ -334,8 +327,29 @@ export class ProjectModuleCapabilityResolver {
               tag,
             });
           },
+          observeState: async (ref, repositoryId) => {
+            const reference = parseGitHubWorkItemRef(ref);
+            if (!linkedRepository(snapshot, repositoryId, reference.owner, reference.repository)) {
+              return {
+                title: "",
+                state: "unknown",
+                tags: [],
+                dependencies: { status: "unknown", openWorkItemRefs: [] },
+                verification: "unavailable",
+                reasonCode: "observation-incomplete",
+              };
+            }
+            return observeGitHubWorkItemState({
+              api: githubApi,
+              owner: reference.owner,
+              repository: reference.repository,
+              number: reference.number,
+            });
+          },
         };
-        resolved = { ...resolved, workItems };
+        if (workItemsRequirement !== undefined || moduleId === "jarvis.module.github") {
+          resolved = { ...resolved, workItems };
+        }
       }
     }
     return resolved;

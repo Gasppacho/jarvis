@@ -10,6 +10,11 @@ The provider-neutral unit of requested product or engineering work.
 
 _Avoid_: GitHub Issue, Jira ticket in the domain model.
 
+### Observed Work Item State
+A provider fact describing the current state, tags and dependencies of a Work
+Item. It is evidence for a later admission decision; it does not request or
+start an Implementation.
+
 ### Implementation
 The local attempt that transforms a Work Item into a validated pushed branch.
 

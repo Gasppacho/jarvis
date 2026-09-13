@@ -24,6 +24,10 @@ contracts:
       version: 1
       kind: fact
       schemaRef: contracts/events/scm.work-item.ready.v1.schema.json
+    - type: scm.work-item.observed
+      version: 1
+      kind: fact
+      schemaRef: contracts/events/scm.work-item.observed.v1.schema.json
     - type: scm.work-item.tag-added
       version: 1
       kind: fact
@@ -50,6 +54,7 @@ configuration:
 permissions:
   emit:
     - scm.work-item.ready
+    - scm.work-item.observed
     - scm.work-item.tag-added
     - scm.change-request.created
     - scm.change-request.creation-failed

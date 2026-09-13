@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Work item observed",
+  "description": "A provider-neutral snapshot of one externally observed work item.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "repositoryId",
+    "workItemRef",
+    "title",
+    "state",
+    "tags",
+    "dependencies",
+    "verification",
+    "reasonCode",
+    "observedAt",
+    "observationRevision"
+  ],
+  "properties": {
+    "repositoryId": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "workItemRef": { "type": "string", "minLength": 1, "maxLength": 2048 },
+    "title": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "state": { "enum": ["open", "closed", "unknown"] },
+    "tags": {
+      "type": "array",
+      "maxItems": 100,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+    },
+    "dependencies": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "openWorkItemRefs"],
+      "properties": {
+        "status": { "enum": ["complete", "unknown"] },
+        "openWorkItemRefs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 2048 }
+        }
+      }
+    },
+    "verification": { "enum": ["verified", "unavailable"] },
+    "reasonCode": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "string", "pattern": "^[a-z][a-z0-9.-]{0,99}$" }
+      ]
+    },
+    "observedAt": { "type": "string", "format": "date-time" },
+    "observationRevision": { "type": "integer", "minimum": 1 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "verification": { "const": "verified" } } },
+      "then": {
+        "properties": {
+          "state": { "enum": ["open", "closed"] },
+          "dependencies": {
+            "type": "object",
+            "properties": { "status": { "const": "complete" } }
+          },
+          "reasonCode": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "verification": { "const": "unavailable" } } },
+      "then": {
+        "properties": {
+          "state": { "const": "unknown" },
+          "tags": { "type": "array", "maxItems": 0 },
+          "dependencies": {
+            "type": "object",
+            "properties": {
+              "status": { "const": "unknown" },
+              "openWorkItemRefs": { "type": "array", "maxItems": 0 }
+            }
+          },
+          "reasonCode": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  ]
+}

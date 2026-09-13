@@ -24,6 +24,349 @@ afterEach(async () => {
 });
 
 describe("GitHub polling Application Harness", () => {
+  it("publishes fixed GitHub observations with pagination and verified closure", async () => {
+    const fakeGitHub = await startFakeGitHubApi();
+    servers.push(fakeGitHub);
+    const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-observed-gh-"));
+    roots.push(executableRoot);
+    const executable = join(executableRoot, "gh");
+    writeFileSync(executable, "#!/bin/sh\necho ghs_observed_sentinel\n", "utf8");
+    chmodSync(executable, 0o755);
+
+    const openBlockers = [
+      { number: 9001, title: "Open blocker", body: "", state: "open" as const, labels: [] },
+    ];
+    const closedBlockers = Array.from({ length: 100 }, (_, index) => ({
+      number: 9100 + index,
+      title: `Closed blocker ${index}`,
+      body: "",
+      state: "closed" as const,
+      labels: [],
+    }));
+    for (let number = 1; number <= 101; number += 1) {
+      fakeGitHub.seedIssue({
+        owner: "Gasppacho",
+        repository: "jarvis",
+        issue: {
+          number,
+          title: number === 1 ? "Observed issue" : `Issue ${number}`,
+          body: "provider body stays out of the event",
+          state: "open",
+          labels: number === 1 ? [{ name: "ready-for-agent" }] : [],
+          ...(number === 1 ? { blockedBy: [...openBlockers, ...closedBlockers] } : {}),
+        },
+      });
+    }
+    fakeGitHub.seedIssue({
+      owner: "Gasppacho",
+      repository: "jarvis",
+      issue: {
+        number: 9999,
+        title: "Pull Request",
+        body: "",
+        state: "open",
+        labels: [{ name: "ready-for-agent" }],
+        pull_request: {},
+      },
+    });
+
+    const engine = await startEngine({
+      enginePath: TEST_BUNDLE,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+        JARVIS_GITHUB_POLL_INTERVAL_MS: "60000",
+      },
+    });
+    engines.push(engine);
+    await registerConnection(engine);
+    const configuration = projectConfig(false, "ignore-existing", "fixed-observation-project", [
+      "main",
+    ]);
+    configuration["compositionMode"] = "fixed-modules";
+    const project = await createProject(engine, false, "ignore-existing", configuration);
+    await bindAndActivate(engine, project.id, project.path);
+
+    await waitForEventTypeCount(engine, project.id, "scm.work-item.observed", 101);
+    const database = new Database(join(engine.dataRoot, "jarvis.sqlite"));
+    try {
+      const rows = database
+        .prepare("SELECT type, envelope FROM events WHERE project_id = ? ORDER BY rowid")
+        .all(project.id) as { readonly type: string; readonly envelope: string }[];
+      expect(rows.filter((row) => row.type === "scm.work-item.observed")).toHaveLength(101);
+      expect(rows.some((row) => row.type === "scm.work-item.ready")).toBe(false);
+      expect(rows.some((row) => row.type === "scm.work-item.tag-added")).toBe(false);
+      expect(rows.some((row) => row.type === "development.implementation.requested")).toBe(false);
+      const target = rows
+        .map((row) => JSON.parse(row.envelope) as Record<string, unknown>)
+        .find(
+          (event) =>
+            (event["payload"] as Record<string, unknown>)["workItemRef"] ===
+            "github://Gasppacho/jarvis/issues/1",
+        );
+      expect(target).toMatchObject({
+        type: "scm.work-item.observed",
+        payload: {
+          title: "Observed issue",
+          state: "open",
+          tags: ["ready-for-agent"],
+          dependencies: {
+            status: "complete",
+            openWorkItemRefs: ["github://Gasppacho/jarvis/issues/9001"],
+          },
+          verification: "verified",
+          reasonCode: null,
+          observationRevision: 1,
+        },
+      });
+      expect(JSON.stringify(target)).not.toContain("provider body");
+    } finally {
+      database.close();
+    }
+    expect(fakeGitHub.requests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "/repos/Gasppacho/jarvis/issues?state=open&per_page=100&page=2",
+        }),
+        expect.objectContaining({
+          path: "/repos/Gasppacho/jarvis/issues/1/dependencies/blocked_by?per_page=100&page=2",
+        }),
+      ]),
+    );
+
+    fakeGitHub.seedIssue({
+      owner: "Gasppacho",
+      repository: "jarvis",
+      issue: {
+        number: 1,
+        title: "Observed issue",
+        body: "provider body stays out of the event",
+        state: "closed",
+        labels: [{ name: "ready-for-agent" }],
+      },
+    });
+    const refreshed = await engine.call(`/v1/projects/${project.id}/overview/refresh`, {
+      method: "POST",
+    });
+    expect(refreshed.status, await refreshed.clone().text()).toBe(200);
+    await waitForObservedState(engine, project.id, "github://Gasppacho/jarvis/issues/1", "closed");
+  });
+
+  it("increments unchanged fixed observations across polls and restart", async () => {
+    const fakeGitHub = await startFakeGitHubApi();
+    servers.push(fakeGitHub);
+    const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-observed-repeat-gh-"));
+    const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-observed-repeat-data-"));
+    roots.push(executableRoot, dataRoot);
+    const executable = join(executableRoot, "gh");
+    writeFileSync(executable, "#!/bin/sh\necho ghs_observed_repeat_sentinel\n", "utf8");
+    chmodSync(executable, 0o755);
+    fakeGitHub.seedIssue({
+      owner: "Gasppacho",
+      repository: "jarvis",
+      issue: {
+        number: 1,
+        title: "Repeated observation",
+        body: "",
+        state: "open",
+        labels: [{ name: "ready-for-agent" }],
+      },
+    });
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: TEST_BUNDLE,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+        JARVIS_GITHUB_POLL_INTERVAL_MS: "60000",
+      },
+    });
+    engines.push(engine);
+    await registerConnection(engine);
+    const configuration = projectConfig(false, "ignore-existing", "fixed-observation-repeat", [
+      "main",
+    ]);
+    configuration["compositionMode"] = "fixed-modules";
+    const project = await createProject(engine, false, "ignore-existing", configuration);
+    await bindAndActivate(engine, project.id, project.path);
+    await waitForEventTypeCount(engine, project.id, "scm.work-item.observed", 1);
+
+    for (const expectedCount of [2, 3]) {
+      const refreshed = await engine.call(`/v1/projects/${project.id}/overview/refresh`, {
+        method: "POST",
+      });
+      expect(refreshed.status, await refreshed.clone().text()).toBe(200);
+      await waitForEventTypeCount(engine, project.id, "scm.work-item.observed", expectedCount);
+    }
+
+    const beforeRestart = new Database(join(dataRoot, "jarvis.sqlite"));
+    try {
+      const events = beforeRestart
+        .prepare(
+          "SELECT envelope FROM events WHERE project_id = ? AND type = 'scm.work-item.observed' ORDER BY rowid",
+        )
+        .all(project.id) as { readonly envelope: string }[];
+      expect(
+        events.map((row) => {
+          const envelope = JSON.parse(row.envelope) as Record<string, unknown>;
+          return (envelope["payload"] as Record<string, unknown>)["observationRevision"];
+        }),
+      ).toEqual([1, 2, 3]);
+      expect(
+        beforeRestart
+          .prepare(
+            "SELECT observation_revision FROM github_work_item_observations WHERE project_id = ? AND work_item_ref = ?",
+          )
+          .get(project.id, "github://Gasppacho/jarvis/issues/1"),
+      ).toEqual({ observation_revision: 3 });
+    } finally {
+      beforeRestart.close();
+    }
+
+    await engine.dispose();
+    engines.splice(engines.indexOf(engine), 1);
+    const restarted = await startEngine({
+      dataRoot,
+      enginePath: TEST_BUNDLE,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+        JARVIS_GITHUB_POLL_INTERVAL_MS: "60000",
+      },
+    });
+    engines.push(restarted);
+    await waitForEventTypeCount(restarted, project.id, "scm.work-item.observed", 4, true);
+
+    const afterRestart = new Database(join(dataRoot, "jarvis.sqlite"));
+    try {
+      const events = afterRestart
+        .prepare(
+          "SELECT envelope FROM events WHERE project_id = ? AND type = 'scm.work-item.observed' ORDER BY rowid",
+        )
+        .all(project.id) as { readonly envelope: string }[];
+      expect(events).toHaveLength(4);
+      expect(
+        events.map((row) => {
+          const envelope = JSON.parse(row.envelope) as Record<string, unknown>;
+          return (envelope["payload"] as Record<string, unknown>)["observationRevision"];
+        }),
+      ).toEqual([1, 2, 3, 4]);
+      expect(
+        afterRestart
+          .prepare(
+            "SELECT observation_revision FROM github_work_item_observations WHERE project_id = ? AND work_item_ref = ?",
+          )
+          .get(project.id, "github://Gasppacho/jarvis/issues/1"),
+      ).toEqual({ observation_revision: 4 });
+    } finally {
+      afterRestart.close();
+    }
+  });
+
+  it.each([
+    ["before commit", "after-github-observation-publish", 0, 0, 1],
+    ["after commit", "after-github-observation-commit", 1, 1, 2],
+  ] as const)(
+    "preserves fixed observation transaction state when crashing %s",
+    async (_boundary, armedFailpoint, expectedSnapshots, expectedOutbox, expectedRevision) => {
+      const fakeGitHub = await startFakeGitHubApi();
+      servers.push(fakeGitHub);
+      const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-observed-crash-gh-"));
+      const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-observed-crash-data-"));
+      roots.push(executableRoot, dataRoot);
+      const executable = join(executableRoot, "gh");
+      writeFileSync(executable, "#!/bin/sh\necho ghs_observed_crash_sentinel\n", "utf8");
+      chmodSync(executable, 0o755);
+      fakeGitHub.seedIssue({
+        owner: "Gasppacho",
+        repository: "jarvis",
+        issue: {
+          number: 1,
+          title: "Crash-safe observation",
+          body: "",
+          state: "open",
+          labels: [],
+        },
+      });
+      const configuration = projectConfig(false, "ignore-existing", "fixed-observation-crash", [
+        "main",
+      ]);
+      configuration["compositionMode"] = "fixed-modules";
+      const baseEnv = {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_FAILPOINT: armedFailpoint,
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+        JARVIS_GITHUB_POLL_INTERVAL_MS: "25",
+      };
+      const crashing = await startEngine({ dataRoot, enginePath: TEST_BUNDLE, env: baseEnv });
+      engines.push(crashing);
+      await registerConnection(crashing);
+      const project = await createProject(crashing, false, "ignore-existing", configuration);
+      await bindAndActivate(crashing, project.id, project.path);
+      expect(await crashing.waitForExit()).not.toBe(0);
+      await crashing.dispose();
+      engines.splice(engines.indexOf(crashing), 1);
+
+      const beforeRestart = new Database(join(dataRoot, "jarvis.sqlite"));
+      try {
+        expect(
+          beforeRestart
+            .prepare(
+              "SELECT COUNT(*) AS count FROM github_work_item_observations WHERE project_id = ?",
+            )
+            .get(project.id),
+        ).toEqual({ count: expectedSnapshots });
+        expect(
+          beforeRestart
+            .prepare("SELECT COUNT(*) AS count FROM events WHERE project_id = ? AND type = ?")
+            .get(project.id, "scm.work-item.observed"),
+        ).toEqual({ count: 0 });
+        expect(
+          beforeRestart
+            .prepare("SELECT COUNT(*) AS count FROM outbox WHERE project_id = ?")
+            .get(project.id),
+        ).toEqual({ count: expectedOutbox });
+      } finally {
+        beforeRestart.close();
+      }
+
+      const restarted = await startEngine({
+        dataRoot,
+        enginePath: TEST_BUNDLE,
+        env: { ...baseEnv, JARVIS_FAILPOINT: "" },
+      });
+      engines.push(restarted);
+      await waitForEventTypeCount(
+        restarted,
+        project.id,
+        "scm.work-item.observed",
+        expectedRevision,
+      );
+      await waitForObservedState(
+        restarted,
+        project.id,
+        "github://Gasppacho/jarvis/issues/1",
+        "open",
+      );
+      const afterRestart = new Database(join(dataRoot, "jarvis.sqlite"));
+      try {
+        expect(
+          afterRestart
+            .prepare(
+              "SELECT observation_revision FROM github_work_item_observations WHERE project_id = ? AND work_item_ref = ?",
+            )
+            .get(project.id, "github://Gasppacho/jarvis/issues/1"),
+        ).toEqual({ observation_revision: expectedRevision });
+      } finally {
+        afterRestart.close();
+      }
+    },
+  );
+
   it("admits one already-labelled open issue from its current GitHub state", async () => {
     const fakeGitHub = await startFakeGitHubApi();
     servers.push(fakeGitHub);
@@ -1698,7 +2041,7 @@ async function waitForFactCount(
 > {
   const deadline = Date.now() + 5_000;
   for (;;) {
-    const response = await engine.call(`/v1/projects/${projectId}/events`);
+    const response = await engine.call(`/v1/projects/${projectId}/events?limit=500`);
     expect(response.status).toBe(200);
     const body = (await response.json()) as {
       readonly items: readonly {
@@ -1720,16 +2063,28 @@ async function waitForEventTypeCount(
   projectId: string,
   type: string,
   count: number,
+  tolerateNotFound = false,
 ): Promise<readonly Record<string, unknown>[]> {
   const deadline = Date.now() + 5_000;
   for (;;) {
-    const response = await engine.call(`/v1/projects/${projectId}/events`);
+    const response = await engine.call(`/v1/projects/${projectId}/events?limit=500`);
+    if (response.status === 404 && tolerateNotFound) {
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `project ${projectId} did not become available after restart\n${engine.stderr()}`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      continue;
+    }
     expect(response.status).toBe(200);
     const body = (await response.json()) as { readonly items: readonly Record<string, unknown>[] };
     const events = body.items.filter((event) => event["type"] === type);
     if (events.length >= count) return events;
     if (Date.now() >= deadline) {
-      throw new Error(`project ${projectId} did not reach ${count} events of type ${type}`);
+      throw new Error(
+        `project ${projectId} did not reach ${count} events of type ${type}\n${engine.stderr()}`,
+      );
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
@@ -1803,6 +2158,36 @@ async function waitForReadiness(
     if (row?.status === status) return;
     if (Date.now() >= deadline)
       throw new Error(`readiness ${workItemRef} did not become ${status}`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function waitForObservedState(
+  engine: Harness,
+  projectId: string,
+  workItemRef: string,
+  state: "open" | "closed" | "unknown",
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    const database = new Database(join(engine.dataRoot, "jarvis.sqlite"));
+    const found = (
+      database
+        .prepare(
+          "SELECT envelope FROM events WHERE project_id = ? AND type = 'scm.work-item.observed'",
+        )
+        .all(projectId) as { readonly envelope: string }[]
+    ).some((row) => {
+      const payload = (JSON.parse(row.envelope) as Record<string, unknown>)["payload"] as
+        Record<string, unknown> | undefined;
+      return payload?.["workItemRef"] === workItemRef && payload["state"] === state;
+    });
+    if (found) {
+      database.close();
+      return;
+    }
+    database.close();
+    if (Date.now() >= deadline) throw new Error(`observed ${workItemRef} did not become ${state}`);
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }

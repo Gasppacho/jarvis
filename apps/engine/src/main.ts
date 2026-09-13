@@ -611,6 +611,7 @@ async function main(): Promise<void> {
       ids,
       clock,
       repositoryResolver,
+      ...(readinessStore === undefined ? {} : { observations: readinessStore }),
       ...(pollingStatusStore === undefined ? {} : { pollingStatus: pollingStatusStore }),
       ...(githubPollIntervalMs === undefined ? {} : { pollIntervalMs: githubPollIntervalMs }),
     });

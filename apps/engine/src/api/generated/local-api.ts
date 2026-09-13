@@ -1535,6 +1535,8 @@ export interface components {
             apiVersion: "jarvis.dev/project/v1";
             /** @constant */
             kind: "Project";
+            /** @enum {string} */
+            compositionMode?: "fixed-modules";
             metadata: components["schemas"]["ProjectMetadata"];
             repositories: components["schemas"]["ProjectRepositoryConfiguration"][];
             slots: Record<string, never>;
@@ -1548,6 +1550,8 @@ export interface components {
             apiVersion: "jarvis.dev/project/v1";
             /** @constant */
             kind: "Project";
+            /** @enum {string} */
+            compositionMode?: "fixed-modules";
             metadata: components["schemas"]["ProjectMetadata"];
             repositories: components["schemas"]["ProjectRepositoryConfiguration"][];
             slots: {

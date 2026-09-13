@@ -167,6 +167,7 @@ describe("bundled Module Package catalogue", () => {
         consumes: ["scm.change-request.creation-requested.v1"],
         produces: [
           "scm.work-item.ready.v1",
+          "scm.work-item.observed.v1",
           "scm.work-item.tag-added.v1",
           "scm.change-request.created.v1",
           "scm.change-request.creation-failed.v1",
@@ -285,7 +286,7 @@ describe("bundled Module Package catalogue", () => {
     await expectOnlyValidPackages(engine);
     await engine.waitForStderr("rejected bundled Module Package github");
     expect(engine.stderr()).toContain(
-      "/contracts/produces/1/schemaRef must identify contracts/events/scm.work-item.tag-removed.v1.schema.json",
+      "schemaRef must identify contracts/events/scm.work-item.tag-removed.v1.schema.json",
     );
   });
 

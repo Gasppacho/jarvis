@@ -143,7 +143,7 @@ final class ModuleCatalogTests: XCTestCase {
         XCTAssertEqual(
             github.produces,
             [
-                "scm.work-item.ready.v1", "scm.work-item.tag-added.v1", "scm.change-request.created.v1",
+                "scm.work-item.ready.v1", "scm.work-item.observed.v1", "scm.work-item.tag-added.v1", "scm.change-request.created.v1",
                 "scm.change-request.creation-failed.v1",
             ])
         XCTAssertEqual(github.requires, [ModuleCapabilityRequirement(id: "github.api", binding: "sourceControl")])

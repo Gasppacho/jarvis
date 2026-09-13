@@ -1,7 +1,11 @@
 import type Database from "better-sqlite3";
 import type { Clock } from "../../../kernel/src/clock.js";
-import type { WorkItemReadinessCapability } from "../../../module-sdk/src/index.js";
-import type { GitHubApi, WorkItemReadinessAssessment } from "../../../module-sdk/src/index.js";
+import type {
+  GitHubApi,
+  WorkItemReadinessAssessment,
+  WorkItemReadinessCapability,
+  WorkItemStateObservation,
+} from "../../../module-sdk/src/index.js";
 
 const MAX_PAGES = 100;
 const PAGE_SIZE = 100;
@@ -19,6 +23,145 @@ export interface WorkItemReadinessSnapshot {
   readonly blockerRefs: readonly string[];
   readonly observedAt: string;
   readonly admittedAt: string | null;
+}
+
+export interface WorkItemObservationSnapshot extends WorkItemStateObservation {
+  readonly projectId: string;
+  readonly repositoryId: string;
+  readonly workItemRef: string;
+  readonly observedAt: string;
+  readonly observationRevision: number;
+}
+
+/** Reads one complete provider snapshot without labels, rules, or admission policy. */
+export async function observeGitHubWorkItemState(input: {
+  readonly api: GitHubApi;
+  readonly owner: string;
+  readonly repository: string;
+  readonly number: number;
+}): Promise<WorkItemStateObservation> {
+  let issue;
+  try {
+    issue = await input.api.get(`/repos/${input.owner}/${input.repository}/issues/${input.number}`);
+  } catch {
+    return unavailableObservation("provider-unavailable");
+  }
+  if (issue.status < 200 || issue.status >= 300) {
+    return unavailableObservation(responseReason(issue));
+  }
+  if (!isRecord(issue.body) || Object.hasOwn(issue.body, "pull_request")) {
+    return unavailableObservation("observation-incomplete");
+  }
+  const number = issue.body["number"];
+  const title = issue.body["title"];
+  const state = issue.body["state"];
+  if (
+    number !== input.number ||
+    !Number.isSafeInteger(number) ||
+    typeof title !== "string" ||
+    title.trim() === "" ||
+    (state !== "open" && state !== "closed")
+  ) {
+    return unavailableObservation("observation-incomplete");
+  }
+  const tags = readTags(issue.body["labels"]);
+  if (tags === undefined) return unavailableObservation("observation-incomplete");
+  const dependencies = await readDependencies(input);
+  if (dependencies.status !== "complete") return unavailableObservation(dependencies.reasonCode);
+  return {
+    title: title.slice(0, 256),
+    state,
+    tags,
+    dependencies: { status: "complete", openWorkItemRefs: dependencies.openWorkItemRefs },
+    verification: "verified",
+    reasonCode: null,
+  };
+}
+
+function readTags(value: unknown): readonly string[] | undefined {
+  if (!Array.isArray(value) || value.length > 100) return undefined;
+  const tags = value.map((tag) => {
+    if (!isRecord(tag) || typeof tag["name"] !== "string") return undefined;
+    const name = tag["name"];
+    return name.length >= 1 && name.length <= 200 ? name : undefined;
+  });
+  if (tags.some((tag) => tag === undefined)) return undefined;
+  const names = tags as string[];
+  return new Set(names).size === names.length ? names : undefined;
+}
+
+async function readDependencies(input: {
+  readonly api: GitHubApi;
+  readonly owner: string;
+  readonly repository: string;
+  readonly number: number;
+}): Promise<
+  | { readonly status: "complete"; readonly openWorkItemRefs: readonly string[] }
+  | { readonly status: "unavailable"; readonly reasonCode: string }
+> {
+  const openWorkItemRefs: string[] = [];
+  try {
+    for (let page = 1; page <= MAX_PAGES; page += 1) {
+      const response = await input.api.get(
+        `/repos/${input.owner}/${input.repository}/issues/${input.number}/dependencies/blocked_by?per_page=${PAGE_SIZE}&page=${page}`,
+      );
+      if (response.status < 200 || response.status >= 300 || !Array.isArray(response.body)) {
+        return { status: "unavailable", reasonCode: responseReason(response) };
+      }
+      for (const blocker of response.body) {
+        if (!isRecord(blocker))
+          return { status: "unavailable", reasonCode: "observation-incomplete" };
+        if (Object.hasOwn(blocker, "pull_request")) continue;
+        const blockerNumber = blocker["number"];
+        if (
+          typeof blockerNumber !== "number" ||
+          !Number.isSafeInteger(blockerNumber) ||
+          blockerNumber < 1 ||
+          (blocker["state"] !== "open" && blocker["state"] !== "closed")
+        ) {
+          return { status: "unavailable", reasonCode: "observation-incomplete" };
+        }
+        if (blocker["state"] === "open") {
+          const ref = `github://${input.owner}/${input.repository}/issues/${blockerNumber}`;
+          if (ref.length > 2048) {
+            return { status: "unavailable", reasonCode: "observation-incomplete" };
+          }
+          openWorkItemRefs.push(ref);
+        }
+      }
+      if (!hasNextPage(response.headers)) {
+        return { status: "complete", openWorkItemRefs: [...new Set(openWorkItemRefs)] };
+      }
+    }
+  } catch {
+    return { status: "unavailable", reasonCode: "provider-unavailable" };
+  }
+  return { status: "unavailable", reasonCode: "observation-incomplete" };
+}
+
+function unavailableObservation(reasonCode: string): WorkItemStateObservation {
+  return {
+    title: "",
+    state: "unknown",
+    tags: [],
+    dependencies: { status: "unknown", openWorkItemRefs: [] },
+    verification: "unavailable",
+    reasonCode,
+  };
+}
+
+function responseReason(response: {
+  readonly status: number;
+  readonly headers?: Readonly<Record<string, string>>;
+}): string {
+  const remaining =
+    response.headers?.["x-ratelimit-remaining"] ?? response.headers?.["X-RateLimit-Remaining"];
+  if (response.status === 429 || (response.status === 403 && remaining === "0")) {
+    return "provider-rate-limited";
+  }
+  if (response.status === 401 || response.status === 403) return "provider-unauthorized";
+  if (response.status >= 500 || response.status === 408) return "provider-unavailable";
+  return "observation-incomplete";
 }
 
 /** Public provider policy used both by polling and Development admission. */
@@ -149,6 +292,90 @@ export class WorkItemReadinessStore {
     }));
   }
 
+  public listObserved(
+    projectId: string,
+    repositoryId: string,
+  ): readonly WorkItemObservationSnapshot[] {
+    const rows = this.db
+      .prepare(
+        `SELECT project_id, repository_id, work_item_ref, title, state, tags,
+                dependencies_status, open_work_item_refs, verification, reason_code,
+                observed_at, observation_revision
+         FROM github_work_item_observations
+         WHERE project_id = ? AND repository_id = ?
+         ORDER BY work_item_ref`,
+      )
+      .all(projectId, repositoryId) as ObservationRow[];
+    return rows.map((row) => ({
+      projectId: row.project_id,
+      repositoryId: row.repository_id,
+      workItemRef: row.work_item_ref,
+      title: row.title,
+      state: row.state,
+      tags: parseStringArray(row.tags),
+      dependencies: {
+        status: row.dependencies_status,
+        openWorkItemRefs: parseStringArray(row.open_work_item_refs),
+      },
+      verification: row.verification,
+      reasonCode: row.reason_code,
+      observedAt: row.observed_at,
+      observationRevision: row.observation_revision,
+    }));
+  }
+
+  public recordObserved(input: {
+    readonly projectId: string;
+    readonly repositoryId: string;
+    readonly workItemRef: string;
+    readonly title: string;
+    readonly observation: WorkItemStateObservation;
+    readonly observedAt: string;
+  }): number {
+    this.db
+      .prepare(
+        `INSERT INTO github_work_item_observations
+           (project_id, repository_id, work_item_ref, title, state, tags,
+            dependencies_status, open_work_item_refs, verification, reason_code,
+            observed_at, observation_revision)
+         VALUES (@projectId, @repositoryId, @workItemRef, @title, @state, @tags,
+                 @dependenciesStatus, @openWorkItemRefs, @verification, @reasonCode,
+                 @observedAt, 1)
+         ON CONFLICT (project_id, repository_id, work_item_ref) DO UPDATE SET
+           title = excluded.title,
+           state = excluded.state,
+           tags = excluded.tags,
+           dependencies_status = excluded.dependencies_status,
+           open_work_item_refs = excluded.open_work_item_refs,
+           verification = excluded.verification,
+           reason_code = excluded.reason_code,
+           observed_at = excluded.observed_at,
+           observation_revision = github_work_item_observations.observation_revision + 1`,
+      )
+      .run({
+        projectId: input.projectId,
+        repositoryId: input.repositoryId,
+        workItemRef: input.workItemRef,
+        title: input.title,
+        state: input.observation.state,
+        tags: JSON.stringify(input.observation.tags),
+        dependenciesStatus: input.observation.dependencies.status,
+        openWorkItemRefs: JSON.stringify(input.observation.dependencies.openWorkItemRefs),
+        verification: input.observation.verification,
+        reasonCode: input.observation.reasonCode,
+        observedAt: input.observedAt,
+      });
+    const row = this.db
+      .prepare(
+        `SELECT observation_revision FROM github_work_item_observations
+         WHERE project_id = ? AND repository_id = ? AND work_item_ref = ?`,
+      )
+      .get(input.projectId, input.repositoryId, input.workItemRef) as {
+      readonly observation_revision: number;
+    };
+    return row.observation_revision;
+  }
+
   public bind(projectId: string, moduleInstanceId: string): WorkItemReadinessCapability {
     return {
       observe: ({
@@ -233,10 +460,34 @@ interface ReadinessRow {
   readonly admitted_at: string | null;
 }
 
+interface ObservationRow {
+  readonly project_id: string;
+  readonly repository_id: string;
+  readonly work_item_ref: string;
+  readonly title: string;
+  readonly state: WorkItemStateObservation["state"];
+  readonly tags: string;
+  readonly dependencies_status: WorkItemStateObservation["dependencies"]["status"];
+  readonly open_work_item_refs: string;
+  readonly verification: WorkItemStateObservation["verification"];
+  readonly reason_code: string | null;
+  readonly observed_at: string;
+  readonly observation_revision: number;
+}
+
 function parseBlockerRefs(value: string): readonly string[] {
   try {
     const parsed: unknown = JSON.parse(value);
     return Array.isArray(parsed) && parsed.every((ref) => typeof ref === "string") ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseStringArray(value: string): readonly string[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.every((item) => typeof item === "string") ? parsed : [];
   } catch {
     return [];
   }

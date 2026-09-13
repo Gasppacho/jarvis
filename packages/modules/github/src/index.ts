@@ -62,4 +62,8 @@ export {
   type GitHubWorkItemReference,
 } from "./translation.js";
 
-export { assessGitHubWorkItemReadiness, WorkItemReadinessStore } from "./work-item-readiness.js";
+export {
+  assessGitHubWorkItemReadiness,
+  observeGitHubWorkItemState,
+  WorkItemReadinessStore,
+} from "./work-item-readiness.js";

@@ -4,6 +4,7 @@
 
 | Event | Kind | Producer | Intended consumer | Payload schema |
 |---|---|---|---|---|
+| `scm.work-item.observed` | Fact | GitHub | Observers; future decision modules | `contracts/events/scm.work-item.observed.v1.schema.json` |
 | `scm.work-item.tag-added` | Fact | GitHub | Automation Rules and observers | `contracts/events/scm.work-item.tag-added.v1.schema.json` |
 | `development.implementation.requested` | Request | Automation Rules or future decision module | Development | `contracts/events/development.implementation.requested.v1.schema.json` |
 | `development.implementation.completed` | Fact | Development | Observers; future modules | `contracts/events/development.implementation.completed.v1.schema.json` |

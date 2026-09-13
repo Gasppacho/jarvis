@@ -9,6 +9,7 @@ import type {
   PollCursorCapability,
   WorkItemReadinessCapability,
 } from "../../../../packages/module-sdk/src/index.js";
+import type { WorkItemStateObservation } from "../../../../packages/module-sdk/src/index.js";
 import type { Clock } from "../../../../packages/kernel/src/clock.js";
 import type { ModuleHost } from "../../../../packages/kernel/src/module-host.js";
 import type { IdGenerator } from "../../../../packages/kernel/src/id-generator.js";
@@ -64,6 +65,24 @@ export interface GitHubPollingDependencies {
   readonly ids: Pick<IdGenerator, "next">;
   readonly clock: Pick<Clock, "now">;
   readonly repositoryResolver: Pick<ProjectRepositoryResolver, "resolve">;
+  readonly observations?: {
+    readonly listObserved: (
+      projectId: string,
+      repositoryId: string,
+    ) => readonly {
+      readonly workItemRef: string;
+      readonly title: string;
+      readonly state: "open" | "closed" | "unknown";
+    }[];
+    readonly recordObserved: (input: {
+      readonly projectId: string;
+      readonly repositoryId: string;
+      readonly workItemRef: string;
+      readonly title: string;
+      readonly observation: WorkItemStateObservation;
+      readonly observedAt: string;
+    }) => number;
+  };
   readonly pollingStatus?: Pick<
     GitHubPollingStatusStore,
     "reconnecting" | "succeeded" | "failed" | "failModule"
@@ -180,12 +199,26 @@ export class GitHubPollingScheduler {
       return;
     }
     const workItemReadiness = capabilities.workItemReadiness;
-    if (workItemReadiness === undefined) {
+    const fixedModules = snapshot.composition.compositionMode === "fixed-modules";
+    if (!fixedModules && workItemReadiness === undefined) {
       logPollingFailure(projectId, instance.instanceId, "capability", "readiness-unavailable");
       this.dependencies.pollingStatus?.failModule(
         projectId,
         instance.instanceId,
         "readiness-unavailable",
+      );
+      return;
+    }
+    if (
+      fixedModules &&
+      (capabilities.workItems?.observeState === undefined ||
+        this.dependencies.observations === undefined)
+    ) {
+      logPollingFailure(projectId, instance.instanceId, "capability", "observation-unavailable");
+      this.dependencies.pollingStatus?.failModule(
+        projectId,
+        instance.instanceId,
+        "observation-unavailable",
       );
       return;
     }
@@ -231,6 +264,7 @@ export class GitHubPollingScheduler {
           pollCursor,
           externalMappings,
           workItemReadiness,
+          capabilities.workItems,
           instance.configuration,
           snapshot,
         );
@@ -245,7 +279,8 @@ export class GitHubPollingScheduler {
     githubApi: GitHubApi,
     pollCursor: PollCursorCapability,
     externalMappings: NonNullable<ModuleHandlerCapabilities["externalMappings"]>,
-    workItemReadiness: WorkItemReadinessCapability,
+    workItemReadiness: WorkItemReadinessCapability | undefined,
+    workItems: ModuleHandlerCapabilities["workItems"],
     configuration: Readonly<Record<string, unknown>> | undefined,
     snapshot: ResolvedProjectSnapshot,
   ): Promise<void> {
@@ -255,20 +290,32 @@ export class GitHubPollingScheduler {
     let failed = false;
     let failureReason: string | undefined;
     try {
-      await scanReadiness(
-        githubApi,
-        githubRepositoryId,
-        repository,
-        readyLabel(configuration),
-        projectId,
-        moduleInstanceId,
-        workItemReadiness,
-        this.dependencies,
-        snapshot,
-      );
+      if (snapshot.composition.compositionMode === "fixed-modules") {
+        await scanObserved(
+          githubApi,
+          githubRepositoryId,
+          repository,
+          projectId,
+          moduleInstanceId,
+          workItems?.observeState,
+          this.dependencies,
+        );
+      } else {
+        await scanReadiness(
+          githubApi,
+          githubRepositoryId,
+          repository,
+          readyLabel(configuration),
+          projectId,
+          moduleInstanceId,
+          workItemReadiness!,
+          this.dependencies,
+          snapshot,
+        );
+      }
     } catch (error: unknown) {
       failed = true;
-      failureReason = `readiness-${classifyPollingFailure(error)}`;
+      failureReason = `${snapshot.composition.compositionMode === "fixed-modules" ? "observation" : "readiness"}-${classifyPollingFailure(error)}`;
       logPollingFailure(projectId, moduleInstanceId, githubRepositoryId, failureReason);
     }
     try {
@@ -443,6 +490,161 @@ async function scanReadiness(
       });
     }
   });
+}
+
+async function scanObserved(
+  githubApi: GitHubApi,
+  githubRepositoryId: string,
+  repository: ProjectRepositoryIdentity,
+  projectId: string,
+  moduleInstanceId: string,
+  observeState:
+    ((ref: string, repositoryId: string) => Promise<WorkItemStateObservation>) | undefined,
+  dependencies: Pick<
+    GitHubPollingDependencies,
+    "publisher" | "transaction" | "ids" | "clock" | "observations"
+  >,
+): Promise<void> {
+  if (
+    repository.provider !== "github" ||
+    observeState === undefined ||
+    dependencies.observations === undefined
+  ) {
+    throw new Error("GitHub observation capability is unavailable");
+  }
+  const previous = dependencies.observations.listObserved(projectId, repository.repositoryId);
+  let candidates: CurrentGitHubIssue[];
+  try {
+    candidates = await readCurrentIssues(githubApi, githubRepositoryId);
+  } catch (error) {
+    publishObservedSnapshots(
+      previous
+        .filter((item) => item.state !== "closed")
+        .map((item) => ({
+          workItemRef: item.workItemRef,
+          title: item.title,
+          observedAt: dependencies.clock.now().toISOString(),
+          observation: unavailableState("observation-incomplete"),
+        })),
+      projectId,
+      moduleInstanceId,
+      repository.repositoryId,
+      dependencies,
+    );
+    throw error;
+  }
+  const currentRefs = new Set(
+    candidates.map(
+      (candidate) => `github://${repository.owner}/${repository.name}/issues/${candidate.number}`,
+    ),
+  );
+  const targets = [
+    ...candidates.map((candidate) => ({
+      workItemRef: `github://${repository.owner}/${repository.name}/issues/${candidate.number}`,
+      title: candidate.title,
+    })),
+    ...previous
+      .filter((item) => item.state !== "closed" && !currentRefs.has(item.workItemRef))
+      .map((item) => ({ workItemRef: item.workItemRef, title: item.title })),
+  ];
+  const previousTitles = new Map(previous.map((item) => [item.workItemRef, item.title]));
+  const observations = [] as {
+    readonly workItemRef: string;
+    readonly title: string;
+    readonly observation: WorkItemStateObservation;
+    readonly observedAt: string;
+  }[];
+  for (const target of targets) {
+    const observation = await observeState(target.workItemRef, repository.repositoryId);
+    observations.push({
+      workItemRef: target.workItemRef,
+      title: (observation.title || previousTitles.get(target.workItemRef) || target.title).slice(
+        0,
+        256,
+      ),
+      observation,
+      observedAt: dependencies.clock.now().toISOString(),
+    });
+  }
+  publishObservedSnapshots(
+    observations,
+    projectId,
+    moduleInstanceId,
+    repository.repositoryId,
+    dependencies,
+  );
+}
+
+function publishObservedSnapshots(
+  snapshots: readonly {
+    readonly workItemRef: string;
+    readonly title: string;
+    readonly observation: WorkItemStateObservation;
+    readonly observedAt: string;
+  }[],
+  projectId: string,
+  moduleInstanceId: string,
+  repositoryId: string,
+  dependencies: Pick<
+    GitHubPollingDependencies,
+    "publisher" | "transaction" | "ids" | "observations"
+  >,
+): void {
+  if (dependencies.observations === undefined)
+    throw new Error("GitHub observation store is unavailable");
+  dependencies.transaction(() => {
+    for (const snapshot of snapshots) {
+      const observationRevision = dependencies.observations!.recordObserved({
+        projectId,
+        repositoryId,
+        workItemRef: snapshot.workItemRef,
+        title: snapshot.title,
+        observation: snapshot.observation,
+        observedAt: snapshot.observedAt,
+      });
+      dependencies.publisher.publish({
+        type: "scm.work-item.observed",
+        version: 1,
+        kind: "fact",
+        projectId,
+        repositoryId,
+        producer: { moduleId: GITHUB_MODULE_ID, moduleInstanceId },
+        subject: { type: "work-item", ref: snapshot.workItemRef },
+        correlationId: `corr_${dependencies.ids.next()}`,
+        causationId: null,
+        idempotencyKey: `${projectId}:${repositoryId}:${snapshot.workItemRef}:observed:${observationRevision}`,
+        payload: {
+          repositoryId,
+          workItemRef: snapshot.workItemRef,
+          title: snapshot.title,
+          state: snapshot.observation.state,
+          tags: snapshot.observation.tags,
+          dependencies: snapshot.observation.dependencies,
+          verification: snapshot.observation.verification,
+          reasonCode: snapshot.observation.reasonCode,
+          observedAt: snapshot.observedAt,
+          observationRevision,
+        },
+      });
+      if (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) {
+        failpoint("after-github-observation-publish");
+      }
+    }
+  });
+  if (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) {
+    failpoint("after-github-observation-commit");
+  }
+}
+
+function unavailableState(reasonCode: string): WorkItemStateObservation {
+  return {
+    title: "",
+    state: "unknown",
+    tags: [],
+    dependencies: { status: "unknown", openWorkItemRefs: [] },
+    verification: "unavailable",
+    reasonCode,
+  };
 }
 
 function readinessIdentity(projectId: string, repositoryId: string, workItemRef: string): string {

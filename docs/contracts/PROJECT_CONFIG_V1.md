@@ -18,6 +18,9 @@ La configuration portable définit la composition logique. Exemple complet : `ex
 - `git` : pattern de branche, stratégie de commit et push.
 - `workspace` : worktree et concurrence.
 - `modules` : instances, package, activation, config et bindings.
+- `compositionMode` : `fixed-modules` choisit explicitement la composition par modules fixes
+  pendant la transition. Son absence conserve la lecture legacy; elle ne se déduit jamais de
+  l'absence de règles.
 
 L'instance Development déclare aussi une décision `preparation` : `install`
 exécute l'unique `commands.install` confirmé dans le worktree, `none` confirme

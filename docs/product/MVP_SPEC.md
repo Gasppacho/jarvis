@@ -104,6 +104,12 @@ Livrer une application native macOS autonome qui :
 
 Le seam principal du MVP est un **Application Harness local** qui démarre une vraie SQLite temporaire, le vrai Kernel, de vrais modules, un repository Git temporaire avec remote bare, un Fake Agent Runtime et un Fake GitHub Adapter. Il pilote le système par la même API locale que l'application macOS et observe les événements/exécutions via SSE ou requêtes.
 
+## Transition vers les modules fixes
+
+Les décisions D01 à D06 de l'ADR 0019 sont normatives pendant la coexistence des compositions. D01 garde les modules, bindings et routes project-scoped; D02 fait de GitHub un provider d'observations canoniques `scm.work-item.observed`; D03 réserve la décision d'admission à Development; D04 conserve les réglages utiles et les brouillons incomplets; D05 conserve les sorties SCM et interdit les mutations automatiques de labels; D06 impose le discriminant portable explicite `compositionMode: fixed-modules`, avec absence égale au legacy.
+
+Une observation vérifiée contient l'état, les tags uniques et la lecture complète des dépendances natives. Une observation indisponible porte `state: unknown`, des tableaux vides et un code sûr; elle ne peut jamais être interprétée comme l'absence d'un tag ou d'un bloqueur. Le polling pagine les issues et `blocked_by`, exclut les Pull Requests et recontrôle les issues suivies disparues avant de publier une fermeture.
+
 Ce seam doit prouver :
 
 1. import et activation d'un projet ;

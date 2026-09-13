@@ -3050,7 +3050,8 @@ capabilities:
         // #110 adds (connections), the External Mapping table ticket #122
         // adds (external_mappings), and the GitHub Cursor table ticket #130
         // adds (github_cursors); ticket #193 adds durable readiness observations;
-        // ticket #199 adds durable polling health.
+        // ticket #199 adds durable polling health; #221 adds durable fixed-module
+        // Work Item observations.
         // All exist but stay empty — activation alone never
         // inserts a row into any of them.
         expect(tableNames(dataRoot)).toEqual([
@@ -3066,6 +3067,7 @@ capabilities:
           "external_mappings",
           "github_cursors",
           "github_polling_status",
+          "github_work_item_observations",
           "github_work_item_readiness",
           "inbox",
           "outbox",
@@ -3306,6 +3308,7 @@ capabilities:
             "external_mappings",
             "github_cursors",
             "github_polling_status",
+            "github_work_item_observations",
             "github_work_item_readiness",
             "inbox",
             "outbox",

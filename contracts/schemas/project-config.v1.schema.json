@@ -22,6 +22,10 @@
     "kind": {
       "const": "Project"
     },
+    "compositionMode": {
+      "type": "string",
+      "enum": ["fixed-modules"]
+    },
     "metadata": {
       "type": "object",
       "additionalProperties": false,
