@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
-import { SystemClock } from "../../../packages/kernel/src/clock.js";
+import { SystemClock, type Clock } from "../../../packages/kernel/src/clock.js";
 import { SystemIdGenerator } from "../../../packages/kernel/src/id-generator.js";
 import {
   EventEnvelopeContractRegistry,
@@ -442,7 +442,15 @@ async function main(): Promise<void> {
       ? parsePositiveMilliseconds(process.env["JARVIS_GITHUB_POLL_INTERVAL_MS"])
       : undefined;
   if (database !== undefined && projectStore !== undefined) {
-    const clock = new SystemClock();
+    let clock: Clock = new SystemClock();
+    if (typeof __JARVIS_TEST_HOOKS__ === "undefined" || __JARVIS_TEST_HOOKS__) {
+      const fixedTime = testHooksEnabled ? process.env["JARVIS_TEST_FIXED_TIME"] : undefined;
+      if (fixedTime !== undefined) {
+        const timestamp = Date.parse(fixedTime);
+        if (!Number.isFinite(timestamp)) throw new Error("Invalid fixed test clock.");
+        clock = { now: () => new Date(timestamp) };
+      }
+    }
     const ids = new SystemIdGenerator();
     const envelopeSchemaPath = join(
       runtimeRoot,

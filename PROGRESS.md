@@ -152,3 +152,16 @@ la concurrence par défaut (18 processeurs disponibles). Le fichier seul passe
 donc les workers à quatre pour ces tests qui lancent eux-mêmes de vrais processus.
 Les assertions, les 500 ms et les délais du produit restent inchangés.
 Preuve rouge : `l02/product-verify-unit-failure.log` dans le dossier temporaire.
+
+Gate du commit `1ebec61` : 366/366 unitaires ; 384/385 intégration. Le test
+`github-change-request.integration.test.ts` retirait ses fausses pannes avant
+les retries de 500–1000 ms ; sous charge, une autre issue créait alors sa PR
+avant les assertions prévues pour la seule relance manuelle. Repro déterministe
+par attente de 1200 ms : deux événements de PR au lieu d'un, assertions intactes.
+Le test fixe désormais l'horloge de persistence via le seam `Clock` existant.
+Ce réglage est limité au bundle Harness et absent de l'artefact de production ;
+la politique de retry reste inchangée. Preuve du gate :
+`l02/product-verify-integration-failure.log` dans le dossier temporaire.
+Correction contrôlée : 6/6 tests (création/récupération PR et absence des hooks
+dans le bundle produit), typecheck réussi. Gate complet à reprendre au commit
+suivant ; aucune PR GitHub réelle créée pendant ces contrôles Harness.

@@ -751,6 +751,7 @@ esac
       enginePath: testBundlePath,
       env: {
         JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_TEST_FIXED_TIME: "2026-09-13T10:00:00.000Z",
         JARVIS_GH_EXECUTABLE: executable,
         JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
       },
@@ -809,6 +810,9 @@ esac
       }
     }
 
+    // Provider scripts may be restored before the retry delay elapses on a
+    // busy host. Freeze the persistence clock, not assertions or retry policy.
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
     const retried = await publishCreationRequest(engine, project.id, failureCases[0]!.workItemRef);
     await waitForExecution(engine, project.id, retried.id, "completed");
     const events = await waitForEvents(engine, project.id, 12);
