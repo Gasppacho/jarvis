@@ -142,12 +142,18 @@ final class ModuleCatalogTests: XCTestCase {
             github.description,
             "Translates GitHub observations and requested SCM actions.")
         XCTAssertEqual(github.categories, ["provider"])
-        XCTAssertEqual(github.consumes, ["scm.change-request.creation-requested.v1"])
+        XCTAssertEqual(
+            github.consumes,
+            [
+                "scm.change-request.creation-requested.v1",
+                "scm.work-item.tags-change-requested.v1",
+            ])
         XCTAssertEqual(
             github.produces,
             [
                 "scm.work-item.ready.v1", "scm.work-item.observed.v1", "scm.work-item.tag-added.v1", "scm.change-request.created.v1",
-                "scm.change-request.creation-failed.v1",
+                "scm.change-request.creation-failed.v1", "scm.work-item.tags-changed.v1",
+                "scm.work-item.tags-change-failed.v1",
             ])
         XCTAssertEqual(github.requires, [ModuleCapabilityRequirement(id: "github.api", binding: "sourceControl")])
         XCTAssertEqual(github.requiredCapabilityIDs, ["github.api"])

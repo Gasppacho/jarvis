@@ -106,6 +106,34 @@ function testFixtureManifests(): readonly DiscoveredModuleManifest[] {
       },
     },
     {
+      packageName: "test-tags-request-producer",
+      source: "<test fixture: tags request producer>",
+      document: {
+        apiVersion: "jarvis.dev/module/v1",
+        kind: "Module",
+        metadata: {
+          id: "jarvis.module.test-tags-request-producer",
+          version: "1.0.0",
+          displayName: "Test Tags Request Producer",
+          description: "Authorized event producer used by the label mutation harness.",
+          categories: ["automation"],
+        },
+        runtime: { entrypoint: "dist/index.mjs" },
+        contracts: {
+          consumes: [],
+          produces: [
+            {
+              type: "scm.work-item.tags-change-requested",
+              version: 1,
+              kind: "request",
+              schemaRef: "contracts/events/scm.work-item.tags-change-requested.v1.schema.json",
+            },
+          ],
+        },
+        capabilities: { requires: [], provides: [] },
+      },
+    },
+    {
       packageName: "test-sample-probe",
       source: "<test fixture: sample probe>",
       document: {

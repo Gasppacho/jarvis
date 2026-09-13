@@ -409,6 +409,56 @@ async function handleFakeGitHubRequest(
     writeJson(response, issue === undefined ? 404 : 200, issue ?? { message: "Not Found" });
     return;
   }
+  const issueLabelsMatch = /^\/repos\/([^/]+)\/([^/]+)\/issues\/([1-9]\d*)\/labels$/.exec(
+    url.pathname,
+  );
+  if (method === "GET" && issueLabelsMatch !== null) {
+    const owner = issueLabelsMatch[1];
+    const repository = issueLabelsMatch[2];
+    const issue =
+      owner === undefined || repository === undefined
+        ? undefined
+        : issues.get(issueKey(owner, repository, Number(issueLabelsMatch[3])));
+    writeJson(response, issue === undefined ? 404 : 200, issue?.labels ?? { message: "Not Found" });
+    return;
+  }
+  const issueLabelMutationMatch =
+    /^\/repos\/([^/]+)\/([^/]+)\/issues\/([1-9]\d*)\/labels(?:\/([^/]+))?$/.exec(url.pathname);
+  if (issueLabelMutationMatch !== null && (method === "POST" || method === "DELETE")) {
+    const owner = issueLabelMutationMatch[1];
+    const repository = issueLabelMutationMatch[2];
+    const number = Number(issueLabelMutationMatch[3]!);
+    if (owner === undefined || repository === undefined) {
+      writeJson(response, 404, { message: "Not Found" });
+      return;
+    }
+    const issue = issues.get(issueKey(owner, repository, number));
+    if (issue === undefined) {
+      writeJson(response, 404, { message: "Not Found" });
+      return;
+    }
+    const requested = method === "POST" ? await readJson(request) : undefined;
+    const names =
+      method === "POST" && isLabelInput(requested)
+        ? requested.labels
+        : method === "DELETE"
+          ? [decodeURIComponent(issueLabelMutationMatch[4] ?? "")]
+          : undefined;
+    if (names === undefined) {
+      writeJson(response, 422, { message: "labels are required" });
+      return;
+    }
+    const labels = new Map(issue.labels.map(({ name }) => [name, { name }]));
+    if (method === "POST") {
+      for (const name of names) labels.set(name, { name });
+    } else {
+      for (const name of names) labels.delete(name);
+    }
+    const updated = { ...issue, labels: [...labels.values()] };
+    issues.set(issueKey(owner, repository, number), updated);
+    writeJson(response, 200, updated.labels);
+    return;
+  }
   const dependenciesMatch =
     /^\/repos\/([^/]+)\/([^/]+)\/issues\/([1-9]\d*)\/dependencies\/blocked_by$/.exec(url.pathname);
   if (method === "GET" && dependenciesMatch !== null) {
@@ -570,6 +620,19 @@ function isPullRequestInput(
     typeof input["base"] === "string" &&
     typeof input["head"] === "string" &&
     (input["draft"] === undefined || typeof input["draft"] === "boolean")
+  );
+}
+
+function isLabelInput(value: unknown): value is { readonly labels: readonly string[] } {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !Array.isArray((value as Record<string, unknown>)["labels"])
+  ) {
+    return false;
+  }
+  return (value as { readonly labels: unknown[] }).labels.every(
+    (label) => typeof label === "string",
   );
 }
 

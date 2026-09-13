@@ -91,6 +91,7 @@ import {
   GitHubCliCredentialResolver,
   GitHubProviderCheckAdapter,
   handleChangeRequestCreationRequested,
+  handleWorkItemTagsChangeRequested,
   WorkItemReadinessStore,
 } from "../../../packages/modules/github/src/index.js";
 
@@ -548,7 +549,12 @@ async function main(): Promise<void> {
             ? handleWorkItemObserved(ctx)
             : handleImplementationRequested(ctx);
       }
-      if (moduleId === "jarvis.module.github") return handleChangeRequestCreationRequested;
+      if (moduleId === "jarvis.module.github") {
+        return (ctx) =>
+          ctx.event.type === "scm.work-item.tags-change-requested"
+            ? handleWorkItemTagsChangeRequested(ctx)
+            : handleChangeRequestCreationRequested(ctx);
+      }
       if (
         fixtures !== undefined &&
         moduleId === fixtures.SAMPLE_PROBE_MODULE_ID &&

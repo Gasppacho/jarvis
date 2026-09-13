@@ -6,9 +6,11 @@ import {
   buildGitHubPullRequestBody,
   GitHubTranslationError,
   mapGitHubPullRequestError,
+  mapGitHubWorkItemTagsError,
   parseGitHubWorkItemRef,
   translateGitHubIssueEvents,
   translateGitHubWorkItemResponse,
+  translateGitHubWorkItemLabelsResponse,
   translateGitHubPullRequestMapping,
   translateGitHubPullRequestLookupResponse,
   translateGitHubPullRequestResponse,
@@ -240,6 +242,37 @@ describe("GitHub change-request translation", () => {
 
 describe("GitHub Work Item translation", () => {
   const ref = "github://QServices/token-warehouse/issues/42";
+
+  it("translates the label list and rejects unusable provider data", () => {
+    expect(
+      translateGitHubWorkItemLabelsResponse(
+        { status: 200, body: [{ name: "agent:ready" }, { name: "human" }] },
+        ref,
+      ),
+    ).toEqual(["agent:ready", "human"]);
+    expect(() =>
+      translateGitHubWorkItemLabelsResponse(
+        { status: 200, body: [{ name: "human" }, { name: "human" }] },
+        ref,
+      ),
+    ).toThrowError(expect.objectContaining({ code: "github.work-item-tags-failed" }));
+    expect(
+      JSON.stringify(
+        mapGitHubWorkItemTagsError({ status: 422, body: { message: "provider secret" } }),
+      ),
+    ).not.toContain("provider secret");
+  });
+
+  it("maps label mutation rate limits and permission failures safely", () => {
+    expect(
+      mapGitHubWorkItemTagsError({ status: 403, headers: { "x-ratelimit-remaining": "0" } }),
+    ).toMatchObject({ code: "github.rate-limited", retryable: true });
+    expect(mapGitHubWorkItemTagsError({ status: 403, body: { message: "forbidden" } })).toEqual({
+      code: "github.unauthorized",
+      message: "GitHub cannot access the requested repository.",
+      retryable: false,
+    });
+  });
 
   it("returns only canonical Issue fields", () => {
     expect(

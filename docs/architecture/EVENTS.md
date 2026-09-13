@@ -24,6 +24,9 @@ Un fait qui s'est réellement produit :
 ```text
 scm.work-item.observed
 scm.work-item.tag-added
+scm.work-item.tags-change-requested
+scm.work-item.tags-changed
+scm.work-item.tags-change-failed
 scm.work-item.ready
 development.implementation.completed
 scm.change-request.created

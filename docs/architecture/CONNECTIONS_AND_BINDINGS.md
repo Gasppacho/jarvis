@@ -77,6 +77,8 @@ A coding agent may use a project-bound MCP to read Work Item context. External m
 
 - Git branch/commit/push are local Git responsibilities of Development.
 - Pull Request creation is a GitHub Module responsibility after a Request.
+- Work Item label changes are a GitHub Module responsibility after a Request;
+  the handler adds labels before removing them and verifies the final state.
 - Merge is unavailable because no MVP Module may emit its Request.
 
 Technical availability of a tool does not transfer domain ownership.

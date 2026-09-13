@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ProjectBindings } from "../../../packages/project-runtime/src/project-types.js";
+import { TAGS_REQUEST_PRODUCER_MODULE_ID } from "../src/test-support/test-fixtures.js";
 import { startEngine, startFakeGitHubApi, type FakeGitHubApi, type Harness } from "./harness.js";
 import { makeNodeRepositoryFixture } from "./repository-fixture.js";
 
@@ -895,6 +896,223 @@ esac
       database.close();
     }
   });
+
+  it("adds and removes only the requested labels, in order, with verified state", async () => {
+    const fakeGitHub = await startFakeGitHubApi();
+    servers.push(fakeGitHub);
+    const executable = credentialExecutable("ghs_tags_success_sentinel");
+    const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-github-tags-success-"));
+    roots.push(dataRoot);
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+      },
+    });
+    engines.push(engine);
+
+    await registerGitHubConnection(engine, "connection/github", "Account");
+    const project = await createGitHubProject(engine, "project-tags-success", true);
+    await bindAndActivate(engine, project, "connection/github");
+    fakeGitHub.seedIssue({
+      owner: "QServices",
+      repository: "repo",
+      issue: {
+        number: 50,
+        title: "Change labels",
+        body: "",
+        state: "open",
+        labels: [{ name: "B" }, { name: "C" }],
+      },
+    });
+
+    const request = await publishTagsChangeRequest(
+      engine,
+      project.id,
+      "github://QServices/repo/issues/50",
+      ["A"],
+      ["B"],
+      "project-tags-success:50:1",
+    );
+    await waitForExecution(engine, project.id, request.id, "completed");
+    const events = await waitForEvents(engine, project.id, 2);
+    expect(events.some((event) => event["type"] === "scm.work-item.tags-changed")).toBe(true);
+    const changedPayload = readEventPayload(dataRoot, "scm.work-item.tags-changed");
+    expect(changedPayload).toMatchObject({
+      repositoryId: "main",
+      workItemRef: "github://QServices/repo/issues/50",
+      addTags: ["A"],
+      removeTags: ["B"],
+    });
+    expect(changedPayload["observedTags"]).toEqual(expect.arrayContaining(["A", "C"]));
+    expect(changedPayload["observedTags"]).toHaveLength(2);
+    const mutations = fakeGitHub.requests.filter(
+      (entry) => entry.path.includes("/issues/50/labels") && entry.method !== "GET",
+    );
+    expect(mutations.map(({ method }) => method)).toEqual(["POST", "DELETE"]);
+    const labels = (await fetch(`${fakeGitHub.baseUrl}/repos/QServices/repo/issues/50/labels`).then(
+      (response) => response.json(),
+    )) as readonly { readonly name: string }[];
+    expect(labels.map(({ name }: { name: string }) => name).sort()).toEqual(["A", "C"]);
+  });
+
+  it("retries a partial mutation without changing human labels", async () => {
+    const fakeGitHub = await startFakeGitHubApi();
+    servers.push(fakeGitHub);
+    const executable = credentialExecutable("ghs_tags_partial_sentinel");
+    const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-github-tags-partial-"));
+    roots.push(dataRoot);
+    const engine = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+      },
+    });
+    engines.push(engine);
+
+    await registerGitHubConnection(engine, "connection/github", "Account");
+    const project = await createGitHubProject(engine, "project-tags-partial", true);
+    await bindAndActivate(engine, project, "connection/github");
+    fakeGitHub.seedIssue({
+      owner: "QServices",
+      repository: "repo",
+      issue: {
+        number: 51,
+        title: "Retry labels",
+        body: "",
+        state: "open",
+        labels: [{ name: "B" }],
+      },
+    });
+    const restoreDelete = fakeGitHub.scriptRoute(
+      "DELETE",
+      "/repos/QServices/repo/issues/51/labels/B",
+      { status: 422, body: { message: "provider detail must not leak" } },
+    );
+    const first = await publishTagsChangeRequest(
+      engine,
+      project.id,
+      "github://QServices/repo/issues/51",
+      ["A"],
+      ["B"],
+      "project-tags-partial:51:1",
+    );
+    await waitForExecution(engine, project.id, first.id, "failed");
+    restoreDelete();
+    fakeGitHub.seedIssue({
+      owner: "QServices",
+      repository: "repo",
+      issue: {
+        number: 51,
+        title: "Retry labels",
+        body: "",
+        state: "open",
+        labels: [{ name: "A" }, { name: "B" }, { name: "human" }],
+      },
+    });
+    const second = await publishTagsChangeRequest(
+      engine,
+      project.id,
+      "github://QServices/repo/issues/51",
+      ["A"],
+      ["B"],
+      "project-tags-partial:51:1",
+    );
+    await waitForExecution(engine, project.id, second.id, "completed");
+    const events = await waitForEvents(engine, project.id, 4);
+    expect(events.filter((event) => event["type"] === "scm.work-item.tags-changed")).toHaveLength(
+      1,
+    );
+    expect(readEventPayload(dataRoot, "scm.work-item.tags-change-failed")).toMatchObject({
+      errorCode: "github.work-item-tags-invalid",
+      retryable: false,
+    });
+    expect(readEventPayload(dataRoot, "scm.work-item.tags-changed")).toMatchObject({
+      observedTags: ["A", "human"],
+    });
+    expect(
+      fakeGitHub.requests.filter(
+        (entry) => entry.method === "POST" && entry.path.endsWith("/issues/51/labels"),
+      ),
+    ).toHaveLength(1);
+    expect(
+      fakeGitHub.requests.filter(
+        (entry) => entry.method === "DELETE" && entry.path.endsWith("/issues/51/labels/B"),
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("recovers a completed external mutation from its durable mapping after a crash", async () => {
+    const fakeGitHub = await startFakeGitHubApi();
+    servers.push(fakeGitHub);
+    const executable = credentialExecutable("ghs_tags_crash_sentinel");
+    const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-github-tags-crash-"));
+    roots.push(dataRoot);
+    const crashed = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_FAILPOINT: "after-external-mapping-before-fact",
+        JARVIS_GH_EXECUTABLE: executable,
+        JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl,
+      },
+    });
+    engines.push(crashed);
+    await registerGitHubConnection(crashed, "connection/github", "Account");
+    const project = await createGitHubProject(crashed, "project-tags-crash", true);
+    await bindAndActivate(crashed, project, "connection/github");
+    fakeGitHub.seedIssue({
+      owner: "QServices",
+      repository: "repo",
+      issue: {
+        number: 52,
+        title: "Crash after labels",
+        body: "",
+        state: "open",
+        labels: [{ name: "B" }, { name: "human" }],
+      },
+    });
+    const request = await publishTagsChangeRequest(
+      crashed,
+      project.id,
+      "github://QServices/repo/issues/52",
+      ["A"],
+      ["B"],
+      "project-tags-crash:52:1",
+    );
+    expect(await crashed.waitForExit()).not.toBe(0);
+    await crashed.dispose();
+    engines.splice(engines.indexOf(crashed), 1);
+
+    const restarted = await startEngine({
+      dataRoot,
+      enginePath: testBundlePath,
+      env: { JARVIS_GH_EXECUTABLE: executable, JARVIS_GITHUB_API_BASE_URL: fakeGitHub.baseUrl },
+    });
+    engines.push(restarted);
+    await waitForExecution(restarted, project.id, request.id, "completed");
+    const events = await waitForEvents(restarted, project.id, 2);
+    expect(events.filter((event) => event["type"] === "scm.work-item.tags-changed")).toHaveLength(
+      1,
+    );
+    expect(
+      fakeGitHub.requests.filter(
+        (entry) => entry.method === "POST" && entry.path.endsWith("/issues/52/labels"),
+      ),
+    ).toHaveLength(1);
+    expect(
+      fakeGitHub.requests.filter(
+        (entry) => entry.method === "DELETE" && entry.path.endsWith("/issues/52/labels/B"),
+      ),
+    ).toHaveLength(1);
+  });
 });
 
 async function registerGitHubConnection(
@@ -919,13 +1137,23 @@ async function registerGitHubConnection(
   expect(validation.status, await validation.clone().text()).toBe(200);
 }
 
+function credentialExecutable(credential: string): string {
+  const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-gh-tags-credentials-"));
+  roots.push(executableRoot);
+  const executable = join(executableRoot, "gh");
+  writeFileSync(executable, `#!/bin/sh\nprintf '%s\\n' '${credential}'\n`, "utf8");
+  chmodSync(executable, 0o755);
+  return executable;
+}
+
 async function createGitHubProject(
   engine: Harness,
   id: string,
+  includeTagsRequestProducer = false,
 ): Promise<{ readonly id: string; readonly repositoryPath: string }> {
   const repositoryPath = makeNodeRepositoryFixture({
     remoteUrl: "git@github.com:QServices/repo.git",
-    projectYaml: stringifyYaml(githubProjectConfiguration(id)),
+    projectYaml: stringifyYaml(githubProjectConfiguration(id, includeTagsRequestProducer)),
   });
   repositories.push(repositoryPath);
   const response = await engine.call("/v1/projects", {
@@ -1004,6 +1232,36 @@ async function publishCreationRequest(
   return (await response.json()) as { readonly id: string };
 }
 
+async function publishTagsChangeRequest(
+  engine: Harness,
+  projectId: string,
+  workItemRef: string,
+  addTags: readonly string[],
+  removeTags: readonly string[],
+  idempotencyKey: string,
+): Promise<{ readonly id: string }> {
+  const response = await engine.call("/test/events", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "scm.work-item.tags-change-requested",
+      version: 1,
+      kind: "request",
+      projectId,
+      repositoryId: "main",
+      producer: { moduleId: TAGS_REQUEST_PRODUCER_MODULE_ID, moduleInstanceId: "tags-producer" },
+      subject: { type: "work-item", ref: workItemRef },
+      correlationId: `corr_${projectId}_tags`,
+      causationId: null,
+      target: { binding: "sourceControl" },
+      idempotencyKey,
+      payload: { repositoryId: "main", workItemRef, addTags, removeTags },
+    }),
+  });
+  expect(response.status, await response.clone().text()).toBe(201);
+  return (await response.json()) as { readonly id: string };
+}
+
 async function rejectCreationRequestWithoutIdempotencyKey(
   engine: Harness,
   projectId: string,
@@ -1072,6 +1330,19 @@ async function waitForEvents(
   }
 }
 
+function readEventPayload(dataRoot: string, type: string): Record<string, unknown> {
+  const database = new Database(join(dataRoot, "jarvis.sqlite"));
+  try {
+    const row = database
+      .prepare("SELECT envelope FROM events WHERE type = ? ORDER BY rowid DESC LIMIT 1")
+      .get(type) as { readonly envelope: string } | undefined;
+    expect(row).toBeDefined();
+    return (JSON.parse(row!.envelope) as { readonly payload: Record<string, unknown> }).payload;
+  } finally {
+    database.close();
+  }
+}
+
 async function waitForExecution(
   engine: Harness,
   projectId: string,
@@ -1094,7 +1365,10 @@ async function waitForExecution(
   }
 }
 
-function githubProjectConfiguration(id: string): Record<string, unknown> {
+function githubProjectConfiguration(
+  id: string,
+  includeTagsRequestProducer = false,
+): Record<string, unknown> {
   const configuration = parseYaml(
     readFileSync(join(ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
   ) as Record<string, unknown>;
@@ -1132,6 +1406,15 @@ function githubProjectConfiguration(id: string): Record<string, unknown> {
         environmentAllowlist: [],
       },
     },
+    ...(includeTagsRequestProducer
+      ? [
+          {
+            instanceId: "tags-producer",
+            moduleId: TAGS_REQUEST_PRODUCER_MODULE_ID,
+            enabled: true,
+          },
+        ]
+      : []),
   ];
   return configuration;
 }

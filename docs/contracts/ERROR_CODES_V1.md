@@ -134,6 +134,8 @@ this public v1 catalog.
 | `github.work-item-unavailable` | Yes | GitHub could not temporarily serve the requested Work Item |
 | `github.work-item-unauthorized` | No | Project GitHub connection cannot read the requested Work Item; revalidate it |
 | `github.work-item-read-failed` | No | Requested Work Item is missing, malformed, mismatched, or closed |
+| `github.work-item-tags-invalid` | No | GitHub rejected a Work Item label mutation or the request is invalid |
+| `github.work-item-tags-failed` | Yes | GitHub did not complete or confirm a Work Item label mutation |
 
 ## Error envelope rules
 

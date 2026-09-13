@@ -7,6 +7,9 @@
 | `scm.work-item.observed` | Fact | GitHub | Observers; future decision modules | `contracts/events/scm.work-item.observed.v1.schema.json` |
 | `scm.work-item.tag-added` | Fact | GitHub | Automation Rules and observers | `contracts/events/scm.work-item.tag-added.v1.schema.json` |
 | `development.implementation.requested` | Request | Development observation admission, Automation Rules or future decision module | Development | `contracts/events/development.implementation.requested.v1.schema.json` |
+| `scm.work-item.tags-change-requested` | Request | Authorized modules | Bound GitHub Module | `contracts/events/scm.work-item.tags-change-requested.v1.schema.json` |
+| `scm.work-item.tags-changed` | Fact | GitHub | Observers | `contracts/events/scm.work-item.tags-changed.v1.schema.json` |
+| `scm.work-item.tags-change-failed` | Fact | GitHub | Observers; future remediation | `contracts/events/scm.work-item.tags-change-failed.v1.schema.json` |
 | `development.implementation.completed` | Fact | Development | Observers; future modules | `contracts/events/development.implementation.completed.v1.schema.json` |
 | `development.implementation.failed` | Fact | Development | Observers; future remediation | `contracts/events/development.implementation.failed.v1.schema.json` |
 | `scm.change-request.creation-requested` | Request | Development | Bound SCM provider | `contracts/events/scm.change-request.creation-requested.v1.schema.json` |

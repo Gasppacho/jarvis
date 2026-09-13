@@ -7,6 +7,7 @@ export {
 } from "../executions/sample-probe-module.js";
 
 export const REQUEST_WORKER_MODULE_ID = "jarvis.module.test-request-worker";
+export const TAGS_REQUEST_PRODUCER_MODULE_ID = "jarvis.module.test-tags-request-producer";
 export const REQUEST_WORKER_CONTRACT = {
   type: "development.implementation.requested",
   version: 1,

@@ -19,6 +19,11 @@ contracts:
       kind: request
       schemaRef: contracts/events/scm.change-request.creation-requested.v1.schema.json
       handler: handleChangeRequestCreationRequested
+    - type: scm.work-item.tags-change-requested
+      version: 1
+      kind: request
+      schemaRef: contracts/events/scm.work-item.tags-change-requested.v1.schema.json
+      handler: handleWorkItemTagsChangeRequested
   produces:
     - type: scm.work-item.ready
       version: 1
@@ -40,6 +45,14 @@ contracts:
       version: 1
       kind: fact
       schemaRef: contracts/events/scm.change-request.creation-failed.v1.schema.json
+    - type: scm.work-item.tags-changed
+      version: 1
+      kind: fact
+      schemaRef: contracts/events/scm.work-item.tags-changed.v1.schema.json
+    - type: scm.work-item.tags-change-failed
+      version: 1
+      kind: fact
+      schemaRef: contracts/events/scm.work-item.tags-change-failed.v1.schema.json
 capabilities:
   requires:
     - id: github.api
@@ -58,5 +71,8 @@ permissions:
     - scm.work-item.tag-added
     - scm.change-request.created
     - scm.change-request.creation-failed
+    - scm.work-item.tags-changed
+    - scm.work-item.tags-change-failed
   externalMutations:
     - github.pull-request.create
+    - github.issue-labels.write

@@ -6,6 +6,8 @@ export type GitHubTranslationErrorCode =
   | "github.branch-not-found"
   | "github.change-request-invalid"
   | "github.change-request-create-failed"
+  | "github.work-item-tags-invalid"
+  | "github.work-item-tags-failed"
   | "github.work-item-unauthorized"
   | "github.work-item-unavailable"
   | "github.work-item-read-failed";
@@ -63,6 +65,22 @@ export interface GitHubChangeRequestCreatedPayload {
   readonly headCommit: string;
   readonly workItemRef: string;
   readonly draft?: boolean;
+}
+
+export interface GitHubWorkItemTagsChangeRequestedPayload {
+  readonly repositoryId: string;
+  readonly workItemRef: string;
+  readonly addTags: readonly string[];
+  readonly removeTags: readonly string[];
+}
+
+export interface GitHubWorkItemTagsChangedPayload extends GitHubWorkItemTagsChangeRequestedPayload {
+  readonly observedTags: readonly string[];
+}
+
+export interface GitHubWorkItemTagsChangeFailedPayload extends GitHubWorkItemTagsChangeRequestedPayload {
+  readonly errorCode: string;
+  readonly retryable: boolean;
 }
 
 export interface GitHubWorkItemTagAddedPayload {
@@ -137,6 +155,76 @@ export function translateGitHubWorkItemResponse(response: unknown, ref: string):
   }
 
   return { ref, number, title, body: issueBody ?? "", state };
+}
+
+/** Translates the additive label-list response without exposing provider data. */
+export function translateGitHubWorkItemLabelsResponse(
+  response: unknown,
+  ref: string,
+): readonly string[] {
+  parseGitHubWorkItemRef(ref);
+  const providerResponse = asProviderResponse(response);
+  if (providerResponse.status !== undefined && !isSuccessful(providerResponse.status)) {
+    throw failureAsError(
+      mapGitHubWorkItemTagsError({
+        status: providerResponse.status,
+        body: providerResponse.body,
+        ...(providerResponse.headers === undefined ? {} : { headers: providerResponse.headers }),
+      }),
+    );
+  }
+  if (!Array.isArray(providerResponse.body) || providerResponse.body.length > 100) {
+    throw new GitHubTranslationError(
+      "github.work-item-tags-failed",
+      "GitHub returned an unusable Work Item label list.",
+      true,
+    );
+  }
+  const labels = providerResponse.body.map((value) => {
+    if (!isRecord(value)) return undefined;
+    const name = readNonBlankString(value["name"]);
+    return name !== undefined && name.length <= 200 ? name : undefined;
+  });
+  if (labels.some((label) => label === undefined)) {
+    throw new GitHubTranslationError(
+      "github.work-item-tags-failed",
+      "GitHub returned an unusable Work Item label list.",
+      true,
+    );
+  }
+  const names = labels as string[];
+  if (new Set(names).size !== names.length) {
+    throw new GitHubTranslationError(
+      "github.work-item-tags-failed",
+      "GitHub returned duplicate Work Item labels.",
+      true,
+    );
+  }
+  return names;
+}
+
+export function mapGitHubWorkItemTagsError(
+  response: GitHubPullRequestErrorResponse,
+): GitHubTranslationFailure {
+  const text = providerText(response.body);
+  if (isRateLimited(response.status, response.headers, text)) {
+    return failure(
+      "github.rate-limited",
+      "GitHub rate limit prevents this request; retry later.",
+      true,
+    );
+  }
+  if (response.status === 401 || response.status === 403) {
+    return failure("github.unauthorized", "GitHub cannot access the requested repository.", false);
+  }
+  if (response.status === 400 || response.status === 404 || response.status === 422) {
+    return failure("github.work-item-tags-invalid", "GitHub rejected the label change.", false);
+  }
+  return failure(
+    "github.work-item-tags-failed",
+    "GitHub label change failed; retry later.",
+    retryableStatus(response.status),
+  );
 }
 
 /** Translates the labelled entries from a repository issue-event response. */
