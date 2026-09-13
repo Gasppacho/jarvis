@@ -14,6 +14,7 @@ import type {
   ModuleShellCommandResult,
   ProjectCommandsCapability,
   WorkItem,
+  WorkItemStateObservation,
 } from "../../../module-sdk/src/index.js";
 
 export const developmentModulePackage = {
@@ -145,6 +146,81 @@ interface ImplementationRequest {
   readonly repositoryId: string;
   readonly baseBranch: string;
   readonly tag?: string;
+  readonly requestedGeneration?: number;
+}
+
+export type DevelopmentScope =
+  { readonly kind: "all" } | { readonly kind: "issue"; readonly workItemRef: string };
+
+export interface DevelopmentEligibilityInput {
+  readonly repositoryId: string;
+  readonly authorizedRepositoryId: string | undefined;
+  readonly workItemRef: string;
+  readonly observation: WorkItemStateObservation;
+  readonly readyLabel: string;
+  readonly scope: DevelopmentScope;
+  readonly alreadyStarted: boolean;
+}
+
+export interface DevelopmentEligibility {
+  readonly eligible: boolean;
+  readonly reason: string;
+  readonly blockerRefs: readonly string[];
+}
+
+/** Pure admission predicate shared by the observation handler and future preflight. */
+export function assessDevelopmentEligibility(
+  input: DevelopmentEligibilityInput,
+): DevelopmentEligibility {
+  if (input.authorizedRepositoryId !== input.repositoryId) {
+    return { eligible: false, reason: "repository-unlinked", blockerRefs: [] };
+  }
+  if (input.observation.verification !== "verified") {
+    return {
+      eligible: false,
+      reason: input.observation.reasonCode ?? "observation-unavailable",
+      blockerRefs: [],
+    };
+  }
+  if (input.observation.state !== "open") {
+    return { eligible: false, reason: "work-item-closed", blockerRefs: [] };
+  }
+  if (input.readyLabel.trim() === "") {
+    return { eligible: false, reason: "ready-label-empty", blockerRefs: [] };
+  }
+  if (!input.observation.tags.includes(input.readyLabel.trim())) {
+    return { eligible: false, reason: "ready-label-missing", blockerRefs: [] };
+  }
+  if (
+    input.observation.dependencies.status !== "complete" ||
+    input.observation.dependencies.openWorkItemRefs.length !== 0
+  ) {
+    return {
+      eligible: false,
+      reason:
+        input.observation.dependencies.status === "complete"
+          ? "open-dependencies"
+          : "dependencies-unavailable",
+      blockerRefs: input.observation.dependencies.openWorkItemRefs,
+    };
+  }
+  if (input.scope.kind === "issue" && input.scope.workItemRef !== input.workItemRef) {
+    return { eligible: false, reason: "scope-mismatch", blockerRefs: [] };
+  }
+  if (input.alreadyStarted) {
+    return { eligible: false, reason: "already-started", blockerRefs: [] };
+  }
+  return { eligible: true, reason: "eligible", blockerRefs: [] };
+}
+
+export function isDevelopmentEligible(input: DevelopmentEligibilityInput): boolean {
+  return assessDevelopmentEligibility(input).eligible;
+}
+
+export interface DevelopmentObservationResult {
+  readonly status: "requested" | "ineligible" | "duplicate";
+  readonly reason: string;
+  readonly requestEventId?: string;
 }
 
 interface DevelopmentExecutionState {
@@ -169,6 +245,91 @@ export interface DevelopmentRunResult {
 
 /** Runs one deterministic implementation attempt in the Project's worktree. */
 declare const __JARVIS_TEST_HOOKS__: boolean;
+
+/** Admits one verified observation and targets the Development instance itself. */
+export function handleWorkItemObserved(ctx: ModuleHandlerContext): DevelopmentObservationResult {
+  const observed = readObservedWorkItem(ctx.event.payload);
+  if (
+    ctx.event.repositoryId !== observed.repositoryId ||
+    ctx.repositoryId !== observed.repositoryId ||
+    ctx.event.subject.ref !== observed.workItemRef
+  ) {
+    throw new DevelopmentExecutionError(
+      "event.payload-invalid",
+      "The Work Item observation does not match its Event repository or subject.",
+    );
+  }
+  const admission = ctx.capabilities.workItemReadiness;
+  if (admission === undefined) {
+    throw new DevelopmentExecutionError(
+      "project.capability-unresolved",
+      "Development admission storage is unavailable.",
+    );
+  }
+  const readyLabel = readReadyLabel(ctx.configuration);
+  const scope = readDevelopmentScope(ctx.configuration["scope"]);
+  const decision =
+    readyLabel === undefined || scope === undefined
+      ? { eligible: false, reason: "configuration-invalid", blockerRefs: [] }
+      : assessDevelopmentEligibility({
+          repositoryId: observed.repositoryId,
+          authorizedRepositoryId: ctx.repository?.repositoryId,
+          workItemRef: observed.workItemRef,
+          observation: observed.observation,
+          readyLabel,
+          scope,
+          alreadyStarted:
+            admission.wasAdmitted?.(observed.repositoryId, observed.workItemRef) ?? false,
+        });
+  if (
+    decision.eligible &&
+    (ctx.repositoryDefaultBranch === undefined || ctx.repositoryDefaultBranch.trim() === "")
+  ) {
+    throw new DevelopmentExecutionError(
+      "project.config-invalid",
+      "The Project repository has no configured default branch.",
+    );
+  }
+  const admitted = admission.observe({
+    repositoryId: observed.repositoryId,
+    workItemRef: observed.workItemRef,
+    status: decision.eligible
+      ? "ready"
+      : observed.observation.verification === "unavailable" ||
+          decision.reason === "configuration-invalid"
+        ? "impossible"
+        : "blocked",
+    reason: decision.reason,
+    blockerRefs: decision.blockerRefs,
+    observedAt: observed.observedAt,
+    title: observed.observation.title,
+    ruleMatches: decision.eligible,
+    admit: decision.eligible,
+    ...(readyLabel === undefined ? {} : { tag: readyLabel }),
+  });
+  if (!decision.eligible) return { status: "ineligible", reason: decision.reason };
+  if (!admitted) return { status: "duplicate", reason: "already-admitted" };
+  const request = ctx.publish({
+    ...DEVELOPMENT_IMPLEMENTATION_REQUESTED,
+    subject: ctx.event.subject,
+    repositoryId: observed.repositoryId,
+    target: { moduleInstanceId: ctx.moduleInstanceId },
+    idempotencyKey: implementationIdentity(
+      ctx.projectId,
+      observed.repositoryId,
+      observed.workItemRef,
+    ),
+    payload: {
+      workItemRef: observed.workItemRef,
+      repositoryId: observed.repositoryId,
+      baseBranch: ctx.repositoryDefaultBranch!,
+      tag: readyLabel,
+      requestedGeneration: observed.observationRevision,
+    },
+    ...(ctx.event.metadata === undefined ? {} : { metadata: ctx.event.metadata }),
+  });
+  return { status: "requested", reason: decision.reason, requestEventId: request.id };
+}
 
 export const handleImplementationRequested = async (
   ctx: ModuleHandlerContext,
@@ -265,28 +426,39 @@ async function runImplementationRequested(
     MAX_OUTPUT_LIMIT_BYTES,
   );
   let checkpointSequence = ctx.lastCheckpointSequence?.() ?? 0;
-  if (
-    requiresGitHubWorkItem &&
-    request.tag !== undefined &&
-    workItems?.assessReadiness === undefined
-  ) {
-    throw new ModuleDeliveryDeferredError("impossible", "work-item-readiness-unavailable");
-  }
-  if (requiresGitHubWorkItem && workItems?.assessReadiness !== undefined) {
-    const readiness = await workItems.assessReadiness({
-      ref: request.workItemRef,
-      repositoryId: request.repositoryId,
-      tag: request.tag ?? "",
-    });
-    if (readiness.status !== "ready") {
-      throw new ModuleDeliveryDeferredError(
-        readiness.status === "impossible"
-          ? "impossible"
-          : readiness.reason === "work-item-closed" || readiness.reason === "ready-label-missing"
-            ? "ineligible"
-            : "blocked",
-        readiness.reason,
-      );
+  if (requiresGitHubWorkItem && request.tag !== undefined) {
+    if (request.requestedGeneration !== undefined && workItems?.observeState !== undefined) {
+      const observation = await workItems.observeState(request.workItemRef, request.repositoryId);
+      const decision = assessDevelopmentEligibility({
+        repositoryId: request.repositoryId,
+        authorizedRepositoryId: ctx.repository?.repositoryId,
+        workItemRef: request.workItemRef,
+        observation,
+        readyLabel: request.tag,
+        scope: readDevelopmentScope(ctx.configuration["scope"]) ?? { kind: "all" },
+        alreadyStarted: false,
+      });
+      if (!decision.eligible) {
+        throw new ModuleDeliveryDeferredError("blocked", decision.reason);
+      }
+    } else if (workItems?.assessReadiness !== undefined) {
+      const readiness = await workItems.assessReadiness({
+        ref: request.workItemRef,
+        repositoryId: request.repositoryId,
+        tag: request.tag,
+      });
+      if (readiness.status !== "ready") {
+        throw new ModuleDeliveryDeferredError(
+          readiness.status === "impossible"
+            ? "impossible"
+            : readiness.reason === "work-item-closed" || readiness.reason === "ready-label-missing"
+              ? "ineligible"
+              : "blocked",
+          readiness.reason,
+        );
+      }
+    } else {
+      throw new ModuleDeliveryDeferredError("impossible", "work-item-readiness-unavailable");
     }
   }
   const workItem =
@@ -1429,6 +1601,7 @@ function readImplementationRequest(
   const repositoryId = payload["repositoryId"];
   const baseBranch = payload["baseBranch"];
   const tag = payload["tag"];
+  const requestedGeneration = payload["requestedGeneration"];
   if (
     typeof workItemRef !== "string" ||
     workItemRef.trim() === "" ||
@@ -1447,7 +1620,100 @@ function readImplementationRequest(
     repositoryId,
     baseBranch,
     ...(typeof tag === "string" && tag.trim() !== "" ? { tag } : {}),
+    ...(typeof requestedGeneration === "number" && Number.isSafeInteger(requestedGeneration)
+      ? { requestedGeneration }
+      : {}),
   };
+}
+
+function readObservedWorkItem(payload: Readonly<Record<string, unknown>>): {
+  readonly repositoryId: string;
+  readonly workItemRef: string;
+  readonly observedAt: string;
+  readonly observationRevision: number;
+  readonly observation: WorkItemStateObservation;
+} {
+  const repositoryId = payload["repositoryId"];
+  const workItemRef = payload["workItemRef"];
+  const title = payload["title"];
+  const state = payload["state"];
+  const tags = payload["tags"];
+  const dependencies = payload["dependencies"];
+  const verification = payload["verification"];
+  const reasonCode = payload["reasonCode"];
+  const observedAt = payload["observedAt"];
+  const observationRevision = payload["observationRevision"];
+  if (
+    typeof repositoryId !== "string" ||
+    repositoryId.trim() === "" ||
+    typeof workItemRef !== "string" ||
+    workItemRef.trim() === "" ||
+    typeof title !== "string" ||
+    title.trim() === "" ||
+    !Array.isArray(tags) ||
+    !tags.every((tag): tag is string => typeof tag === "string") ||
+    !isRecord(dependencies) ||
+    (dependencies["status"] !== "complete" && dependencies["status"] !== "unknown") ||
+    !Array.isArray(dependencies["openWorkItemRefs"]) ||
+    !dependencies["openWorkItemRefs"].every((ref): ref is string => typeof ref === "string") ||
+    (state !== "open" && state !== "closed" && state !== "unknown") ||
+    (verification !== "verified" && verification !== "unavailable") ||
+    (reasonCode !== null && typeof reasonCode !== "string") ||
+    typeof observedAt !== "string" ||
+    typeof observationRevision !== "number" ||
+    !Number.isSafeInteger(observationRevision) ||
+    observationRevision < 1
+  ) {
+    throw new DevelopmentExecutionError(
+      "event.payload-invalid",
+      "The Work Item observation payload is invalid.",
+    );
+  }
+  return {
+    repositoryId,
+    workItemRef,
+    observedAt,
+    observationRevision,
+    observation: {
+      title,
+      state,
+      tags,
+      dependencies: {
+        status: dependencies["status"],
+        openWorkItemRefs: dependencies["openWorkItemRefs"],
+      },
+      verification,
+      reasonCode,
+    },
+  };
+}
+
+function readReadyLabel(configuration: Readonly<Record<string, unknown>>): string | undefined {
+  const value = configuration["readyLabel"];
+  return value === undefined
+    ? "ready-to-dev"
+    : typeof value === "string"
+      ? value.trim()
+      : undefined;
+}
+
+function readDevelopmentScope(value: unknown): DevelopmentScope | undefined {
+  if (value === undefined) return { kind: "all" };
+  if (!isRecord(value)) return undefined;
+  if (value["kind"] === "all") return { kind: "all" };
+  return value["kind"] === "issue" &&
+    typeof value["workItemRef"] === "string" &&
+    value["workItemRef"].trim() !== ""
+    ? { kind: "issue", workItemRef: value["workItemRef"] }
+    : undefined;
+}
+
+function implementationIdentity(
+  projectId: string,
+  repositoryId: string,
+  workItemRef: string,
+): string {
+  return `development:${createHash("sha256").update([projectId, repositoryId, workItemRef].join("\0")).digest("hex")}`;
 }
 
 function branchValue(value: string): string {

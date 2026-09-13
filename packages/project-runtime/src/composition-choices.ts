@@ -278,6 +278,7 @@ function routedConsumers(
     producer.moduleId,
     producer.configuration,
     contract,
+    producer.instanceId,
   );
   if (targets === undefined) return consumers.map(({ instance }) => instance);
   return targets.flatMap((target) => {

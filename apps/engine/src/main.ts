@@ -19,6 +19,7 @@ import {
 } from "../../../packages/modules/automation-rules/src/index.js";
 import {
   DEVELOPMENT_MODULE_ID,
+  handleWorkItemObserved,
   handleImplementationRequested,
 } from "../../../packages/modules/development/src/index.js";
 import { ConfigError, loadConfig } from "./config.js";
@@ -537,8 +538,15 @@ async function main(): Promise<void> {
     const handlers: ModuleHandlerLookup = (moduleId) => {
       if (moduleId === AUTOMATION_RULES_MODULE_ID) return handleWorkItemTagAdded;
       if (moduleId === DEVELOPMENT_MODULE_ID) {
-        if (__JARVIS_TEST_HOOKS__) return (ctx) => handleImplementationRequested(ctx, failpoint);
-        return handleImplementationRequested;
+        if (__JARVIS_TEST_HOOKS__)
+          return (ctx) =>
+            ctx.event.type === "scm.work-item.observed"
+              ? handleWorkItemObserved(ctx)
+              : handleImplementationRequested(ctx, failpoint);
+        return (ctx) =>
+          ctx.event.type === "scm.work-item.observed"
+            ? handleWorkItemObserved(ctx)
+            : handleImplementationRequested(ctx);
       }
       if (moduleId === "jarvis.module.github") return handleChangeRequestCreationRequested;
       if (

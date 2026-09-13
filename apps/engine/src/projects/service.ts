@@ -836,6 +836,7 @@ export class ProjectService implements ProjectRegistry<
               producer.moduleId,
               producer.configuration,
               contract,
+              producer.instanceId,
             );
             const targets = configuredTargets ?? [undefined];
             return targets.map((target) => {

@@ -39,6 +39,7 @@ export interface ProjectModulePackageValidationPort {
     moduleId: string,
     configuration: Readonly<Record<string, unknown>> | undefined,
     producedContract: Pick<ProjectModuleContractDescriptor, "type" | "version" | "kind">,
+    producerInstanceId: string,
   ): readonly { readonly moduleInstanceId?: string; readonly binding?: string }[] | undefined;
   validateConfiguration(
     moduleId: string,
@@ -199,6 +200,7 @@ export class SavedProjectCompositionValidator implements ProjectCompositionValid
           producer.moduleId,
           producer.configuration,
           produced,
+          producer.instanceId,
         );
         for (const configuredTarget of configuredTargets ?? [undefined]) {
           const scopedConsumers = consumers.filter(({ instance }) => {

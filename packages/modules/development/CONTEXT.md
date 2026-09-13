@@ -15,6 +15,10 @@ A provider fact describing the current state, tags and dependencies of a Work
 Item. It is evidence for a later admission decision; it does not request or
 start an Implementation.
 
+In fixed mode, Development owns that decision: its pure predicate checks the
+verified observation against the project label, scope, repository binding and
+durable admission identity, then emits one targeted Implementation Request.
+
 ### Implementation
 The local attempt that transforms a Work Item into a validated pushed branch.
 

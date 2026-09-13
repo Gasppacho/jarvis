@@ -36,7 +36,7 @@ export type ModuleContractDescriptor = ContractDescriptorBase &
   (
     | {
         readonly kind: "request";
-        readonly targeting?: { readonly configurationPath: string };
+        readonly targeting?: { readonly configurationPath: string } | { readonly mode: "self" };
       }
     | {
         readonly kind: "fact";
@@ -262,6 +262,7 @@ export class ModuleHost {
     moduleId: string,
     configuration: Readonly<Record<string, unknown>> | undefined,
     producedContract: Pick<ModuleContractDescriptor, "type" | "version" | "kind">,
+    producerInstanceId: string,
   ): readonly ModuleRequestTarget[] | undefined {
     const produced = this.compositionById
       .get(moduleId)
@@ -271,7 +272,11 @@ export class ModuleHost {
           contract.version === producedContract.version &&
           contract.kind === producedContract.kind,
       );
-    const path = produced?.targeting?.configurationPath;
+    const targeting = produced?.targeting;
+    if (targeting !== undefined && "mode" in targeting) {
+      return [{ moduleInstanceId: producerInstanceId }];
+    }
+    const path = targeting?.configurationPath;
     if (path === undefined) return undefined;
     if (configuration === undefined) return [];
     return valuesAtConfigurationPath(configuration, path).flatMap(

@@ -191,15 +191,27 @@
                 "minLength": 1
               },
               "targeting": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["configurationPath"],
-                "properties": {
-                  "configurationPath": {
-                    "type": "string",
-                    "pattern": "^/(?:[^/]+/)*\\*(?:/[^/]+)*$"
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["configurationPath"],
+                    "properties": {
+                      "configurationPath": {
+                        "type": "string",
+                        "pattern": "^/(?:[^/]+/)*\\*(?:/[^/]+)*$"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["mode"],
+                    "properties": {
+                      "mode": { "const": "self" }
+                    }
                   }
-                }
+                ]
               }
             }
           }

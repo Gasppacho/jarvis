@@ -139,8 +139,9 @@ describe("bundled Module Package catalogue", () => {
         displayName: "Development",
         description: "Implements a requested work item in an isolated Git workspace.",
         categories: ["agentic"],
-        consumes: ["development.implementation.requested.v1"],
+        consumes: ["scm.work-item.observed.v1", "development.implementation.requested.v1"],
         produces: [
+          "development.implementation.requested.v1",
           "development.implementation.completed.v1",
           "development.implementation.failed.v1",
           "scm.change-request.creation-requested.v1",

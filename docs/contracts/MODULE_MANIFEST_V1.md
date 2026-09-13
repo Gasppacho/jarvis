@@ -61,7 +61,7 @@ Producer :
     configurationPath: /rules/*/emit
 ```
 
-Pour une Request configurée, `targeting.configurationPath` sélectionne les descriptors d'émission `{type, target}` avec un JSON Pointer contenant un segment wildcard `*`. Le Kernel peut ainsi résoudre les targets de composition sans interpréter le modèle métier du module. Le chemin est optionnel pour les producers dont la target n'est pas issue de la configuration.
+Pour une Request configurée, `targeting.configurationPath` sélectionne les descriptors d’émission `{type, target}` avec un JSON Pointer contenant un segment wildcard `*`. Le Kernel peut ainsi résoudre les targets de composition sans interpréter le modèle métier du module. Pour une Request interne qui cible toujours l’instance productrice, `targeting.mode: self` déclare cette target sans introduire de configuration utilisateur. Le targeting est optionnel pour les producers dont la target n’est pas issue de la configuration.
 
 Le code ne peut enregistrer un handler ou publier un type absent du manifeste. `schemaRef` doit identifier exactement le contrat versionné déclaré, selon la forme canonique `contracts/events/<type>.v<version>.schema.json` ; il documente et résout le payload ainsi que ses `title` et `description` humains pour les choix de composition, mais ne constitue jamais une identité d'événement alternative.
 

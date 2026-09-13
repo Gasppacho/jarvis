@@ -130,7 +130,7 @@ describe("project composition choices", () => {
         moduleId: "jarvis.module.development",
         displayName: "Development",
         description: "Implements a requested work item in an isolated Git workspace.",
-        consumes: ["development.implementation.requested.v1"],
+        consumes: ["scm.work-item.observed.v1", "development.implementation.requested.v1"],
         requires: expect.arrayContaining([
           { id: "agent.execute", binding: "agentRuntime" },
           { id: "repository.write", binding: "repository" },
@@ -286,7 +286,10 @@ describe("project composition choices", () => {
         type: "development.implementation.requested",
         version: 1,
         kind: "request",
-        producers: [{ instanceId: "automation-rules", moduleId: "jarvis.module.automation-rules" }],
+        producers: [
+          { instanceId: "automation-rules", moduleId: "jarvis.module.automation-rules" },
+          { instanceId: "development", moduleId: "jarvis.module.development" },
+        ],
         consumers: [
           {
             instanceId: "development",
@@ -355,6 +358,7 @@ describe("project composition choices", () => {
       "development.implementation.requested",
       "scm.change-request.created",
       "scm.change-request.creation-requested",
+      "scm.work-item.observed",
       "scm.work-item.ready",
       "scm.work-item.tag-added",
     ]);

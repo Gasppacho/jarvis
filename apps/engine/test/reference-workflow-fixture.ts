@@ -35,6 +35,7 @@ export async function startReferenceWorkflowFixture(
   projectId = "reference-workflow",
   extraEnv: Readonly<Record<string, string>> = {},
   guidedDraft = false,
+  fixedModules = false,
 ): Promise<ReferenceWorkflowFixture> {
   const repository = makeRealGitRepositoryFixture({
     additionalRemotes: [{ name: "github", url: "git@github.com:Gasppacho/jarvis.git" }],
@@ -46,7 +47,9 @@ export async function startReferenceWorkflowFixture(
 
   try {
     if (!guidedDraft) {
-      const configuration = referenceProjectConfiguration(projectId);
+      const configuration = fixedModules
+        ? fixedProjectConfiguration(projectId)
+        : referenceProjectConfiguration(projectId);
       mkdirSync(join(repository.root, ".jarvis"), { recursive: true });
       writeFileSync(
         join(repository.root, ".jarvis", "project.yaml"),
@@ -212,6 +215,28 @@ function referenceProjectConfiguration(projectId: string): PortableProjectConfig
     ),
     commands: { ...configuration.commands, test: "node --test" },
     modules,
+  };
+}
+
+function fixedProjectConfiguration(projectId: string): PortableProjectConfiguration {
+  const configuration = referenceProjectConfiguration(projectId);
+  return {
+    ...configuration,
+    compositionMode: "fixed-modules",
+    modules: configuration.modules
+      .filter((module) => module.instanceId !== "automation-rules")
+      .map((module) =>
+        module.instanceId === "development"
+          ? {
+              ...module,
+              configuration: {
+                ...module.configuration,
+                readyLabel: "ready-to-dev",
+                scope: { kind: "all" },
+              },
+            }
+          : module,
+      ),
   };
 }
 

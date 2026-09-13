@@ -184,7 +184,8 @@ export class ProjectModuleCapabilityResolver {
       ...(this.pollCursors === undefined
         ? {}
         : { pollCursor: this.pollCursors.bind(projectId, moduleInstanceId) }),
-      ...(this.workItemReadiness === undefined || moduleId !== "jarvis.module.github"
+      ...(this.workItemReadiness === undefined ||
+      (moduleId !== "jarvis.module.github" && moduleId !== "jarvis.module.development")
         ? {}
         : { workItemReadiness: this.workItemReadiness.bind(projectId, moduleInstanceId) }),
     };

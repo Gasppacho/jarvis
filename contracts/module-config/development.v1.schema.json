@@ -9,6 +9,37 @@
     "maxRepairCycles"
   ],
   "properties": {
+    "readyLabel": {
+      "title": "Ready label",
+      "description": "Exact label whose verified observation may request Development.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "default": "ready-to-dev",
+      "examples": ["ready-to-dev"]
+    },
+    "scope": {
+      "title": "Work Item scope",
+      "description": "Whether observations may request all Work Items or one exact reference.",
+      "default": { "kind": "all" },
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": { "kind": { "const": "all" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "workItemRef"],
+          "properties": {
+            "kind": { "const": "issue" },
+            "workItemRef": { "type": "string", "minLength": 1, "maxLength": 2048 }
+          }
+        }
+      ]
+    },
     "validationOrder": {
       "title": "Validation order",
       "description": "Commands explicitly selected for validation in the allocated worktree after implementation. An empty list is an incomplete draft and cannot activate.",

@@ -119,6 +119,7 @@ describe("reference workflow pull request", () => {
     expect(ready.valid).toBe(true);
     expect(ready.requestRoutes.map((route) => route.consumer.instanceId).sort()).toEqual([
       "development",
+      "development",
       "github",
     ]);
     await fixture.activate();

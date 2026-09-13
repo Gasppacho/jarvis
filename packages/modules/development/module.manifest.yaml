@@ -14,12 +14,23 @@ runtime:
   partitionBy: payload.repositoryId
 contracts:
   consumes:
+    - type: scm.work-item.observed
+      version: 1
+      kind: fact
+      schemaRef: contracts/events/scm.work-item.observed.v1.schema.json
+      handler: handleWorkItemObserved
     - type: development.implementation.requested
       version: 1
       kind: request
       schemaRef: contracts/events/development.implementation.requested.v1.schema.json
       handler: handleImplementationRequested
   produces:
+    - type: development.implementation.requested
+      version: 1
+      kind: request
+      schemaRef: contracts/events/development.implementation.requested.v1.schema.json
+      targeting:
+        mode: self
     - type: development.implementation.completed
       version: 1
       kind: fact
@@ -65,6 +76,7 @@ configuration:
   schemaRef: contracts/module-config/development.v1.schema.json
 permissions:
   emit:
+    - development.implementation.requested
     - development.implementation.completed
     - development.implementation.failed
     - scm.change-request.creation-requested

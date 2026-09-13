@@ -378,6 +378,8 @@ export class WorkItemReadinessStore {
 
   public bind(projectId: string, moduleInstanceId: string): WorkItemReadinessCapability {
     return {
+      wasAdmitted: (repositoryId, workItemRef) =>
+        this.wasAdmitted(projectId, repositoryId, workItemRef),
       observe: ({
         repositoryId,
         workItemRef,

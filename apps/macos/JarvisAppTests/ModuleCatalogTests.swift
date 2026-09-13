@@ -96,10 +96,13 @@ final class ModuleCatalogTests: XCTestCase {
             development.description,
             "Implements a requested work item in an isolated Git workspace.")
         XCTAssertEqual(development.categories, ["agentic"])
-        XCTAssertEqual(development.consumes, ["development.implementation.requested.v1"])
+        XCTAssertEqual(
+            development.consumes,
+            ["scm.work-item.observed.v1", "development.implementation.requested.v1"])
         XCTAssertEqual(
             development.produces,
             [
+                "development.implementation.requested.v1",
                 "development.implementation.completed.v1",
                 "development.implementation.failed.v1",
                 "scm.change-request.creation-requested.v1",

@@ -161,6 +161,8 @@ export type WorkItemReadinessStatus = "ready" | "blocked" | "impossible";
 
 /** Durable current readiness and one-time admission for a GitHub work item. */
 export interface WorkItemReadinessCapability {
+  /** Durable identity guard for one project/repository/work-item triple. */
+  readonly wasAdmitted?: (repositoryId: string, workItemRef: string) => boolean;
   readonly observe: (input: {
     readonly repositoryId: string;
     readonly workItemRef: string;
