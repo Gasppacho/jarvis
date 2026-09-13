@@ -387,6 +387,7 @@ public struct ProjectCompositionReview: Sendable, Equatable {
     }
 
     public let readyToValidate: Bool
+    public let githubDevelopmentFlow: Bool
     public let compositionGuide: ProjectCompositionGuide
     public let resourceChoices: ProjectResourceChoices
     public let findings: [Finding]
@@ -398,6 +399,7 @@ public struct ProjectCompositionReview: Sendable, Equatable {
             let wire = try? JSONDecoder().decode(WireProjectCompositionReview.self, from: data)
         else { preconditionFailure("Generated Project composition review drifted") }
         readyToValidate = wire.readyToValidate
+        githubDevelopmentFlow = payload.githubDevelopmentFlow == true
         compositionGuide = ProjectCompositionGuide(payload: payload.composition)
         resourceChoices = ProjectResourceChoices(payload: payload.resources)
         findings = wire.validation.findings.map {

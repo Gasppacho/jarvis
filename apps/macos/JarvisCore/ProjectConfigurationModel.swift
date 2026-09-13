@@ -317,17 +317,15 @@ public final class ProjectConfigurationModel {
     }
 
     public func setCommand(projectId: String, name: String, command: String) {
+        let value = command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : command
+        guard state(for: projectId).draft?.commands[name] != value else { return }
         editDraft(projectId: projectId) { draft in
-            if command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                draft.commands.removeValue(forKey: name)
-            } else {
-                draft.commands[name] = command
-            }
+            draft.commands[name] = value
             for index in draft.modules.indices where draft.modules[index].moduleId == "jarvis.module.development" {
-                if name == "install" {
+                if name == "install", draft.modules[index].configurationValues["preparation"] == "install" {
                     draft.modules[index].configurationValues["preparation"] = ""
-                } else {
-                    draft.modules[index].configurationValues["validationOrder"] = "[]"
+                } else if draft.modules[index].validationOrder.contains(name) {
+                    draft.modules[index].validationOrder.removeAll { $0 == name }
                 }
             }
         }
@@ -335,13 +333,10 @@ public final class ProjectConfigurationModel {
 
     public func selectValidationCommand(projectId: String, moduleID: UUID, name: String, selected: Bool) {
         editModule(projectId: projectId, moduleId: moduleID) { module in
-            let data = Data(module.configurationValues["validationOrder", default: "[]"].utf8)
-            var order = (try? JSONDecoder().decode([String].self, from: data)) ?? []
+            var order = module.validationOrder
             order.removeAll { $0 == name }
             if selected { order.append(name) }
-            if let encoded = try? JSONEncoder().encode(order) {
-                module.configurationValues["validationOrder"] = String(decoding: encoded, as: UTF8.self)
-            }
+            module.validationOrder = order
         }
     }
 

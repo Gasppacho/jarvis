@@ -985,6 +985,8 @@ export interface components {
             projectId: string;
             /** @description Engine-owned readiness for the supplied or saved Portable Configuration and current Local Bindings. */
             readyToValidate: boolean;
+            /** @description Additive configuration-only projection. True when the Engine recognizes one readiness admission rule, matching GitHub label, resolved Development and PR routes, concurrency one and no merge request. Does not certify access or commands. Absent means unconfirmed. */
+            githubDevelopmentFlow?: boolean;
             composition: components["schemas"]["ProjectCompositionChoicesV1"];
             validation: components["schemas"]["ProjectValidationReportV1"];
             resources: components["schemas"]["ProjectResourceChoices"];

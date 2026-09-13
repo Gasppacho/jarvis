@@ -87,7 +87,7 @@ public struct ProjectOnboardingPresentation: Sendable, Equatable {
         }
         steps = [
             Self.step(.repository, repositoryStatus),
-            Self.step(.workflow, hasWorkflow ? .readyForReview : .needsAction),
+            Self.step(.workflow, hasWorkflow && configuration?.draft?.workflowCommandsConfigured == true ? .readyForReview : .needsAction),
             Self.step(.connections, resourcesReady ? .complete : .needsAction),
             Self.step(.review, reviewStatus),
         ]

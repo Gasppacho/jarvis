@@ -545,6 +545,8 @@ final class ProjectConfigurationTests: XCTestCase {
         let proposedDevelopment = try XCTUnwrap(state.draft?.modules.first { $0.instanceId == "development" })
         XCTAssertEqual(proposedDevelopment.configurationValues["validationOrder"], "[]")
         XCTAssertTrue(proposedDevelopment.configurationValues["preparation", default: ""].isEmpty)
+        XCTAssertFalse(state.draft?.workflowCommandsConfigured ?? true)
+        XCTAssertEqual(state.compositionReview?.githubDevelopmentFlow, true)
 
         XCTAssertEqual(
             state.resourceChoices.map(\.slotId),
@@ -597,8 +599,26 @@ final class ProjectConfigurationTests: XCTestCase {
         configuration.setCommand(projectId: imported.id, name: "verify", command: "pnpm verify")
         configuration.selectValidationCommand(projectId: imported.id, moduleID: commandModule.id, name: "verify", selected: true)
         XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.first { $0.id == commandModule.id }?.configurationValues["validationOrder"], #"["verify"]"#)
+        configuration.setCommand(projectId: imported.id, name: "test", command: "pnpm test")
+        configuration.selectValidationCommand(projectId: imported.id, moduleID: commandModule.id, name: "test", selected: true)
         configuration.setCommand(projectId: imported.id, name: "verify", command: "pnpm verify --changed")
-        XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.first { $0.id == commandModule.id }?.configurationValues["validationOrder"], "[]")
+        XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.first { $0.id == commandModule.id }?.configurationValues["validationOrder"], #"["test"]"#, "editing verify must preserve the other confirmed validation")
+        configuration.selectValidationCommand(projectId: imported.id, moduleID: commandModule.id, name: "test", selected: false)
+        configuration.selectValidationCommand(projectId: imported.id, moduleID: commandModule.id, name: "verify", selected: true)
+        configuration.setCommand(projectId: imported.id, name: "install", command: "pnpm install --frozen-lockfile")
+        configuration.apply(.setModuleConfiguration(commandModule.id, "preparation", "install"), projectId: imported.id, packages: catalog.packages)
+        configuration.setCommand(projectId: imported.id, name: "install", command: "pnpm install --frozen-lockfile")
+        XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.first { $0.id == commandModule.id }?.configurationValues["preparation"], "install", "an identical command is not a change requiring reconfirmation")
+        let confirmedSave = await configuration.saveDraft(projectId: imported.id, writeToRepository: false)
+        XCTAssertNotNil(confirmedSave)
+        await configuration.refresh(projectId: imported.id, packages: catalog.packages)
+        let reopenedDevelopment = try XCTUnwrap(configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "development" })
+        XCTAssertEqual(reopenedDevelopment.configurationValues["preparation"], "install")
+        XCTAssertEqual(reopenedDevelopment.configurationValues["validationOrder"], #"["verify"]"#)
+        XCTAssertTrue(configuration.state(for: imported.id).draft?.workflowCommandsConfigured == true)
+        configuration.setCommand(projectId: imported.id, name: "install", command: "pnpm install --frozen-lockfile --offline")
+        XCTAssertFalse(configuration.state(for: imported.id).draft?.workflowCommandsConfigured ?? true)
+        XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.first { $0.id == reopenedDevelopment.id }?.validationOrder, ["verify"])
         configuration.setReadyLabel(projectId: imported.id, label: "approved-work")
         XCTAssertTrue(configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "automation-rules" }?.automationRules?.first?.matchJSON.contains("approved-work") == true)
         let labelModule = try XCTUnwrap(configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "github" })
@@ -633,6 +653,7 @@ final class ProjectConfigurationTests: XCTestCase {
         await configuration.refreshCompositionChoices(projectId: imported.id)
         state = configuration.state(for: imported.id)
         XCTAssertEqual(state.draft?.name, "Preserved name")
+        XCTAssertEqual(state.compositionReview?.githubDevelopmentFlow, false)
         XCTAssertEqual(
             state.compositionGuide?.moduleInstances.first(where: {
                 $0.instanceId == "development"

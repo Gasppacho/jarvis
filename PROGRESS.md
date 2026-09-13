@@ -12,11 +12,12 @@ un échec ultérieur du commit (7/7 tests de projection).
 L02 implémentée, relue et gate complet réussi au commit `5906e64` :
 366 unitaires, 385 intégration et 187 Swift ; app empaquetée en 3 min 53 s.
 Les deux échecs Development et le `listen EPERM` ont été reproduits séparément.
-L03 implémentée et relue, commit `ceb3759`. L04 implémentée, relue et vérifiée nativement ; L05–L10 restent à exécuter dans l’ordre. Aucun push, test GitHub ou merge effectué.
+L03 implémentée et relue, commit `ceb3759`. L04 implémentée, relue et vérifiée nativement, commit `9289c1f`. L05 implémentée, relue et vérifiée nativement ; L06–L10 restent à exécuter dans l’ordre. Aucun push, test GitHub ou merge effectué.
 Le projet réel et le travail retenu de #204 restent intacts.
 
-La session macOS est verrouillée (`IOConsoleLocked = Yes`, confirmé par `ioreg`).
-Le déverrouillage a été demandé le 13 septembre ; continuer les travaux indépendants.
+La session macOS s'est déverrouillée pendant L04 puis reverrouillée pendant L05.
+Après la demande « continue », `IOConsoleLocked = No` est confirmé par `ioreg`.
+Les essais natifs reprennent dans la racine isolée.
 Les captures natives tentées en L01 sont inutilisables, donc ne prouvent aucun rendu.
 
 ## Contrôles et décisions
@@ -37,9 +38,9 @@ Les captures natives tentées en L01 sont inutilisables, donc ne prouvent aucun 
 | --- | --- | --- |
 | L01 | Implémentée, tests et double relecture ; visuel en attente | `989b9b7` |
 | L02 | Implémentée, relue ; gate complet réussi, vrai run encore requis | `cb35979` → `5906e64` |
-| L03 | Implémentée, relue ; tests ciblés réussis, visuel en attente | `ceb3759` |
-| L04 | En cours — import, doublons, reprise et isolation native | — |
-| L05 | À faire — workflow guidé | — |
+| L03 | Implémentée, relue ; cadre natif aux deux tailles et apparences en L04 | `ceb3759` |
+| L04 | Implémentée, relue ; import, doublon, navigation et reprise natifs vérifiés | `9289c1f` |
+| L05 | Implémentée, double relecture ; parcours natif et reprise vérifiés | À enregistrer |
 | L06 | À faire — accès et agent | — |
 | L07 | À faire — vérification et démarrage | — |
 | L08 | À faire — supervision | — |
@@ -291,3 +292,58 @@ Commande de reprise native :
 `rtk proxy dist/Jarvis.app/Contents/MacOS/Jarvis --data-root /tmp/jarvis-ux-reliability-evidence/l04/data`.
 Deux dépôts factices ont uniquement servi à l’import et à la navigation ;
 aucune issue, exécution Development ou PR n’a été produite par cet essai.
+
+
+## L05 — configuration graphique du workflow
+
+Base : `9289c1f` (L04). Rouge puis vert au seam Swift → vraie API : changer
+verify supprimait aussi test ; resoumettre la même commande install effaçait sa
+confirmation. `setCommand` invalide maintenant seulement le choix concerné et
+ignore une valeur inchangée. Le test sauvegarde et recharge préparation install
+et la seule validation verify, avec conservation du label et des éditions.
+Commande : `rtk proxy swift test --package-path apps/macos --filter 'ProjectConfigurationTests|ProjectOnboardingPresentationTests|AutomationRuleConfigurationTests'`.
+21/21 réussis après la correction.
+
+`ProjectWorkflowView` remplace les contrôles dupliqués du mode avancé et sert au
+guide : proposition Engine, quatre cartes explicatives, label, installation,
+confirmation des validations, résumé de PR. Aucun graphe n’est sauvegardé ;
+les destinations sont lues dans la réponse composition-review. Les autres
+commandes restent sous Autres vérifications, hors Advanced. Relecture et preuve
+native de cette surface encore requise.
+
+Relecture : le catalogue de contrats ne prouvait pas le lien réel d'une règle
+historique. Ajout additif de `githubDevelopmentFlow` au seul read model local,
+calculé par l'Engine depuis `workflowRule` et les routes validées. Ce signal
+décrit la configuration, sans certifier les accès ni les commandes. Faux ou
+absent : dessin présenté comme référence non confirmée, explications conditionnelles.
+Contrat source, types et documentation mis à jour. Labels permanents et
+passage du dessin horizontal à une liste verticale quand les quatre cartes
+ne tiennent pas, sans grille sur plusieurs rangées.
+
+Test réel API ajouté : rouge (champ absent), puis 4/4 verts avec règle historique,
+label désaccordé, cible absente, identité statique, concurrence 2 et source
+supplémentaire. Aucun de ces cas ne confirme la chaîne guidée. La proposition
+ne remplace pas le draft sauvegardé. Suite Swift après contrat : 21/21.
+Typecheck corrigé pour l'absence possible de requestAttempts : réussi.
+Commande : `rtk pnpm exec vitest run --project integration apps/engine/test/composition-review.integration.test.ts`.
+
+La session verrouillée a empêché les premières captures L05. Les deux processus
+Jarvis isolés ont été fermés proprement par le menu AX Quit Jarvis.
+Ne pas considérer un Cmd+Q sans effet vérifié comme une fermeture.
+Les preuves natives L04 restent valides ; aucune capture L05 n'est encore revendiquée.
+
+Vérification native L05 désormais exécutée après déverrouillage, sur build relu
+(base 9289c1f + delta L05), manifeste et captures dans
+`/tmp/jarvis-ux-reliability-evidence/l05/` : 02 modèle, 03 schéma confirmé,
+04 installation gelée proposée, 05 verify non coché, 06 choix verify seul
+enregistré, 07 petite fenêtre sombre, 08 disposition verticale à 900×800,
+09 petite fenêtre claire, 10 explication PR à 1512×949 claire, 11 label modifié
+au clavier avec focus préservé après sauvegarde, 12 reprise du même projet,
+label et commandes confirmées après fermeture/relaunch. Toutes vues avec view_image.
+Le nominal a été configuré sans Advanced, ID ou JSON. Les commandes n'ont pas
+été exécutées et aucun compte n'a été autorisé : il s'agit d'une preuve UI.
+App fermée proprement, absence de processus Jarvis vérifiée, apparence sombre restaurée.
+
+Relectures finales : Standards 0 finding, Spec 0 finding. Typecheck, contrats,
+build empaqueté et dernier test API 4/4 réussis. Tests Swift 21/21 réussis.
+Le fallback legacy est prouvé à l'API ; sa matrice visuelle complète reste L09.

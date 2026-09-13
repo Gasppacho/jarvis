@@ -165,13 +165,8 @@ struct ProjectOnboardingView: View {
         case .repository:
             repositoryStep
         case .workflow:
-            GroupBox("Workflow") {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Choisissez votre workflow. Vous pouvez enregistrer un brouillon incomplet et le reprendre plus tard.")
-                    advancedControls
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            ProjectWorkflowView(model: projectConfiguration, project: project,
+                                packages: moduleCatalog.packages, openAdvanced: openAdvanced)
         case .connections:
             connectionsStep
             runtimeCard
@@ -218,12 +213,6 @@ struct ProjectOnboardingView: View {
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private var advancedControls: some View {
-        Button("Réglages avancés") {
-            openAdvanced()
         }
     }
 

@@ -142,6 +142,15 @@ public struct ProjectModuleDraft: Identifiable, Sendable, Equatable {
     public var preservedRawConfigurations: [String: String]
     public var configurationRepairExplanation: String?
 
+    public var validationOrder: [String] {
+        get { (try? JSONDecoder().decode([String].self, from: Data(configurationValues["validationOrder", default: "[]"].utf8))) ?? [] }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                configurationValues["validationOrder"] = String(decoding: data, as: UTF8.self)
+            }
+        }
+    }
+
     init(payload: Components.Schemas.ModuleInstanceConfiguration, package: ModulePackage?) {
         id = UUID()
         instanceId = payload.instanceId
@@ -290,6 +299,18 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
 
     public var validationCommandNames: [String] {
         commands.keys.filter { $0 != "install" }.sorted()
+    }
+
+    /// Confirms the user's command choices, not their execution or Engine readiness.
+    public var workflowCommandsConfigured: Bool {
+        let development = modules.filter { $0.enabled && $0.moduleId == "jarvis.module.development" }
+        return !development.isEmpty && development.allSatisfy { module in
+            let preparation = module.configurationValues["preparation"]
+            let prepared = preparation == "none" || (preparation == "install" && commands["install"]?.isEmpty == false)
+            return prepared && !module.validationOrder.isEmpty && module.validationOrder.allSatisfy {
+                $0 != "install" && commands[$0]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            }
+        }
     }
 
     /// The engine owns every discovered repository/Git/workspace value. Swift

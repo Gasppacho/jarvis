@@ -2,7 +2,13 @@ import type {
   WorkItemReadinessSnapshot,
   WorkItemReadinessStore,
 } from "../../../../packages/modules/github/src/work-item-readiness.js";
-import { preflightGitHub, check, workflowRule, type ProjectPreflight } from "./preflight.js";
+import {
+  preflightGitHub,
+  check,
+  workflowRule,
+  isGitHubDevelopmentFlow,
+  type ProjectPreflight,
+} from "./preflight.js";
 import type { GitHubApi } from "../../../../packages/module-sdk/src/index.js";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -719,6 +725,7 @@ export class ProjectService implements ProjectRegistry<
       kind: "ProjectCompositionReview",
       projectId: project.id,
       readyToValidate: validation.valid,
+      githubDevelopmentFlow: isGitHubDevelopmentFlow(configuration, validation),
       composition,
       validation: toWireValidationReport(validation),
       resources: resourceChoices(

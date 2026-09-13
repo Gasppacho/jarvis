@@ -118,6 +118,15 @@ courants. L'opération est read-only : elle ne sauvegarde ni Draft, ni relation 
 état de Review. Le shell invalide l'état Ready dès qu'un Draft sauvegardé est modifié et ne
 le rétablit qu'après une nouvelle réponse Engine.
 
+Le champ additif optionnel githubDevelopmentFlow confirme uniquement que l'Engine
+reconnaît le parcours guidé : règle unique sur scm.work-item.ready, label GitHub
+correspondant, destinations Development puis GitHub résolues, concurrence de 1 et
+absence de demande de merge. Par exemple, le template GitHub produit true même
+avant l'autorisation des accès ; une règle historique scm.work-item.tag-added
+produit false. Ce n'est ni une validation des commandes ni une autorisation de
+démarrer. Si le champ est absent ou faux, Swift présente le dessin comme une
+référence non confirmée, sans reconnaître ni recalculer les règles.
+
 La projection de composition sert à prévisualiser la configuration sauvegardée ou une
 proposition avant activation. `POST /v1/projects/{projectId}/composition-graph` projette,
 sans mutation, le graphe de composition `ProjectCompositionGraphV1` de cette configuration ou d'une

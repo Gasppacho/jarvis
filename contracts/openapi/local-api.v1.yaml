@@ -1661,6 +1661,9 @@ components:
         readyToValidate:
           type: boolean
           description: Engine-owned readiness for the supplied or saved Portable Configuration and current Local Bindings.
+        githubDevelopmentFlow:
+          type: boolean
+          description: Additive configuration-only projection. True when the Engine recognizes one readiness admission rule, matching GitHub label, resolved Development and PR routes, concurrency one and no merge request. Does not certify access or commands. Absent means unconfirmed.
         composition:
           $ref: "#/components/schemas/ProjectCompositionChoicesV1"
         validation:
