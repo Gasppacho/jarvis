@@ -11,11 +11,12 @@
 ## Tests
 
 - [ ] All CI gates pass.
-- [ ] Application Harness reference workflow passes.
+- [x] Application Harness reference workflow passes for the first-run proof (`rtk pnpm exec vitest run --project integration apps/engine/test/reference-workflow-first-run.integration.test.ts`, [`issue-201-verification.md`](./issue-201-verification.md)).
 - [ ] Migration tests pass from previous released version.
 - [x] Bundle smoke test launches Engine and displays health ([`scripts/smoke-bundle.sh`](../../scripts/smoke-bundle.sh), `bash scripts/smoke-bundle.sh --step launch`).
 - [x] Bundle smoke test imports a local Git repository and rejects a plain directory ([`scripts/smoke-bundle.sh`](../../scripts/smoke-bundle.sh), `bash scripts/smoke-bundle.sh --step import`).
 - [ ] GitHub sandbox test creates exactly one PR.
+- [ ] Packaged SwiftUI Q01 smoke displays the four steps and captures `Bloquée → Éligible → PR créée` (manual proof pending; see [`issue-201-verification.md`](./issue-201-verification.md)).
 - [ ] Crash recovery and replay tests pass.
 - [x] Packaged Engine crash recovery passes ([`scripts/smoke-bundle.sh`](../../scripts/smoke-bundle.sh), `bash scripts/smoke-bundle.sh --step recovery`: unclean kill, same-root relaunch, Project retained, schema unchanged and second Engine refused).
 - [x] Packaging script seams pass (`bash scripts/build-dmg.test.sh`, `bash scripts/notarize-dmg.test.sh`, `bash scripts/release.test.sh`).

@@ -4,9 +4,9 @@ import XCTest
 
 @testable import JarvisCore
 
-/// Ticket #199: Overview is a read model. These fixtures prove that the shell
-/// keeps every Engine eligibility reason, native blocker and polling state
-/// readable without reconstructing policy locally.
+/// Tickets #199/#201: Overview is a read model. These fixtures prove that the
+/// shell keeps every Engine eligibility reason, native blocker and polling
+/// state readable without reconstructing policy locally.
 @MainActor
 final class ProjectOverviewTests: XCTestCase {
     func testFixtureMapsStatusesReasonsBlockersAndPolling() throws {
@@ -23,6 +23,11 @@ final class ProjectOverviewTests: XCTestCase {
         ])
 
         let blocked = try XCTUnwrap(overview.issues.first { $0.status == .blocked })
+        XCTAssertEqual(blocked.issueNumber, 4)
+        XCTAssertEqual(blocked.reason, "open-native-blockers")
+        XCTAssertEqual(
+            blocked.explanation,
+            "Blocked by two open GitHub native dependencies.")
         XCTAssertEqual(blocked.openDependencyCount, 2)
         XCTAssertEqual(
             blocked.blockerRefs,

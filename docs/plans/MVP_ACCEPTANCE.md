@@ -15,6 +15,9 @@ Sur un repository sandbox GitHub et un ticket de fonctionnalité simple :
 
 La preuve manuelle complémentaire est enregistrée dans [l’issue #150](https://github.com/Gasppacho/jarvis/issues/150#issuecomment-5633535201). Les autres lignes citent le test Application Harness qui les démontre.
 
+- [x] Q01 parcourt une issue de `blocked_by` ouvert à une seule PR avec le fake GitHub, le FakeRuntime, SQLite, Git et le Local API ([rapport exécuté](./issue-201-verification.md), [`reference-workflow-first-run.integration.test.ts`](../../apps/engine/test/reference-workflow-first-run.integration.test.ts)).
+- [ ] Q01 smoke visuel de l’application SwiftUI assemblée avec captures et VoiceOver ([rapport](./issue-201-verification.md) : preuve manuelle interactive non observée).
+
 - [x] Ajouter `agent:ready` produit exactement un fact `scm.work-item.tag-added` logique ([pushed branch](../../apps/engine/test/reference-workflow-pushed-branch.integration.test.ts)).
 - [x] Automation Rules produit une seule request `development.implementation.requested` ([correlation](../../apps/engine/test/reference-workflow-correlation.integration.test.ts)).
 - [x] Development alloue un worktree distinct et crée une branche conforme au pattern ([pushed branch](../../apps/engine/test/reference-workflow-pushed-branch.integration.test.ts), [naming](../../apps/engine/test/reference-workflow-naming.integration.test.ts)).
