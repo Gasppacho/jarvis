@@ -51,6 +51,9 @@ public struct ProjectOverview: Sendable, Equatable {
         public let blockerRefs: [String]
         public let readinessLabel: String
         public let executionId: String?
+        public let lastExecutionStatus: String?
+        public let executionStartedAt: Date?
+        public let executionCompletedAt: Date?
 
         public init(
             workItemRef: String,
@@ -63,7 +66,10 @@ public struct ProjectOverview: Sendable, Equatable {
             openDependencyCount: Int,
             blockerRefs: [String],
             readinessLabel: String,
-            executionId: String? = nil
+            executionId: String? = nil,
+            lastExecutionStatus: String? = nil,
+            executionStartedAt: Date? = nil,
+            executionCompletedAt: Date? = nil
         ) {
             self.workItemRef = workItemRef
             self.title = title
@@ -76,6 +82,9 @@ public struct ProjectOverview: Sendable, Equatable {
             self.blockerRefs = blockerRefs
             self.readinessLabel = readinessLabel
             self.executionId = executionId
+            self.lastExecutionStatus = lastExecutionStatus
+            self.executionStartedAt = executionStartedAt
+            self.executionCompletedAt = executionCompletedAt
         }
     }
 
@@ -91,6 +100,7 @@ public struct ProjectOverview: Sendable, Equatable {
     public let activeExecutionCount: Int
     public let activeWorkItemRefs: [String]
     public let readinessHelp: String
+    public let selectedWorkItemRef: String?
 
     public init(
         projectId: String,
@@ -104,7 +114,8 @@ public struct ProjectOverview: Sendable, Equatable {
         issues: [Issue],
         activeExecutionCount: Int,
         activeWorkItemRefs: [String],
-        readinessHelp: String
+        readinessHelp: String,
+        selectedWorkItemRef: String? = nil
     ) {
         self.projectId = projectId
         self.name = name
@@ -118,6 +129,7 @@ public struct ProjectOverview: Sendable, Equatable {
         self.activeExecutionCount = activeExecutionCount
         self.activeWorkItemRefs = activeWorkItemRefs
         self.readinessHelp = readinessHelp
+        self.selectedWorkItemRef = selectedWorkItemRef
     }
 
     init(payload: Components.Schemas.ProjectOverviewV1) {
@@ -150,11 +162,15 @@ public struct ProjectOverview: Sendable, Equatable {
                 openDependencyCount: $0.openDependencyCount,
                 blockerRefs: $0.blockerRefs,
                 readinessLabel: $0.readinessLabel,
-                executionId: $0.executionId)
+                executionId: $0.executionId,
+                lastExecutionStatus: $0.lastExecutionStatus?.rawValue,
+                executionStartedAt: $0.executionStartedAt,
+                executionCompletedAt: $0.executionCompletedAt)
         }
         activeExecutionCount = payload.activeExecutionCount
         activeWorkItemRefs = payload.activeWorkItemRefs
         readinessHelp = payload.readinessHelp
+        selectedWorkItemRef = payload.selectedWorkItemRef
     }
 
     private static func status(

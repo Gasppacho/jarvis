@@ -9,6 +9,24 @@
 - [ ] Les connexions et runtimes sont bindés par projet, pas imposés globalement.
 - [x] Les modules actifs et leur graphe événementiel sont visibles dans l'onglet Graph de Project Detail ([ProjectGraphView](../../apps/macos/JarvisApp/Features/Projects/ProjectGraphView.swift), [ProjectGraphModelTests](../../apps/macos/JarvisAppTests/ProjectGraphModelTests.swift)).
 
+## Guided reliability delivery (2026-09-13)
+
+The detailed evidence is in [PROGRESS.md](../../PROGRESS.md); do not infer closure
+of older issue criteria from these observations.
+
+- [x] Four-step native guide, saved draft reopening, scoped account/runtime choices,
+  workflow commands and truthful empty preflight observed in isolated data (L03–L07).
+- [x] Failed work remains linked after label removal and restart (L08 Harness);
+  packaged app shows the retained failure at 1100×800 (Harness data).
+- [x] Complete keyboard configuration and activation observed on the real L10 run.
+- [ ] Complete VoiceOver error reading: names, values and card activation observed;
+  full error reading remains unproven (L09–L10).
+- [x] One real bounded issue [#205](https://github.com/Gasppacho/jarvis/issues/205),
+  real Codex, successful second validation and one [PR #206](https://github.com/Gasppacho/jarvis/pull/206)
+  created by the GitHub module, followed by pause without merge (L10).
+- [x] Final clean-worktree `rtk pnpm verify` on `f53a234` (366 unit, 389 integration,
+  196 Swift) and identified packaged build, reopened paused at 1100×800 (L10).
+
 ## Reference workflow acceptance
 
 Sur un repository sandbox GitHub et un ticket de fonctionnalité simple :

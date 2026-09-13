@@ -4,6 +4,19 @@ import XCTest
 
 final class ConnectionsModelTests: XCTestCase {
     @MainActor
+    func testSelectedAccountIsUsedByThisProjectButExpiredAccessStaysVisible() {
+        let available = Connection(id: "github", provider: "github", accountLabel: "Account", status: "available",
+                                   capabilities: ["github.api", "scm.change-request.manage", "work-items.read"])
+        let expired = Connection(id: "github", provider: "github", accountLabel: "Account", status: "unauthenticated", capabilities: [])
+        let model = ConnectionsModel(api: StubConnectionsAPI())
+        XCTAssertEqual(model.presentation(for: available, isBound: true).status, "Utilisé par ce projet")
+        XCTAssertFalse(model.presentation(for: available, isBound: true).diagnostic.contains("Prêt à être accordé"))
+        XCTAssertEqual(model.presentation(for: available).status, "Disponible")
+        XCTAssertEqual(model.presentation(for: expired, isBound: true).status, "Accès requis")
+        XCTAssertFalse(model.presentation(for: expired, isBound: true).isSelectable)
+    }
+
+    @MainActor
     func testRefreshListsProviderAccountLabelAndStatus() async {
         let connection = Connection(
             id: "connection/github-main",

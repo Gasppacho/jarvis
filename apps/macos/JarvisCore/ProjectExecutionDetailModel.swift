@@ -77,6 +77,15 @@ public final class ProjectExecutionDetailModel {
         await load(projectId: projectId, executionId: executionId, using: detailProvider)
     }
 
+    public func watch(projectId: String, executionId: String) async {
+        // ponytail: poll the local snapshot while visible; use checkpoint SSE if traffic warrants it.
+        while !Task.isCancelled {
+            await refresh(projectId: projectId, executionId: executionId)
+            do { try await Task.sleep(for: .seconds(1)) }
+            catch { return }
+        }
+    }
+
     @discardableResult
     public func retry(projectId: String, executionId: String) async -> Bool {
         let stateKey = key(projectId, executionId)

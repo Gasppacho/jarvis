@@ -124,6 +124,31 @@ describe("repository discovery and project import", () => {
       body: JSON.stringify(body),
     });
 
+  it("imports the chosen name atomically and rejects invalid names without creating a project", async () => {
+    const engine = await start();
+    const root = fixture(() => makeNodeRepositoryFixture({ branch: "trunk" }));
+    const before = treeSnapshot(root);
+    for (const name of [" ", "x".repeat(121), `${" ".repeat(121)}A`, 42, null]) {
+      const rejected = await importProject(engine, { repositoryPath: root, name });
+      expect(rejected.status).toBe(400);
+      const error = (await rejected.json()) as { error: { code: string } };
+      expect(error.error.code).toBe("project.config-invalid");
+    }
+    expect(await (await engine.call("/v1/projects")).json()).toEqual({ items: [] });
+    const response = await importProject(engine, {
+      repositoryPath: root,
+      name: " Mon projet guidé ",
+    });
+    expect(response.status).toBe(201);
+    const detail = (await response.json()) as components["schemas"]["ProjectDetail"];
+    expect(detail.name).toBe("Mon projet guidé");
+    expect(detail.portableConfig.metadata.name).toBe("Mon projet guidé");
+    expect(detail.portableConfig.repositories[0]?.defaultBranch).toBe("trunk");
+    expect(detail.portableConfig.commands.install).toContain("--frozen-lockfile");
+    expect(detail.portableConfig.modules).toEqual([]);
+    expect(treeSnapshot(root)).toBe(before);
+  });
+
   function embeddedPortableConfig(
     modules: readonly Record<string, unknown>[],
     slots: Record<string, unknown> = { tickets: { requires: "work-items.read", optional: true } },
@@ -333,6 +358,14 @@ capabilities:
     );
     const root = fixture(() => makeNodeRepositoryFixture({ projectYaml: committed }));
 
+    const inspection = (await (await discover(engine, root)).json()) as {
+      suggested: components["schemas"]["PortableProjectConfiguration"];
+    };
+    expect(inspection.suggested.metadata.name).toBe("Token Warehouse");
+    expect(inspection.suggested.repositories).toEqual(
+      (parseYaml(committed) as components["schemas"]["PortableProjectConfiguration"]).repositories,
+    );
+
     const detail = (await (await importProject(engine, { repositoryPath: root })).json()) as {
       id: string;
       name: string;
@@ -341,6 +374,47 @@ capabilities:
     expect(detail.id).toBe("token-warehouse");
     expect(detail.name).toBe("Token Warehouse");
     expect(detail.moduleCount).toBe(3);
+  });
+
+  it("inspects the configured remote without falling back to origin", async () => {
+    const engine = await start();
+    const committed = readFileSync(
+      join(REPO_ROOT, "examples/project/.jarvis/project.yaml"),
+      "utf8",
+    ).replace("remote: origin", "remote: upstream");
+    expect(committed).toContain("remote: upstream");
+    for (const urls of [
+      ["https://user:fixture-password@github.com/selected/repository.git?fixture=private#fragment"],
+      [],
+      ["https://github.com/selected/one.git", "https://github.com/selected/two.git"],
+    ]) {
+      const root = fixture(() =>
+        makeNodeRepositoryFixture({
+          projectYaml: committed,
+          additionalRemotes: urls.map((url) => ({ name: "upstream", url })),
+        }),
+      );
+      const inspection = (await (
+        await discover(engine, root)
+      ).json()) as components["schemas"]["RepositoryDiscovery"];
+      expect(inspection.remoteUrl).toBe(
+        urls.length === 1 ? "https://github.com/selected/repository.git" : null,
+      );
+      expect(inspection.provider).toBe(urls.length === 1 ? "github" : null);
+      const created = (await (
+        await importProject(engine, { repositoryPath: root })
+      ).json()) as components["schemas"]["ProjectDetail"];
+      writeFileSync(
+        join(root, ".jarvis/project.yaml"),
+        committed.replace("remote: upstream", "remote: origin"),
+      );
+      const detail = (await (
+        await engine.call(`/v1/projects/${created.id}`)
+      ).json()) as components["schemas"]["ProjectDetail"];
+      expect(detail.bindingStatus["main"]?.remoteUrl).toBe(
+        urls.length === 1 ? "https://github.com/selected/repository.git" : null,
+      );
+    }
   });
 
   it("lists imported projects and serves their detail", async () => {
@@ -1585,6 +1659,7 @@ capabilities:
         path: created.bindingStatus["main"]?.path,
         accessible: false,
         bookmarkRef: null,
+        remoteUrl: null,
       });
     } finally {
       await rm(dataRoot, { recursive: true, force: true });
@@ -1950,10 +2025,10 @@ capabilities:
         required: false,
         items: [],
         readiness: {
-          status: "absent",
+          status: "unchecked",
           checkedAt: null,
           detail:
-            "Aucun runtime Codex découvert. Installez ou activez Codex avec les instructions locales, puis relancez la découverte.",
+            "Choisissez d’abord un workflow utilisant un agent, puis autorisez Codex pour ce projet.",
         },
       },
     });
@@ -1989,10 +2064,9 @@ capabilities:
         required: true,
         items: [],
         readiness: {
-          status: "absent",
+          status: "unchecked",
           checkedAt: null,
-          detail:
-            "Aucun runtime Codex découvert. Installez ou activez Codex avec les instructions locales, puis relancez la découverte.",
+          detail: "Recherchez Codex sur ce Mac, puis autorisez-le pour ce projet.",
         },
       },
       items: [
@@ -2344,6 +2418,7 @@ capabilities:
         path: updated.bindingStatus["main"]?.path,
         accessible: true,
         bookmarkRef: `bookmark/${created.id}/main`,
+        remoteUrl: "git@github.com:QServices/token-warehouse.git",
       });
     } finally {
       await rm(dataRoot, { recursive: true, force: true });

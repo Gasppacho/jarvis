@@ -142,4 +142,55 @@ describe("project composition review", () => {
     };
     expect(reopened.portableConfig).toEqual(project.portableConfig);
   });
+
+  it("confirms the guided flow only from the configured admission rule and resolved destinations", async () => {
+    const { engine, project } = await setup();
+    const preview = async (portableConfig?: unknown) => {
+      const response = await engine.call("/v1/projects/" + project.id + "/composition-review", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(portableConfig ? { portableConfig } : {}),
+      });
+      expect(response.status).toBe(200);
+      return response.json() as Promise<{
+        githubDevelopmentFlow: boolean;
+        composition: { startingPoints: Array<{ id: string; template: Record<string, unknown> }> };
+      }>;
+    };
+    const initial = await preview();
+    expect(initial.githubDevelopmentFlow).toBe(false); // The saved example uses the legacy tag fact.
+    const template = initial.composition.startingPoints.find(
+      (point) => point.id === "github-development",
+    )!.template;
+    expect((await preview(template)).githubDevelopmentFlow).toBe(true);
+
+    for (const defect of ["legacy", "label", "target", "override", "concurrency", "extra-module"]) {
+      const proposed = structuredClone(template);
+      const modules = proposed["modules"] as Array<{
+        moduleId: string;
+        instanceId: string;
+        enabled: boolean;
+        configuration: Record<string, unknown>;
+      }>;
+      const github = modules.find((module) => module.moduleId === "jarvis.module.github")!;
+      const rules = modules.find((module) => module.moduleId === "jarvis.module.automation-rules")!
+        .configuration["rules"] as Array<{
+        when: { eventType: string };
+        emit: { type: string; target: { moduleInstanceId: string }; payload?: object };
+      }>;
+      if (defect === "legacy") rules[0]!.when.eventType = "scm.work-item.tag-added";
+      if (defect === "label") github.configuration["readyLabel"] = "different-label";
+      if (defect === "target") rules[0]!.emit.target.moduleInstanceId = "absent";
+      if (defect === "override") rules[0]!.emit.payload = { workItemRef: "github://a/b/issues/1" };
+      if (defect === "concurrency")
+        (proposed["workspace"] as Record<string, unknown>)["maxConcurrentExecutions"] = 2;
+      if (defect === "extra-module")
+        modules.push({ ...structuredClone(github), instanceId: "another-source" });
+      expect((await preview(proposed)).githubDevelopmentFlow, defect).toBe(false);
+    }
+    const reopened = (await (await engine.call("/v1/projects/" + project.id)).json()) as {
+      portableConfig: unknown;
+    };
+    expect(reopened.portableConfig).toEqual(project.portableConfig);
+  });
 });

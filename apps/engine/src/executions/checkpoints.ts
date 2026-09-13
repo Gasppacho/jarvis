@@ -20,7 +20,7 @@ export type ExecutionCheckpointInput =
   | {
       readonly projectId: string;
       readonly executionId: string;
-      readonly type: "agent.started";
+      readonly type: "agent.started" | "agent.repair-started";
       readonly sourceSequence: number;
       readonly occurredAt: string;
     }
@@ -39,6 +39,16 @@ export type ExecutionCheckpointInput =
       readonly sourceSequence: number;
       readonly occurredAt: string;
       readonly check: string;
+    }
+  | {
+      readonly projectId: string;
+      readonly executionId: string;
+      readonly type: "validation.completed";
+      readonly sourceSequence: number;
+      readonly occurredAt: string;
+      readonly check: string;
+      readonly durationMs: number;
+      readonly planComplete: boolean;
     }
   | {
       readonly projectId: string;
@@ -199,6 +209,26 @@ export class ExecutionCheckpointStore {
     );
   }
 
+  /** Agent verbosity must not evict the structured proof needed by the detail. */
+  public listForDetail(projectId: string, executionId: string): ExecutionCheckpoint[] {
+    const rows = this.db
+      .prepare(
+        `
+      SELECT project_id, execution_id, sequence, source_sequence, type, payload, occurred_at
+      FROM execution_checkpoints
+      WHERE project_id = @projectId AND execution_id = @executionId
+        AND (type <> 'agent.message' OR sequence IN (
+          SELECT sequence FROM execution_checkpoints
+          WHERE project_id = @projectId AND execution_id = @executionId AND type = 'agent.message'
+          ORDER BY sequence DESC LIMIT 8
+        ))
+      ORDER BY sequence DESC LIMIT 10000
+    `,
+      )
+      .all({ projectId, executionId }) as ExecutionCheckpointRow[];
+    return rows.reverse().map(toCheckpoint);
+  }
+
   public lastSourceSequence(projectId: string, executionId: string): number {
     return (
       this.db
@@ -261,8 +291,14 @@ function validateInput(input: ExecutionCheckpointInput): void {
   if (
     (input.type === "agent.message" && typeof input.message !== "string") ||
     (input.type === "preparation.failed" && typeof input.output !== "string") ||
-    ((input.type === "validation.started" || input.type === "validation.failed") &&
+    ((input.type === "validation.started" ||
+      input.type === "validation.failed" ||
+      input.type === "validation.completed") &&
       (typeof input.check !== "string" || input.check === "")) ||
+    (input.type === "validation.completed" &&
+      (!Number.isSafeInteger(input.durationMs) ||
+        input.durationMs < 0 ||
+        typeof input.planComplete !== "boolean")) ||
     (input.type === "validation.failed" && typeof input.output !== "string") ||
     ((input.type === "commit.created" || input.type === "branch.pushed") &&
       (typeof input.branch !== "string" ||
@@ -277,6 +313,7 @@ function validateInput(input: ExecutionCheckpointInput): void {
 function checkpointPayload(input: ExecutionCheckpointInput): Readonly<Record<string, unknown>> {
   if (
     input.type === "agent.started" ||
+    input.type === "agent.repair-started" ||
     input.type === "preparation.started" ||
     input.type === "preparation.completed"
   ) {
@@ -295,6 +332,13 @@ function checkpointPayload(input: ExecutionCheckpointInput): Readonly<Record<str
     return {
       check: sanitizeCheckpointMessage(input.check),
       output: sanitizeCheckpointMessage(input.output),
+    };
+  }
+  if (input.type === "validation.completed") {
+    return {
+      check: sanitizeCheckpointMessage(input.check),
+      durationMs: input.durationMs,
+      planComplete: input.planComplete,
     };
   }
   if (input.type === "commit.created" || input.type === "branch.pushed") {

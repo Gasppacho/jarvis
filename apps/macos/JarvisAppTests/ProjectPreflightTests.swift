@@ -9,7 +9,7 @@ final class ProjectPreflightTests: XCTestCase {
     func testReadinessStatesEmptyCandidatesBlockersAndRepairDestinations() throws {
         let empty = try fixture(empty: true)
         XCTAssertTrue(ProjectPreflightState.current(empty).canActivate)
-        XCTAssertEqual(ProjectPreflightState.current(empty).title, "Prêt à activer")
+        XCTAssertEqual(ProjectPreflightState.current(empty).title, "Configuration vérifiée")
         XCTAssertEqual(empty.candidateEligibility.status, .empty)
         let blocked = try fixture(blocked: true)
         XCTAssertTrue(ProjectPreflightState.current(blocked).canActivate, "A blocker affects the candidate, not configuration readiness")
@@ -26,6 +26,22 @@ final class ProjectPreflightTests: XCTestCase {
         }
     }
 
+    func testFinalActionKeepsExactIssueIntentAndRejectsUnverifiedCandidates() throws {
+        var report = try fixture()
+        XCTAssertEqual(ProjectPreflightState.current(report).activationTitle, "Surveiller les issues prêtes")
+        report.rule = .init(instanceId: "rules", ruleId: "ready", label: "ready-for-agent", selectedWorkItemRef: "github://owner/repo/issues/1")
+        XCTAssertEqual(ProjectPreflightState.current(report).activationTitle, "Tester avec l’issue #1")
+        XCTAssertTrue(ProjectPreflightState.current(report).canStartWorkflow)
+        report.candidateEligibility.items[0].status = .ineligible
+        XCTAssertFalse(ProjectPreflightState.current(report).canStartWorkflow)
+        report.candidateEligibility.items = []
+        XCTAssertFalse(ProjectPreflightState.current(report).canStartWorkflow)
+        XCTAssertEqual(ProjectPreflightState.stale(report).activationTitle, "Tester avec l’issue #1")
+        XCTAssertFalse(ProjectPreflightState.stale(report).canStartWorkflow)
+        report.rule = nil
+        XCTAssertTrue(ProjectPreflightState.current(report).canStartWorkflow, "No candidate does not prevent explicit monitoring")
+    }
+
     @MainActor
     func testTransportRetryKeepsErrorsSeparateAndForwardsOnlyCurrentFingerprint() async throws {
         let api = PreflightStub(report: try fixture())
@@ -33,16 +49,27 @@ final class ProjectPreflightTests: XCTestCase {
         await api.setFailure(true)
         await model.preflight(projectId: "project")
         guard case .failed = model.state(for: "project").preflight else { return XCTFail("transport failure must not become findings") }
+        XCTAssertNil(model.state(for: "project").preflightReceivedAt)
         await model.activateWorkflow(projectId: "project")
         let rejectedCalls = await api.activations
         XCTAssertTrue(rejectedCalls.isEmpty)
         await api.setFailure(false)
         await model.preflight(projectId: "project")
         XCTAssertTrue(model.state(for: "project").preflight.canActivate)
+        XCTAssertNotNil(model.state(for: "project").preflightReceivedAt)
         await model.activateWorkflow(projectId: "project")
         let calls = await api.activations
         XCTAssertEqual(calls, [String(repeating: "a", count: 64)])
         XCTAssertEqual(model.state(for: "project").activation, .succeeded)
+        await model.refresh(projectId: "project")
+        let disconnected = model.state(for: "project")
+        XCTAssertFalse(disconnected.preflight.canActivate)
+        XCTAssertEqual(ProjectOnboardingPresentation(
+            project: Project(id: "project", name: "Project", status: .draft, moduleCount: 3, activeExecutions: 0),
+            configuration: disconnected).steps.last?.status, .stale)
+        await model.activateWorkflow(projectId: "project")
+        let afterDisconnect = await api.activations
+        XCTAssertEqual(afterDisconnect, calls, "a lost Engine client must invalidate the old report")
     }
 
     @MainActor
@@ -108,6 +135,9 @@ final class ProjectPreflightTests: XCTestCase {
         let reopened = model(api)
         await reopened.preflight(projectId: "project")
         XCTAssertTrue(reopened.state(for: "project").canRestoreTrial)
+        let isolated = model(api, preferenceNamespace: "isolated:fixture:")
+        await isolated.preflight(projectId: "project")
+        XCTAssertFalse(isolated.state(for: "project").canRestoreTrial, "an isolated data root must not inherit the real project's trial")
         UserDefaults.standard.set("github://owner/repo/issues/2", forKey: key)
         let changed = model(api)
         await changed.preflight(projectId: "project")
@@ -128,9 +158,9 @@ final class ProjectPreflightTests: XCTestCase {
         XCTAssertEqual(issueRequest["workItemRef"] as? String, "github://owner/repo/issues/1")
     }
 
-    @MainActor private func model(_ api: PreflightStub) -> ProjectConfigurationModel {
+    @MainActor private func model(_ api: PreflightStub, preferenceNamespace: String = "") -> ProjectConfigurationModel {
         let session = EngineSessionModel(supervisor: EngineSupervisor(resources: .developmentBuild()))
-        return ProjectConfigurationModel(session: session, projects: ProjectsModel(session: session), preflightAPI: api)
+        return ProjectConfigurationModel(session: session, projects: ProjectsModel(session: session, preferenceNamespace: preferenceNamespace), preflightAPI: api)
     }
 
     private func fixture(valid: Bool = true, blocked: Bool = false, empty: Bool = false) throws -> Components.Schemas.ProjectPreflightV1 {

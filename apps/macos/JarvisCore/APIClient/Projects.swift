@@ -80,6 +80,7 @@ public struct ProjectBinding: Sendable, Equatable, Identifiable {
     public let path: String
     public let accessible: Bool
     public let bookmarkRef: String?
+    public var remoteUrl: String? = nil
 
     public var id: String { repositoryId }
 }
@@ -386,6 +387,7 @@ public struct ProjectCompositionReview: Sendable, Equatable {
     }
 
     public let readyToValidate: Bool
+    public let githubDevelopmentFlow: Bool
     public let compositionGuide: ProjectCompositionGuide
     public let resourceChoices: ProjectResourceChoices
     public let findings: [Finding]
@@ -397,6 +399,7 @@ public struct ProjectCompositionReview: Sendable, Equatable {
             let wire = try? JSONDecoder().decode(WireProjectCompositionReview.self, from: data)
         else { preconditionFailure("Generated Project composition review drifted") }
         readyToValidate = wire.readyToValidate
+        githubDevelopmentFlow = payload.githubDevelopmentFlow == true
         compositionGuide = ProjectCompositionGuide(payload: payload.composition)
         resourceChoices = ProjectResourceChoices(payload: payload.resources)
         findings = wire.validation.findings.map {
@@ -912,7 +915,8 @@ private extension ProjectDetail {
                     repositoryId: repositoryId,
                     path: entry.path,
                     accessible: entry.accessible,
-                    bookmarkRef: entry.bookmarkRef
+                    bookmarkRef: entry.bookmarkRef,
+                    remoteUrl: entry.remoteUrl
                 )
             }
     }

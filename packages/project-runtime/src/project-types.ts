@@ -84,6 +84,7 @@ export interface ProjectCompositionReview {
   readonly kind: "ProjectCompositionReview";
   readonly projectId: string;
   readonly readyToValidate: boolean;
+  readonly githubDevelopmentFlow: boolean;
   readonly composition: ProjectCompositionChoices;
   readonly validation: ProjectValidationReport;
   readonly resources: ProjectResourceChoices;
@@ -461,5 +462,6 @@ export interface BindingStatus {
     readonly path: string;
     readonly accessible: boolean;
     readonly bookmarkRef: string | null;
+    readonly remoteUrl?: string | null;
   };
 }

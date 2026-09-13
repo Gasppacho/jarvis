@@ -13,12 +13,12 @@ Development machine:
 
 The shipped application still bundles its own Node runtime.
 
-## Intended root commands
+## Root commands
 
-Ticket 01 must make these commands real and keep them stable:
+Run these commands from the repository root:
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile
 pnpm generate          # contracts and clients
 pnpm contracts:check   # schemas, examples, manifests and OpenAPI
 pnpm lint
@@ -58,11 +58,15 @@ A helper such as `scripts/run-dev-app.sh` may build/copy the Engine resources an
 
 ## Local data
 
-Development builds must support an isolated data root:
+Launch the packaged app with an absolute, isolated data root:
 
 ```bash
-JARVIS_DATA_ROOT=/tmp/jarvis-dev-<id>
+dist/Jarvis.app/Contents/MacOS/Jarvis --data-root /tmp/jarvis-dev-unique-run
 ```
+
+The native argument isolates Engine data, folder grants and guided navigation.
+Use a different root per trial; never activate imported audit fixtures. The Engine-only
+launcher also accepts `JARVIS_DATA_ROOT`.
 
 Tests never use the developer's real Application Support directory, Keychain items, repositories or GitHub account unless explicitly marked sandbox/manual.
 

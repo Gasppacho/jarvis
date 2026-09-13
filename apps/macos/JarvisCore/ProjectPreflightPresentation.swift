@@ -21,13 +21,27 @@ public enum ProjectPreflightState: Sendable, Equatable {
         guard case .current(let report) = self else { return false }
         return report.valid && report.configurationReady && !report.compositionFingerprint.isEmpty
     }
+    public var canStartWorkflow: Bool {
+        guard canActivate, let report else { return false }
+        guard let ref = report.rule?.selectedWorkItemRef else { return true }
+        return report.candidateEligibility.status == .available
+            && report.candidateEligibility.items.contains { $0.workItemRef == ref && $0.status == .eligible }
+    }
+    public var activationTitle: String {
+        report?.rule?.selectedWorkItemRef.map { "Tester avec l’issue \(Self.issueLabel($0))" }
+            ?? "Surveiller les issues prêtes"
+    }
+    public static func issueLabel(_ ref: String) -> String {
+        guard let url = URL(string: ref), let number = Int(url.lastPathComponent), number > 0 else { return "sélectionnée" }
+        return "#\(number)"
+    }
     public var title: String {
         switch self {
-        case .unchecked: "Vérifier que le workflow est prêt"
+        case .unchecked: "Configuration à vérifier"
         case .loading: "Vérification en cours"
-        case .current(let report): report.configurationReady ? "Prêt à activer" : "Corrections nécessaires"
-        case .stale: "Rapport périmé : relancez le préflight"
-        case .failed: "Erreur Local API — préflight indisponible"
+        case .current: canActivate ? "Configuration vérifiée" : "Corrections nécessaires"
+        case .stale: "Contrôle périmé : vérifiez à nouveau"
+        case .failed: "Vérification indisponible"
         }
     }
     public static func repairStep(_ check: Components.Schemas.PreflightCheck) -> ProjectOnboardingStep {

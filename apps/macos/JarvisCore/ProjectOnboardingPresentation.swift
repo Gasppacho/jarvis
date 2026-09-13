@@ -10,10 +10,10 @@ public enum ProjectOnboardingStep: String, CaseIterable, Codable, Sendable, Hash
 
     public var title: String {
         switch self {
-        case .repository: "Repository"
+        case .repository: "Dépôt"
         case .workflow: "Workflow"
-        case .connections: "Connections"
-        case .review: "Review"
+        case .connections: "Accès et agent"
+        case .review: "Vérification"
         }
     }
 }
@@ -23,6 +23,8 @@ public enum ProjectOnboardingStepStatus: String, Sendable, Equatable {
     case inProgress = "En cours"
     case readyForReview = "Prêt à revoir"
     case complete = "Terminé"
+    case failed = "À corriger"
+    case stale = "À revérifier"
 }
 
 /// Stable content inventory for the native first-opened shell.
@@ -47,12 +49,12 @@ public struct ProjectOnboardingPresentation: Sendable, Equatable {
     /// screen enables activation only after its current validation report.
     public let canActivate: Bool
 
-    public init(project: Project?) {
+    public init(project: Project?, configuration: ProjectConfigurationState? = nil) {
         guard project != nil else {
             emptyState = EmptyState(
-                title: "Welcome to Jarvis",
-                description: "Turn a ready issue into development and a pull request. Start by importing a local repository.",
-                primaryAction: "Importer un repository")
+                title: "Bienvenue dans Jarvis",
+                description: "Choisissez un dépôt, configurez votre workflow et suivez une issue GitHub jusqu’à sa Pull Request. Vous gardez la relecture et le merge.",
+                primaryAction: "Ajouter un projet")
             steps = []
             reviewIsAccessible = false
             canActivate = false
@@ -60,11 +62,34 @@ public struct ProjectOnboardingPresentation: Sendable, Equatable {
         }
 
         emptyState = nil
+        let reviewStatus: ProjectOnboardingStepStatus
+        switch configuration?.preflight ?? .unchecked {
+        case .unchecked: reviewStatus = .needsAction
+        case .loading: reviewStatus = .inProgress
+        case .failed: reviewStatus = .failed
+        case .stale: reviewStatus = .stale
+        case .current(let report):
+            reviewStatus = report.valid && report.configurationReady ? .complete : .failed
+        }
+        let hasWorkflow = configuration?.draft?.modules.contains(where: \.enabled) == true
+        let resources = configuration?.resourceChoices ?? []
+        let resourcesReady = !resources.isEmpty && resources.allSatisfy { $0.status == .bound }
+            && configuration?.runtimeAllowsActivation == true
+        let repositoryStatus: ProjectOnboardingStepStatus
+        if configuration?.isLoading == true {
+            repositoryStatus = .inProgress
+        } else if configuration?.loadFailed == true {
+            repositoryStatus = configuration?.detail == nil ? .failed : .stale
+        } else if let bindings = configuration?.detail?.bindings, !bindings.isEmpty {
+            repositoryStatus = bindings.allSatisfy(\.accessible) ? .complete : .failed
+        } else {
+            repositoryStatus = configuration?.errorMessage == nil ? .needsAction : .failed
+        }
         steps = [
-            Self.step(.repository, .complete),
-            Self.step(.workflow, .inProgress),
-            Self.step(.connections, .needsAction),
-            Self.step(.review, .readyForReview),
+            Self.step(.repository, repositoryStatus),
+            Self.step(.workflow, hasWorkflow && configuration?.draft?.workflowCommandsConfigured == true ? .readyForReview : .needsAction),
+            Self.step(.connections, resourcesReady ? .complete : .needsAction),
+            Self.step(.review, reviewStatus),
         ]
         reviewIsAccessible = true
         canActivate = false
@@ -86,9 +111,11 @@ public struct ProjectOnboardingPresentation: Sendable, Equatable {
 /// newer app can safely share this local store with an older one.
 public final class ProjectOnboardingNavigationStore {
     private let defaults: UserDefaults
+    private let namespace: String
 
-    public init(defaults: UserDefaults = .standard) {
+    public init(defaults: UserDefaults = .standard, namespace: String = "") {
         self.defaults = defaults
+        self.namespace = namespace
     }
 
     public func currentStep(for projectID: String) -> ProjectOnboardingStep {
@@ -102,7 +129,12 @@ public final class ProjectOnboardingNavigationStore {
         defaults.set(step.rawValue, forKey: key(for: projectID))
     }
 
+    public var lastProjectID: String? {
+        get { defaults.string(forKey: "\(namespace)dev.jarvis.last-project.v1") }
+        set { defaults.set(newValue, forKey: "\(namespace)dev.jarvis.last-project.v1") }
+    }
+
     public func key(for projectID: String) -> String {
-        "dev.jarvis.project-onboarding.v1.\(projectID)"
+        "\(namespace)dev.jarvis.project-onboarding.v1.\(projectID)"
     }
 }

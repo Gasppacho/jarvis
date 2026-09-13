@@ -4,8 +4,6 @@ import type {
   ExternalMappingCapability,
   AgentRuntimeGrant,
   ModuleHandlerCapabilities,
-  ModuleShellCommandInput,
-  ModuleShellCommandResult,
   PollCursorCapability,
   WorkItemReadinessCapability,
   ModuleWorkspace,
@@ -26,7 +24,7 @@ import {
   parseGitHubWorkItemRef,
   translateGitHubWorkItemResponse,
 } from "../../../../packages/modules/github/src/index.js";
-import { runBoundedProcess } from "../../../../packages/workspace/src/bounded-process-runner.js";
+import { runProjectCommand } from "./project-command.js";
 import type { ResolvedProjectSnapshot } from "../projects/store.js";
 import type { ConnectionDescriptor } from "../connections/registry.js";
 import type {
@@ -488,23 +486,6 @@ function linkedRepository(
       identity.owner.toLowerCase() === owner.toLowerCase() &&
       identity.name.toLowerCase() === repository.toLowerCase(),
   );
-}
-
-function runProjectCommand(input: ModuleShellCommandInput): Promise<ModuleShellCommandResult> {
-  const windows = process.platform === "win32";
-  return runBoundedProcess({
-    executable: windows ? "cmd.exe" : "/bin/sh",
-    args: windows ? ["/d", "/s", "/c", input.command] : ["-c", input.command],
-    cwd: input.cwd,
-    env: {
-      PATH: process.env["PATH"] ?? "",
-      LANG: "C",
-      LC_ALL: "C",
-    },
-    ...(input.signal === undefined ? {} : { signal: input.signal }),
-    ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
-    ...(input.outputLimitBytes === undefined ? {} : { outputLimitBytes: input.outputLimitBytes }),
-  });
 }
 
 function projectCommands(

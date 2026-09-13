@@ -89,10 +89,12 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
 
   app.post("/v1/projects", async (request, reply) => {
     const service = requireDatabaseReady(deps);
-    const body = request.body as { repositoryPath?: unknown; portableConfig?: unknown } | undefined;
+    const body = request.body as
+      { repositoryPath?: unknown; portableConfig?: unknown; name?: unknown } | undefined;
     const detail = service.importProject({
       repositoryPath: body?.repositoryPath,
       portableConfig: body?.portableConfig,
+      name: body?.name,
     });
     return reply.code(201).send(detail);
   });

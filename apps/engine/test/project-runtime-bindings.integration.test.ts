@@ -262,9 +262,29 @@ else { require("node:fs").writeFileSync(${JSON.stringify(join(dataRoot, "unexpec
   });
 
   it("does not require an unused optional runtime slot", async () => {
-    const engine = await startEngine();
+    const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-runtime-no-workflow-"));
+    roots.push(dataRoot);
+    const engine = await startEngine({ dataRoot });
     engines.push(engine);
     const project = await createProject(engine);
+    const undiscovered = await json<ResourceChoicesBody>(
+      engine,
+      `/v1/projects/${project.id}/binding-candidates`,
+    );
+    expect(undiscovered.agentRuntimes).toMatchObject({
+      required: true,
+      items: [],
+      readiness: { status: "unchecked" },
+    });
+    seedRuntime(dataRoot, {
+      id: "runtime/codex-default",
+      provider: "codex",
+      displayName: "Codex",
+      executablePath: process.execPath,
+      version: "0.153.4",
+      capabilities: ["agent.execute"],
+      status: "available",
+    });
     const configuration = portableConfiguration();
     configuration["modules"] = (configuration["modules"] as { instanceId: string }[]).filter(
       (instance) => instance.instanceId !== "development",
@@ -276,10 +296,31 @@ else { require("node:fs").writeFileSync(${JSON.stringify(join(dataRoot, "unexpec
       body: JSON.stringify({ portableConfig: configuration, writeToRepository: false }),
     });
     expect(save.status).toBe(200);
-    expect(
-      (await json<ResourceChoicesBody>(engine, `/v1/projects/${project.id}/binding-candidates`))
-        .agentRuntimes?.required,
-    ).toBe(false);
+    const choices = await json<ResourceChoicesBody>(
+      engine,
+      `/v1/projects/${project.id}/binding-candidates`,
+    );
+    expect(choices.agentRuntimes).toMatchObject({
+      required: false,
+      items: [
+        {
+          ref: "runtime/codex-default",
+          bound: false,
+          selectable: false,
+          readiness: { status: "unchecked" },
+        },
+      ],
+      readiness: { status: "unchecked", detail: expect.stringContaining("workflow") },
+    });
+    const selection = await engine.call(`/v1/projects/${project.id}/runtime-binding`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ref: "runtime/codex-default", approveEnvironment: true }),
+    });
+    expect(selection.status).toBe(400);
+    expect((await json<BindingsBody>(engine, `/v1/projects/${project.id}/bindings`)).slots).toEqual(
+      {},
+    );
   });
 
   it("offers registry runtimes per project and rejects a stale unavailable binding", async () => {

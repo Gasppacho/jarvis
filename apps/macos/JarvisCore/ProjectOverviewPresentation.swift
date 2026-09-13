@@ -28,43 +28,60 @@ public struct ProjectOverviewPresentation: Sendable, Equatable {
         }
     }
 
+    public static func focusedIssue(_ overview: ProjectOverview) -> ProjectOverview.Issue? {
+        overview.issues.first { $0.status == .inProgress && $0.executionId != nil }
+            ?? overview.issues.filter { $0.executionId != nil }.max {
+                ($0.executionStartedAt ?? .distantPast) < ($1.executionStartedAt ?? .distantPast)
+            }
+    }
+
+    public static func workStatusLabel(_ issue: ProjectOverview.Issue) -> String {
+        if issue.status == .inProgress { return "En cours" }
+        return switch issue.lastExecutionStatus {
+        case "failed", "timed-out": "Échec à examiner"
+        case "cancelled": "Annulée"
+        case "completed": "Exécution terminée"
+        default: issueStatusLabel(issue.status)
+        }
+    }
+
     public static func issueStatusLabel(_ status: ProjectOverview.Issue.Status) -> String {
         switch status {
-        case .eligible: "Eligible"
-        case .waiting: "Waiting"
-        case .inProgress: "Already running"
-        case .blocked: "Blocked by dependencies"
-        case .ineligible: "Not eligible"
-        case .unavailable: "Unable to verify"
+        case .eligible: "Prête"
+        case .waiting: "En attente"
+        case .inProgress: "En cours"
+        case .blocked: "Bloquée par des dépendances"
+        case .ineligible: "Non prête"
+        case .unavailable: "Impossible à vérifier"
         }
     }
 
     public static func pollingLabel(_ state: ProjectOverview.PollingState) -> String {
         switch state {
-        case .live: "Live"
-        case .reconnecting: "Reconnecting…"
-        case .failed: "Connection failed"
-        case .paused: "New work paused"
-        case .unavailable: "Not connected"
+        case .live: "À jour"
+        case .reconnecting: "Reconnexion…"
+        case .failed: "Connexion en échec"
+        case .paused: "Nouveaux départs en pause"
+        case .unavailable: "Non connecté"
         }
     }
 
     public static func projectStatusLabel(_ status: ProjectOverview.Status) -> String {
         switch status {
-        case .draft: "Draft"
-        case .ready: "Ready"
-        case .running: "Running"
-        case .paused: "Paused"
-        case .degraded: "Degraded"
+        case .draft: "Brouillon"
+        case .ready: "En attente d’une issue prête"
+        case .running: "En cours"
+        case .paused: "En pause"
+        case .degraded: "À examiner"
         }
     }
 
     public static func primaryActionLabel(_ action: ProjectOverview.PrimaryAction) -> String {
         switch action {
-        case .activate: "Activate"
-        case .pause: "Pause new work"
-        case .resume: "Resume new work"
-        case .refresh: "Refresh"
+        case .activate: "Activer"
+        case .pause: "Mettre les nouveaux départs en pause"
+        case .resume: "Reprendre les nouveaux départs"
+        case .refresh: "Actualiser"
         }
     }
 }

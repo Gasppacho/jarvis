@@ -5,3 +5,4 @@ dist/
 *.tsbuildinfo
 .vitest/
 apps/macos/.swiftpm/
+graft/

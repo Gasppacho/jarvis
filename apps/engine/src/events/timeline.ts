@@ -74,6 +74,32 @@ export class EventJournalReader {
     return this.readRows(projectId, query).map(toDetail);
   }
 
+  /** Latest work request for each subject, independently of later polling events. */
+  public latestRequestsBySubject(
+    projectId: string,
+    types: readonly string[],
+    limit: number,
+  ): EventSummary[] {
+    const rows = this.db
+      .prepare(
+        `
+      WITH ranked AS (
+        SELECT id, type, version, kind, occurred_at, envelope, correlation_id,
+          ROW_NUMBER() OVER (
+            PARTITION BY json_extract(envelope, '$.subject.ref')
+            ORDER BY occurred_at DESC, id DESC
+          ) AS rank
+        FROM events
+        WHERE project_id = @projectId AND type IN (SELECT value FROM json_each(@types))
+      )
+      SELECT id, type, version, kind, occurred_at, envelope, correlation_id
+      FROM ranked WHERE rank = 1 ORDER BY occurred_at DESC, id DESC LIMIT @limit
+    `,
+      )
+      .all({ projectId, types: JSON.stringify(types), limit }) as EventRow[];
+    return rows.map(toSummary);
+  }
+
   public findById(projectId: string, eventId: string): EventDetail | undefined {
     const row = this.db
       .prepare(

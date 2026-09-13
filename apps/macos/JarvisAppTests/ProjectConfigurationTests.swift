@@ -526,6 +526,8 @@ final class ProjectConfigurationTests: XCTestCase {
             state.compositionGuide?.startingPoints.map(\.displayName),
             ["GitHub Development", "Custom composition"])
         XCTAssertEqual(state.compositionGuide?.modulePackages.count, 4)
+        XCTAssertEqual(state.agentRuntimes?.required, false)
+        XCTAssertEqual(state.runtimePresentation.status, "Choisissez d’abord un workflow")
 
         configuration.apply(.addSlot(name: "custom-slot", requirement: "agent.execute"), projectId: imported.id, packages: catalog.packages)
         let slotsOnly = configuration.state(for: imported.id).draft
@@ -542,9 +544,12 @@ final class ProjectConfigurationTests: XCTestCase {
             state.draft?.modules.map(\.instanceId),
             ["github", "automation-rules", "development"])
         XCTAssertEqual(state.localBindings?.slots, [])
+        XCTAssertEqual(state.agentRuntimes?.required, true)
         let proposedDevelopment = try XCTUnwrap(state.draft?.modules.first { $0.instanceId == "development" })
         XCTAssertEqual(proposedDevelopment.configurationValues["validationOrder"], "[]")
         XCTAssertTrue(proposedDevelopment.configurationValues["preparation", default: ""].isEmpty)
+        XCTAssertFalse(state.draft?.workflowCommandsConfigured ?? true)
+        XCTAssertEqual(state.compositionReview?.githubDevelopmentFlow, true)
 
         XCTAssertEqual(
             state.resourceChoices.map(\.slotId),
@@ -597,8 +602,26 @@ final class ProjectConfigurationTests: XCTestCase {
         configuration.setCommand(projectId: imported.id, name: "verify", command: "pnpm verify")
         configuration.selectValidationCommand(projectId: imported.id, moduleID: commandModule.id, name: "verify", selected: true)
         XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.first { $0.id == commandModule.id }?.configurationValues["validationOrder"], #"["verify"]"#)
+        configuration.setCommand(projectId: imported.id, name: "test", command: "pnpm test")
+        configuration.selectValidationCommand(projectId: imported.id, moduleID: commandModule.id, name: "test", selected: true)
         configuration.setCommand(projectId: imported.id, name: "verify", command: "pnpm verify --changed")
-        XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.first { $0.id == commandModule.id }?.configurationValues["validationOrder"], "[]")
+        XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.first { $0.id == commandModule.id }?.configurationValues["validationOrder"], #"["test"]"#, "editing verify must preserve the other confirmed validation")
+        configuration.selectValidationCommand(projectId: imported.id, moduleID: commandModule.id, name: "test", selected: false)
+        configuration.selectValidationCommand(projectId: imported.id, moduleID: commandModule.id, name: "verify", selected: true)
+        configuration.setCommand(projectId: imported.id, name: "install", command: "pnpm install --frozen-lockfile")
+        configuration.apply(.setModuleConfiguration(commandModule.id, "preparation", "install"), projectId: imported.id, packages: catalog.packages)
+        configuration.setCommand(projectId: imported.id, name: "install", command: "pnpm install --frozen-lockfile")
+        XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.first { $0.id == commandModule.id }?.configurationValues["preparation"], "install", "an identical command is not a change requiring reconfirmation")
+        let confirmedSave = await configuration.saveDraft(projectId: imported.id, writeToRepository: false)
+        XCTAssertNotNil(confirmedSave)
+        await configuration.refresh(projectId: imported.id, packages: catalog.packages)
+        let reopenedDevelopment = try XCTUnwrap(configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "development" })
+        XCTAssertEqual(reopenedDevelopment.configurationValues["preparation"], "install")
+        XCTAssertEqual(reopenedDevelopment.configurationValues["validationOrder"], #"["verify"]"#)
+        XCTAssertTrue(configuration.state(for: imported.id).draft?.workflowCommandsConfigured == true)
+        configuration.setCommand(projectId: imported.id, name: "install", command: "pnpm install --frozen-lockfile --offline")
+        XCTAssertFalse(configuration.state(for: imported.id).draft?.workflowCommandsConfigured ?? true)
+        XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.first { $0.id == reopenedDevelopment.id }?.validationOrder, ["verify"])
         configuration.setReadyLabel(projectId: imported.id, label: "approved-work")
         XCTAssertTrue(configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "automation-rules" }?.automationRules?.first?.matchJSON.contains("approved-work") == true)
         let labelModule = try XCTUnwrap(configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "github" })
@@ -633,6 +656,7 @@ final class ProjectConfigurationTests: XCTestCase {
         await configuration.refreshCompositionChoices(projectId: imported.id)
         state = configuration.state(for: imported.id)
         XCTAssertEqual(state.draft?.name, "Preserved name")
+        XCTAssertEqual(state.compositionReview?.githubDevelopmentFlow, false)
         XCTAssertEqual(
             state.compositionGuide?.moduleInstances.first(where: {
                 $0.instanceId == "development"
@@ -1044,6 +1068,7 @@ final class ProjectConfigurationTests: XCTestCase {
             portableConfig: invalid,
             writeToRepository: false)
         XCTAssertNil(saveResult)
+        XCTAssertTrue(configuration.state(for: imported.id).saveFailed)
         let message = try XCTUnwrap(
             configuration.state(for: imported.id).errorMessage)
         XCTAssertTrue(message.contains("project.config-invalid"))
@@ -1093,6 +1118,9 @@ final class ProjectConfigurationTests: XCTestCase {
         let freshState = configuration.state(for: imported.id)
         XCTAssertNotNil(freshState.compositionReview, freshState.errorMessage ?? "missing review")
         XCTAssertFalse(freshState.compositionReview?.readyToValidate ?? true)
+        XCTAssertEqual(freshState.saveStatus, "Enregistré")
+        XCTAssertEqual(ProjectOnboardingPresentation(project: imported, configuration: freshState).steps.first?.status, .complete)
+        XCTAssertEqual(ProjectOnboardingPresentation(project: imported, configuration: freshState).steps[1].status, .needsAction)
 
         let incomplete = try projectConfiguration(projectId: imported.id)
         let saveResult = await configuration.saveConfiguration(
@@ -1137,9 +1165,29 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertTrue(presentation.isSaveEnabled)
         XCTAssertFalse(presentation.isReadyForValidation)
         XCTAssertEqual(state.draft?.name, "Unsaved review edit")
+        XCTAssertEqual(state.saveStatus, "Modifications à enregistrer")
+        XCTAssertEqual(ProjectOnboardingPresentation(project: imported, configuration: state).steps.last?.status, .stale)
+
+        let saving = Task { await configuration.saveDraft(projectId: imported.id, writeToRepository: false) }
+        for _ in 0..<100 where !configuration.state(for: imported.id).isSaving {
+            await Task.yield()
+        }
+        XCTAssertTrue(configuration.state(for: imported.id).isSaving, "the real save must be in flight before editing")
+        configuration.editDraft(projectId: imported.id) { $0.name = "Edited while saving" }
+        let saved = await saving.value
+        XCTAssertEqual(saved?.project.name, "Unsaved review edit")
+        state = configuration.state(for: imported.id)
+        XCTAssertEqual(state.draft?.name, "Edited while saving")
+        XCTAssertEqual(state.saveStatus, "Modifications à enregistrer")
+        XCTAssertNotEqual(state.compositionReview?.compositionGuide.startingPoints.first?.template?.metadata.name,
+                          "Unsaved review edit", "the saved snapshot must not certify the newer edit")
 
         projects.releaseRepositoryAccess()
         await session.shutdown()
+        await configuration.refresh(projectId: imported.id)
+        state = configuration.state(for: imported.id)
+        XCTAssertNotNil(state.detail, "a lost connection keeps the last repository snapshot")
+        XCTAssertEqual(ProjectOnboardingPresentation(project: imported, configuration: state).steps.first?.status, .stale)
     }
 
     private func schemaFixturePackage(

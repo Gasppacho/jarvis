@@ -10,24 +10,30 @@ struct ModuleCatalogView: View {
         Group {
             switch moduleCatalog.state {
             case .idle, .loading:
-                ProgressView("Loading Module Packages…")
+                ProgressView("Chargement des modules…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .failed(let message):
                 ContentUnavailableView {
-                    Label("Module catalogue unavailable", systemImage: "exclamationmark.triangle")
+                    Label("Catalogue indisponible", systemImage: "exclamationmark.triangle")
                 } description: {
                     Text(message)
+                } actions: {
+                    Button("Réessayer") { Task { await moduleCatalog.refresh() } }
+                        .accessibilityIdentifier("catalogue.retry")
                 }
             case .loaded:
                 catalogue
             }
         }
-        .navigationTitle("Module Catalog")
+        .navigationTitle("Catalogue")
     }
 
     private var catalogue: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
+                Text("Catalogue").font(.title2.bold())
+                Text("Les modules disponibles composent vos workflows. Pour commencer, choisissez un projet puis l’étape Workflow.")
+                    .foregroundStyle(.secondary)
                 ForEach(moduleCatalog.packages) { package in
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(alignment: .firstTextBaseline) {
@@ -38,15 +44,17 @@ struct ModuleCatalogView: View {
                                 .font(.callout.monospaced())
                                 .foregroundStyle(.secondary)
                         }
-                        Text(package.description)
+                        Text(description(for: package))
                             .foregroundStyle(.secondary)
 
-                        Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 8) {
-                            ForEach(package.presentationFields) { field in
-                                row(field.label, field.value)
+                        DisclosureGroup("Détails techniques") {
+                            Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 8) {
+                                ForEach(package.presentationFields) { field in
+                                    row(field.label, field.value)
+                                }
                             }
+                            .font(.callout)
                         }
-                        .font(.callout)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(16)
@@ -55,6 +63,16 @@ struct ModuleCatalogView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(24)
+        }
+    }
+
+    private func description(for package: ModulePackage) -> String {
+        switch package.id {
+        case "jarvis.module.github": "Observe les issues GitHub et réalise les actions demandées sur les Pull Requests."
+        case "jarvis.module.automation-rules": "Transforme les événements qui correspondent aux règles du projet en demandes de travail."
+        case "jarvis.module.development": "Développe une issue dans un dossier Git isolé, vérifie le résultat et pousse les modifications."
+        case "jarvis.module.change-request-review": "Examine une révision de Pull Request et conserve un verdict local."
+        default: package.description
         }
     }
 

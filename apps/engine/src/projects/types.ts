@@ -112,7 +112,9 @@ export type RepositoryDiscovery = Omit<
   components["schemas"]["RepositoryDiscovery"],
   "suggested"
 > & {
-  readonly suggested: SuggestedProjectConfig;
+  readonly suggested: Omit<SuggestedProjectConfig, "repositories"> & {
+    readonly repositories: StoredPortableProjectConfiguration["repositories"];
+  };
 };
 
 export type {

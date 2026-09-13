@@ -2,8 +2,7 @@ import AppKit
 import JarvisCore
 import SwiftUI
 
-/// The ready shell: the project sidebar (UX "wizard étape 1") and the project
-/// detail. `NavigationSplitView` because the sidebar list is the navigation.
+/// The single project sidebar and its guided or advanced content.
 struct RootView: View {
     let projects: ProjectsModel
     let projectConfiguration: ProjectConfigurationModel
@@ -22,6 +21,7 @@ struct RootView: View {
     var body: some View {
         NavigationSplitView {
             sidebar
+                .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 280)
         } detail: {
             detail
         }
@@ -37,7 +37,7 @@ struct RootView: View {
                 set: {
                     guard !$0 else { return }
                     switch projects.importState {
-                    case .inspecting, .confirm, .failed:
+                    case .inspecting, .confirm, .existing, .failed:
                         projects.cancelImport()
                     case .idle, .saving:
                         break
@@ -45,7 +45,14 @@ struct RootView: View {
                 }
             )
         ) {
-            ProjectImportSheet(projects: projects, chooseAnotherFolder: presentFolderPicker)
+            ProjectImportSheet(projects: projects, chooseAnotherFolder: presentFolderPicker) { project, newlyImported in
+                selection = .project(project.id)
+                Task {
+                    if !newlyImported {
+                        await projects.refresh()
+                    }
+                }
+            }
         }
         .onChange(of: projects.importState) { _, newState in
             if case .idle = newState { pendingImport = false }
@@ -57,33 +64,49 @@ struct RootView: View {
                     selectedProjectID: projectId,
                     availableProjectIDs: projectIds)
                 if reconciled == nil { selection = nil }
-            } else if let firstProject = projects.projects.first {
-                selection = .project(firstProject.id)
+            } else if selection == nil, let firstProject = projects.projects.first {
+                let previous = projects.onboardingNavigation.lastProjectID
+                selection = .project(previous.flatMap { projectIds.contains($0) ? $0 : nil } ?? firstProject.id)
             }
+        }
+        .onChange(of: selectedProjectID) { _, id in
+            if let id { projects.onboardingNavigation.lastProjectID = id }
         }
     }
 
     private var sidebar: some View {
-        List(selection: $selection) {
-            Section("Modules") {
-                Label("Module Catalog", systemImage: "shippingbox")
-                    .tag(SidebarSelection.moduleCatalog)
-            }
-            Section("Connections") {
-                Label("Connections", systemImage: "link")
-                    .tag(SidebarSelection.connections)
-            }
-            Section("Projects") {
+        List(selection: Binding(
+            get: {
+                switch selection {
+                case .projectAdvanced(let id), .projectGuide(let id): return .project(id)
+                default: return selection
+                }
+            },
+            set: { selection = $0 }
+        )) {
+            Section("Projets") {
+                Button(action: presentFolderPicker) {
+                    Label("Ajouter un projet", systemImage: "plus.circle")
+                }
+                .disabled(projects.isRefreshing || !importStateAllowsNewPicker)
+                .accessibilityIdentifier("project.add")
+                .keyboardShortcut("n", modifiers: .command)
                 ForEach(projects.projects) { project in
-                    ProjectRow(project: project).tag(SidebarSelection.project(project.id))
+                    ProjectRow(project: project, isSelected: selectedProjectID == project.id).tag(SidebarSelection.project(project.id))
                 }
                 if projects.projects.isEmpty {
                     ContentUnavailableView {
-                        Label("No projects yet", systemImage: "tray")
+                        Label("Aucun projet", systemImage: "tray")
                     } description: {
-                        Text("Add a repository to import it as a draft project.")
+                        Text("Ajoutez un dépôt pour configurer votre premier projet.")
                     }
                 }
+            }
+            Section("Bibliothèque") {
+                Label("Catalogue", systemImage: "shippingbox")
+                    .tag(SidebarSelection.moduleCatalog)
+                Label("Comptes et connexions", systemImage: "link")
+                    .tag(SidebarSelection.connections)
             }
         }
         .overlay(alignment: .top) {
@@ -102,7 +125,7 @@ struct RootView: View {
                 Button {
                     presentFolderPicker()
                 } label: {
-                    Label("Importer un repository", systemImage: "folder.badge.plus")
+                    Label("Ajouter un projet", systemImage: "folder.badge.plus")
                 }
                 .disabled(projects.isRefreshing || !importStateAllowsNewPicker)
             }
@@ -129,15 +152,17 @@ struct RootView: View {
             ModuleCatalogView(moduleCatalog: moduleCatalog)
         case .connections:
             ConnectionsView(model: connections)
-        case .project(let projectId):
+        case .project(let projectId), .projectGuide(let projectId):
             if let project = projects.projects.first(where: { $0.id == projectId }) {
-                if project.status == .draft {
+                if project.status == .draft || selection == .projectGuide(project.id) {
                     ProjectOnboardingView(
+                        projects: projects,
                         projectConfiguration: projectConfiguration,
                         moduleCatalog: moduleCatalog,
                         connections: connections,
                         project: project,
                         openAdvanced: { selection = .projectAdvanced(project.id) })
+                        .id(project.id)
                 } else {
                     ProjectDetailView(
                         projects: projects,
@@ -152,40 +177,51 @@ struct RootView: View {
                 }
             } else {
                 ContentUnavailableView(
-                    "Project unavailable", systemImage: "folder.badge.questionmark",
-                    description: Text("Refresh the project list and try again."))
+                    "Projet indisponible", systemImage: "folder.badge.questionmark",
+                    description: Text("Actualisez la liste des projets puis réessayez."))
             }
         case .projectAdvanced(let projectId):
             if let project = projects.projects.first(where: { $0.id == projectId }) {
-                ProjectDetailView(
-                    projects: projects,
-                    projectConfiguration: projectConfiguration,
-                    moduleCatalog: moduleCatalog,
-                    overview: overview,
-                    timeline: timeline,
-                    executionDetail: executionDetail,
-                    projectGraph: projectGraph,
-                    deadLetters: deadLetters,
-                    project: project)
+                VStack(alignment: .leading, spacing: 0) {
+                    Button {
+                        selection = .projectGuide(project.id)
+                    } label: {
+                        Label("Revenir à la configuration guidée", systemImage: "arrow.left")
+                    }
+                    .padding(16)
+                    .accessibilityIdentifier("project.return-to-guide")
+                    Divider()
+                    ProjectDetailView(
+                        projects: projects,
+                        projectConfiguration: projectConfiguration,
+                        moduleCatalog: moduleCatalog,
+                        overview: overview,
+                        timeline: timeline,
+                        executionDetail: executionDetail,
+                        projectGraph: projectGraph,
+                        deadLetters: deadLetters,
+                        project: project)
+                }
+                .id(project.id)
             } else {
                 ContentUnavailableView(
-                    "Project unavailable", systemImage: "folder.badge.questionmark",
-                    description: Text("Refresh the project list and try again."))
+                    "Projet indisponible", systemImage: "folder.badge.questionmark",
+                    description: Text("Actualisez la liste des projets puis réessayez."))
             }
         case nil:
             if projects.projects.isEmpty {
                 FirstLaunchView(importRepository: presentFolderPicker)
             } else {
                 ContentUnavailableView(
-                    "No selection", systemImage: "sidebar.left",
-                    description: Text("Pick the module catalogue or a project in the sidebar."))
+                    "Choisissez un projet", systemImage: "sidebar.left",
+                    description: Text("Retrouvez vos projets et la bibliothèque dans la barre latérale."))
             }
         }
     }
 
     private var selectedProjectID: String? {
         switch selection {
-        case .project(let projectID), .projectAdvanced(let projectID): projectID
+        case .project(let projectID), .projectGuide(let projectID), .projectAdvanced(let projectID): projectID
         case .moduleCatalog, .connections, nil: nil
         }
     }
@@ -197,8 +233,8 @@ struct RootView: View {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.prompt = "Import"
-        panel.message = "Pick the folder that contains the repository."
+        panel.prompt = "Choisir ce dossier"
+        panel.message = "Choisissez le dossier de votre dépôt Git."
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task { await projects.inspect(at: url) }
     }
@@ -208,27 +244,41 @@ private enum SidebarSelection: Hashable {
     case moduleCatalog
     case connections
     case project(String)
+    case projectGuide(String)
     case projectAdvanced(String)
 }
 
 private struct ProjectRow: View {
     let project: Project
+    let isSelected: Bool
 
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(project.name)
-                Text(project.status == .draft ? "Draft" : "Project")
+                Text(project.status == .draft ? "Configuration à terminer" : "Projet")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Text(project.status.rawValue)
+            Text(statusTitle)
                 .font(.caption.weight(.medium))
-                .foregroundStyle(statusColor)
+                .foregroundStyle(isSelected ? Color.primary : statusColor)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 2)
-                .background(statusColor.opacity(0.15), in: Capsule())
+                .background((isSelected ? Color.primary : statusColor).opacity(0.15), in: Capsule())
+        }
+    }
+
+    private var statusTitle: String {
+        switch project.status {
+        case .draft: "Brouillon"
+        case .valid: "Vérifié"
+        case .active: "Actif"
+        case .paused: "En pause"
+        case .invalid: "À corriger"
+        case .degraded: "Attention requise"
+        case .archived: "Archivé"
         }
     }
 

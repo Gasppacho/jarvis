@@ -21,9 +21,9 @@ const MAX_CHECKS = 100;
 const STEP_LABELS = {
   "issue-received": "Issue reçue",
   "eligibility-confirmed": "Éligibilité confirmée",
-  "workspace-prepared": "Workspace préparé",
-  "agent-running": "Agent en cours",
-  checks: "Checks",
+  "workspace-prepared": "Préparation du projet",
+  "agent-running": "Développement",
+  checks: "Vérifications",
   "commit-push": "Commit et push",
   "pull-request": "Création de la Pull Request",
 } as const;
@@ -68,6 +68,22 @@ export function buildExecutionDetail(input: ExecutionDetailInput): Detail {
           ),
         );
   const failure = buildFailure(failedExecution, failureEvent, input.retryDeliveryId);
+  if (failure?.code === "execution.failed") {
+    const phase = checkpointEntries.findLast(
+      ({ execution, checkpoint }) =>
+        execution.id === failedExecution?.id && checkpoint.type !== "agent.message",
+    )?.checkpoint.type;
+    failure.stepId =
+      phase === "validation.started" || phase === "validation.failed"
+        ? "checks"
+        : phase === "preparation.started" || phase === "preparation.failed"
+          ? "workspace-prepared"
+          : phase === "commit.created"
+            ? "commit-push"
+            : phase?.startsWith("agent.")
+              ? "agent-running"
+              : null;
+  }
   const createdPullRequest = input.events.find(
     (event) => event.type === "scm.change-request.created",
   );
@@ -82,9 +98,25 @@ export function buildExecutionDetail(input: ExecutionDetailInput): Detail {
     leases: input.leases,
     checks,
     failure,
-    pullRequestCreated: createdPullRequest !== undefined,
-    pullRequestRequested: requestedPullRequest !== undefined,
   });
+  const failedCheck =
+    steps.find((step) => step.id === "checks")?.status === "proved"
+      ? undefined
+      : checks.findLast((check) => check.status === "failed");
+  const validationFailure =
+    failedCheck === undefined || latestExecution?.status === "cancelled"
+      ? null
+      : {
+          code: "git.validation-failed",
+          message: `La commande ${failedCheck.name} a échoué (tentative ${failedCheck.attempt}).`,
+          retryable: false,
+          impact:
+            "Aucune modification n’est publiée tant que toutes les vérifications n’ont pas réussi.",
+          nextAction: activeExecution
+            ? "La tentative continue ; le résultat précédent reste dans l’historique ci-dessous."
+            : "Consultez la sortie de la commande pour corriger la cause avant de relancer.",
+          stepId: "checks" as const,
+        };
   const detailEvents = input.events.slice(0, MAX_EVENTS).map(toEvent);
   const inputEventIds = unique(executions.map((execution) => execution.inputEventId));
   const causationIds = unique(
@@ -128,7 +160,15 @@ export function buildExecutionDetail(input: ExecutionDetailInput): Detail {
       causationIds,
       events: detailEvents,
     },
-    failure,
+    failure:
+      failure?.code === "git.validation-failed" && validationFailure !== null
+        ? {
+            ...failure,
+            message: validationFailure.message,
+            impact: validationFailure.impact,
+            nextAction: validationFailure.nextAction,
+          }
+        : (failure ?? validationFailure),
     retryDeliveryId: input.retryDeliveryId,
     cancellableExecutionId: activeExecution?.id ?? null,
   };
@@ -204,65 +244,84 @@ function buildChecks(
     readonly checkpoint: ExecutionCheckpoint;
   }[],
 ): DetailCheck[] {
-  const starts = new Map<
-    string,
-    { execution: LedgerExecutionSummary; checkpoint: ExecutionCheckpoint }
-  >();
-  const checks = new Map<string, DetailCheck>();
-  for (const entry of entries) {
-    const { checkpoint, execution } = entry;
-    if (
-      checkpoint.type === "validation.started" &&
-      typeof checkpoint.payload["check"] === "string"
-    ) {
-      const name = truncate(sanitizeText(String(checkpoint.payload["check"])), 256).value;
-      starts.set(name, entry);
-      checks.set(name, {
+  const checks: DetailCheck[] = [];
+  let executionId: string | undefined;
+  let attempt = 1;
+  const current = new Map<string, DetailCheck>();
+  for (const { checkpoint, execution } of entries) {
+    if (execution.id !== executionId) {
+      executionId = execution.id;
+      attempt = 1;
+      current.clear();
+    }
+    if (checkpoint.type === "agent.repair-started") {
+      attempt += 1;
+      current.clear();
+    }
+    const name = truncate(
+      sanitizeText(stringValue(checkpoint.payload, "check") ?? "Validation"),
+      256,
+    ).value;
+    const add = (name: string): DetailCheck => {
+      const check: DetailCheck = {
         name,
+        attempt,
         status: "unavailable",
         durationMs: null,
-        startedAt: checkpoint.occurredAt,
+        startedAt: null,
         completedAt: null,
         output: null,
         executionId: execution.id,
-      });
+      };
+      checks.push(check);
+      current.set(name, check);
+      return check;
+    };
+    if (checkpoint.type === "validation.started") {
+      // Older journals did not record repairs. A repeated check starts a new plan attempt.
+      if (current.has(name)) {
+        attempt += 1;
+        current.clear();
+      }
+      const check = add(name);
+      check.status =
+        execution.status === "cancelled"
+          ? "cancelled"
+          : execution.status === "running" || execution.status === "cancelling"
+            ? "running"
+            : "unavailable";
+      check.startedAt = checkpoint.occurredAt;
     }
-    if (checkpoint.type === "validation.failed") {
-      const name = truncate(
-        sanitizeText(stringValue(checkpoint.payload, "check") ?? "Validation"),
-        256,
-      ).value;
-      const start = starts.get(name);
-      checks.set(name, {
-        name,
-        status: "failed",
-        durationMs: duration(start?.checkpoint.occurredAt ?? null, checkpoint.occurredAt),
-        startedAt: start?.checkpoint.occurredAt ?? null,
-        completedAt: checkpoint.occurredAt,
-        output: truncate(sanitizeText(stringValue(checkpoint.payload, "output") ?? ""), MAX_EXCERPT)
-          .value,
-        executionId: execution.id,
-      });
+    if (checkpoint.type === "validation.failed" || checkpoint.type === "validation.completed") {
+      const check = current.get(name) ?? add(name);
+      check.status = checkpoint.type === "validation.completed" ? "passed" : "failed";
+      check.completedAt = checkpoint.occurredAt;
+      check.durationMs = duration(check.startedAt, check.completedAt);
+      check.output =
+        check.status === "failed"
+          ? truncate(sanitizeText(stringValue(checkpoint.payload, "output") ?? ""), MAX_EXCERPT)
+              .value
+          : null;
     }
-    if (checkpoint.type === "commit.created") {
-      const validation = checkpoint.payload["validation"];
-      if (isValidationSnapshot(validation)) {
-        for (const command of validation.commands.slice(0, MAX_CHECKS)) {
-          const start = starts.get(command.name);
-          checks.set(command.name, {
-            name: truncate(sanitizeText(command.name), 256).value,
-            status: "passed",
-            durationMs: command.durationMs,
-            startedAt: start?.checkpoint.occurredAt ?? null,
-            completedAt: checkpoint.occurredAt,
-            output: null,
-            executionId: execution.id,
-          });
-        }
+    if (
+      checkpoint.type === "commit.created" &&
+      isValidationSnapshot(checkpoint.payload["validation"])
+    ) {
+      const commands = checkpoint.payload["validation"].commands.slice(0, MAX_CHECKS);
+      if ([...current.values()].some((check) => check.status === "failed")) {
+        attempt += 1;
+        current.clear();
+      }
+      for (const command of commands) {
+        const name = truncate(sanitizeText(command.name), 256).value;
+        const check = current.get(name) ?? add(name);
+        check.status = "passed";
+        check.durationMs = command.durationMs;
+        check.completedAt ??= checkpoint.occurredAt;
       }
     }
   }
-  return [...checks.values()].slice(0, MAX_CHECKS);
+  return checks.slice(-MAX_CHECKS);
 }
 
 function buildSteps(input: {
@@ -275,153 +334,209 @@ function buildSteps(input: {
   readonly leases: ReadonlyMap<string, WorkspaceLease | undefined>;
   readonly checks: readonly DetailCheck[];
   readonly failure: DetailFailure | null;
-  readonly pullRequestCreated: boolean;
-  readonly pullRequestRequested: boolean;
 }): DetailStep[] {
   const event = (types: readonly string[]) =>
     input.events.find((item) => types.includes(item.type));
-  const checkpoint = (type: ExecutionCheckpoint["type"]) =>
-    input.checkpoints.find((item) => item.checkpoint.type === type);
-  const latestActive = input.executions.find(
+  const checkpoint = (...types: ExecutionCheckpoint["type"][]) =>
+    input.checkpoints.findLast((item) => types.includes(item.checkpoint.type));
+  const latest = input.executions.at(-1);
+  const cancelled = latest?.status === "cancelled";
+  const active = input.executions.find(
     (execution) => execution.status === "running" || execution.status === "cancelling",
   );
-  const cancelled = input.executions.at(-1)?.status === "cancelled";
-  const failedStep = input.failure?.stepId ?? null;
-  const result = (id: StepId, evidence: Evidence | undefined, detail: string): DetailStep => {
-    const failed = failedStep === id && !cancelled;
-    const status = failed
-      ? "failed"
-      : evidence !== undefined
-        ? evidence.active
-          ? "active"
-          : "proved"
-        : cancelled && id === "agent-running"
-          ? "cancelled"
-          : "unavailable";
-    return {
-      id,
-      label: STEP_LABELS[id],
-      status,
-      occurredAt: evidence?.occurredAt ?? null,
-      completedAt: evidence?.completedAt ?? null,
-      executionId: evidence?.executionId ?? null,
-      detail,
-    };
-  };
-
   const received = event(["scm.work-item.tag-added", "scm.work-item.ready"]);
   const ready = event(["scm.work-item.ready", "development.implementation.requested"]);
-  const preparation = checkpoint("preparation.completed");
-  const leaseEntry = input.executions
-    .map((execution) => ({ execution, lease: input.leases.get(execution.id) }))
-    .find((entry) => entry.lease !== undefined);
-  const agent = checkpoint("agent.started");
-  const validation = input.checks[0];
+  const preparation = checkpoint(
+    "preparation.started",
+    "preparation.completed",
+    "preparation.failed",
+  );
+  const agent = checkpoint("agent.started", "agent.repair-started");
+  const validation = checkpoint("validation.started", "validation.failed", "validation.completed");
   const commit = checkpoint("commit.created");
   const pushed = checkpoint("branch.pushed");
   const requested = event(["scm.change-request.creation-requested"]);
   const created = event(["scm.change-request.created"]);
-  const terminal =
-    input.executions.find((execution) => execution.id === latestActive?.id) ??
-    input.executions.at(-1);
-
+  const after = (left: typeof agent, right: typeof agent) =>
+    left !== undefined &&
+    (right === undefined || input.checkpoints.indexOf(left) > input.checkpoints.indexOf(right));
+  const agentActive =
+    agent !== undefined && active?.id === agent.execution.id && after(agent, validation);
+  const validationStart = input.checkpoints.find(
+    (entry) =>
+      entry.checkpoint.type === "validation.started" &&
+      agent !== undefined &&
+      entry.execution.id === agent.execution.id &&
+      after(entry, agent),
+  );
+  const validationCancelled =
+    cancelled && validation?.checkpoint.type === "validation.started" && after(validation, agent);
+  const latestCheck = input.checks.at(-1);
+  const currentChecks = input.checks.filter(
+    (check) =>
+      check.executionId === latestCheck?.executionId && check.attempt === latestCheck?.attempt,
+  );
+  const checksPassed =
+    (commit !== undefined && !after(agent, commit) && !after(validation, commit)) ||
+    (validation?.checkpoint.type === "validation.completed" &&
+      validation.checkpoint.payload["planComplete"] === true &&
+      !after(agent, validation) &&
+      currentChecks.every((check) => check.status === "passed"));
+  const failedCheck = checksPassed
+    ? undefined
+    : input.checks.findLast((check) => check.status === "failed");
+  const fromCheckpoint = (entry: typeof agent, completed = true): Evidence | undefined =>
+    entry === undefined
+      ? undefined
+      : evidence(
+          entry.checkpoint.occurredAt,
+          completed ? entry.checkpoint.occurredAt : null,
+          entry.execution.id,
+        );
+  const fromEvent = (entry: EventDetail | undefined, completed = true): Evidence | undefined =>
+    entry === undefined
+      ? undefined
+      : evidence(
+          entry.occurredAt,
+          completed ? entry.occurredAt : null,
+          executionForEvent(entry, input.executions),
+        );
+  const result = (
+    id: StepId,
+    proof: Evidence | undefined,
+    status: DetailStep["status"],
+    detail: string,
+  ): DetailStep => ({
+    id,
+    label: STEP_LABELS[id],
+    status:
+      cancelled && (status === "active" || status === "repairing")
+        ? "cancelled"
+        : !cancelled && input.failure?.stepId === id
+          ? "failed"
+          : status,
+    occurredAt: proof?.occurredAt ?? null,
+    completedAt: proof?.completedAt ?? null,
+    executionId: proof?.executionId ?? null,
+    detail:
+      cancelled && (status === "active" || status === "repairing" || status === "cancelled")
+        ? "Cette étape a été interrompue par l’annulation. Les résultats précédents restent dans l’historique."
+        : detail,
+  });
+  const notStarted = "Pas encore commencé";
+  const lease = input.executions
+    .map((execution) => input.leases.get(execution.id))
+    .findLast((lease) => lease !== undefined);
   return [
     result(
       "issue-received",
-      received === undefined
-        ? undefined
-        : evidence(
-            received.occurredAt,
-            received.occurredAt,
-            executionForEvent(received, input.executions),
-          ),
-      received === undefined
-        ? "Information indisponible"
-        : "Le journal prouve la réception de l’issue.",
+      fromEvent(received),
+      received ? "proved" : "unavailable",
+      received ? "L’issue a été reçue." : "Information indisponible",
     ),
     result(
       "eligibility-confirmed",
-      ready === undefined
-        ? undefined
-        : evidence(ready.occurredAt, ready.occurredAt, executionForEvent(ready, input.executions)),
-      ready === undefined
-        ? "Information indisponible"
-        : "Le fait de readiness prouve l’éligibilité.",
+      fromEvent(ready),
+      ready ? "proved" : "unavailable",
+      ready ? "L’issue a été admise pour ce projet." : "Information indisponible",
     ),
     result(
       "workspace-prepared",
-      preparation === undefined && leaseEntry === undefined
-        ? undefined
-        : preparation !== undefined
-          ? evidence(
-              preparation.checkpoint.occurredAt,
-              preparation.checkpoint.occurredAt,
-              preparation.execution.id,
-            )
-          : evidence(leaseEntry!.lease!.createdAt, null, leaseEntry!.execution.id),
-      preparation === undefined && leaseEntry === undefined
-        ? "Information indisponible"
-        : "Le workspace est enregistré par le moteur.",
+      fromCheckpoint(preparation, preparation?.checkpoint.type !== "preparation.started") ??
+        (lease ? evidence(lease.createdAt, null, lease.executionId) : undefined),
+      preparation?.checkpoint.type === "preparation.failed"
+        ? "failed"
+        : preparation?.checkpoint.type === "preparation.completed" || agent
+          ? "proved"
+          : lease
+            ? "active"
+            : "not-started",
+      preparation?.checkpoint.type === "preparation.failed"
+        ? "La préparation a échoué."
+        : preparation?.checkpoint.type === "preparation.completed" || agent
+          ? "Le projet est préparé dans son espace de travail."
+          : lease
+            ? "Préparation en cours."
+            : notStarted,
     ),
     result(
       "agent-running",
-      agent === undefined
-        ? undefined
-        : evidence(
+      agent
+        ? evidence(
             agent.checkpoint.occurredAt,
-            terminal?.completedAt ?? null,
+            validationStart?.checkpoint.occurredAt ?? null,
             agent.execution.id,
-            latestActive?.id === agent.execution.id,
-          ),
-      agent === undefined ? "Information indisponible" : "Un checkpoint agent est enregistré.",
+          )
+        : undefined,
+      agentActive
+        ? "active"
+        : agent
+          ? after(agent, validation) && !commit
+            ? cancelled
+              ? "cancelled"
+              : "unavailable"
+            : "proved"
+          : cancelled
+            ? "cancelled"
+            : "not-started",
+      agentActive
+        ? agent.checkpoint.type === "agent.repair-started"
+          ? "L’agent répare la modification après l’échec des vérifications."
+          : "L’agent développe l’issue."
+        : validation || commit
+          ? "L’agent a remis sa modification au validateur."
+          : agent
+            ? "Le résultat de l’agent reste à confirmer."
+            : notStarted,
     ),
     result(
       "checks",
-      validation === undefined
-        ? undefined
-        : evidence(
-            validation.startedAt ?? validation.completedAt ?? "",
-            validation.completedAt,
-            validation.executionId,
-          ),
-      validation === undefined
-        ? "Information indisponible"
-        : "Les résultats de validation sont enregistrés.",
+      fromCheckpoint(validation, validation?.checkpoint.type !== "validation.started"),
+      checksPassed
+        ? "proved"
+        : validationCancelled
+          ? "cancelled"
+          : agentActive && failedCheck
+            ? "repairing"
+            : validation?.checkpoint.type === "validation.started" &&
+                active?.id === validation.execution.id
+              ? "active"
+              : failedCheck
+                ? "failed"
+                : validation
+                  ? cancelled
+                    ? "cancelled"
+                    : "unavailable"
+                  : "not-started",
+      checksPassed
+        ? "Toutes les commandes de cette tentative ont réussi."
+        : failedCheck
+          ? `Tentative ${failedCheck.attempt} : ${failedCheck.name} a échoué. ${agentActive ? "Réparation en cours ; le résultat reste à vérifier." : "Le résultat reste visible dans l’historique des vérifications."}`
+          : validation?.checkpoint.type === "validation.started"
+            ? "Les commandes du projet sont en cours de vérification."
+            : validation
+              ? "Résultat non confirmé."
+              : notStarted,
     ),
     result(
       "commit-push",
-      pushed !== undefined
-        ? evidence(pushed.checkpoint.occurredAt, pushed.checkpoint.occurredAt, pushed.execution.id)
-        : commit !== undefined
-          ? evidence(commit.checkpoint.occurredAt, null, commit.execution.id, true)
-          : undefined,
-      pushed !== undefined
-        ? "Le commit et le push sont prouvés."
-        : commit !== undefined
-          ? "Le commit est prouvé; le push reste à confirmer."
-          : "Information indisponible",
+      fromCheckpoint(pushed ?? commit, pushed !== undefined),
+      pushed ? "proved" : commit ? "active" : "not-started",
+      pushed
+        ? "Le commit est poussé sur le dépôt distant."
+        : commit
+          ? "Commit créé ; envoi en cours."
+          : notStarted,
     ),
     result(
       "pull-request",
-      created !== undefined
-        ? evidence(
-            created.occurredAt,
-            created.occurredAt,
-            executionForEvent(created, input.executions),
-          )
-        : requested !== undefined
-          ? evidence(
-              requested.occurredAt,
-              null,
-              executionForEvent(requested, input.executions),
-              true,
-            )
-          : undefined,
-      created !== undefined
+      fromEvent(created ?? requested, created !== undefined),
+      created ? "proved" : requested ? "active" : "not-started",
+      created
         ? "La Pull Request est créée et attend une revue manuelle."
-        : requested !== undefined
-          ? "La création de la Pull Request est demandée."
-          : "Information indisponible",
+        : requested
+          ? "GitHub crée la Pull Request."
+          : notStarted,
     ),
   ];
 }
@@ -430,16 +545,14 @@ interface Evidence {
   readonly occurredAt: string;
   readonly completedAt: string | null;
   readonly executionId: string | null;
-  readonly active?: boolean;
 }
 
 function evidence(
   occurredAt: string,
   completedAt: string | null,
   executionId: string | null,
-  active = false,
 ): Evidence {
-  return { occurredAt, completedAt, executionId, active };
+  return { occurredAt, completedAt, executionId };
 }
 
 function executionForEvent(
@@ -464,8 +577,8 @@ function buildFailure(
         ? "execution.cancelled"
         : "execution.failed");
   const message =
-    execution?.error ??
     stringValue(payload, "message") ??
+    execution?.error ??
     (execution?.status === "timed-out"
       ? "L’exécution a dépassé son délai."
       : execution?.status === "cancelled"
@@ -516,7 +629,7 @@ function latestWorkspace(
     const lease = leases.get(execution.id);
     if (lease !== undefined) {
       return {
-        path: lease.workspacePath,
+        path: `projects/${lease.projectId}/workspaces/${lease.executionId}`,
         repositoryId: lease.repositoryId,
         branch: lease.workingBranch,
         baseRevisionSha: lease.baseRevisionSha,

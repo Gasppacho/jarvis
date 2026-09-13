@@ -32,10 +32,20 @@ final class ProjectImportTests: XCTestCase {
             XCTAssertEqual(inspection.defaultBranch, "main")
             XCTAssertEqual(inspection.packageManager, "pnpm")
 
+            projects.importName = String(repeating: "x", count: 121)
+            let rejected = await projects.confirmImport()
+            XCTAssertNil(rejected)
+            guard case .confirm = projects.importState else {
+                return XCTFail("the name must remain editable after invalid input")
+            }
+            XCTAssertTrue(projects.projects.isEmpty)
+            projects.importName = "Mon projet guidé"
             let result = await projects.confirmImport()
             let imported = try XCTUnwrap(result)
 
             XCTAssertEqual(imported.status, .draft)
+            XCTAssertEqual(imported.name, "Mon projet guidé")
+            XCTAssertEqual(projects.onboardingNavigation.currentStep(for: imported.id), .workflow)
             XCTAssertEqual(projects.projects.map(\.id), [imported.id])
             XCTAssertEqual(projects.projects.map(\.status), [.draft])
 
@@ -45,10 +55,40 @@ final class ProjectImportTests: XCTestCase {
             XCTAssertTrue(binding.path.hasPrefix("/"))
             XCTAssertTrue(binding.path.hasSuffix(repository.lastPathComponent))
             XCTAssertTrue(binding.accessible)
+            XCTAssertEqual(binding.remoteUrl, "git@github.com:QServices/token-warehouse.git")
             XCTAssertNotNil(binding.bookmarkRef)
             if let config = detail.portableConfigJSON {
                 XCTAssertFalse(String(decoding: config, as: UTF8.self).contains(repository.path()))
             }
+        }
+    }
+
+    @MainActor
+    func testDuplicateImportOffersTheExistingProjectWithoutChangingItsName() async throws {
+        let firstRepository = try makeRepository()
+        let secondRepository = try makeRepository()
+        try await withModels { _, projects in
+            await projects.inspect(at: firstRepository)
+            let firstResult = await projects.confirmImport()
+            let first = try XCTUnwrap(firstResult)
+            await projects.inspect(at: secondRepository)
+            projects.importName = "Second projet"
+            let secondResult = await projects.confirmImport()
+            let second = try XCTUnwrap(secondResult)
+            XCTAssertNotEqual(first.id, second.id)
+            XCTAssertEqual(second.name, "Second projet", "the returned project is the navigation destination")
+
+            await projects.inspect(at: firstRepository)
+            guard case .existing(let existing) = projects.importState else {
+                return XCTFail("a duplicate must offer the existing project before any write")
+            }
+            XCTAssertEqual(existing.id, first.id)
+            let duplicate = await projects.confirmImport()
+            XCTAssertNil(duplicate, "a duplicate confirmation must not create or rename a project")
+            projects.cancelImport()
+            XCTAssertEqual(projects.projects.count, 2)
+            let detail = try await projects.detail(for: first.id)
+            XCTAssertEqual(detail.project.name, first.name)
         }
     }
 
@@ -375,10 +415,10 @@ final class ProjectImportTests: XCTestCase {
     }
 
     @MainActor
-    func testDuplicateImportLeavesAnActionableFailureInTheImportFlow() async throws {
+    func testDuplicateImportKeepsTheEngineConflictAndOffersTheExistingProject() async throws {
         let repository = try makeRepository()
 
-        try await withModels { _, projects in
+        try await withModels { session, projects in
             await projects.inspect(at: repository)
             _ = await projects.confirmImport()
 
@@ -386,11 +426,18 @@ final class ProjectImportTests: XCTestCase {
             let duplicate = await projects.confirmImport()
             XCTAssertNil(duplicate)
 
-            guard case .failed(let message) = projects.importState else {
-                return XCTFail("the duplicate import did not leave a visible failure")
+            guard case .existing(let existing) = projects.importState else {
+                return XCTFail("the duplicate must offer its existing project")
             }
-            XCTAssertTrue(message.contains("project.already-imported"))
-            XCTAssertTrue(message.contains("Select the existing project"))
+            XCTAssertEqual(existing.id, projects.projects.first?.id)
+            do {
+                _ = try await session.client?.importProject(repositoryPath: repository.path())
+                XCTFail("the Engine must still reject a duplicate POST")
+            } catch {
+                let message = ProjectsModel.describe(error)
+                XCTAssertTrue(message.contains("project.already-imported"))
+                XCTAssertTrue(message.contains("Select the existing project"))
+            }
         }
     }
 

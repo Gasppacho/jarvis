@@ -40,6 +40,24 @@ existing project does not migrate labels, rules, IDs, parameters or bindings.
 `examples/guided-project/.jarvis/project.yaml` illustrates confirmed choices for a
 repository with `verify`; templates do not copy either example into real projects.
 
+## Guided configuration and proof
+
+The native guide is **Dépôt → Workflow → Accès et agent → Vérification**.
+Its four-card diagram explains the canonical Engine configuration; it is not a
+second routing model. Save does not activate. Preflight checks current access and
+configuration without running the agent or project validation commands. A scoped
+first trial names the selected issue; broadening scope requires a new verification.
+
+The recommended chain is `scm.work-item.ready` →
+`development.implementation.requested` → Development preparation, agent, validations,
+commit and push → `scm.change-request.creation-requested` → GitHub PR creation.
+Failed checks remain visible across repair attempts and restarts. The overview keeps
+the failed execution linked even after removal of the trigger label. Pausing stops
+new admissions; cancelling an active execution is a separate explicit action.
+
+The [progress ledger](../../PROGRESS.md) distinguishes Harness coverage, native
+screenshots and real GitHub/Codex delivery. None substitutes for another.
+
 ## Configuration
 
 The Project enables three Module Instances:
@@ -61,7 +79,7 @@ development
   produces scm.change-request.creation-requested
 ```
 
-## Sequence
+## Historical sequence (`agent:ready`)
 
 ```text
 User/GitHub          GitHub Module       Rules Module       Development        Eventing

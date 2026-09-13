@@ -109,6 +109,29 @@ export class ExecutionLedgerReader {
     return row === undefined ? undefined : toSummary(row);
   }
 
+  /** One latest attempt per supplied input, without losing old work to unrelated executions. */
+  public latestByInputEventIds(
+    projectId: string,
+    eventIds: readonly string[],
+  ): LedgerExecutionSummary[] {
+    if (eventIds.length === 0) return [];
+    const rows = this.db
+      .prepare(
+        `
+      WITH ranked AS (
+        SELECT id, project_id, module_instance_id, status, attempt, created_at, error, completed_at, input_event_id, replayed,
+          ROW_NUMBER() OVER (PARTITION BY input_event_id ORDER BY created_at DESC, id DESC) AS rank
+        FROM executions WHERE project_id = @projectId
+          AND input_event_id IN (SELECT value FROM json_each(@eventIds))
+      )
+      SELECT id, project_id, module_instance_id, status, attempt, created_at, error, completed_at, input_event_id, replayed
+      FROM ranked WHERE rank = 1 ORDER BY created_at DESC, id DESC
+    `,
+      )
+      .all({ projectId, eventIds: JSON.stringify(eventIds) }) as ExecutionRow[];
+    return rows.map(toSummary);
+  }
+
   public listByInputEventIds(
     projectId: string,
     eventIds: readonly string[],

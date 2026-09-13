@@ -42,7 +42,7 @@ export interface BoundedProcessRequest {
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-const MAX_TIMEOUT_MS = 120_000;
+const MAX_TIMEOUT_MS = 3_600_000;
 const DEFAULT_OUTPUT_LIMIT_BYTES = 64 * 1024;
 const MAX_OUTPUT_LIMIT_BYTES = 1024 * 1024;
 const TERMINATION_GRACE_MS = 250;

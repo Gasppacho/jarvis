@@ -1,0 +1,926 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Jarvis — Proposition de parcours</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: light-dark(#f5f5f7, #191a1d);
+        --panel: light-dark(#fff, #242529);
+        --sidebar: light-dark(#eeeef1, #202125);
+        --ink: light-dark(#202126, #f3f3f6);
+        --muted: light-dark(#62646d, #b1b2bc);
+        --line: light-dark(#dedee5, #41424b);
+        --blue: light-dark(#225dcc, #91b5ff);
+        --tint: light-dark(#eaf0ff, #2a3650);
+        --green: light-dark(#276d4b, #85d0a5);
+        --amber: light-dark(#845a13, #edc775);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 32px;
+        background: var(--bg);
+        color: var(--ink);
+        font:
+          14px/1.5 -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+        color: inherit;
+      }
+      button:focus-visible,
+      a:focus-visible,
+      input:focus-visible,
+      select:focus-visible,
+      summary:focus-visible {
+        outline: 3px solid var(--blue);
+        outline-offset: 3px;
+      }
+      .preview {
+        max-width: 1220px;
+        margin: 0 auto 16px;
+        display: flex;
+        gap: 20px;
+        align-items: center;
+        justify-content: space-between;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .switcher {
+        display: flex;
+        padding: 3px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        gap: 3px;
+      }
+      .switcher button {
+        border: 0;
+        border-radius: 6px;
+        padding: 6px 12px;
+        background: transparent;
+      }
+      .switcher button[aria-pressed="true"] {
+        background: var(--panel);
+        color: var(--blue);
+        box-shadow: 0 1px 4px #0001;
+      }
+      .window {
+        max-width: 1220px;
+        min-height: 750px;
+        margin: auto;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow: 0 16px 55px #00000012;
+        display: grid;
+        grid-template-columns: 210px 1fr;
+        background: var(--panel);
+      }
+      aside {
+        background: var(--sidebar);
+        border-right: 1px solid var(--line);
+        padding: 18px 14px;
+        display: flex;
+        flex-direction: column;
+      }
+      .traffic {
+        display: flex;
+        gap: 8px;
+        margin: 2px 7px 30px;
+      }
+      .traffic i {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #ff6058;
+      }
+      .traffic i:nth-child(2) {
+        background: #ffbf2f;
+      }
+      .traffic i:nth-child(3) {
+        background: #28c841;
+      }
+      .brand {
+        font-weight: 650;
+        font-size: 23px;
+        letter-spacing: -0.8px;
+        padding: 0 12px 30px;
+      }
+      .group-label {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 600;
+        margin: 20px 12px 8px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      .nav-item {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        width: 100%;
+        text-align: left;
+        padding: 9px 12px;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+      }
+      .nav-item.active {
+        background: var(--tint);
+        color: var(--blue);
+        font-weight: 600;
+      }
+      .project-icon {
+        display: grid;
+        place-items: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        background: var(--blue);
+        color: var(--panel);
+        font-size: 12px;
+      }
+      .spacer {
+        flex: 1;
+      }
+      .engine {
+        font-size: 12px;
+        color: var(--muted);
+        margin: 30px 12px 0;
+      }
+      .engine span {
+        color: var(--green);
+      }
+      main {
+        min-width: 0;
+      }
+      .toolbar {
+        height: 62px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0 30px;
+      }
+      .toolbar small {
+        color: var(--muted);
+      }
+      .content {
+        padding: 30px 38px;
+      }
+      h1 {
+        font-size: 27px;
+        line-height: 1.2;
+        letter-spacing: -0.8px;
+        margin: 0 0 10px;
+      }
+      h2 {
+        font-size: 16px;
+        line-height: 1.35;
+        margin: 0 0 12px;
+      }
+      h3 {
+        font-size: 14px;
+        margin: 0;
+      }
+      .lead {
+        color: var(--muted);
+        margin: 0 0 27px;
+        max-width: 640px;
+      }
+      .pill {
+        display: inline-flex;
+        gap: 6px;
+        align-items: center;
+        border-radius: 5px;
+        padding: 3px 8px;
+        font-size: 11px;
+        font-weight: 600;
+        background: var(--tint);
+        color: var(--blue);
+      }
+      .success {
+        color: var(--green);
+        background: light-dark(#edf6f0, #23382d);
+      }
+      .waiting {
+        color: var(--amber);
+        background: light-dark(#fcf4e5, #3b3322);
+      }
+      .row {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .button {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        padding: 7px 13px;
+        border-radius: 7px;
+        box-shadow: 0 1px 2px #00000008;
+      }
+      .primary {
+        background: light-dark(#225dcc, #4079e5);
+        border-color: transparent;
+        color: white;
+      }
+      .stepper {
+        display: flex;
+        gap: 18px;
+        margin: 0 0 30px;
+        list-style: none;
+        padding: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .stepper li {
+        display: flex;
+        gap: 7px;
+        align-items: center;
+      }
+      .stepper b {
+        border: 1px solid var(--line);
+        width: 22px;
+        height: 22px;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        font-size: 11px;
+      }
+      .stepper .current {
+        color: var(--blue);
+        font-weight: 600;
+      }
+      .stepper .current b {
+        background: var(--blue);
+        color: var(--panel);
+        border-color: transparent;
+      }
+      .surface {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 21px;
+        margin: 16px 0;
+      }
+      .flow {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 0 2px;
+      }
+      .node {
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        padding: 14px 12px;
+        flex: 1;
+        min-width: 0;
+        background: var(--panel);
+      }
+      .node.active {
+        border-color: var(--blue);
+        background: var(--tint);
+      }
+      .node strong {
+        display: block;
+        font-size: 13px;
+      }
+      .node small {
+        color: var(--muted);
+        font-size: 11px;
+        display: block;
+        margin-top: 4px;
+      }
+      .arrow {
+        color: var(--muted);
+        font-size: 20px;
+      }
+      .glyph {
+        font-size: 17px;
+        color: var(--blue);
+        display: block;
+        margin-bottom: 8px;
+      }
+      .field {
+        margin: 18px 0;
+      }
+      .field label {
+        display: block;
+        font-size: 12px;
+        font-weight: 600;
+        margin-bottom: 7px;
+      }
+      .field input,
+      .field select {
+        width: 100%;
+        background: var(--panel);
+        color: var(--ink);
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 9px 11px;
+      }
+      .field small {
+        display: block;
+        color: var(--muted);
+        margin-top: 6px;
+        font-size: 12px;
+      }
+      .pair {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 22px;
+      }
+      .check {
+        display: flex;
+        gap: 10px;
+        margin: 13px 0;
+        font-size: 13px;
+      }
+      .check span:first-child {
+        color: var(--green);
+      }
+      .check small {
+        display: block;
+        color: var(--muted);
+      }
+      .footer {
+        border-top: 1px solid var(--line);
+        margin-top: 28px;
+        padding-top: 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .footer small {
+        color: var(--muted);
+      }
+      details {
+        margin-top: 22px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      summary {
+        cursor: pointer;
+      }
+      .section-title {
+        margin-top: 28px;
+      }
+      .issues {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 12px;
+      }
+      .issues th {
+        text-align: left;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 500;
+        padding: 9px 8px;
+        border-bottom: 1px solid var(--line);
+      }
+      .issues td {
+        padding: 14px 8px;
+        border-bottom: 1px solid var(--line);
+        font-size: 12px;
+      }
+      .issues td small {
+        display: block;
+        color: var(--muted);
+        margin-top: 3px;
+      }
+      .issue-link {
+        background: none;
+        border: 0;
+        color: var(--blue);
+        padding: 0;
+        text-align: left;
+        font-weight: 600;
+      }
+      .note {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .stage-list {
+        list-style: none;
+        padding: 0;
+        margin: 20px 0;
+      }
+      .stage-list li {
+        position: relative;
+        padding: 0 0 25px 36px;
+        margin: 0;
+      }
+      .stage-list li:before {
+        content: "";
+        position: absolute;
+        left: 10px;
+        top: 24px;
+        bottom: 1px;
+        border-left: 1px solid var(--line);
+      }
+      .stage-list li:last-child:before {
+        display: none;
+      }
+      .stage-dot {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 22px;
+        height: 22px;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        background: var(--sidebar);
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .done .stage-dot {
+        color: var(--green);
+        background: light-dark(#edf6f0, #23382d);
+      }
+      .running .stage-dot {
+        color: var(--blue);
+        background: var(--tint);
+      }
+      .stage-list p {
+        margin: 5px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .output {
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 16px;
+        margin-top: 12px;
+        font-size: 12px;
+      }
+      .output p {
+        margin: 0 0 8px;
+      }
+      .output p:last-child {
+        margin: 0;
+      }
+      .run-layout {
+        display: grid;
+        grid-template-columns: 1.3fr 1fr;
+        gap: 30px;
+      }
+      .meta {
+        display: grid;
+        grid-template-columns: 90px 1fr;
+        gap: 12px;
+        font-size: 12px;
+      }
+      .meta dt {
+        color: var(--muted);
+      }
+      .meta dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+      .screen[hidden] {
+        display: none;
+      }
+      .banner {
+        padding: 10px 14px;
+        border-radius: 7px;
+        background: var(--tint);
+        color: var(--blue);
+        font-size: 12px;
+        margin: 14px 0;
+      }
+      .action-message {
+        min-height: 22px;
+        margin-top: 12px;
+        color: var(--green);
+        font-size: 12px;
+      }
+      @media (max-width: 1000px) {
+        body {
+          padding: 14px;
+        }
+        .window {
+          grid-template-columns: 168px 1fr;
+        }
+        .content {
+          padding: 25px;
+        }
+        .run-layout {
+          grid-template-columns: 1fr;
+        }
+        .preview {
+          align-items: flex-start;
+        }
+        .flow {
+          gap: 6px;
+        }
+        .node {
+          padding: 10px 8px;
+        }
+      }
+      @media (max-width: 700px) {
+        .window {
+          grid-template-columns: 1fr;
+        }
+        aside {
+          display: none;
+        }
+        .preview {
+          display: block;
+        }
+        .switcher {
+          width: max-content;
+          margin-top: 12px;
+        }
+        .content {
+          padding: 20px;
+        }
+        .toolbar {
+          padding: 0 20px;
+        }
+        .pair {
+          grid-template-columns: 1fr;
+          gap: 0;
+        }
+        .stepper {
+          gap: 9px;
+          flex-wrap: wrap;
+        }
+        .flow {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .arrow {
+          transform: rotate(90deg);
+          align-self: center;
+        }
+        .issues th:last-child,
+        .issues td:last-child {
+          display: none;
+        }
+        .row {
+          flex-wrap: wrap;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="preview">
+      <span>PROPOSITION UX · données fictives · aucun effet sur GitHub</span>
+      <nav class="switcher" aria-label="Écrans de la maquette">
+        <button data-screen="setup" aria-pressed="true">1. Configurer</button
+        ><button data-screen="overview" aria-pressed="false">2. Superviser</button
+        ><button data-screen="execution" aria-pressed="false">3. Suivre</button>
+      </nav>
+    </div>
+    <div class="window">
+      <aside>
+        <div class="traffic" aria-hidden="true"><i></i><i></i><i></i></div>
+        <div class="brand">Jarvis</div>
+        <div class="group-label">Projets</div>
+        <button class="nav-item active" data-screen="overview">
+          <span class="project-icon">J</span> Jarvis</button
+        ><button class="nav-item" data-screen="setup">＋ Ajouter un projet</button>
+        <div class="group-label">Bibliothèque</div>
+        <div class="nav-item">⌘ &nbsp; Connexions</div>
+        <div class="nav-item">◈ &nbsp; Agents</div>
+        <div class="spacer"></div>
+        <div class="engine">
+          <span>●</span> Moteur local disponible<br />Tout s’exécute sur ce Mac
+        </div>
+      </aside>
+      <main>
+        <div class="toolbar">
+          <strong>Jarvis <small>/ Gasppacho/jarvis</small></strong
+          ><span class="pill">Issue → Pull Request</span>
+        </div>
+        <section class="content screen" id="setup">
+          <ol class="stepper">
+            <li><b>✓</b> Dépôt</li>
+            <li class="current"><b>2</b> Workflow</li>
+            <li><b>3</b> Accès et agent</li>
+            <li><b>4</b> Vérification</li>
+          </ol>
+          <h1>Votre premier workflow.</h1>
+          <p class="lead">
+            Confiez une issue prête à votre agent. Jarvis prépare une Pull Request que vous pourrez
+            relire.
+          </p>
+          <div class="surface">
+            <div class="row">
+              <h2>Développer une issue GitHub</h2>
+              <span class="pill success">Modèle recommandé</span>
+            </div>
+            <div
+              class="flow"
+              aria-label="Issue éligible, développement, vérifications, Pull Request"
+            >
+              <div class="node">
+                <span class="glyph">◎</span><strong>Issue prête</strong
+                ><small>Label + aucun bloqueur ouvert</small>
+              </div>
+              <span class="arrow" aria-hidden="true">→</span>
+              <div class="node">
+                <span class="glyph">⌘</span><strong>Développement</strong
+                ><small>Agent dans une branche isolée</small>
+              </div>
+              <span class="arrow" aria-hidden="true">→</span>
+              <div class="node">
+                <span class="glyph">✓</span><strong>Vérifications</strong
+                ><small>Commandes du projet</small>
+              </div>
+              <span class="arrow" aria-hidden="true">→</span>
+              <div class="node">
+                <span class="glyph">⑂</span><strong>Pull Request</strong
+                ><small>À relire par vous</small>
+              </div>
+            </div>
+          </div>
+          <div class="pair">
+            <div class="field">
+              <label for="label">Quand une issue porte le label</label
+              ><input id="label" value="ready-for-agent" /><small
+                >Les issues fermées ou bloquées ne démarrent pas.</small
+              >
+            </div>
+            <div class="field">
+              <label for="concurrency">Nombre d’issues traitées à la fois</label
+              ><input id="concurrency" value="1 — une issue à la fois" readonly /><small
+                >Les autres issues attendent leur tour.</small
+              >
+            </div>
+          </div>
+          <div class="check">
+            <span>✓</span>
+            <div>
+              Vos fichiers de travail restent séparés.<small
+                >Chaque issue est développée dans son propre worktree.</small
+              >
+            </div>
+          </div>
+          <div class="check">
+            <span>✓</span>
+            <div>
+              Vous gardez la décision de merger.<small
+                >Ce workflow s’arrête à la création de la Pull Request.</small
+              >
+            </div>
+          </div>
+          <details>
+            <summary>Réglages avancés et composition des modules</summary>
+            <p>
+              GitHub → Automation Rules → Development → GitHub. La carte résume les abonnements et
+              événements ; elle n’ajoute pas de moteur de workflow central.
+            </p>
+            <p>
+              Branche cible, convention de branche, tentatives de réparation, ressources et règles
+              restent configurables.
+            </p>
+          </details>
+          <div class="footer">
+            <small>Le projet reste en brouillon jusqu’à votre activation.</small
+            ><button class="button primary" id="preview-setup">
+              Prévisualiser la vérification →
+            </button>
+          </div>
+          <div id="setup-message" class="action-message" role="status"></div>
+        </section>
+        <section class="content screen" id="overview" hidden>
+          <div class="row">
+            <div>
+              <h1>Une vue claire du travail.</h1>
+              <p class="lead">GitHub → développement → Pull Request</p>
+            </div>
+            <button class="button" id="pause">Suspendre les nouvelles issues</button>
+          </div>
+          <div class="row">
+            <span class="pill success" id="watch-status">● Surveillance active</span
+            ><span class="note">Dernière vérification : il y a 12 s · exemple</span>
+          </div>
+          <div class="surface">
+            <div class="flow">
+              <div class="node">
+                <span class="glyph">◎</span><strong>GitHub</strong
+                ><small id="label-summary">ready-for-agent · sans bloqueur</small>
+              </div>
+              <span class="arrow" aria-hidden="true">→</span>
+              <div class="node active">
+                <span class="glyph">⌘</span><strong>Développement</strong
+                ><small>1 issue en cours · Codex</small>
+              </div>
+              <span class="arrow" aria-hidden="true">→</span>
+              <div class="node">
+                <span class="glyph">⑂</span><strong>Pull Request</strong
+                ><small>Relecture manuelle</small>
+              </div>
+            </div>
+          </div>
+          <div class="row section-title">
+            <h2>Issues suivies</h2>
+            <button class="button" data-screen="setup">Configurer</button>
+          </div>
+          <table class="issues">
+            <thead>
+              <tr>
+                <th>Issue</th>
+                <th>Situation</th>
+                <th>Prochaine étape</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <button class="issue-link" data-screen="execution">
+                    Afficher la dernière activité du projet</button
+                  ><small>EX-12 · exemple de travail en cours</small>
+                </td>
+                <td><span class="pill">◉ Vérifications</span></td>
+                <td>Créer la Pull Request</td>
+              </tr>
+              <tr>
+                <td>Clarifier l’état des connexions<small>EX-13 · prête</small></td>
+                <td><span class="pill">◷ En attente</span></td>
+                <td>Attendre une place</td>
+              </tr>
+              <tr>
+                <td>Afficher les dépendances des issues<small>EX-14 · label présent</small></td>
+                <td><span class="pill waiting">⊘ Bloquée</span></td>
+                <td>EX-13 doit être fermée</td>
+              </tr>
+              <tr>
+                <td>Améliorer le titre des exécutions<small>EX-11 · terminée</small></td>
+                <td><span class="pill success">✓ PR créée</span></td>
+                <td>À relire</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="note">
+            Une issue bloquée sera réévaluée automatiquement. Son label ne suffit pas à la lancer.
+          </p>
+          <div id="pause-message" class="action-message" role="status"></div>
+          <details>
+            <summary>Diagnostic technique du projet</summary>
+            <p>
+              Événements, livraisons, identifiants de corrélation et ressources liés au projet. Ces
+              informations restent accessibles pour diagnostiquer un problème.
+            </p>
+          </details>
+        </section>
+        <section class="content screen" id="execution" hidden>
+          <button class="issue-link" data-screen="overview">← Issues suivies</button>
+          <div class="row" style="margin-top: 20px">
+            <h1>Afficher la dernière activité</h1>
+            <span class="pill" id="run-status">◉ Vérifications</span>
+          </div>
+          <p class="lead">EX-12 · Codex · début il y a 4 min · données d’exemple</p>
+          <div class="run-layout">
+            <div>
+              <h2>Avancement</h2>
+              <ol class="stage-list">
+                <li class="done">
+                  <span class="stage-dot">✓</span>
+                  <h3>Issue prête à développer</h3>
+                  <p>Label confirmé et aucun bloqueur ouvert.</p>
+                </li>
+                <li class="done">
+                  <span class="stage-dot">✓</span>
+                  <h3>Branche de travail préparée</h3>
+                  <p>Les fichiers du dépôt principal sont préservés.</p>
+                </li>
+                <li class="done">
+                  <span class="stage-dot">✓</span>
+                  <h3>Changement implémenté</h3>
+                  <p>L’agent a terminé sa modification.</p>
+                </li>
+                <li class="running">
+                  <span class="stage-dot" id="validation-dot">◉</span>
+                  <h3 id="validation-title">Vérifications du projet</h3>
+                  <div class="output">
+                    <p>✓ Contrats et types</p>
+                    <p>✓ Tests unitaires</p>
+                    <p id="validation-output">◉ Tests d’intégration en cours…</p>
+                  </div>
+                </li>
+                <li>
+                  <span class="stage-dot">5</span>
+                  <h3>Commit, push et Pull Request</h3>
+                  <p id="pr-outcome">En attente de la réussite des vérifications.</p>
+                </li>
+              </ol>
+            </div>
+            <div>
+              <div class="surface" style="margin-top: 0">
+                <h2>Contexte</h2>
+                <dl class="meta">
+                  <dt>Dépôt</dt>
+                  <dd>Gasppacho/jarvis</dd>
+                  <dt>Branche cible</dt>
+                  <dd>main</dd>
+                  <dt>Agent</dt>
+                  <dd>Codex · lié à ce projet</dd>
+                  <dt>Travail isolé</dt>
+                  <dd>Worktree propre à cette issue</dd>
+                </dl>
+              </div>
+              <h2>Dernier message de l’agent</h2>
+              <div class="output">
+                « L’état vide est maintenant explicite. Je vérifie que l’activité reste visible
+                après une reconnexion. »
+              </div>
+              <p class="note">
+                Extrait de démonstration. L’application affichera la sortie réelle de l’agent.
+              </p>
+              <button class="button" id="simulate-failure">Voir le cas d’un échec</button>
+              <div id="failure" class="banner" hidden>
+                <strong>Les tests d’intégration ont échoué.</strong>
+                <p>
+                  La limite de réparation est atteinte. Aucune PR créée ; le worktree est conservé.
+                </p>
+                <button class="button" id="show-diagnostics">Afficher le diagnostic</button>
+              </div>
+              <div id="diagnostics" class="output" hidden>
+                Exemple : le test de restauration de l’activité échoue après un redémarrage. Dans le
+                produit, ce panneau donne le vrai test en échec, sa sortie nettoyée et le worktree
+                conservé.
+              </div>
+            </div>
+          </div>
+          <details>
+            <summary>Événements et exécutions techniques</summary>
+            <p>
+              Plusieurs exécutions finies sont reliées par leur corrélation. La progression est une
+              projection des faits persistés.
+            </p>
+          </details>
+        </section>
+      </main>
+    </div>
+    <script>
+      const screens = [...document.querySelectorAll(".screen")];
+      function showScreen(id) {
+        screens.forEach((screen) => {
+          screen.hidden = screen.id !== id;
+        });
+        document
+          .querySelectorAll(".switcher button")
+          .forEach((button) =>
+            button.setAttribute("aria-pressed", String(button.dataset.screen === id)),
+          );
+      }
+      document
+        .querySelectorAll("[data-screen]")
+        .forEach((button) =>
+          button.addEventListener("click", () => showScreen(button.dataset.screen)),
+        );
+      document.getElementById("label").addEventListener("input", (event) => {
+        document.getElementById("label-summary").textContent =
+          (event.target.value.trim() || "Label à choisir") + " · sans bloqueur";
+      });
+      document.getElementById("preview-setup").addEventListener("click", () => {
+        document.getElementById("setup-message").textContent =
+          "Étape suivante prévue : vérifier le compte GitHub, les droits sur le dépôt, l’agent et les commandes, puis afficher les issues éligibles avant activation. Aucune connexion réelle dans cette maquette.";
+      });
+      let paused = false;
+      document.getElementById("pause").addEventListener("click", (event) => {
+        paused = !paused;
+        event.currentTarget.textContent = paused
+          ? "Reprendre la surveillance"
+          : "Suspendre les nouvelles issues";
+        document.getElementById("watch-status").textContent = paused
+          ? "◷ Surveillance suspendue"
+          : "● Surveillance active";
+        document.getElementById("pause-message").textContent = paused
+          ? "Exemple : aucune nouvelle issue ne démarre. Le travail en cours continue."
+          : "Exemple : la surveillance reprend et les issues sont réévaluées.";
+      });
+      document.getElementById("simulate-failure").addEventListener("click", (event) => {
+        document.getElementById("failure").hidden = false;
+        document.getElementById("run-status").textContent = "⊘ Échec des vérifications";
+        document.getElementById("run-status").className = "pill waiting";
+        document.getElementById("validation-dot").textContent = "⊘";
+        document.getElementById("validation-title").textContent = "Vérifications échouées";
+        document.getElementById("validation-output").textContent = "⊘ Tests d’intégration en échec";
+        document.getElementById("pr-outcome").textContent =
+          "Non exécuté : les vérifications ont échoué.";
+        event.currentTarget.hidden = true;
+      });
+      document.getElementById("show-diagnostics").addEventListener("click", () => {
+        document.getElementById("diagnostics").hidden = false;
+      });
+    </script>
+  </body>
+</html>

@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { homedir } from "node:os";
 import { CodexRuntime } from "../../../../packages/agent-runtime/src/codex-runtime.js";
 import { RuntimeDetector } from "../../../../packages/agent-runtime/src/detector.js";
 import type { RuntimeDescriptor } from "../../../../packages/agent-runtime/src/index.js";
@@ -152,7 +153,7 @@ function toDescriptor(row: RuntimeDescriptorRow): RuntimeDescriptor {
 export function detectedRuntimeEnvironment(): Record<string, string> {
   return Object.fromEntries(
     ["PATH", "HOME", "CODEX_HOME"].flatMap((name) => {
-      const value = process.env[name];
+      const value = name === "HOME" ? process.env[name] || homedir() : process.env[name];
       return typeof value === "string" && value.trim() !== "" ? [[name, value]] : [];
     }),
   );

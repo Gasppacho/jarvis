@@ -215,10 +215,10 @@ public struct EngineClient: Sendable {
     /// committed `.jarvis/project.yaml` is adopted; otherwise the engine infers
     /// the draft from discovery. Returns 409 `project.already-imported` for a
     /// repository this installation already imported.
-    public func importProject(repositoryPath: String) async throws -> ProjectDetail {
+    public func importProject(repositoryPath: String, name: String? = nil) async throws -> ProjectDetail {
         let operation = "POST /v1/projects"
         let output = try await underlying.importProject(
-            .init(body: .json(.init(repositoryPath: repositoryPath)))
+            .init(body: .json(.init(repositoryPath: repositoryPath, name: name)))
         )
         switch output {
         case .created(let created):

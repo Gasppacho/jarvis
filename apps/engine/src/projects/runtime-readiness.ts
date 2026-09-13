@@ -13,6 +13,89 @@ import type {
   StoredPortableProjectConfiguration,
 } from "../../../../packages/project-runtime/src/project-types.js";
 import type { ProjectRow } from "./store.js";
+import { discoverRepository } from "./discovery.js";
+import { check } from "./preflight.js";
+import { projectCommandEnvironment } from "../executions/project-command.js";
+import { delimiter, isAbsolute, join } from "node:path";
+
+/** File inspection only: package-manager --version may execute repository code. */
+export function checkProjectTools(project: ProjectRow) {
+  let discovery;
+  try {
+    discovery = discoverRepository(project.repositoryPath);
+  } catch {
+    return [
+      check(
+        "tools:repository",
+        "Outils du projet",
+        false,
+        "Le dossier du projet n’est plus accessible. Autorisez à nouveau son accès.",
+        "Repository",
+      ),
+    ];
+  }
+  const selected = new Set<string>();
+  for (const module of project.portableConfig.modules) {
+    if (!module.enabled || module.moduleId !== "jarvis.module.development") continue;
+    const order = module.configuration?.["validationOrder"];
+    if (Array.isArray(order))
+      for (const name of order) if (typeof name === "string") selected.add(name);
+    if (module.configuration?.["preparation"] === "install") selected.add("install");
+  }
+  const commands = [...selected].flatMap((name) => {
+    const command =
+      project.portableConfig.commands[name as keyof typeof project.portableConfig.commands];
+    return command ? [command] : [];
+  });
+  const scripts = discovery.scripts ?? {};
+  const visited = new Set<string>();
+  // ponytail: follows literal package-script calls; arbitrary shell logic is checked only during execution.
+  for (let index = 0; index < commands.length; index++) {
+    for (const match of commands[index]!.matchAll(
+      /\b(?:npm|pnpm|yarn|bun)\s+(?:(?:run|run-script)\s+)?([A-Za-z0-9:_-]+)/g,
+    )) {
+      const name = match[1]!;
+      if (!visited.has(name) && Object.hasOwn(scripts, name) && typeof scripts[name] === "string") {
+        visited.add(name);
+        commands.push(scripts[name]);
+      }
+    }
+  }
+  const text = commands.join("\n");
+  const tools = new Set(["git"]);
+  if (/\b(node|npm|pnpm|yarn)\b/.test(text)) tools.add("node");
+  for (const manager of ["npm", "pnpm", "yarn", "bun"]) {
+    if (new RegExp(`\\b${manager}\\b`).test(text)) tools.add(manager);
+  }
+  if (/\b(swift|xcodebuild|xcrun)\b/.test(text)) {
+    tools.add("swift");
+    tools.add("xcrun");
+  }
+  const directories = (projectCommandEnvironment()["PATH"] ?? "")
+    .split(delimiter)
+    .filter(isAbsolute);
+  return [...tools].map((tool) => {
+    let denied = false;
+    const executable = directories.some((directory) => {
+      try {
+        const path = join(directory, tool);
+        if (!statSync(path).isFile()) return false;
+        accessSync(path, constants.X_OK);
+        return true;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        denied ||= code === "EPERM" || code === "EACCES";
+        return false;
+      }
+    });
+    const remedy = executable
+      ? "Exécutable présent et autorisé dans le profil du validateur. Sa version et le résultat des commandes restent à vérifier pendant l’exécution."
+      : denied
+        ? `L’exécution de ${tool} est refusée. Corrigez ses autorisations locales puis vérifiez à nouveau.`
+        : `Installez ou réparez ${tool === "swift" || tool === "xcrun" ? "Swift et les outils de développement Xcode" : tool}, puis relancez la vérification. Le validateur ne trouve pas cet outil.`;
+    return check(`tool:${tool}`, `Outil : ${tool}`, executable, remedy, "Connections");
+  });
+}
 
 export function runtimeReadiness(
   status: ProjectRuntimeReadiness["status"],
@@ -46,7 +129,7 @@ export function projectAgentRuntimeChoices(
       const missingCapabilities = [
         ...new Set(requiredSlots.flatMap((slot) => slot.requiredCapabilities)),
       ].filter((capability) => !descriptor.capabilities.includes(capability));
-      const compatible = missingCapabilities.length === 0 && requiredSlots.length > 0;
+      const compatible = missingCapabilities.length === 0;
       const status =
         !compatible || descriptor.status === "degraded"
           ? "incompatible"
@@ -69,13 +152,13 @@ export function projectAgentRuntimeChoices(
             project.slotBindings[slot.slotId]?.kind === "runtime" &&
             project.slotBindings[slot.slotId]?.ref === descriptor.id,
         ),
-        selectable: compatible && descriptor.status === "available",
+        selectable: requiredSlots.length > 0 && compatible && descriptor.status === "available",
         readiness: runtimeReadiness(
           status,
           missingCapabilities.length > 0
             ? `Capabilities manquantes : ${missingCapabilities.join(", ")}. Choisissez un runtime compatible.`
             : status === "incompatible"
-              ? "La version ou le workflow est incompatible. Choisissez un runtime compatible ou configurez le workflow."
+              ? "La version de Codex n’est pas prise en charge. Installez une version compatible, puis relancez la découverte."
               : status === "access-denied"
                 ? "Autorisez la connexion locale Codex, puis relancez la découverte."
                 : status === "absent"
@@ -95,10 +178,12 @@ export function projectAgentRuntimeChoices(
     required: requiredSlots.length > 0,
     items,
     readiness: runtimeReadiness(
-      items.length === 0 ? "absent" : "unchecked",
-      items.length === 0
-        ? "Aucun runtime Codex découvert. Installez ou activez Codex avec les instructions locales, puis relancez la découverte."
-        : "Choisissez explicitement un runtime et vérifiez ses accès pour ce projet.",
+      "unchecked",
+      requiredSlots.length === 0
+        ? "Choisissez d’abord un workflow utilisant un agent, puis autorisez Codex pour ce projet."
+        : items.length === 0
+          ? "Recherchez Codex sur ce Mac, puis autorisez-le pour ce projet."
+          : "Choisissez explicitement un runtime et vérifiez ses accès pour ce projet.",
     ),
   };
 }

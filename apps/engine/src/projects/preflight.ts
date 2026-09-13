@@ -48,6 +48,46 @@ export function workflowRule(configuration: StoredPortableProjectConfiguration) 
   return { ...selected, tag };
 }
 
+/** Recognizes the guide's explanation, not readiness, access or successful commands. */
+export function isGitHubDevelopmentFlow(
+  configuration: StoredPortableProjectConfiguration,
+  validation: ProjectValidationReport,
+): boolean {
+  try {
+    const { instance, rule, tag } = workflowRule(configuration);
+    const enabled = configuration.modules.filter((module) => module.enabled);
+    const github = enabled.find((module) => module.moduleId === "jarvis.module.github");
+    const development = enabled.find((module) => module.moduleId === "jarvis.module.development");
+    if (
+      enabled.length !== 3 ||
+      !github ||
+      !development ||
+      configuration.workspace.maxConcurrentExecutions !== 1 ||
+      (github.configuration?.["readyLabel"] ?? "ready-for-agent") !== tag ||
+      rule.emit.type !== "development.implementation.requested"
+    )
+      return false;
+    const route = (type: string, producer: string, consumer: string) =>
+      validation.requestRoutes.some(
+        (item) =>
+          item.contract.type === type &&
+          item.contract.version === 1 &&
+          item.producer.instanceId === producer &&
+          item.consumer.instanceId === consumer,
+      );
+    return (
+      route("development.implementation.requested", instance.instanceId, development.instanceId) &&
+      route("scm.change-request.creation-requested", development.instanceId, github.instanceId) &&
+      validation.requestAttempts !== undefined &&
+      !validation.requestAttempts.some(
+        (item) => item.contract.type === "scm.change-request.merge-requested",
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function check(
   id: string,
   title: string,

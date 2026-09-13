@@ -46,16 +46,27 @@ public final class ProjectsModel {
     public private(set) var importState: ImportState = .idle
     /// The folder the import flow inspected, until the flow ends.
     public private(set) var inspectedPath: String?
+    public var importName = ""
+
+    public var importNameError: String? {
+        if importName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "Donnez un nom à votre projet."
+        }
+        return importName.unicodeScalars.count > 120 ? "Le nom doit contenir au plus 120 caractères." : nil
+    }
 
     public enum ImportState: Equatable, Sendable {
         case idle
         case inspecting
         case confirm(RepositoryInspection)
+        case existing(Project)
         case saving
         case failed(String)
     }
 
     private let session: EngineSessionModel
+    let preferenceNamespace: String
+    public let onboardingNavigation: ProjectOnboardingNavigationStore
     private let repositoryGrants: any RepositoryGrantStoring
     private var inspectedURL: URL?
     /// Retaining these URLs retains security-scoped access for the Engine Session.
@@ -70,12 +81,15 @@ public final class ProjectsModel {
         session: EngineSessionModel,
         repositoryGrants: any RepositoryGrantStoring = RepositoryGrantStore(),
         deletionOperation: (@MainActor (String) async throws -> Void)? = nil,
-        repositoryDiscovery: RepositoryDiscovery? = nil
+        repositoryDiscovery: RepositoryDiscovery? = nil,
+        preferenceNamespace: String = ""
     ) {
         self.session = session
         self.repositoryGrants = repositoryGrants
         self.deletionOperation = deletionOperation
         self.repositoryDiscovery = repositoryDiscovery
+        self.preferenceNamespace = preferenceNamespace
+        onboardingNavigation = ProjectOnboardingNavigationStore(namespace: preferenceNamespace)
     }
 
     private var client: EngineClient? { session.client }
@@ -105,6 +119,7 @@ public final class ProjectsModel {
         importState = .inspecting
         inspectedPath = path
         inspectedURL = url
+        importName = ""
         do {
             try retainAccess(to: url, key: "pending-import")
             let inspection: RepositoryInspection
@@ -121,6 +136,13 @@ public final class ProjectsModel {
                     "This folder is not a Git repository. Choose another folder to import a repository.")
                 return
             }
+            let existing = try await existingProject(at: url)
+            guard revision == importRevision else { return }
+            if let existing {
+                importState = .existing(existing)
+                return
+            }
+            importName = inspection.suggested?.metadata?.name ?? url.lastPathComponent
             importState = .confirm(inspection)
         } catch {
             guard revision == importRevision else { return }
@@ -134,18 +156,20 @@ public final class ProjectsModel {
         importState = .idle
         inspectedPath = nil
         inspectedURL = nil
+        importName = ""
         releaseAccess(key: "pending-import")
     }
 
     /// UX step 2: save what the user confirmed as a `draft` project.
     @discardableResult
     public func confirmImport() async -> Project? {
-        guard let client, let path = inspectedPath, let repositoryURL = inspectedURL else {
+        guard case .confirm = importState, importNameError == nil,
+            let client, let path = inspectedPath, let repositoryURL = inspectedURL else {
             return nil
         }
         importState = .saving
         do {
-            let detail = try await client.importProject(repositoryPath: path)
+            let detail = try await client.importProject(repositoryPath: path, name: importName)
             if let binding = detail.bindings.first {
                 do {
                     let bookmarkRef = try repositoryGrants.save(
@@ -170,16 +194,40 @@ public final class ProjectsModel {
                         "Repository access could not be saved. Choose the repository again."
                 }
             }
+            // Publish the next step before refresh exposes the new project to the sidebar.
+            onboardingNavigation.set(.workflow, for: detail.project.id)
             importState = .idle
             inspectedPath = nil
             inspectedURL = nil
+            importName = ""
             releaseAccess(key: "pending-import")
             await refresh()
             return detail.project
         } catch {
+            if case EngineClientError.engineError(_, "project.already-imported", _) = error,
+                let existing = try? await existingProject(at: repositoryURL) {
+                importState = .existing(existing)
+                return nil
+            }
             importState = .failed(Self.describe(error))
             return nil
         }
+    }
+
+    /// Read the canonical bindings; inspection never imports or rewrites a grant.
+    private func existingProject(at url: URL) async throws -> Project? {
+        guard let client else { return nil }
+        let known = try await client.listProjects()
+        let canonical = url.resolvingSymlinksInPath().standardizedFileURL
+        for project in known {
+            let detail = try await client.getProject(id: project.id)
+            if detail.bindings.contains(where: {
+                URL(fileURLWithPath: $0.path).resolvingSymlinksInPath().standardizedFileURL == canonical
+            }) {
+                return project
+            }
+        }
+        return nil
     }
 
     public func detail(for id: String) async throws -> ProjectDetail {

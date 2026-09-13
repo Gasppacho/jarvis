@@ -48,6 +48,7 @@ public struct ProjectDetailView: View {
     // across a Project switch rather than losing the selected tab.
     @State private var selectedTab: Tab = .overview
     @State private var selectedExecutionID: String?
+    @State private var executionOrigin: Tab = .overview
 
     public init(
         projects: ProjectsModel,
@@ -73,13 +74,13 @@ public struct ProjectDetailView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            Picker("View", selection: $selectedTab) {
-                Text("Overview").tag(Tab.overview)
+            Picker("Vue", selection: $selectedTab) {
+                Text("Supervision").tag(Tab.overview)
                 Text("Composition").tag(Tab.composition)
-                Text("Graph").tag(Tab.graph)
-                Text("Timeline").tag(Tab.timeline)
-                Text("Execution").tag(Tab.execution)
-                Text("Dead Letters").tag(Tab.deadLetters)
+                Text("Schéma").tag(Tab.graph)
+                Text("Historique").tag(Tab.timeline)
+                Text("Exécution").tag(Tab.execution)
+                Text("Livraisons en échec").tag(Tab.deadLetters)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -88,7 +89,7 @@ public struct ProjectDetailView: View {
 
             switch selectedTab {
             case .overview:
-                ProjectOverviewView(model: overview, projects: projects, projectId: project.id) { id in
+                ProjectOverviewView(model: overview, projects: projects, executionDetail: executionDetail, projectId: project.id) { id in
                     openExecution(id)
                 }
             case .composition:
@@ -110,12 +111,13 @@ public struct ProjectDetailView: View {
                         timeline: timeline,
                         projectId: project.id,
                         executionId: selectedExecutionID,
-                        close: { selectedTab = .timeline })
+                        backLabel: executionOrigin == .overview ? "Retour à la supervision" : "Retour à l’historique",
+                        close: { selectedTab = executionOrigin })
                 } else {
                     ContentUnavailableView(
-                        "No execution selected",
+                        "Aucune exécution sélectionnée",
                         systemImage: "gearshape",
-                        description: Text("Open an execution from Overview or Timeline."))
+                        description: Text("Ouvrez une exécution depuis la supervision ou l’historique."))
                 }
             case .deadLetters:
                 ProjectDeadLettersView(model: deadLetters, projectId: project.id)
@@ -158,6 +160,7 @@ public struct ProjectDetailView: View {
     }
 
     private func openExecution(_ executionID: String) {
+        executionOrigin = selectedTab == .execution ? executionOrigin : selectedTab
         selectedExecutionID = executionID
         selectedTab = .execution
     }
@@ -290,8 +293,7 @@ public struct ProjectDetailView: View {
             TextField("Project name", text: projectNameBinding)
                 .textFieldStyle(.roundedBorder)
 
-            startingPointEditor
-            workflowCommandEditor
+            ProjectWorkflowView(model: projectConfiguration, project: project, packages: moduleCatalog.packages)
             slotRequirementsEditor
 
             HStack {
@@ -314,93 +316,6 @@ public struct ProjectDetailView: View {
                 moduleEditor(
                     module,
                     projectSlots: state.draft?.slotRequirements.keys.sorted() ?? [])
-            }
-        }
-    }
-
-    private var startingPointEditor: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Starting point").font(.headline)
-            Text(
-                "Choose a canonical draft or keep a Custom composition. You can edit every choice afterward."
-            )
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            ForEach(presentation.startingPoints) { startingPoint in
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(startingPoint.displayName).font(.body.weight(.semibold))
-                        Text(startingPoint.description)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button(startingPoint.action.label) {
-                        perform(.edit(startingPoint.action))
-                    }
-                }
-                .accessibilityElement(children: .contain)
-                .accessibilityHint(
-                    "Creates an editable Portable Configuration Draft without Local Bindings.")
-            }
-        }
-        .confirmationDialog("Replace the current module composition?", isPresented: Binding(
-            get: { state.pendingStartingPointID != nil },
-            set: { if !$0 { projectConfiguration.cancelStartingPointReplacement(projectId: project.id) } }
-        )) {
-            Button("Replace composition", role: .destructive) {
-                if let id = state.pendingStartingPointID {
-                    projectConfiguration.chooseStartingPoint(projectId: project.id, startingPointId: id, confirmedReplacement: true)
-                }
-            }
-            Button("Keep draft", role: .cancel) { projectConfiguration.cancelStartingPointReplacement(projectId: project.id) }
-        } message: {
-            Text("This replaces modules, rules and slot requirements. Project details and commands are kept. Resources still require explicit binding.")
-        }
-        .id("starting-point")
-    }
-
-    private var workflowCommandEditor: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let draft = state.draft {
-                Text("Workflow choices").font(.headline)
-                Text("Recommended model").font(.subheadline)
-                Text(presentation.startingPoints.first(where: { $0.id == "github-development" })?.description ?? "Repository mapping unavailable. Refresh the Engine review.").font(.callout)
-                if let github = draft.modules.first(where: { $0.moduleId == "jarvis.module.github" }),
-                    github.configurationValues["readyLabel"] != nil {
-                    TextField("Ready label", text: Binding(
-                        get: { state.draft?.modules.first(where: { $0.id == github.id })?.configurationValues["readyLabel"] ?? "" },
-                        set: { projectConfiguration.setReadyLabel(projectId: project.id, label: $0) }
-                    ))
-                    .textFieldStyle(.roundedBorder)
-                }
-                Text("Commands are proposals from the repository. Confirm only commands you trust. Install prepares dependencies in each fresh worktree before the agent. Selected validations must pass in that worktree before commit, push and PR creation.")
-                    .font(.callout)
-                Text("For Jarvis, prefer pnpm verify. Prerequisites: macOS, Xcode command line tools and Swift, Node 24 and the pnpm version declared by packageManager; confirm the frozen install and grant the runtime's tool paths first.")
-                    .font(.caption).foregroundStyle(.secondary)
-                ForEach(["install", "verify", "lint", "typecheck", "test", "build"], id: \.self) { name in
-                    TextField(name, text: Binding(
-                        get: { state.draft?.commands[name] ?? "" },
-                        set: { projectConfiguration.setCommand(projectId: project.id, name: name, command: $0) }
-                    )).textFieldStyle(.roundedBorder)
-                }
-                ForEach(draft.modules.filter { $0.moduleId == "jarvis.module.development" }) { module in
-                    Picker("Worktree preparation", selection: configurationBinding(module.id, "preparation")) {
-                        Text("Choose and confirm preparation").tag("")
-                        Text("Run the install command above").tag("install")
-                        Text("No preparation necessary").tag("none")
-                    }
-                    Text("Confirm validations for \(module.instanceId)").font(.subheadline)
-                    ForEach(draft.validationCommandNames, id: \.self) { name in
-                        Toggle("Run \(name): \(draft.commands[name] ?? "")", isOn: Binding(
-                            get: {
-                                let raw = state.draft?.modules.first(where: { $0.id == module.id })?.configurationValues["validationOrder"] ?? "[]"
-                                return ((try? JSONDecoder().decode([String].self, from: Data(raw.utf8))) ?? []).contains(name)
-                            },
-                            set: { projectConfiguration.selectValidationCommand(projectId: project.id, moduleID: module.id, name: name, selected: $0) }
-                        ))
-                    }
-                }
             }
         }
     }
@@ -1273,7 +1188,8 @@ public struct ProjectDetailView: View {
                     $0.repositoryId == repositoryId
                     })
                 else { return }
-                chooseRepository(for: binding)
+                presentRepositoryPicker(binding: binding, project: project, projects: projects,
+                                        configuration: projectConfiguration, packages: moduleCatalog.packages)
             }
         case .confirmation:
             isDeleteConfirmationPresented = true
@@ -1477,27 +1393,6 @@ public struct ProjectDetailView: View {
                     .asynchronous(
                         .setLocalBinding(slot, selection.isEmpty ? nil : selection)))
             })
-    }
-
-    private func chooseRepository(for binding: ProjectBinding) {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Restore Access"
-        panel.message = "Choose the repository for \(project.name)."
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        Task {
-            if await projects.reauthorize(
-                projectId: project.id,
-                repositoryId: binding.repositoryId,
-                replacing: binding.bookmarkRef,
-                with: url
-            ) {
-                await projectConfiguration.refreshAfterRepositoryBindingChange(
-                    projectId: project.id, packages: moduleCatalog.packages)
-            }
-        }
     }
 
     private func row(_ label: String, _ value: String) -> some View {

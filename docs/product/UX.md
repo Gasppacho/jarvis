@@ -1,167 +1,158 @@
 # UX macOS
 
-## Navigation principale
+## Parcours canonique
 
-La fenêtre principale utilise une sidebar native :
+Décision du 13 septembre 2026 : **Dépôt → Workflow → Accès et agent → Vérification**
+est l'unique parcours recommandé. Il remplace les anciens assistants à cinq étapes
+et le second panneau de navigation. Les réglages de composition restent accessibles
+dans **Réglages avancés**, avec un retour explicite au guide du même projet.
+Le plan et les preuves de livraison sont suivis dans
+[`PROGRESS.md`](../../PROGRESS.md) ; les captures de la maquette d'audit représentent
+des données fictives, pas des résultats exécutés.
 
-```text
-Jarvis
-├── Projects
-│   ├── Token Warehouse
-│   └── Client A
-├── Connections
-├── Agent Runtimes
-├── Module Catalog
-└── Settings
-```
+La sidebar native privilégie **Projets**, avec **Ajouter un projet**, puis la
+**Bibliothèque** (Comptes et connexions, Catalogue des modules). Le détail d'un
+projet contient un en-tête avec nom, dépôt, état et prochaine action. Les quatre
+étapes sont des boutons dans le contenu, sur une rangée quand la largeur le permet
+et dans une liste verticale sinon. Le contenu reste aligné à gauche, avec une
+largeur de lecture limitée et un défilement vertical. Aucune seconde sidebar vide.
 
-Lorsqu'un projet est sélectionné :
+Chaque étape reste accessible, même si le brouillon est incomplet. Une seule action
+principale fait avancer l'étape ; les actions de correction sont contextuelles.
+La sauvegarde reste visible en bas, avec **Modifications à enregistrer**,
+**Enregistrement…**, **Enregistré** ou **Échec — Réessayer**. Sauvegarder ne démarre
+aucun travail. Changer d'étape ou ouvrir les réglages avancés conserve le brouillon.
+Une réouverture retrouve les valeurs enregistrées et l'étape du projet.
 
-```text
-Overview · Graph · Modules · Executions · Events · Artifacts · Settings
-```
+Les raccourcis **⌘N** (ajouter un projet) et **⌘S** (enregistrer le brouillon)
+complètent les contrôles natifs. L’activation reste une action explicite, sans
+raccourci Entrée global. La navigation clavier et VoiceOver font l’objet d’une
+preuve native distincte ; les noms AX seuls ne prouvent pas le parcours.
 
-## Premier lancement
+Les champs ont des libellés permanents. Toute action critique possède un nom
+d'accessibilité et fonctionne au clavier. Un état combine icône et texte ; aucune
+signification ne dépend uniquement de la couleur. Les couleurs système suivent
+l'apparence claire ou sombre. Les identifiants, contrats, chemins internes et
+documents JSON sont repliés dans **Détails techniques**.
 
-Le premier lancement ne demande aucune configuration métier globale. Il :
+## Dépôt
 
-1. initialise le stockage ;
-2. détecte Git, `gh` et les runtimes connus ;
-3. affiche l'état du moteur ;
-4. propose `Import a repository`.
+Le premier lancement explique le résultat : développer une issue prête, vérifier
+le travail puis proposer une Pull Request. **Ajouter un projet** ouvre le sélecteur
+de dossier macOS. L'inspection est en lecture seule : Git, remote, branche de base,
+manifestes, gestionnaire de paquets, commandes et instructions du dépôt.
 
-Les connexions peuvent être créées pendant le wizard projet ou depuis l'écran global.
+Le résumé propose le nom modifiable, le dépôt GitHub et la branche de base. Annuler
+ne crée aucun projet. Un dossier non Git ou inaccessible conserve son erreur et
+propose de choisir un autre dossier. Un dépôt déjà connu propose **Ouvrir ce projet**.
+Après confirmation, le nouveau brouillon est sélectionné immédiatement. L'accès au
+dossier reste local à ce Mac et peut être réautorisé depuis cette étape.
 
-## Wizard projet
+## Workflow
 
-### Étape 1 — Repository
-
-L'utilisateur choisit un dossier. Jarvis obtient un security-scoped bookmark et détecte :
-
-- repository Git ;
-- remote et provider probables ;
-- branche par défaut ;
-- manifests de package ;
-- package manager ;
-- scripts disponibles ;
-- fichiers d'instructions agentiques.
-
-### Étape 2 — Écosystème
-
-Jarvis propose sans imposer :
-
-- commandes install, lint, typecheck, test, build ;
-- convention de branche ;
-- remote de push ;
-- nombre maximal d'exécutions concurrentes.
-
-### Étape 3 — Ressources
-
-L'utilisateur lie :
-
-- slot `sourceControl` ;
-- slot `tickets` ;
-- slot `agentRuntime` ;
-- MCP optionnels.
-
-Une ressource globale n'est pas visible des agents du projet sans ce binding. Pour chaque Slot, le contrôle n'affiche que les ressources explicitement accordées au Project qui satisfont à la fois la capability du Slot et celles des Module Instances qui le référencent. Une Module Instance sélectionnée n'apparaît elle-même que pour les capabilities de son Manifest qu'elle fournit réellement.
-
-Chaque ligne `Resources` nomme les capabilities requises et les Module Instances du Draft qui référencent le Slot par un binding ou un `runtimeSlot`, avec le nom et la description de leur Module Package. Elle affiche tel quel le statut Engine `bound`, `available`, `missing`, `inaccessible` ou `incompatible`. Pour un état non résolu, la conséquence (`impact`) puis la prochaine action (`repairAction`) précèdent tout choix de ressource. Quand l'Engine ne retourne aucun candidat éligible, la ligne explique l'indisponibilité avec ce statut et cette action plutôt que d'afficher un picker `Unbound` vide. Recharger les candidats ou changer un Local Binding rafraîchit aussi les ressources manquantes et les choix Event sans remplacer les autres valeurs du Draft.
-
-Le contrôle de capability d'un Slot propose uniquement l'union des identifiants déclarés par `ModulePackage.requires[].id` dans le Module Catalog chargé, avec sa signification humaine lue depuis `GET /v1/capability-catalog` (ticket 48) sous le picker. Une valeur libre reste accessible sous `Advanced`; le shell n'invente ni identifiant, ni nom de binding, ni explication humaine absente du catalogue servi — un identifiant inconnu du catalogue affiche « Unavailable » plutôt qu'une signification devinée.
-
-Choisir un template n'accorde jamais de ressource locale. Le picker modifie uniquement `ProjectBindings`; la Portable Configuration reste inchangée. Sauvegarder puis rouvrir recharge séparément les documents canoniques `jarvis.dev/project/v1` et `jarvis.dev/project-bindings/v1`.
-
-### Étape 4 — Modules
-
-Un Project fraîchement importé commence par deux choix nommés : `GitHub Development`
-ou `Custom composition`. Le premier remplit un Draft canonique; le second conserve les
-valeurs détectées et laisse la composition vide. Aucun choix ne lie ni n'autorise une
-ressource locale.
-
-Pour le template GitHub Development :
+La carte **Développer une issue GitHub** applique la proposition existante de
+l'Engine. Elle n'accorde aucune ressource locale. Le schéma explicatif présente :
 
 ```text
-[✓] GitHub
-[✓] Automation Rules
-[✓] Development
-[ ] Change Request Review
-[ ] Auto Merge
+Issue prête → Développement → Vérifications → Pull Request
 ```
 
-Chaque carte mène par le nom et la description du Module Package. Elle affiche les
-Events consommés et émis, les capabilities requises, la compatibilité et les ressources
-manquantes provenant de la prévisualisation Engine. `Advanced` révèle seulement ensuite
-l'Instance ID, le Package ID, la version et les détails contractuels. Ajouter, retirer,
-activer, désactiver ou changer un package redemande immédiatement les choix au Local API;
-une réponse devenue obsolète ne remplace jamais un Draft plus récent et les autres
-valeurs saisies restent intactes.
+Chaque carte révèle son explication et les réglages usuels. À petite largeur,
+l'ordre devient vertical. Le schéma projette la composition canonique et les
+événements déclarés par l'Engine ; il ne stocke pas un second graphe et Swift ne
+recalcule aucun routage. Une composition personnalisée conserve ses valeurs.
+Remplacer une composition par le modèle demande une confirmation qui nomme les
+valeurs remplacées : modules, règles et exigences de ressources ; nom et commandes
+du projet sont conservés. Le modèle déjà présent ne devient pas un choix à refaire.
 
-### Étape 5 — Validation
+Le parcours recommandé utilise une issue ouverte portant **ready-for-agent**, sans
+bloqueur GitHub natif ouvert. GitHub produit `scm.work-item.ready`, Automation Rules
+produit `development.implementation.requested`, puis Development prépare le
+worktree, exécute l'agent et les validations confirmées, commit et pousse. GitHub
+crée la PR après `scm.change-request.creation-requested`. **Une issue à la fois** ;
+**relecture et merge humains**. Les projets historiques conservent `agent:ready`
+et leur règle historique tant qu'un remplacement explicite n'est pas demandé.
 
-Jarvis affiche :
+**Préparer et vérifier le projet** présente les commandes détectées comme des
+propositions non encore exécutées. L'utilisateur confirme la préparation, y compris
+l'absence de préparation, puis choisit explicitement les validations. Pour Jarvis,
+proposer l'installation avec lockfile gelé et `pnpm verify` une fois, sans sélectionner
+aussi les commandes qu'il contient. Modifier une commande révoque sa confirmation.
+Un brouillon incomplet reste enregistrable. **Workflow configuré** décrit uniquement
+la configuration ; ce libellé ne prouve jamais la réussite des commandes.
 
-- contrats compatibles ;
-- requests résolues ;
-- capabilities satisfaites ;
-- accès au repository ;
-- connexion au provider ;
-- runtime disponible ;
-- commandes valides.
+## Accès et agent
 
-Un projet invalide peut être sauvegardé mais pas activé. Le rapport distingue les états non validé, validation en cours, valide, invalide, périmé et erreur du Local API. L'étape 5 affiche `Ready to activate` uniquement pour le Project sélectionné dont le rapport courant a réussi avec `valid: true`; chaque autre état explique pourquoi cette disponibilité manque. Toute modification de la Portable Configuration ou des Local Bindings la révoque immédiatement. Toute modification rend aussi le rapport affiché périmé; ses routes, capabilities, findings et statut ne redeviennent courants qu'après une nouvelle réponse réussie de `/validation-report`, et une réponse antérieure à la modification est ignorée. Le rapport reste une évaluation en lecture seule : il n'est pas persisté avec la Portable Configuration ou les Local Bindings. Rouvrir ou recharger le Project restaure ces deux documents sans les réécrire et revient à l'état non validé jusqu'à un nouvel appel à `/validation-report`; un échec de cette nouvelle validation conserve la composition durable. Les findings invalides sont ordonnés par leurs identités contractuelles et nomment une référence Project, Request, contrat, Module Instance, Slot ou capability stable, ce qui est indisponible, le comportement affecté et l'action corrective. Une erreur du Local API ne ressemble jamais à un rapport invalide : elle explique son impact et permet de redemander un nouveau rapport.
+Deux cartes : **Compte GitHub** et **Agent de développement**. Un candidat peut être
+préselectionné visuellement, mais seul un choix explicite autorise ce projet à
+l'utiliser. Une ressource globale n'est jamais un accord implicite aux projets.
 
-Le bouton `Activate` (#55) transforme ce signal de présentation en requête réelle vers `POST /v1/projects/{projectId}/activate`. Il n'est actionnable que dans l'état `Ready to activate`, et transmet le `compositionFingerprint` exact du rapport affiché — jamais un rapport plus ancien, jamais deviné. Un rapport valide sans `compositionFingerprint` (le champ reste optionnel sur le contrat) refuse localement l'activation plutôt que d'omettre le champ ou d'en envoyer un faux, avec la même explication de principe que les autres états indisponibles. Une activation rejetée — aucun rapport courant (`project.activation-not-validated`), rapport périmé (`project.activation-report-stale`) ou échec de transport — s'affiche dans un encadré distinct, jamais mêlé aux findings du rapport de validation : une erreur d'activation ne ressemble jamais à une conclusion de validation. Un succès affiche le Project actif à la fois dans l'Assistant et dans la liste des Projects; un échec laisse l'état affiché cohérent avec celui de l'Engine, sans jamais montrer un Project actif qui ne l'est pas vraiment.
+Après le choix du compte, afficher **Utilisé par ce projet**, le résultat du contrôle
+d'accès au dépôt, sa date et **Modifier**. Plusieurs comptes restent distinguables.
+Aucun compte, connexion expirée ou accès refusé conserve une action de réparation.
 
-### Première ouverture et import
+Pour l'agent, distinguer : choisir d'abord un workflow, Codex absent, connexion
+requise, version incompatible, outil manquant, vérification en cours, prêt et erreur
+du moteur. Un Codex valide sans workflow n'est pas une version incompatible.
+Présenter le modèle effectivement choisi ou **Modèle par défaut de Codex** lorsque
+le runner utilise son défaut. Ne pas déduire un modèle d'une configuration globale
+ignorée par le runner. Les délais et permissions détaillés restent dans les réglages
+avancés. Aucun secret ni valeur d'environnement n'entre dans la configuration portable.
 
-Quand le moteur est prêt mais qu'aucun Project n'est connu, le détail du split
-view explique le résultat attendu — issue prête, développement, puis Pull
-Request — et propose `Importer un repository`; la même action reste dans la
-toolbar. L'inspection est strictement en lecture seule : un dossier non Git ou
-une erreur reste visible avec son impact et l'action `Choose another folder`,
-et ne crée jamais un Project partiel.
+La vérification du runtime et des outils ne démarre pas Development et ne garantit
+pas le succès des tests. Elle utilise les accès effectivement accordés au projet.
+Une édition ou réouverture demande un contrôle courant ; un accord conservé ne
+constitue pas à lui seul une preuve de disponibilité actuelle.
 
-Après l'import, le shell présente quatre étapes persistantes : `Repository`,
-`Workflow`, `Connections` et `Review`. Chaque ligne porte une icône native et
-un état textuel (`À compléter`, `En cours`, `Prêt à revoir` ou `Terminé`). Le
-choix de l'étape est local au Project et survit à la relance sans réécrire les
-valeurs inconnues. `Review` reste accessible pour un Draft incomplet; seule
-l'activation dépend du rapport courant de l'Engine. Les contrôles experts et
-les identifiants techniques restent sous `Advanced`.
+## Vérification
 
-### Grammaire de composition guidée
+**Vérifier la configuration** résume accès, commandes confirmées, déclencheur et
+sortie attendue. Les contrôles proviennent du preflight Engine. Un échec présente
+son impact et **Corriger**, qui ouvre la bonne étape. Le fingerprint, les références
+de contrats et les routes restent dans les détails techniques.
 
-La grammaire retenue est un **parcours par étapes persistantes dans un split view natif** : `Starting point`, `Module Instances`, `Automation Rules`, `Resources`, puis `Review`. La liste d'étapes reste visible et signale les éléments complets, incomplets ou bloqués ; le panneau de détail édite une étape à la fois. L'utilisateur peut revenir à toute étape sans perdre les valeurs du Draft. La divulgation est progressive, mais `Review` reste toujours accessible et distingue un Draft sauvegardable de l'état de validation détenu par l'Engine.
+**Configuration prête** ne signifie ni tests réussis ni issue disponible. Une liste
+vide d'issues est normale ; une erreur GitHub ou des dépendances inconnues bloque
+l'éligibilité et ne ressemble pas à une liste vide. Toute modification invalide le
+rapport ; une réponse périmée ou d'un autre projet ne devient jamais courante.
 
-Cette décision vient d'une comparaison de trois prototypes SwiftUI structurellement différents, tous alimentés par les mêmes quatre fixtures en mémoire, de forme `jarvis.dev/project-composition-choices/v1` :
+La carte **Première exécution** distingue **Tester avec cette issue** et
+**Surveiller les issues prêtes**. Le choix mono-issue ajoute le filtre exact à la
+règle canonique et conserve les autres valeurs ; sa portée reste visible après
+vérification. Le bouton final reprend l'intention et le numéro de l'issue.
+Élargir à toutes les issues retire uniquement le filtre posé par l'essai, exige
+un nouveau rapport puis une activation explicite. Une issue déjà admise ne redémarre
+pas. Sans rapport courant, fingerprint exact et ressources requises disponibles,
+aucune activation n'est permise, y compris depuis les réglages avancés.
 
-- **Fresh** : aucun starting point, aucune Module Instance et aucun Event choisi ;
-- **Valid** : GitHub Development, une Request résolue et une ressource éligible liée ;
-- **Orphaned** : la phrase de Rule est conservée, mais l'Engine explique qu'aucun consumer actif n'est disponible et qu'aucune ressource éligible n'existe ;
-- **Ambiguous** : deux consumers actifs sont présentés avec l'explication de routage de l'Engine.
+## Inventaire des états
 
-| Prototype | Structure | Utilisabilité et divulgation | Préservation / états vides | Clavier, VoiceOver et texte accessible |
-|---|---|---|---|---|
-| Assistant modal linéaire | Une séquence `Back` / `Next` qui verrouille les étapes futures | Très clair pour Fresh, mais masque trop longtemps les conflits Orphaned/Ambiguous et rend la correction transversale lente | Les valeurs survivent à `Back`, mais la validation par page encourage à bloquer un Draft incomplet ; les états vides sont actionnables mais isolés | Ordre clavier simple ; VoiceOver perd le contexte global et annonce mal la relation entre erreur et étape masquée |
-| Canevas de composition | Colonnes Module Instance → Event → consumer/resource, avec Review en panneau | Excellent pour lire Valid et Ambiguous, mais dense, peu progressif et trop proche d'un éditeur de graphe impératif | La phrase reste visible lors d'un conflit ; Fresh devient un grand canevas vide dont l'action initiale est peu évidente | Navigation bidimensionnelle coûteuse ; ordre VoiceOver et représentation texte/liste fragiles |
-| Étapes persistantes en split view | Liste d'étapes avec état, détail de l'étape sélectionnée et Review toujours accessible | Bon point de départ pour Fresh, correction directe d'Orphaned/Ambiguous, et vue globale sans prétendre persister un graphe | Le même Draft alimente toutes les étapes ; chaque vide nomme l'indisponibilité, son impact et l'action de réparation | Ordre clavier stable liste puis détail ; chaque ligne expose label, valeur, état et hint ; le contenu possède une représentation textuelle/liste complète |
+| État observé | Présentation | Action utile |
+| --- | --- | --- |
+| Aucun projet | Résultat attendu, aucun travail lancé | Ajouter un projet |
+| Brouillon incomplet | Valeurs conservées, étapes à compléter | Enregistrer ou compléter |
+| Configuration prête | Contrôles de configuration courants, tests non encore exécutés | Choisir la portée et démarrer |
+| Vérification en cours | Progression nommée, activation indisponible | Attendre le résultat |
+| Exécution en cours | Issue, étape réelle, durée et dernière mise à jour | Ouvrir, mettre en pause les départs ou annuler l'exécution |
+| Échec | Cause, tentative et contrôle concernés avant les détails | Corriger ou reprendre selon le remède Engine |
+| Déconnecté / données anciennes | Dernier résultat conservé, âge et état de connexion | Réessayer |
+| Rapport périmé | Ancien rapport explicitement marqué | Vérifier à nouveau |
+| Projet en pause | Aucun nouveau départ ; l'actif reste suivi | Reprendre après vérification de portée |
 
-Le troisième prototype est retenu : il combine la progression du wizard avec la navigation de réparation nécessaire aux Drafts réouverts, respecte le split view macOS existant et ne transforme pas les Events en graphe éditable. Les prototypes et leurs assets ont été supprimés après comparaison ; aucun `View` prototype n'est une surface de production.
+Le rendu se vérifie à 1100×800 et 1512×949, en clair et sombre. Les preuves
+Harness, fixtures de présentation, captures natives et session réelle restent
+identifiées séparément. Un test de libellés ou une image rendue hors interaction
+ne prouve pas le parcours utilisateur complet.
 
-L'inventaire de présentation retenu est piloté par les données : cinq sections ordonnées, des lignes avec état et action, un ordre clavier stable, puis pour chaque ligne un rôle, un label, une valeur et un hint accessibles. Les phrases saisies sont distinctes des explications de routage. Les statuts `resolved`, `broadcast`, `orphaned` et `ambiguous` ainsi que leurs explications viennent de la réponse de l'Engine ; Swift ne recalcule ni consumer ni compatibilité.
+## Réglages avancés de composition
 
-`Review` présente sous forme de listes textuelles les Module Instances, chemins Event et
-diffusion des Facts, routes de Requests, compatibilité, capabilities et Local Bindings.
-Chaque finding bloquant possède une action qui ramène au contrôle de Module Instance,
-d'Automation Rule ou de ressource concerné. `Save Draft` reste disponible pour une
-composition structurellement sérialisable mais incomplète. `Ready to validate` est un
-résultat séparé de l'Engine pour le Draft sauvegardé et ses Local Bindings; toute édition
-non sauvegardée le rend immédiatement caduc. Validate et Activate restent indisponibles
-tant que ce résultat est faux. La sauvegarde ne contient que Portable Configuration et
-Local Bindings, jamais les lignes de Review ni un graphe Event.
-
-La comparaison native utilise le build de l'app empaquetée pour vérifier structure, tailles et navigation, et XCTest vérifie l'inventaire observable sur les quatre fixtures. SwiftPM ne fournit pas de target XCUITest pour l'exécutable SwiftPM macOS ; l'automatisation UI/VoiceOver de bout en bout reste donc une vérification manuelle de l'app empaquetée, et non un test `swift test` prétendument équivalent.
+Les formulaires existants de modules, règles, ressources et configuration structurée
+restent le chemin d'édition des compositions personnalisées. Leur navigation interne
+ne constitue pas un autre assistant de premier usage. Les ressources éligibles,
+capabilities, compatibilités et destinations viennent de l'Engine. Les valeurs
+inconnues sont conservées et réparables ; le shell n'invente ni ressource ni contrat.
+Le choix d'une ressource écrit les Local Bindings, jamais la Portable Configuration.
+La sauvegarde conserve ces deux documents canoniques, sans lignes de présentation.
 
 ### Automation Rules
 
@@ -231,13 +222,16 @@ Project Detail expose l'action destructive `Delete Project…`. Elle ouvre une c
 
 `Cancel` ne déclenche aucune opération. Après confirmation, la sidebar et sa sélection ne sont effacées qu'une fois la suppression moteur réussie. Un échec API conserve le Project et son Repository Grant ; un échec de nettoyage du grant après suppression moteur est signalé comme résultat partiel. Un Project actif doit d'abord être pausé.
 
-## Graphe émergent
+## Graphe émergent — diagnostic avancé
+
+Cette section décrit l’inspection technique des compositions personnalisées.
+Elle reste distincte du schéma métier à quatre cartes du guide recommandé.
 
 Le graphe est dérivé des manifests et instances actives. Il n'est pas un éditeur de workflow impératif. La vue runtime livrée par #18 est l'onglet **Graph** de Project Detail : après activation, il lit `GET /v1/projects/{projectId}/graph` et affiche les Module Instances et contrats effectivement actifs. L'onglet **Timeline** expose les Executions et leur action d'annulation par la même Local API.
 
 ```text
 [GitHub]
-    └─ scm.work-item.tag-added
+    └─ scm.work-item.ready
            ↓
 [Automation Rules]
     └─ development.implementation.requested
@@ -269,16 +263,16 @@ Cette décision vient d'une comparaison de trois prototypes SwiftUI structurelle
 | Prototype | Structure | Lisibilité du routage | Comportement en densité | Clavier, VoiceOver et coût de l'équivalent texte/liste |
 |---|---|---|---|---|
 | Flow map | Cartes de Module Instance, liste d'edges séparée, rail de capability en bande | Le statut de routage exige un aller-retour entre la carte et la ligne d'edge correspondante ; aucun trait ne relie visuellement les cartes | Cartes, edges et rail défilent chacun sur un axe différent ; sans connexion dessinée entre les cartes, la mise en page dégénère en trois listes non reliées dès que la composition grossit | Trois zones de défilement d'orientations différentes rendent l'ordre clavier et VoiceOver imprévisible ; structure la plus éloignée de la liste texte que #51 doit de toute façon construire |
-| Hierarchical outline | Module Instance en ligne parente, Events produits/consommés et capabilities en lignes filles | Le statut de routage est porté directement par la ligne fille concernée, sans recherche croisée | Liste native qui défile verticalement ; une identité de ligne non unique par Module Instance a provoqué un doublon d'affichage sur la fixture Ambiguous, corrigé en qualifiant chaque ligne par Module Instance, rôle et index | Ordre clavier et VoiceOver strictement descendant, identique au split view déjà retenu pour la grammaire de composition guidée ; le contenu affiché est déjà la représentation texte/liste |
+| Hierarchical outline | Module Instance en ligne parente, Events produits/consommés et capabilities en lignes filles | Le statut de routage est porté directement par la ligne fille concernée, sans recherche croisée | Liste native qui défile verticalement ; une identité de ligne non unique par Module Instance a provoqué un doublon d'affichage sur la fixture Ambiguous, corrigé en qualifiant chaque ligne par Module Instance, rôle et index | Ordre clavier et VoiceOver strictement descendant, identique à la liste des réglages avancés ; le contenu affiché est déjà la représentation texte/liste |
 | Routing table | Une ligne par contrat Request : producer, consumer résolu ou échec, version, finding | Statut de routage directement lisible par ligne, la plus compacte des trois | `Table` native, la plus robuste à la densité, mais les Facts diffusés ne figurent dans aucune ligne : la table ne montre qu'une partie du graphe de composition | Ordre clavier et VoiceOver natif ligne/colonne ; coût texte/liste nul, mais au prix de rendre invisibles les événements diffusés |
 
-Le deuxième prototype est retenu : il montre l'intégralité du graphe de composition — Module Instances, Requests routées, Facts diffusés et capabilities — sans recherche croisée pour lire un statut, avec l'ordre clavier/VoiceOver descendant déjà retenu pour la grammaire de composition guidée, et son contenu constitue déjà la représentation texte/liste que #51 doit fournir. Le flow map ne dessine aucune connexion réelle entre les cartes une fois construit sur le read model : il dégénère en trois listes non reliées, moins lisibles et plus coûteuses à faire correspondre à la liste texte. Le routing table reste le plus compact pour les seules Requests, mais omet entièrement les Facts diffusés du graphe de composition, ce qui ne convient pas à une prévisualisation qui doit rester complète. Les statuts `resolved`, `broadcast`, `orphaned` et `ambiguous` ainsi que les états `bound`/`unresolved`/`unbound` du rail viennent tels quels de la réponse `POST /v1/projects/{projectId}/composition-graph` ; pour le runtime activé, les nœuds, contrats et statuts viennent de `GET /v1/projects/{projectId}/graph`. Swift ne recalcule ni consumer ni compatibilité.
+Le deuxième prototype est retenu : il montre l'intégralité du graphe de composition — Module Instances, Requests routées, Facts diffusés et capabilities — sans recherche croisée pour lire un statut, avec un ordre clavier/VoiceOver descendant dans les réglages avancés, et son contenu constitue déjà la représentation texte/liste que #51 doit fournir. Le flow map ne dessine aucune connexion réelle entre les cartes une fois construit sur le read model : il dégénère en trois listes non reliées, moins lisibles et plus coûteuses à faire correspondre à la liste texte. Le routing table reste le plus compact pour les seules Requests, mais omet entièrement les Facts diffusés du graphe de composition, ce qui ne convient pas à une prévisualisation qui doit rester complète. Les statuts `resolved`, `broadcast`, `orphaned` et `ambiguous` ainsi que les états `bound`/`unresolved`/`unbound` du rail viennent tels quels de la réponse `POST /v1/projects/{projectId}/composition-graph` ; pour le runtime activé, les nœuds, contrats et statuts viennent de `GET /v1/projects/{projectId}/graph`. Swift ne recalcule ni consumer ni compatibilité.
 
 Les trois prototypes ont été comparés depuis le build empaqueté (`pnpm build:app`, captures `screencapture` sur les fixtures Orphaned et Ambiguous), puis supprimés avec leur point d'entrée temporaire une fois la comparaison faite ; aucune `View` prototype ne devient une surface de production.
 
 ### Sélection et deuxième surface
 
-#52 termine l'outline retenue ci-dessus sans dessiner de carte, d'edge ni de canvas : #50 a tranché contre le flow map sur ce même read model, et cette décision n'est pas rouverte. Sélectionner une ligne — Module Instance, contrat produit, contrat consommé, capability requise ou entrée de rail — révèle son détail : identifiants stables, version de contrat, statut de routage et findings applicables. Ce détail est une projection pure de `ProjectCompositionGraph`, indexée par l'id déjà qualifié par Module Instance, rôle et index ; il ne recalcule ni consumer, ni compatibilité, ni routage, et un id inconnu ou périmé ne révèle rien plutôt que de planter. La sélection est un `Button` natif : atteignable au clavier, annoncée par VoiceOver, distinguée par un glyphe de divulgation et par le mot « Selected » dans son libellé d'accessibilité — jamais par la seule couleur ni par le survol.
+Pour ce diagnostic avancé, #52 termine l’outline retenue par #50. Cette décision concerne le graphe détaillé des contrats ; elle n’interdit pas les quatre cartes explicatives du guide métier. Sélectionner une ligne — Module Instance, contrat produit, contrat consommé, capability requise ou entrée de rail — révèle son détail : identifiants stables, version de contrat, statut de routage et findings applicables. Ce détail est une projection pure de `ProjectCompositionGraph`, indexée par l'id déjà qualifié par Module Instance, rôle et index ; il ne recalcule ni consumer, ni compatibilité, ni routage, et un id inconnu ou périmé ne révèle rien plutôt que de planter. La sélection est un `Button` natif : atteignable au clavier, annoncée par VoiceOver, distinguée par un glyphe de divulgation et par le mot « Selected » dans son libellé d'accessibilité — jamais par la seule couleur ni par le survol.
 
 La seconde surface que #28 demandait (Wizard preview et Project Overview) se réduit, tant que #18 et #6 ne livrent pas l'état runtime, à l'état lecture seule de Project Detail : un Project sauvegardé, sans Draft ouvert (`ProjectConfigurationState.isDraftSaved == true`). Cet état affiche la même Composition, construite par le même `ProjectCompositionOutline` à partir du même `ProjectCompositionGraph`, que l'état d'édition du Wizard ; aucune des deux surfaces ne reconstruit de règle métier Engine. La liste retenue par #51 reste disponible et équivalente pour la même composition.
 
@@ -297,11 +291,17 @@ Liste filtrable par projet, module, statut et corrélation. Une fiche affiche :
 - diagnostic de l'échec.
 
 Depuis une issue active de l'Overview ou une ligne d'exécution de la Timeline, l'utilisateur
-ouvre la fiche corrélée. Elle regroupe les executions finies et en cours autour de l'Event
-d'entrée et affiche exactement les étapes `Issue reçue`, `Éligibilité confirmée`, `Workspace
-préparé`, `Agent en cours`, `Checks`, `Commit et push` et `Création de la Pull Request`.
-Chaque ligne est fondée sur une preuve du journal, du Ledger ou des checkpoints; une preuve
-manquante affiche `Information indisponible`.
+ouvre la fiche corrélée. Elle regroupe les exécutions finies et en cours autour de
+l’événement d’entrée : réception de l’issue, éligibilité, préparation du worktree,
+agent, validations, commit et push, création de la Pull Request. Les étapes suivent
+les résultats et tentatives réellement enregistrés par l’Engine.
+
+Chaque étape distingue **Pas encore commencé**, **En cours**, **Réussi**, **Échoué**,
+**Réparation en cours** et **Annulé**. **Information indisponible** signifie que les
+données ne permettent réellement pas de conclure. Un checkpoint de démarrage ne
+prouve pas un succès. Pendant une réparation, le contrôle échoué reste visible ;
+une tentative réussie remplace l’alerte active et conserve l’historique. L’agent
+possède ses propres dates de fin, distinctes de celles des validations suivantes.
 
 La fiche distingue `Live`, `Reconnecting…` et `Snapshot précédent` sans effacer le dernier
 snapshot. Elle montre les checks avec leur nom, durée et résultat, les extraits agentiques
@@ -309,7 +309,7 @@ bornés avec leur timestamp, puis le diagnostic, l'impact et l'action possible e
 de dépassement de délai ou d'annulation. Une Pull Request créée expose son numéro, titre et
 lien; le message rappelle qu'une revue manuelle est requise. Les identifiants techniques,
 la corrélation, la causalité, les événements et les détails du workspace sont repliés dans
-`Technical details`; aucun contrôle de fusion ou d'auto-fusion n'est présent.
+`Détails techniques`; aucun contrôle de fusion ou d'auto-fusion n'est présent.
 
 ## Events
 
@@ -351,72 +351,3 @@ Codex runtime unavailable
 Development cannot start for Token Warehouse.
 Reconnect the runtime or bind another runtime in Project Settings.
 ```
-
-### Runtime agentique dans Connections (#197)
-
-La même étape `Connections` présente la carte `Runtime agentique` : nom Codex,
-version disponible, état textuel et icône native, choix local et dernier contrôle.
-`Choisir` confirme explicitement l’accès de ce seul projet aux outils et au
-contexte de connexion locaux détectés, puis vérifie le runtime. Aucun chemin,
-variable, JSON ou identifiant n’est nécessaire dans ce parcours; seul le ref
-opaque figure sous `Technical details`, en lecture seule.
-
-`Découvrir les runtimes` actualise les candidats. `Vérifier le runtime` rejoue
-le contrôle project-scoped sans démarrer Development. Les états `Prêt`, `Absent`,
-`Accès refusé`, `Version incompatible`, `Vérification en cours`, `Erreur du moteur`
-et `Non vérifié` conservent une explication textuelle, l’impact sur Development
-et la réparation. La progression, les boutons et la divulgation sont natifs;
-les couleurs sémantiques suivent les thèmes et aucun état ne repose sur la
-couleur seule. Les noms/version et l’accord local sont annoncés avec les contrôles.
-
-`Review` reste accessible dans tous ces états. L’activation exige à la fois le
-rapport courant et le runtime requis prêt. Une modification ou réouverture
-révoque la readiness; les bindings conservés ne valent jamais contrôle courant.
-Le nouveau template allowliste les noms `PATH`, `HOME`, `CODEX_HOME`, sans leur
-valeur et sans grant implicite; les projets existants gardent leur allowlist et
-leur règle `agent:ready`. Le nouveau template conserve `ready-for-agent`.
-
-### Modèle GitHub Development confirmé (#195)
-
-Le nouveau modèle utilise `ready-for-agent` et `scm.work-item.ready` : GitHub confirme
-l'absence de bloqueur natif ouvert, puis la règle demande Development. Le contrôle
-Ready label met à jour le filtre de la règle readiness associée. Les projets historiques
-conservent leur label et leur règle tag-added lors d'une réouverture/sauvegarde.
-
-Workflow choices expose les commandes proposées et leur contexte : préparation dans
-le worktree frais avant l'agent, validations après l'implémentation, puis commit/push
-et demande de PR. Les validations sont sélectionnées explicitement ; une modification
-de commande exige une nouvelle sélection. Pour Jarvis, `pnpm verify` est proposé si
-le script existe, avec les prérequis macOS/Swift, Node 24 et pnpm. La préparation doit
-être choisie, y compris « No preparation necessary ». Une liste vide reste un brouillon
-sauvegardable, jamais un workflow prêt ou des validations réussies.
-
-Custom composition conserve les modifications. Revenir au modèle demande une
-confirmation native avant remplacement. Review annonce que les issues déjà prêtes
-peuvent démarrer dès l'activation explicite, une à la fois, et que le parcours s'arrête
-à la PR avec revue et merge manuels.
-
-### Review guidé et premier essai (#198)
-
-Review propose `Vérifier que le workflow est prêt`. La réponse Engine affiche
-`Prêt à activer` ou `Corrections nécessaires`, les contrôles avec leur impact,
-et `Corriger` vers Repository, Workflow ou Connections. Les références de
-contrats et le fingerprint sont dans Advanced. `Aucune issue correspondante
-pour le moment` conserve la possibilité d'activer une configuration prête.
-Les candidates nomment les dépendances ouvertes, le label, la contrainte une
-issue à la fois et les ressources contrôlées. Une information inconnue ne
-s'affiche jamais comme une issue éligible.
-
-`Essayer avec cette issue uniquement` conserve la règle et ajoute son filtre
-exact de Work Item, enregistre localement le Draft et demande un nouveau
-préflight. L'activation reste séparée. `Surveiller toutes les issues éligibles`
-n'est proposé que pour le filtre posé par cet essai; il enlève seulement ce
-filtre, conserve tous les autres choix et exige un nouveau préflight puis une
-activation explicite. Une issue déjà admise ne redémarre pas; une candidate
-jamais admise redevient disponible après élargissement du périmètre.
-
-Tout changement invalide le rapport. Les erreurs Local API, findings et rejets
-d'activation sont distincts. Le texte avant `Activate workflow` annonce qu'une
-issue déjà éligible peut démarrer dès cette action. Le préflight n'exécute aucun
-travail. Les contrôles natifs restent accessibles au clavier et nommés pour
-VoiceOver, avec texte et icône; les raisons restent multilignes.

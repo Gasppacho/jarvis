@@ -6,8 +6,10 @@ import SwiftUI
 struct ProjectOverviewView: View {
     let model: ProjectOverviewModel
     let projects: ProjectsModel
+    let executionDetail: ProjectExecutionDetailModel
     let projectId: String
     var onOpenExecution: ((String) -> Void)? = nil
+    @State private var issueFilter = ""
 
     var body: some View {
         let presentation = ProjectOverviewPresentation(model.state(for: projectId))
@@ -15,7 +17,7 @@ struct ProjectOverviewView: View {
             VStack(alignment: .leading, spacing: 16) {
                 switch presentation.state {
                 case .loading:
-                    ProgressView("Loading Project Overview…")
+                    ProgressView("Chargement de la supervision…")
                         .frame(maxWidth: .infinity, minHeight: 240)
                 case .failed(let message):
                     unavailable(message)
@@ -30,16 +32,21 @@ struct ProjectOverviewView: View {
             .padding(24)
         }
         .task(id: projectId) {
-            await model.refresh(projectId: projectId)
+            await model.watch(projectId: projectId)
         }
     }
 
     private func overviewContent(_ overview: ProjectOverview) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             header(overview)
-            workflowCard(overview)
-            pollingCard(overview)
+            if let issue = ProjectOverviewPresentation.focusedIssue(overview) {
+                focusedWork(issue)
+            }
             issuesCard(overview)
+            DisclosureGroup("Surveillance et workflow") {
+                pollingCard(overview)
+                workflowCard(overview)
+            }
         }
     }
 
@@ -56,27 +63,43 @@ struct ProjectOverviewView: View {
                     .font(.callout.weight(.medium))
                 Spacer()
             }
+            if let ref = overview.selectedWorkItemRef {
+                Label("Essai limité à \(ProjectPreflightState.issueLabel(ref))", systemImage: "scope").font(.headline)
+            }
+            HStack {
+                Label(ProjectOverviewPresentation.pollingLabel(overview.polling.state), systemImage: pollingSymbol(overview.polling.state))
+                    .foregroundStyle(pollingColor(overview.polling.state))
+                if let date = overview.polling.lastPollAt {
+                    Text("Dernier contrôle GitHub : \(date, format: .dateTime)").font(.caption)
+                }
+            }
+            if overview.polling.state == .reconnecting || overview.polling.state == .failed {
+                Text("Les issues affichées viennent du dernier contrôle terminé. La connexion doit être rétablie.").foregroundStyle(.orange)
+            }
             Text(overview.nextStep)
                 .font(.body)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 switch overview.primaryAction {
                 case .pause:
-                    Button("Pause new work") {
+                    Button("Mettre les nouveaux départs en pause") {
                         Task {
                             await model.pause(projectId: projectId)
                             await projects.refresh()
                         }
                     }
+                    .accessibilityIdentifier("project.overview.pause")
+                    .help("Empêche les nouveaux départs. Le travail actif continue ; ouvrez-le pour l’annuler.")
                 case .resume:
-                    Button("Resume new work") {
+                    Button("Reprendre les nouveaux départs") {
                         Task {
                             await model.resume(projectId: projectId)
                             await projects.refresh()
                         }
                     }
+                    .accessibilityIdentifier("project.overview.resume")
                 case .activate:
-                    Text("Complete the Project configuration to activate it.")
+                    Text("Terminez la configuration pour activer le projet.")
                         .foregroundStyle(.secondary)
                 case .refresh:
                     EmptyView()
@@ -84,7 +107,7 @@ struct ProjectOverviewView: View {
                 Button {
                     Task { await model.retryPolling(projectId: projectId) }
                 } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                    Label("Actualiser", systemImage: "arrow.clockwise")
                 }
                 .disabled(model.state(for: projectId).isLoading)
             }
@@ -137,52 +160,99 @@ struct ProjectOverviewView: View {
                     systemImage: pollingSymbol(overview.polling.state))
                     .foregroundStyle(pollingColor(overview.polling.state))
                 if let lastPollAt = overview.polling.lastPollAt {
-                    Text("Last poll: \(lastPollAt, format: .dateTime)")
+                    Text("Dernier contrôle : \(lastPollAt, format: .dateTime)")
                         .font(.callout)
                 } else {
-                    Text("No GitHub poll has completed yet.")
+                    Text("Aucun contrôle GitHub terminé pour le moment.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
                 if let errorReason = overview.polling.errorReason {
-                    Label("Retry reason: \(errorReason)", systemImage: "exclamationmark.triangle")
+                    Label("Motif de reprise : \(errorReason)", systemImage: "exclamationmark.triangle")
                         .font(.caption)
                         .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if overview.polling.state == .failed || overview.polling.state == .unavailable {
-                    Button("Retry GitHub polling") {
+                    Button("Réessayer le contrôle GitHub") {
                         Task { await model.retryPolling(projectId: projectId) }
                     }
                     .disabled(model.state(for: projectId).isLoading)
                 }
             }
         } label: {
-            Label("GitHub polling", systemImage: "arrow.triangle.2.circlepath")
+            Label("Surveillance GitHub", systemImage: "arrow.triangle.2.circlepath")
+        }
+    }
+
+    private func focusedWork(_ issue: ProjectOverview.Issue) -> some View {
+        GroupBox(issue.status == .inProgress ? "Travail en cours" : "Dernier travail") {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("#\(issue.issueNumber) — \(issue.title)").font(.title3.bold())
+                Label(ProjectOverviewPresentation.workStatusLabel(issue), systemImage: issue.reason == "execution-failed" ? "exclamationmark.triangle.fill" : "clock")
+                if let id = issue.executionId {
+                    let snapshot = executionDetail.state(for: projectId, executionId: id)
+                    if let detail = snapshot.detail {
+                        if let step = detail.steps.last(where: { [.active, .repairing, .failed].contains($0.status) }) ?? detail.steps.last(where: { $0.status == .proved }) {
+                            Text("\(step.label) · \(ProjectExecutionDetailPresentation.stepStatusLabel(step.status))").font(.headline)
+                        }
+                        if let failure = detail.failure {
+                            Text(failure.message).foregroundStyle(.orange)
+                            Text(failure.nextAction).font(.callout)
+                        }
+                        if detail.pullRequest?.url != nil { Text("PR créée — prête à relire") }
+                        if let date = detail.lastActivityAt {
+                            Text("Dernière activité : \(date, format: .dateTime)").font(.caption)
+                        }
+                    } else if snapshot.isLoading {
+                        ProgressView("Chargement de l’étape…")
+                    }
+                    if let error = snapshot.errorMessage {
+                        Label("Dernier état conservé : \(error)", systemImage: "network.slash").foregroundStyle(.orange)
+                    }
+                    if let start = issue.executionStartedAt {
+                        HStack {
+                            Text("Durée :")
+                            if let end = issue.executionCompletedAt {
+                                Text("\(max(0, end.timeIntervalSince(start)), specifier: "%.0f") s")
+                            } else { Text(start, style: .timer) }
+                        }.font(.caption)
+                    }
+                    Button("Ouvrir le travail") { onOpenExecution?(id) }
+                        .accessibilityIdentifier("project.overview.open-work")
+                        .accessibilityHint("Voir les étapes, le résultat et l’annulation de l’issue \(issue.issueNumber)")
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .task(id: "\(projectId):\(issue.executionId ?? "")") {
+            if let id = issue.executionId { await executionDetail.watch(projectId: projectId, executionId: id) }
         }
     }
 
     private func issuesCard(_ overview: ProjectOverview) -> some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(overview.readinessHelp)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if overview.issues.isEmpty {
-                    ContentUnavailableView {
-                        Label("No relevant issues", systemImage: "checkmark.circle")
-                    } description: {
-                        Text("The latest GitHub snapshot contains no issue to display yet.")
-                    }
-                } else {
-                    ForEach(overview.issues) { issue in
-                        issueRow(issue)
-                    }
+        let focused = ProjectOverviewPresentation.focusedIssue(overview)?.id
+        let ready = overview.issues.filter { $0.id != focused && $0.status == .eligible }
+        let attention = overview.issues.filter { $0.id != focused && $0.status == .unavailable }
+        let others = overview.issues.filter { $0.id != focused && $0.status != .eligible && $0.status != .unavailable }
+        return VStack(alignment: .leading, spacing: 12) {
+            if !attention.isEmpty {
+                GroupBox("Actions requises") {
+                    ForEach(attention) { issueRow($0) }
                 }
             }
-        } label: {
-            Label("Issues", systemImage: "list.bullet.rectangle")
+            GroupBox("Issues prêtes (\(ready.count))") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(overview.readinessHelp).font(.callout).foregroundStyle(.secondary)
+                    if ready.isEmpty { Text("Aucune autre issue prête dans le dernier contrôle GitHub.") }
+                    ForEach(ready) { issueRow($0) }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            DisclosureGroup("Autres issues (\(others.count))") {
+                TextField("Filtrer par titre ou numéro", text: $issueFilter)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("project.overview.issue-filter")
+                ForEach(others.filter { issueFilter.isEmpty || "\($0.issueNumber) \($0.title)".localizedCaseInsensitiveContains(issueFilter) }) { issueRow($0) }
+            }
         }
     }
 
@@ -206,18 +276,18 @@ struct ProjectOverviewView: View {
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)
             if issue.openDependencyCount > 0 {
-                Text("Open native dependencies: \(issue.openDependencyCount)")
+                Text("Bloqueurs ouverts : \(issue.openDependencyCount)")
                     .font(.caption.weight(.medium))
                 ForEach(issue.blockerRefs, id: \.self) { blocker in
-                    Text(blocker)
+                    Text(ProjectPreflightState.issueLabel(blocker))
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             if let executionId = issue.executionId, let onOpenExecution {
-                Button("Open execution") { onOpenExecution(executionId) }
-                    .accessibilityLabel("Open execution for issue \(issue.issueNumber)")
+                Button("Ouvrir le travail") { onOpenExecution(executionId) }
+                    .accessibilityLabel("Ouvrir le travail de l’issue \(issue.issueNumber)")
             }
         }
         .padding(10)
@@ -229,11 +299,11 @@ struct ProjectOverviewView: View {
 
     private func unavailable(_ message: String) -> some View {
         ContentUnavailableView {
-            Label("Project Overview unavailable", systemImage: "exclamationmark.triangle.fill")
+            Label("Supervision indisponible", systemImage: "exclamationmark.triangle.fill")
         } description: {
             Text(message)
         } actions: {
-            Button("Retry") { Task { await model.refresh(projectId: projectId) } }
+            Button("Réessayer") { Task { await model.refresh(projectId: projectId) } }
         }
     }
 

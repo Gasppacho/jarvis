@@ -76,7 +76,7 @@ public final class ConnectionsModel {
         return connections.isEmpty ? .none : .accounts
     }
 
-    public func presentation(for connection: Connection) -> GitHubConnectionPresentation {
+    public func presentation(for connection: Connection, isBound: Bool = false) -> GitHubConnectionPresentation {
         guard connection.provider == "github" else {
             return GitHubConnectionPresentation(
                 status: "Compte incompatible",
@@ -102,9 +102,9 @@ public final class ConnectionsModel {
                 isSelectable: false)
         }
         return GitHubConnectionPresentation(
-            status: "Disponible",
-            diagnostic: "Prêt à être accordé explicitement à ce projet.",
-            action: "Utiliser pour ce projet",
+            status: isBound ? "Utilisé par ce projet" : "Disponible",
+            diagnostic: isBound ? "Ce compte est autorisé pour ce projet seulement." : "Prêt à être accordé explicitement à un projet.",
+            action: isBound ? "Modifier" : "Utiliser pour ce projet",
             isSelectable: true)
     }
 

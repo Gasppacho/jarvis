@@ -1,13 +1,11 @@
 import JarvisCore
 import SwiftUI
 
-/// Wizard étapes 1–2 as the import flow stands in ticket 02: what discovery
-/// found, and the engine's proposed configuration, with one confirmation
-/// before anything is saved. Slots and modules are the wizard's later steps
-/// (tickets 03+), not part of the draft import.
+/// Read-only inspection and explicit import, followed by the chosen project.
 struct ProjectImportSheet: View {
     let projects: ProjectsModel
     let chooseAnotherFolder: () -> Void
+    let openProject: (Project, Bool) -> Void
 
     var body: some View {
         Group {
@@ -20,7 +18,7 @@ struct ProjectImportSheet: View {
             case .inspecting:
                 VStack(spacing: 12) {
                     ProgressView()
-                    Text("Inspecting the repository…")
+                    Text("Inspection du dépôt…")
                         .foregroundStyle(.secondary)
                 }
                 .frame(width: 360, height: 120)
@@ -28,17 +26,39 @@ struct ProjectImportSheet: View {
             case .confirm(let inspection):
                 confirm(inspection)
 
+            case .existing(let project):
+                VStack(alignment: .leading, spacing: 16) {
+                    Label("Ce dépôt est déjà dans Jarvis", systemImage: "folder.badge.checkmark")
+                        .font(.headline)
+                    Text(project.name).font(.title3)
+                    Text("Retrouvez sa configuration et son travail en cours.")
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Button("Annuler") { projects.cancelImport() }
+                            .keyboardShortcut(.cancelAction)
+                        Spacer()
+                        Button("Ouvrir ce projet") {
+                            projects.cancelImport()
+                            openProject(project, false)
+                        }
+                        .keyboardShortcut(.defaultAction)
+                        .accessibilityIdentifier("project.open-existing")
+                    }
+                }
+                .padding(24)
+                .frame(width: 480)
+
             case .saving:
                 VStack(spacing: 12) {
                     ProgressView()
-                    Text("Importing the project…")
+                    Text("Création du brouillon…")
                         .foregroundStyle(.secondary)
                 }
                 .frame(width: 360, height: 120)
 
             case .failed(let message):
                 VStack(alignment: .leading, spacing: 12) {
-                    Label("The import could not be completed", systemImage: "exclamationmark.triangle.fill")
+                    Label("L’import n’a pas abouti", systemImage: "exclamationmark.triangle.fill")
                         .font(.headline)
                         .foregroundStyle(.red)
                     Text(message)
@@ -46,8 +66,10 @@ struct ProjectImportSheet: View {
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     HStack {
+                        Button("Annuler") { projects.cancelImport() }
+                            .keyboardShortcut(.cancelAction)
                         Spacer()
-                        Button("Choose another folder") {
+                        Button("Choisir un autre dossier") {
                             projects.cancelImport()
                             chooseAnotherFolder()
                         }
@@ -62,42 +84,48 @@ struct ProjectImportSheet: View {
 
     private func confirm(_ inspection: RepositoryInspection) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Import a repository")
+            Text("Ajouter un projet")
                 .font(.title3.bold())
 
-            let suggestedName = inspection.suggested?.metadata?.name ?? ""
-            if suggestedName.isEmpty {
-                Text("Jarvis inspected the folder and proposes this draft.")
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("Jarvis inspected the folder and proposes “\(suggestedName)” as a draft project.")
-                    .foregroundStyle(.secondary)
+            Text("Vérifiez le dépôt puis donnez un nom à votre projet. Aucun workflow ne démarre à l’import.")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Nom du projet").font(.callout.weight(.medium))
+                TextField("Nom du projet", text: Binding(
+                    get: { projects.importName }, set: { projects.importName = $0 }))
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("project.import-name")
+                    .accessibilityLabel("Nom du projet")
+                if let error = projects.importNameError {
+                    Text(error).font(.callout).foregroundStyle(.red)
+                        .accessibilityIdentifier("project.import-name-error")
+                }
             }
 
-            GroupBox("Repository detected") {
+            GroupBox("Dépôt détecté") {
                 Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
-                    row("Git repository", "Yes")
+                    row("Dépôt Git", "Oui")
                     if let remote = inspection.remoteUrl {
-                        row("Remote", remote)
+                        row("Dépôt distant", remote)
                     }
                     if let provider = inspection.provider {
-                        row("Provider", provider)
+                        row("Hébergeur", provider)
                     }
-                    if let branch = inspection.defaultBranch {
-                        row("Default branch", branch)
+                    if let branch = inspection.suggested?.repositories?.first?.defaultBranch ?? inspection.defaultBranch {
+                        row("Branche de base", branch)
                     }
                     if let packageManager = inspection.packageManager {
-                        row("Package manager", packageManager)
+                        row("Gestionnaire de paquets", packageManager)
                     }
                 }
                 .font(.callout)
             }
 
             if inspection.suggested?.commands?.isEmpty == false || inspection.suggested?.git?.branchPattern != nil {
-                DisclosureGroup("Advanced") {
+                DisclosureGroup("Détails de l’inspection") {
                     if let commands = inspection.suggested?.commands, !commands.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Proposed commands")
+                    Text("Commandes proposées")
                         .font(.callout.weight(.semibold))
                         .foregroundStyle(.secondary)
                     ForEach(commands.sorted { $0.key < $1.key }, id: \.key) { name, command in
@@ -116,12 +144,16 @@ struct ProjectImportSheet: View {
 
             HStack {
                 Spacer()
-                Button("Cancel") { projects.cancelImport() }
+                Button("Annuler") { projects.cancelImport() }
                     .keyboardShortcut(.cancelAction)
-                Button("Save as draft project") {
-                    Task { await projects.confirmImport() }
+                Button("Créer le brouillon") {
+                    Task {
+                        if let project = await projects.confirmImport() { openProject(project, true) }
+                    }
                 }
                 .keyboardShortcut(.defaultAction)
+                .disabled(projects.importNameError != nil)
+                .accessibilityIdentifier("project.confirm-import")
             }
         }
         .padding(24)

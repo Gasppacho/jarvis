@@ -20,8 +20,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let connections: ConnectionsModel
 
     override init() {
-        session = EngineSessionModel.bundled()
-        projects = ProjectsModel(session: session)
+        let dataRoot: URL?
+        let startupError: EngineStartError?
+        switch EngineSessionModel.requestedDataRoot(arguments: CommandLine.arguments) {
+        case .success(let root): dataRoot = root; startupError = nil
+        case .failure(let error): dataRoot = nil; startupError = error
+        }
+        session = EngineSessionModel.bundled(dataRoot: dataRoot, startupError: startupError)
+        projects = ProjectsModel(session: session, repositoryGrants: dataRoot.map {
+            RepositoryGrantStore(storageDirectory: $0.appendingPathComponent("repository-grants"))
+        } ?? RepositoryGrantStore(), preferenceNamespace: dataRoot.map {
+            "isolated:\($0.resolvingSymlinksInPath().path()):"
+        } ?? "")
         projectConfiguration = ProjectConfigurationModel(session: session, projects: projects)
         moduleCatalog = ModuleCatalogModel(session: session)
         timeline = ProjectTimelineModel(session: session)

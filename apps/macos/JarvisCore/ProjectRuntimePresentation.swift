@@ -19,11 +19,15 @@ public struct ProjectRuntimePresentation: Sendable, Equatable {
         public let subtitle: String
         public let bound: Bool
         public let selectable: Bool
+        public let needsAttention: Bool
         public let status: String
         public let detail: String
     }
 
-    public let title = "Runtime agentique"
+    public let title = "Agent de développement"
+    /// The runner supplies no model override and ignores user configuration.
+    public let modelLabel = "Modèle par défaut de Codex"
+    public let requiresWorkflow: Bool
     public let status: String
     public let icon: String
     public let detail: String
@@ -37,25 +41,26 @@ public struct ProjectRuntimePresentation: Sendable, Equatable {
 
     public init(choices: Components.Schemas.ProjectAgentRuntimeChoices?, isBusy: Bool) {
         self.isBusy = isBusy
+        requiresWorkflow = choices?.required == false
         let readiness = choices?.readiness
         let state = isBusy ? .checking : (readiness?.status ?? Components.Schemas.ProjectRuntimeReadiness.statusPayload.unchecked)
-        status = Self.label(state)
+        status = requiresWorkflow ? "Choisissez d’abord un workflow" : Self.label(state)
         icon = state == .ready ? "checkmark.circle.fill" : state == .checking ? "clock" : "exclamationmark.triangle"
-        detail = readiness?.detail ?? "Découvrez puis choisissez un runtime Codex pour ce projet."
+        detail = readiness?.detail ?? "Recherchez puis choisissez Codex pour ce projet."
         impact = state == .ready ? "Development peut utiliser ce runtime." : "Development ne peut pas démarrer."
         checkedAt = readiness?.checkedAt
         candidates = (choices?.items ?? []).map {
-            Candidate(id: $0.ref, name: $0.displayName, subtitle: $0.version.map { "Codex · \($0)" } ?? "Codex · Version non fournie", bound: $0.bound, selectable: $0.selectable && !isBusy, status: Self.label($0.readiness.status), detail: $0.readiness.detail)
+            Candidate(id: $0.ref, name: $0.displayName, subtitle: $0.version.map { "Codex · \($0)" } ?? "Codex · Version non fournie", bound: $0.bound, selectable: $0.selectable && !isBusy && choices?.required == true, needsAttention: $0.readiness.status != .unchecked && $0.readiness.status != .ready, status: Self.label($0.readiness.status), detail: $0.readiness.detail)
         }
-        canCheck = !isBusy && candidates.contains(where: \.bound)
+        canCheck = !isBusy && !requiresWorkflow && candidates.contains(where: \.bound)
     }
 
     private static func label(_ status: Components.Schemas.ProjectRuntimeReadiness.statusPayload) -> String {
         switch status {
         case .ready: "Prêt"
-        case .absent: "Absent"
-        case .access_hyphen_denied: "Accès refusé"
-        case .incompatible: "Version incompatible"
+        case .absent: "Codex non installé"
+        case .access_hyphen_denied: "Connexion ou autorisation requise"
+        case .incompatible: "Agent non compatible"
         case .checking: "Vérification en cours"
         case .engine_hyphen_error: "Erreur du moteur"
         case .unchecked: "Non vérifié"

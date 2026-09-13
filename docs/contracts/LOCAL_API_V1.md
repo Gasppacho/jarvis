@@ -47,6 +47,18 @@ crée aucun binding : chaque Project doit toujours enregistrer son accord explic
 
 Import, liste, détail, validation, activation, pause et configuration locale.
 
+`POST /v1/projects` accepte un `name` optionnel (1 à 120 caractères reçus, puis
+retrait des espaces extérieurs ; un résultat vide est refusé). Il remplace uniquement le nom dans la configuration
+importée, dans la même transaction de création. Un nom invalide est refusé avant
+toute création ; les autres valeurs découvertes ou présentes dans le dépôt restent
+inchangées. Sans `name`, le comportement d’adoption existant est conservé.
+L’inspection propose le nom et les branches d’une configuration du dépôt existante,
+afin que la confirmation graphique ne remplace pas silencieusement ces valeurs.
+Après import, `bindingStatus[].remoteUrl` du détail projette le remote sélectionné
+par la configuration conservée dans l’Engine, sans identifiants ni paramètres
+d’URL. Ce champ additif optionnel vaut `null` si le remote est absent, ambigu ou
+illisible ; il ne relit pas le choix dans un YAML modifié depuis l’import.
+
 `POST /v1/projects/{projectId}/validate` est conservé pour compatibilité et sa réponse
 fermée reste exactement `{valid, issues}`. `issues` projette les `findings` avec
 `code`, `severity` et `message` (l'ancien `path` optionnel reste accepté par le contrat).
@@ -106,6 +118,15 @@ courants. L'opération est read-only : elle ne sauvegarde ni Draft, ni relation 
 état de Review. Le shell invalide l'état Ready dès qu'un Draft sauvegardé est modifié et ne
 le rétablit qu'après une nouvelle réponse Engine.
 
+Le champ additif optionnel githubDevelopmentFlow confirme uniquement que l'Engine
+reconnaît le parcours guidé : règle unique sur scm.work-item.ready, label GitHub
+correspondant, destinations Development puis GitHub résolues, concurrence de 1 et
+absence de demande de merge. Par exemple, le template GitHub produit true même
+avant l'autorisation des accès ; une règle historique scm.work-item.tag-added
+produit false. Ce n'est ni une validation des commandes ni une autorisation de
+démarrer. Si le champ est absent ou faux, Swift présente le dessin comme une
+référence non confirmée, sans reconnaître ni recalculer les règles.
+
 La projection de composition sert à prévisualiser la configuration sauvegardée ou une
 proposition avant activation. `POST /v1/projects/{projectId}/composition-graph` projette,
 sans mutation, le graphe de composition `ProjectCompositionGraphV1` de cette configuration ou d'une
@@ -145,8 +166,19 @@ observées par GitHub avec leur numéro, titre, label de readiness, statut
 (`eligible`, `waiting`, `in-progress`, `blocked`, `ineligible` ou `unavailable`), raison
 contractuelle, explication lisible et références des dépendances ouvertes.
 
+Le champ optionnel `selectedWorkItemRef` projette la portée exacte configurée.
+Pour chaque issue, `executionId` désigne l’exécution active ou la dernière tentative
+durable ; `lastExecutionStatus`, `executionStartedAt` et `executionCompletedAt` sont
+additifs et optionnels. Retirer le label ne masque pas un échec déjà survenu.
+Le journal sélectionne la dernière demande Development/PR par sujet (100 sujets),
+puis le Ledger fournit sa dernière tentative dans le même projet. Une exécution
+terminée ne prouve pas à elle seule la PR : seul `pullRequest` du détail fournit
+ce résultat vérifié. Le dernier travail échoué rend la supervision inactive et
+non pausée `degraded`, sans modifier la politique d’activation ou d’admission.
+
 L'Engine reste l'autorité pour l'éligibilité et la claim. Une issue sans label de
-readiness apparaît comme en attente et ne peut pas être claimée; une issue `blocked`
+readiness ne peut pas être claimée ; elle apparaît en attente si aucun travail
+antérieur ne nécessite de présenter son résultat ; une issue `blocked`
 doit porter au moins une dépendance native GitHub ouverte (`blocked_by`). Une autre
 issue active dans le même Project est représentée comme `in-progress`, et les autres
 issues attendent tant que la règle d'une seule issue à la fois est satisfaite. Le nom
@@ -206,11 +238,22 @@ déclarées dans OpenAPI : `GET /v1/projects/{projectId}/dead-letters` et
 une projection corrélée et durable d'une Execution. Le moteur retrouve l'Event d'entrée
 dans le même Project, suit son `correlationId`, puis regroupe les Executions, checkpoints,
 leases et faits de Pull Request prouvés par ces identifiants. La réponse expose toujours
-les sept étapes ordonnées `Issue reçue`, `Éligibilité confirmée`, `Workspace préparé`,
-`Agent en cours`, `Checks`, `Commit et push` et `Création de la Pull Request`; chaque
-étape indique `proved`, `active`, `failed`, `cancelled` ou `unavailable`. Une donnée
-absente reste `null` ou `Information indisponible` côté interface : aucun timestamp,
-résultat, artefact, payload ou diagnostic n'est fabriqué.
+les sept étapes ordonnées `Issue reçue`, `Éligibilité confirmée`, `Préparation du projet`,
+`Développement`, `Vérifications`, `Commit et push` et `Création de la Pull Request`.
+Une étape indique `not-started`, `active`, `proved`, `failed`, `repairing`, `cancelled`
+ou `unavailable`. `proved` exige le résultat réussi, jamais le seul démarrage.
+`not-started` concerne une étape future ; `unavailable` une preuve manquante.
+Les valeurs nouvelles sont ajoutées au contrat v1 avec le client généré et l’Engine
+embarqués ensemble. Aucun timestamp, résultat, artefact ou diagnostic n’est fabriqué.
+
+`checks` conserve les tentatives successives, identifiées par `executionId`, `name`
+et `attempt` (cycle de validation, distinct de la tentative de livraison). Un échec
+reste présent pendant une réparation ; la réussite de la nouvelle tentative retire
+l’alerte active et conserve l’historique. `running` et `cancelled` complètent les
+résultats `passed`, `failed`, `unavailable`. Les nouveaux checkpoints durables
+`agent.repair-started` et `validation.completed` séparent réparation et validation.
+Le dernier check réussi porte `planComplete`, attestant la fin du plan entier ;
+les anciens journaux utilisent le snapshot de validation attaché à `commit.created`.
 
 Les Executions et les Checks portent leur durée seulement quand une fin durable est
 enregistrée. Les extraits agentiques sont limités et nettoyés; les événements techniques
@@ -219,6 +262,11 @@ tableaux et extraits ont les bornes déclarées dans le schéma OpenAPI. `cancel
 est présent uniquement pendant une Execution annulable, et `retryDeliveryId` permet le
 replay explicite d'une Dead Letter existante. Le détail n'autorise ni fusion ni auto-fusion;
 la Pull Request est présentée comme soumise à revue manuelle.
+
+`workspace.path` est relatif à la racine des données Jarvis
+(`projects/{projectId}/workspaces/{executionId}`). Ce champ de diagnostic ne
+révèle pas de chemin absolu utilisateur et ne constitue pas une URL de fichier.
+Le stockage interne conserve le chemin réel pour la gestion du worktree.
 
 ### Stream
 

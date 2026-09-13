@@ -24,19 +24,19 @@ public struct ProjectExecutionDetailPresentation: Sendable, Equatable {
         } else if snapshot.isLoading {
             state = .loading
         } else {
-            state = .failed(snapshot.errorMessage ?? "No execution detail is available yet.")
+            state = .failed(snapshot.errorMessage ?? "Aucun détail d’exécution disponible pour le moment.")
         }
         switch connection {
         case .live:
-            connectionLabel = "Live"
+            connectionLabel = "En direct"
             connectionSymbol = "dot.radiowaves.left.and.right"
             isSnapshot = false
         case .reconnecting:
-            connectionLabel = "Reconnecting…"
+            connectionLabel = "Reconnexion…"
             connectionSymbol = "arrow.triangle.2.circlepath"
             isSnapshot = true
         case .failed:
-            connectionLabel = "Snapshot précédent"
+            connectionLabel = "Dernier état connu"
             connectionSymbol = "clock.arrow.circlepath"
             isSnapshot = true
         }
@@ -44,30 +44,34 @@ public struct ProjectExecutionDetailPresentation: Sendable, Equatable {
 
     public static func executionStatusLabel(_ status: ProjectExecutionDetail.ExecutionStatus) -> String {
         switch status {
-        case .queued: "Queued"
-        case .running: "Running"
-        case .cancelling: "Cancelling"
-        case .completed: "Completed"
-        case .failed: "Failed"
-        case .cancelled: "Cancelled"
-        case .timedOut: "Timed out"
+        case .queued: "En attente"
+        case .running: "En cours"
+        case .cancelling: "Annulation en cours"
+        case .completed: "Terminée"
+        case .failed: "Échouée"
+        case .cancelled: "Annulée"
+        case .timedOut: "Délai dépassé"
         }
     }
 
     public static func stepStatusLabel(_ status: ProjectExecutionDetail.Step.Status) -> String {
         switch status {
-        case .proved: "Confirmed"
-        case .active: "In progress"
-        case .failed: "Failed"
-        case .cancelled: "Cancelled"
+        case .proved: "Réussi"
+        case .active: "En cours"
+        case .repairing: "Réparation en cours"
+        case .failed: "Échoué"
+        case .cancelled: "Annulé"
+        case .notStarted: "Pas encore commencé"
         case .unavailable: "Information indisponible"
         }
     }
 
     public static func checkStatusLabel(_ status: ProjectExecutionDetail.Check.Status) -> String {
         switch status {
-        case .passed: "Passed"
-        case .failed: "Failed"
+        case .passed: "Réussi"
+        case .running: "En cours"
+        case .failed: "Échoué"
+        case .cancelled: "Annulé"
         case .unavailable: "Information indisponible"
         }
     }

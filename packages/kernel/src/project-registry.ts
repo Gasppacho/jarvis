@@ -8,6 +8,7 @@
 export interface ImportProjectRequest {
   readonly repositoryPath: unknown;
   readonly portableConfig: unknown;
+  readonly name?: unknown;
 }
 
 export interface ReplaceProjectConfigurationRequest {

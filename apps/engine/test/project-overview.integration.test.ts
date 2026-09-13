@@ -1,3 +1,6 @@
+import { cpSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { PortableProjectConfiguration } from "../../../packages/project-runtime/src/project-types.js";
 import { afterEach, expect, it } from "vitest";
 import type { ProjectOverview } from "../src/projects/types.js";
 import { explain, localApiValidator } from "./contract.js";
@@ -113,4 +116,92 @@ it("pauses new admissions durably while keeping Resume explicit", async () => {
       }
     ).status,
   ).toBe("active");
+});
+
+it("keeps the failed work linked after label removal and Engine restart", async () => {
+  const fixture = await startReferenceWorkflowFixture("overview-validation-failure");
+  fixtures.push(fixture);
+  const path = `/v1/projects/${fixture.projectId}`;
+  const detail = (await (await fixture.engine.call(path)).json()) as {
+    portableConfig: PortableProjectConfiguration;
+  };
+  const save = await fixture.engine.call(`${path}/configuration`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      portableConfig: {
+        ...detail.portableConfig,
+        commands: { ...detail.portableConfig.commands, test: 'node -e "process.exit(7)"' },
+      },
+      writeToRepository: false,
+    }),
+  });
+  expect(save.status).toBe(200);
+  await fixture.activate();
+  fixture.fakeGitHub.appendLabeledIssueEvent({
+    owner: "Gasppacho",
+    repository: "jarvis",
+    issueNumber: 16,
+    issueTitle: "Keep this validation failure visible",
+    issueBody: "A bounded fixture",
+    label: "agent:ready",
+    actor: "reference-user",
+    createdAt: new Date().toISOString(),
+  });
+  await expect
+    .poll(
+      async () => {
+        const result = (await (await fixture.engine.call(`${path}/executions`)).json()) as {
+          items: { status: string }[];
+        };
+        return result.items.some((execution) => execution.status === "failed");
+      },
+      { timeout: 15000 },
+    )
+    .toBe(true);
+  seedIssue(fixture, 16);
+  await fixture.engine.call(`${path}/overview/refresh`, { method: "POST" });
+  const failed = await overview(fixture);
+  const issue = failed.issues.find((item) => item.issueNumber === 16);
+  expect(issue).toMatchObject({
+    executionId: expect.any(String),
+    lastExecutionStatus: "failed",
+    reason: "execution-failed",
+  });
+  expect(failed.status).toBe("degraded");
+  await expect
+    .poll(async () => {
+      const failureDetail = (await (
+        await fixture.engine.call(`${path}/executions/${issue!.executionId}/detail`)
+      ).json()) as { failure: { code: string } };
+      return failureDetail.failure.code;
+    })
+    .toBe("git.validation-failed");
+  const failureDetail = (await (
+    await fixture.engine.call(`${path}/executions/${issue!.executionId}/detail`)
+  ).json()) as { failure: { message: string; nextAction: string } };
+  expect(failureDetail.failure.message).toMatch(/La commande .+ a échoué/);
+  expect(failureDetail.failure.nextAction).toContain("corriger la cause avant de relancer");
+  await fixture.restart();
+  expect((await overview(fixture)).issues.find((item) => item.issueNumber === 16)).toMatchObject({
+    executionId: issue!.executionId,
+    lastExecutionStatus: "failed",
+  });
+  expect(fixture.fakeGitHub.pullRequests).toHaveLength(0);
+  const capture = process.env["JARVIS_OVERVIEW_CAPTURE_DIR"];
+  if (capture !== undefined) {
+    const pause = await fixture.engine.call(`${path}/pause`, { method: "POST" });
+    expect(pause.status).toBe(200);
+    mkdirSync(capture, { recursive: true });
+    writeFileSync(
+      join(capture, "failed-overview.json"),
+      JSON.stringify(await overview(fixture), null, 2),
+    );
+    await fixture.engine.dispose();
+    cpSync(fixture.engine.dataRoot, join(capture, "data"), {
+      recursive: true,
+      errorOnExist: true,
+      force: false,
+    });
+  }
 });

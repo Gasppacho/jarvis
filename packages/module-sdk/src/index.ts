@@ -236,7 +236,7 @@ export type ModuleExecutionCheckpoint =
       readonly output: string;
     }
   | {
-      readonly type: "agent.started";
+      readonly type: "agent.started" | "agent.repair-started";
       readonly sequence: number;
       readonly timestamp: string;
     }
@@ -251,6 +251,14 @@ export type ModuleExecutionCheckpoint =
       readonly sequence: number;
       readonly timestamp: string;
       readonly check: string;
+    }
+  | {
+      readonly type: "validation.completed";
+      readonly sequence: number;
+      readonly timestamp: string;
+      readonly check: string;
+      readonly durationMs: number;
+      readonly planComplete: boolean;
     }
   | {
       readonly type: "validation.failed";

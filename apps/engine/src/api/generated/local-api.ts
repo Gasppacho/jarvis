@@ -832,6 +832,8 @@ export interface components {
                     accessible: boolean;
                     /** @description Opaque reference to bookmark bytes owned by the macOS Shell. */
                     bookmarkRef: string | null;
+                    /** @description Current remote selected by the saved project configuration, with credentials and query metadata removed. Null when unavailable or ambiguous; no origin fallback. */
+                    remoteUrl?: string | null;
                 };
             };
         };
@@ -983,6 +985,8 @@ export interface components {
             projectId: string;
             /** @description Engine-owned readiness for the supplied or saved Portable Configuration and current Local Bindings. */
             readyToValidate: boolean;
+            /** @description Additive configuration-only projection. True when the Engine recognizes one readiness admission rule, matching GitHub label, resolved Development and PR routes, concurrency one and no merge request. Does not certify access or commands. Absent means unconfirmed. */
+            githubDevelopmentFlow?: boolean;
             composition: components["schemas"]["ProjectCompositionChoicesV1"];
             validation: components["schemas"]["ProjectValidationReportV1"];
             resources: components["schemas"]["ProjectResourceChoices"];
@@ -1143,6 +1147,8 @@ export interface components {
             issues: components["schemas"]["ProjectOverviewIssue"][];
             activeExecutionCount: number;
             activeWorkItemRefs: string[];
+            /** @description Exact work-item scope from the configured workflow, or null for monitoring. */
+            selectedWorkItemRef?: string | null;
             readinessHelp: string;
         };
         ProjectOverviewStage: {
@@ -1165,8 +1171,14 @@ export interface components {
             openDependencyCount: number;
             blockerRefs: string[];
             readinessLabel: string;
-            /** @description The active execution proving the in-progress issue, when one exists. */
+            /** @description Active execution, or latest durable work execution after completion or failure. */
             executionId?: string | null;
+            /** @enum {string|null} */
+            lastExecutionStatus?: "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled" | "timed-out" | null;
+            /** Format: date-time */
+            executionStartedAt?: string | null;
+            /** Format: date-time */
+            executionCompletedAt?: string | null;
         };
         PreflightScopeRequest: {
             compositionFingerprint: string;
@@ -1290,6 +1302,7 @@ export interface components {
             checks: components["schemas"]["ExecutionDetailCheck"][];
             agentExcerpts: components["schemas"]["ExecutionDetailAgentExcerpt"][];
             workspace: {
+                /** @description Workspace location relative to the Jarvis data root; never an absolute user path. */
                 path: string;
                 repositoryId: string;
                 branch: string;
@@ -1356,7 +1369,7 @@ export interface components {
             id: "issue-received" | "eligibility-confirmed" | "workspace-prepared" | "agent-running" | "checks" | "commit-push" | "pull-request";
             label: string;
             /** @enum {string} */
-            status: "proved" | "active" | "failed" | "cancelled" | "unavailable";
+            status: "proved" | "active" | "repairing" | "failed" | "cancelled" | "not-started" | "unavailable";
             /** Format: date-time */
             occurredAt: string | null;
             /** Format: date-time */
@@ -1366,8 +1379,9 @@ export interface components {
         };
         ExecutionDetailCheck: {
             name: string;
+            attempt: number;
             /** @enum {string} */
-            status: "passed" | "failed" | "unavailable";
+            status: "passed" | "running" | "failed" | "cancelled" | "unavailable";
             durationMs: number | null;
             /** Format: date-time */
             startedAt: string | null;
@@ -1789,6 +1803,8 @@ export interface operations {
             content: {
                 "application/json": {
                     repositoryPath: string;
+                    /** @description Optional display name, limited to 120 characters before trimming. Leading and trailing whitespace is removed; a blank result is rejected. Applied atomically to the imported configuration, preserving other discovered or committed values. */
+                    name?: string;
                     portableConfig?: components["schemas"]["PortableProjectConfiguration"];
                 };
             };

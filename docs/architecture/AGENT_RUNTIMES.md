@@ -117,6 +117,26 @@ Les outputs bruts sont stockés comme artefacts nettoyés. Le Module SDK reçoit
 
 La déclaration de l'agent n'est pas la preuve de réussite. Development exécute lui-même les commandes projet après la session et vérifie Git diff/commit/push. Les tests sont l'autorité au seam convenu.
 
+Le prompt initial et chaque réparation rappellent cette séparation : le gate
+complet est exécuté par Development ; Codex peut exécuter des contrôles ciblés
+permis par son sandbox et doit rapporter les restrictions, sans les contourner.
+Les erreurs d'environnement ne justifient pas des changements hors de l'issue.
+
+Préparation et validation utilisent le même environnement
+minimal du validateur (`PATH`, `HOME`, `LANG=C`, `LC_ALL=C`), sans héritage des
+autres variables ni credentials. `HOME` provient de l'identité locale OS.
+La détection du profil Codex utilise aussi l'identité OS lorsque `HOME` n'est
+pas hérité ; l'accord explicite du Project reste nécessaire avant son usage.
+Le preflight recherche dans ce même PATH les exécutables connus requis par
+les commandes sélectionnées et leurs appels littéraux aux scripts du projet
+(Git, outils Node/gestionnaire, Swift/Xcode si détectés). Il vérifie les droits
+d'exécution sans lancer ces outils : même `--version` peut déléguer à du code
+du dépôt. Les scripts facultatifs ne deviennent pas des prérequis. Ce contrôle
+ne prouve ni la version, ni le fonctionnement de l'outil, ni le succès des tests.
+Les appels calculés dynamiquement restent contrôlés pendant l'exécution.
+Les commandes du validateur respectent la durée configurée par Development
+(maximum une heure), au lieu d'une coupure cachée à deux minutes.
+
 ## Re-entry for repair
 
 Si une commande échoue, Development peut démarrer une nouvelle session de réparation dans la même exécution locale, avec :
@@ -126,6 +146,13 @@ Si une commande échoue, Development peut démarrer une nouvelle session de rép
 - budget de cycles restant.
 
 Le nombre de cycles est borné. Aucun futur événement externe n'est attendu.
+
+Un outil absent, un refus d'accès explicite, un timeout ou une panne de lancement
+arrête la tentative avec un code et un remède distincts. Ces erreurs ne
+déclenchent pas de réparation du code. La reconnaissance des refus d'accès dans
+la sortie est limitée aux diagnostics OS explicites ; un échec de test ordinaire
+conserve les cycles bornés configurés. Le checkpoint de validation reste en échec
+et le worktree est retenu pour diagnostic.
 
 ## Guided project preflight
 

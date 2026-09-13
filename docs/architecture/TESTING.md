@@ -83,6 +83,10 @@ Pour chaque ticket :
 - `FakeAgentRuntime` : script de modifications déterministe.
 - `FakeGitHubAdapter` : store in-memory/persisté de Work Items et Change Requests.
 - `ControllableClock` et `DeterministicIdGenerator`.
+- Le bundle Harness peut fixer l'horloge de persistence avec
+  `JARVIS_TEST_FIXED_TIME` et `JARVIS_ENABLE_TEST_HOOKS=1` pour observer les
+  tentatives avant leur retry, indépendamment de la durée réelle du test.
+  Ce mécanisme est absent du bundle de production, vérifié dans l'artefact.
 - `Failpoint` persistence pour simuler crash aux frontières transactionnelles. Compilé uniquement dans le bundle de test (`engine.test-bundle.mjs`, `apps/engine/tsup.config.ts`) via le flag `__JARVIS_TEST_HOOKS__` ; absent par construction du bundle de production que `scripts/build-app.sh` empaquette (ADR 0015).
 
 Ne pas mocker SQLite, Git ou Eventing dans le test principal.
@@ -98,3 +102,18 @@ Ne pas mocker SQLite, Git ou Eventing dans le test principal.
 - architecture rules ;
 - license/security scan ;
 - packaging smoke sur branche release.
+
+## Native checks with isolated data
+
+Build with `rtk pnpm build:app`, then launch a new app instance with
+`rtk proxy open -n dist/Jarvis.app --args --data-root /tmp/jarvis-native-check-unique`.
+Use a fresh absolute path for each independent run. The app passes it explicitly
+to its Engine Supervisor and stores repository bookmarks beneath that root.
+Navigation and trial preferences use a namespace derived from the same path,
+so an imported project with the same id cannot inherit the real project's scope.
+The default launch keeps the existing data and preference keys. A malformed
+`--data-root` stops before Engine startup; inherited `JARVIS_DATA_ROOT` remains
+ignored. Do not infer isolation from that environment variable.
+
+Identify the new process before interacting with its native window. Captures of
+a locked desktop or a fixture render do not establish successful app interaction.

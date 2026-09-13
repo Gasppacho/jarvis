@@ -87,6 +87,11 @@ paths:
               properties:
                 repositoryPath:
                   type: string
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 120
+                  description: Optional display name, limited to 120 characters before trimming. Leading and trailing whitespace is removed; a blank result is rejected. Applied atomically to the imported configuration, preserving other discovered or committed values.
                 portableConfig:
                   $ref: "#/components/schemas/PortableProjectConfiguration"
       responses:
@@ -1325,6 +1330,9 @@ components:
               bookmarkRef:
                 type: [string, "null"]
                 description: Opaque reference to bookmark bytes owned by the macOS Shell.
+              remoteUrl:
+                type: [string, "null"]
+                description: Current remote selected by the saved project configuration, with credentials and query metadata removed. Null when unavailable or ambiguous; no origin fallback.
     ValidationContract:
       type: object
       additionalProperties: false
@@ -1653,6 +1661,9 @@ components:
         readyToValidate:
           type: boolean
           description: Engine-owned readiness for the supplied or saved Portable Configuration and current Local Bindings.
+        githubDevelopmentFlow:
+          type: boolean
+          description: Additive configuration-only projection. True when the Engine recognizes one readiness admission rule, matching GitHub label, resolved Development and PR routes, concurrency one and no merge request. Does not certify access or commands. Absent means unconfirmed.
         composition:
           $ref: "#/components/schemas/ProjectCompositionChoicesV1"
         validation:
@@ -1978,6 +1989,9 @@ components:
         activeWorkItemRefs:
           type: array
           items: { type: string }
+        selectedWorkItemRef:
+          type: [string, "null"]
+          description: Exact work-item scope from the configured workflow, or null for monitoring.
         readinessHelp: { type: string, minLength: 1 }
     ProjectOverviewStage:
       type: object
@@ -2007,7 +2021,12 @@ components:
         readinessLabel: { type: string, minLength: 1 }
         executionId:
           type: [string, "null"]
-          description: The active execution proving the in-progress issue, when one exists.
+          description: Active execution, or latest durable work execution after completion or failure.
+        lastExecutionStatus:
+          type: [string, "null"]
+          enum: [queued, running, cancelling, completed, failed, cancelled, timed-out, null]
+        executionStartedAt: { type: [string, "null"], format: date-time }
+        executionCompletedAt: { type: [string, "null"], format: date-time }
     PreflightScopeRequest:
       type: object
       additionalProperties: false
@@ -2279,7 +2298,10 @@ components:
           additionalProperties: false
           required: [path, repositoryId, branch, baseRevisionSha, status, executionId]
           properties:
-            path: { type: string, maxLength: 4096 }
+            path:
+              type: string
+              maxLength: 4096
+              description: Workspace location relative to the Jarvis data root; never an absolute user path.
             repositoryId: { type: string }
             branch: { type: string, maxLength: 256 }
             baseRevisionSha: { type: string, maxLength: 256 }
@@ -2356,7 +2378,7 @@ components:
       properties:
         id: { type: string, enum: [issue-received, eligibility-confirmed, workspace-prepared, agent-running, checks, commit-push, pull-request] }
         label: { type: string, minLength: 1 }
-        status: { type: string, enum: [proved, active, failed, cancelled, unavailable] }
+        status: { type: string, enum: [proved, active, repairing, failed, cancelled, not-started, unavailable] }
         occurredAt: { type: [string, "null"], format: date-time }
         completedAt: { type: [string, "null"], format: date-time }
         executionId: { type: [string, "null"] }
@@ -2364,10 +2386,11 @@ components:
     ExecutionDetailCheck:
       type: object
       additionalProperties: false
-      required: [name, status, durationMs, startedAt, completedAt, output, executionId]
+      required: [name, attempt, status, durationMs, startedAt, completedAt, output, executionId]
       properties:
         name: { type: string, minLength: 1, maxLength: 256 }
-        status: { type: string, enum: [passed, failed, unavailable] }
+        attempt: { type: integer, minimum: 1 }
+        status: { type: string, enum: [passed, running, failed, cancelled, unavailable] }
         durationMs: { type: [integer, "null"], minimum: 0 }
         startedAt: { type: [string, "null"], format: date-time }
         completedAt: { type: [string, "null"], format: date-time }

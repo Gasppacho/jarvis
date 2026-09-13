@@ -3,7 +3,7 @@ import type { ProjectPreflight } from "../src/projects/preflight.js";
 import { join, dirname } from "node:path";
 import Database from "better-sqlite3";
 import { RuntimeDescriptorStore } from "../src/runtimes/registry.js";
-import { chmodSync, writeFileSync, readFileSync } from "node:fs";
+import { chmodSync, writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { afterEach, expect, it } from "vitest";
 import {
   startReferenceWorkflowFixture,
@@ -26,8 +26,8 @@ afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((f) => f.dispose()));
 });
 
-async function setup() {
-  const f = await startReferenceWorkflowFixture("preflight", {}, true);
+async function setup(env: Readonly<Record<string, string>> = {}) {
+  const f = await startReferenceWorkflowFixture("preflight", env, true);
   fixtures.push(f);
   const path = `/v1/projects/${f.projectId}`;
   const detail = (await (await f.engine.call(path)).json()) as {
@@ -116,7 +116,7 @@ it("preflights a ready configuration with no candidates without starting work", 
   const { f, path } = await setup();
   const response = await f.engine.call(`${path}/preflight`, { method: "POST" });
   expect(response.status).toBe(200);
-  const report = await response.json();
+  const report = (await response.json()) as ProjectPreflight;
   const validate = localApiValidator("ProjectPreflightV1");
   expect(validate(report), explain(validate)).toBe(true);
   expect(report, JSON.stringify(report)).toMatchObject({
@@ -130,6 +130,66 @@ it("preflights a ready configuration with no candidates without starting work", 
   expect(f.fakeGitHub.requests.every((r) => r.method === "GET")).toBe(true);
   expect(await (await f.engine.call(`${path}/events`)).json()).toEqual({ items: [] });
   expect(await (await f.engine.call(`${path}/executions`)).json()).toEqual({ items: [] });
+  expect(report.checks).toContainEqual(
+    expect.objectContaining({ id: "tool:git", status: "passed" }),
+  );
+  expect(report.checks).toContainEqual(
+    expect.objectContaining({ id: "tool:node", status: "passed" }),
+  );
+});
+
+it("reports missing validator tools with a repair destination without running project scripts", async () => {
+  const { f, path } = await setup({ PATH: "/jarvis-no-tools" });
+  const result = await report(f, path);
+  expect(result.valid).toBe(false);
+  expect(result.checks).toContainEqual(
+    expect.objectContaining({
+      id: "tool:node",
+      status: "failed",
+      repairStep: "Connections",
+      impact: expect.stringContaining("Installez ou réparez node"),
+    }),
+  );
+  expect(readFileSync(f.runtimeCounterPath, "utf8")).toBe("");
+  expect(JSON.stringify(result)).not.toContain("/jarvis-no-tools");
+});
+
+it("inspects selected scripts transitively without executing package-manager shims", async () => {
+  const { f, path, config } = await setup();
+  const bin = join(f.repositoryRoot, "tool-shims");
+  const marker = join(bin, "executed");
+  mkdirSync(bin);
+  for (const tool of ["pnpm", "bun"]) {
+    const executable = join(bin, tool);
+    writeFileSync(
+      executable,
+      `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(marker)}, "executed");\n`,
+    );
+    chmodSync(executable, 0o755);
+  }
+  writeFileSync(
+    join(f.repositoryRoot, "package.json"),
+    JSON.stringify({
+      scripts: {
+        verify: "pnpm run check",
+        check: "bun run check.ts && pnpm run toString",
+        benchmark: "yarn benchmark",
+      },
+    }),
+  );
+  await save(f, path, { ...config, commands: { verify: "pnpm verify", test: "yarn test" } });
+  await f.restart({ PATH: `${bin}:${process.env["PATH"] ?? ""}` });
+  const result = await report(f, path);
+  expect(result.valid, JSON.stringify(result)).toBe(true);
+  expect(result.checks).toContainEqual(
+    expect.objectContaining({ id: "tool:pnpm", status: "passed" }),
+  );
+  expect(result.checks).toContainEqual(
+    expect.objectContaining({ id: "tool:bun", status: "passed" }),
+  );
+  expect(result.checks.some((item) => item.id === "tool:yarn")).toBe(false);
+  expect(existsSync(marker)).toBe(false);
+  expect(readFileSync(f.runtimeCounterPath, "utf8")).toBe("");
 });
 
 function seed(f: ReferenceWorkflowFixture, number: number, blocked = false) {

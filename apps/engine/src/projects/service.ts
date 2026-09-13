@@ -2,7 +2,13 @@ import type {
   WorkItemReadinessSnapshot,
   WorkItemReadinessStore,
 } from "../../../../packages/modules/github/src/work-item-readiness.js";
-import { preflightGitHub, check, workflowRule, type ProjectPreflight } from "./preflight.js";
+import {
+  preflightGitHub,
+  check,
+  workflowRule,
+  isGitHubDevelopmentFlow,
+  type ProjectPreflight,
+} from "./preflight.js";
 import type { GitHubApi } from "../../../../packages/module-sdk/src/index.js";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -27,7 +33,11 @@ import {
 import { deriveProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
 import { EventJournalReader, type ListEventsQuery } from "../events/timeline.js";
 import type { DeadLetterReader } from "../events/dead-letters.js";
-import { ExecutionLedgerReader, type ListExecutionsQuery } from "../executions/ledger.js";
+import {
+  ExecutionLedgerReader,
+  type ListExecutionsQuery,
+  type LedgerExecutionSummary,
+} from "../executions/ledger.js";
 import type { ExecutionCheckpointStore } from "../executions/checkpoints.js";
 import type { WorkspaceLeaseRepository } from "../../../../packages/workspace/src/lease-repository.js";
 import { buildExecutionDetail } from "./execution-detail.js";
@@ -45,6 +55,8 @@ import type {
 import { EngineError } from "../errors.js";
 import {
   discoverRepository,
+  readRepositoryRemotes,
+  publicRemoteUrl,
   RepositoryPathError,
   requireRepositoryDirectory,
   slugify,
@@ -90,6 +102,7 @@ import type { ProjectResourceGrant, ProjectResourceGrantDetailsPort } from "./re
 import {
   checkProjectRuntimeReadiness,
   runtimeSlots,
+  checkProjectTools,
   projectAgentRuntimeChoices,
 } from "./runtime-readiness.js";
 import { detectedRuntimeEnvironment } from "../runtimes/registry.js";
@@ -103,7 +116,19 @@ const INITIAL_STATUS = "draft" as const;
 export class RepositoryDiscoveryService implements RepositoryDiscoveryPort<RepositoryDiscovery> {
   discoverRepository(root: unknown): RepositoryDiscovery {
     try {
-      return discoverRepository(root);
+      const path = requireRepositoryDirectory(root);
+      const committed = readCommittedConfig(path);
+      const discovery = discoverRepository(path, committed?.repositories[0]?.remote);
+      return committed === undefined
+        ? discovery
+        : {
+            ...discovery,
+            suggested: {
+              ...discovery.suggested,
+              metadata: committed.metadata,
+              repositories: committed.repositories,
+            },
+          };
     } catch (error) {
       throw repositoryPathError(error);
     }
@@ -133,7 +158,7 @@ export class ProjectService implements ProjectRegistry<
       Partial<Pick<WorkItemReadinessStore, "list">>,
     private readonly developmentAdmissions?: Pick<DevelopmentAdmissions, "read">,
     private readonly pollingStatus?: Pick<GitHubPollingStatusStore, "read">,
-    private readonly checkpoints?: Pick<ExecutionCheckpointStore, "list">,
+    private readonly checkpoints?: Pick<ExecutionCheckpointStore, "listForDetail">,
     private readonly workspaceLeases?: Pick<WorkspaceLeaseRepository, "findByExecution">,
   ) {}
 
@@ -163,7 +188,20 @@ export class ProjectService implements ProjectRegistry<
       );
     }
     const resolved = resolvePortableConfig(repositoryPath, request.portableConfig, discovery);
-    const portableConfig = resolved.configuration;
+    let portableConfig = resolved.configuration;
+    if (request.name !== undefined) {
+      if (
+        typeof request.name !== "string" ||
+        request.name.trim() === "" ||
+        [...request.name].length > 120
+      ) {
+        throw configInvalid("Le nom du projet doit contenir entre 1 et 120 caractères.");
+      }
+      portableConfig = {
+        ...portableConfig,
+        metadata: { ...portableConfig.metadata, name: request.name.trim() },
+      };
+    }
     if (!resolved.isDiscoveredDraft) {
       requirePortableProjectConfiguration(portableConfig, this.modules);
     }
@@ -215,6 +253,22 @@ export class ProjectService implements ProjectRegistry<
         return ref === undefined ? [] : [[ref, execution.id] as const];
       }),
     );
+    const workRequests = this.eventJournal.latestRequestsBySubject(
+      project.id,
+      ["development.implementation.requested", "scm.change-request.creation-requested"],
+      100,
+    );
+    const requestRefs = new Map(workRequests.map((event) => [event.id, event.subjectRef]));
+    const latestExecutions = this.executionLedger.latestByInputEventIds(
+      project.id,
+      workRequests.map((event) => event.id),
+    );
+    const latestByRef = new Map(
+      latestExecutions.flatMap((execution) => {
+        const ref = requestRefs.get(execution.inputEventId);
+        return ref === undefined ? [] : [[ref, execution] as const];
+      }),
+    );
     const admissionByRef = new Map(
       admission.items.flatMap((item) =>
         item.workItemRef === undefined ? [] : [[item.workItemRef, item] as const],
@@ -225,6 +279,10 @@ export class ProjectService implements ProjectRegistry<
         overviewIssue(snapshot, {
           activeRefs,
           activeExecutionIdsByRef,
+          latestExecution:
+            activeExecutions.find(
+              (execution) => execution.id === activeExecutionIdsByRef.get(snapshot.workItemRef),
+            ) ?? latestByRef.get(snapshot.workItemRef),
           admission: admissionByRef.get(snapshot.workItemRef),
           paused,
           hasActiveExecution,
@@ -235,13 +293,29 @@ export class ProjectService implements ProjectRegistry<
         }),
       )
       .filter((issue): issue is ProjectOverviewIssue => issue !== undefined)
+      .sort(
+        (left, right) =>
+          Number(right.status === "in-progress") - Number(left.status === "in-progress") ||
+          (right.executionStartedAt ?? "").localeCompare(left.executionStartedAt ?? "") ||
+          Number(right.status === "eligible") - Number(left.status === "eligible"),
+      )
       .slice(0, 100);
     const polling = aggregatePolling(paused, this.pollingStatus?.read(project.id) ?? []);
+    const lastWorkFailed =
+      latestExecutions[0]?.status === "failed" || latestExecutions[0]?.status === "timed-out";
     const overviewStatus = overviewStatusFor(
       project.status,
       activeExecutions.length,
       polling.state,
+      lastWorkFailed,
     );
+    let selectedWorkItemRef: string | null = null;
+    try {
+      const ref = workflowRule(project.portableConfig).rule.when.equals?.["payload.workItemRef"];
+      if (typeof ref === "string") selectedWorkItemRef = ref;
+    } catch {
+      /* Custom workflows need not have a guide-compatible rule. */
+    }
     const eligible = issues.some((issue) => issue.status === "eligible");
     const stages = overviewStages(polling.state, hasActiveExecution, eligible, project.status);
     return {
@@ -249,9 +323,10 @@ export class ProjectService implements ProjectRegistry<
       kind: "ProjectOverview",
       projectId: project.id,
       name: project.name,
+      selectedWorkItemRef,
       status: overviewStatus,
       primaryAction:
-        overviewStatus === "degraded"
+        overviewStatus === "degraded" && !lastWorkFailed
           ? "refresh"
           : project.status === "paused"
             ? "resume"
@@ -265,7 +340,13 @@ export class ProjectService implements ProjectRegistry<
           project.status === "paused" ||
           project.status === "degraded",
         stages,
-        nextStep: nextOverviewStep(overviewStatus, hasActiveExecution, eligible, polling.state),
+        nextStep: nextOverviewStep(
+          overviewStatus,
+          hasActiveExecution,
+          eligible,
+          polling.state,
+          lastWorkFailed,
+        ),
       },
       issues,
       activeExecutionCount: activeExecutions.length,
@@ -359,6 +440,7 @@ export class ProjectService implements ProjectRegistry<
         "Connections",
       ),
       ...github.checks,
+      ...checkProjectTools(project),
     ];
     if (
       this.preflightRevisions.get(project.id) !== revision ||
@@ -612,7 +694,7 @@ export class ProjectService implements ProjectRegistry<
     const checkpoints = new Map(
       allExecutions.map(
         (execution) =>
-          [execution.id, this.checkpoints?.list(project.id, execution.id, 100) ?? []] as const,
+          [execution.id, this.checkpoints?.listForDetail(project.id, execution.id) ?? []] as const,
       ),
     );
     const leases = new Map(
@@ -690,6 +772,7 @@ export class ProjectService implements ProjectRegistry<
       kind: "ProjectCompositionReview",
       projectId: project.id,
       readyToValidate: validation.valid,
+      githubDevelopmentFlow: isGitHubDevelopmentFlow(configuration, validation),
       composition,
       validation: toWireValidationReport(validation),
       resources: resourceChoices(
@@ -1249,6 +1332,7 @@ function overviewIssue(
   input: {
     readonly activeRefs: ReadonlySet<string>;
     readonly activeExecutionIdsByRef: ReadonlyMap<string, string>;
+    readonly latestExecution: LedgerExecutionSummary | undefined;
     readonly admission: OverviewAdmission | undefined;
     readonly paused: boolean;
     readonly hasActiveExecution: boolean;
@@ -1267,7 +1351,11 @@ function overviewIssue(
     openDependencyCount: blockerRefs.length,
     blockerRefs,
     readinessLabel: snapshot.tag?.trim() || input.fallbackReadinessLabel,
-    executionId: input.activeExecutionIdsByRef.get(snapshot.workItemRef) ?? null,
+    executionId:
+      input.activeExecutionIdsByRef.get(snapshot.workItemRef) ?? input.latestExecution?.id ?? null,
+    lastExecutionStatus: input.latestExecution?.status ?? null,
+    executionStartedAt: input.latestExecution?.createdAt ?? null,
+    executionCompletedAt: input.latestExecution?.completedAt ?? null,
   };
 
   if (input.activeRefs.has(snapshot.workItemRef)) {
@@ -1276,6 +1364,24 @@ function overviewIssue(
       status: "in-progress",
       reason: "execution-active",
       explanation: "An execution is already active for this issue.",
+    };
+  }
+  if (input.latestExecution?.status === "failed" || input.latestExecution?.status === "timed-out") {
+    return {
+      ...base,
+      status: "unavailable",
+      reason: "execution-failed",
+      explanation:
+        "La dernière exécution a échoué. Ouvrez son résultat pour consulter la cause et le travail conservé.",
+    };
+  }
+  if (input.latestExecution?.status === "cancelled") {
+    return {
+      ...base,
+      status: "ineligible",
+      reason: "execution-cancelled",
+      explanation:
+        "L’exécution a été annulée. Son résultat et le travail conservé restent consultables.",
     };
   }
   if (snapshot.admittedAt !== null) {
@@ -1456,13 +1562,14 @@ function overviewStatusFor(
   projectStatus: ProjectRow["status"],
   activeExecutionCount: number,
   pollingState: ProjectOverview["polling"]["state"],
+  lastWorkFailed: boolean,
 ): ProjectOverview["status"] {
   if (projectStatus === "paused") return "paused";
   if (projectStatus === "degraded" || pollingState === "failed") return "degraded";
   if (projectStatus === "draft" || projectStatus === "invalid" || projectStatus === "archived") {
     return "draft";
   }
-  return activeExecutionCount > 0 ? "running" : "ready";
+  return activeExecutionCount > 0 ? "running" : lastWorkFailed ? "degraded" : "ready";
 }
 
 function overviewStages(
@@ -1513,14 +1620,17 @@ function nextOverviewStep(
   active: boolean,
   eligible: boolean,
   pollingState: ProjectOverview["polling"]["state"],
+  lastWorkFailed: boolean,
 ): string {
-  if (status === "draft") return "Complete validation before activating this Project.";
-  if (status === "paused") return "Resume the Project to admit new work.";
+  if (status === "draft") return "Vérifiez la configuration avant d’activer ce projet.";
+  if (status === "paused") return "Reprenez le projet pour autoriser de nouveaux départs.";
+  if (!active && lastWorkFailed)
+    return "Ouvrez le dernier travail pour examiner l’échec et le résultat conservé.";
   if (status === "degraded" || pollingState === "failed")
-    return "Refresh the GitHub connection and retry polling.";
-  if (active) return "Monitor the active Development execution.";
-  if (eligible) return "Jarvis will claim the first eligible issue.";
-  return "Waiting for an eligible issue.";
+    return "Vérifiez la connexion GitHub puis relancez la surveillance.";
+  if (active) return "Suivez l’exécution de développement en cours.";
+  if (eligible) return "Jarvis prendra en charge la première issue éligible.";
+  return "En attente d’une issue éligible.";
 }
 
 function readinessHelp(
@@ -1537,7 +1647,7 @@ function readinessHelp(
     if (snapshot.tag?.trim()) labels.add(snapshot.tag.trim());
   }
   if (labels.size === 0) labels.add("ready-for-agent");
-  return `An issue can start when it has the ${[...labels].map((label) => `“${label}”`).join(" or ")} label and no open GitHub native blockers.`;
+  return `Une issue ouverte peut démarrer avec le label ${[...labels].map((label) => `“${label}”`).join(" ou ")} et sans bloqueur GitHub natif ouvert.`;
 }
 
 function validateBindingReferences(
@@ -1960,15 +2070,25 @@ function toDetail(
   repositoryAccessibility: RepositoryAccessibilityPort,
 ): ProjectDetail {
   const accessible = repositoryAccessibility.isAccessibleDirectory(row.repositoryPath);
+  let remotes: ReturnType<typeof readRepositoryRemotes> = [];
+  try {
+    if (accessible) remotes = readRepositoryRemotes(row.repositoryPath);
+  } catch {
+    // A removed or inaccessible checkout has no current remote to display.
+  }
   const bindingStatus: BindingStatus = Object.fromEntries(
-    row.portableConfig.repositories.map((repository) => [
-      repository.id,
-      {
-        path: row.repositoryPath,
-        accessible,
-        bookmarkRef: row.bookmarkRef,
-      },
-    ]),
+    row.portableConfig.repositories.map((repository) => {
+      const url = remotes.find((remote) => remote.name === repository.remote)?.url;
+      return [
+        repository.id,
+        {
+          path: row.repositoryPath,
+          accessible,
+          bookmarkRef: row.bookmarkRef,
+          remoteUrl: url === undefined ? null : publicRemoteUrl(url),
+        },
+      ];
+    }),
   );
   return { ...toSummary(row), portableConfig: row.portableConfig, bindingStatus };
 }
