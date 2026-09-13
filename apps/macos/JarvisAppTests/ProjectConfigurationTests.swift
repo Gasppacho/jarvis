@@ -542,7 +542,7 @@ final class ProjectConfigurationTests: XCTestCase {
         state = configuration.state(for: imported.id)
         XCTAssertEqual(
             state.draft?.modules.map(\.instanceId),
-            ["github", "automation-rules", "development"])
+            ["github", "development"])
         XCTAssertEqual(state.localBindings?.slots, [])
         XCTAssertEqual(state.agentRuntimes?.required, true)
         let proposedDevelopment = try XCTUnwrap(state.draft?.modules.first { $0.instanceId == "development" })
@@ -554,19 +554,19 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(
             state.resourceChoices.map(\.slotId),
             [
-            "agentRuntime", "sourceControl", "tickets",
+            "agentRuntime", "sourceControl",
         ])
         XCTAssertEqual(
             state.resourceChoices.first { $0.slotId == "sourceControl" }?.status,
             .incompatible)
         XCTAssertEqual(
             state.compositionGuide?.moduleInstances.map(\.displayName),
-            ["Automation Rules", "Development", "GitHub"])
+            ["Development", "GitHub"])
         XCTAssertEqual(
             state.compositionGuide?.moduleInstances.first(where: {
                 $0.instanceId == "development"
             })?.missingResources,
-            ["agent.execute", "work-items.read"])
+            ["agent.execute"])
         let presentation = ProjectDetailPresentation(
             project: imported,
             detail: state.detail,
@@ -588,7 +588,7 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(developmentCard.compatibility, "compatible")
         XCTAssertEqual(
             developmentCard.missingResources,
-            "agent.execute, work-items.read")
+            "agent.execute")
         XCTAssertTrue(developmentCard.technicalDetails.contains("jarvis.module.development"))
         XCTAssertTrue(developmentCard.technicalDetails.contains("1.0.0"))
         XCTAssertTrue(
@@ -623,10 +623,14 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertFalse(configuration.state(for: imported.id).draft?.workflowCommandsConfigured ?? true)
         XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.first { $0.id == reopenedDevelopment.id }?.validationOrder, ["verify"])
         configuration.setReadyLabel(projectId: imported.id, label: "approved-work")
-        XCTAssertTrue(configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "automation-rules" }?.automationRules?.first?.matchJSON.contains("approved-work") == true)
+        XCTAssertEqual(
+            configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "github" }?.configurationValues["readyLabel"],
+            "approved-work")
         let labelModule = try XCTUnwrap(configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "github" })
         configuration.apply(.setModuleConfiguration(labelModule.id, "readyLabel", "reviewed-work"), projectId: imported.id, packages: catalog.packages)
-        XCTAssertTrue(configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "automation-rules" }?.automationRules?.first?.matchJSON.contains("reviewed-work") == true)
+        XCTAssertEqual(
+            configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "github" }?.configurationValues["readyLabel"],
+            "reviewed-work")
         XCTAssertTrue(ProjectDetailPresentation.activationNotice.contains("already"))
         XCTAssertTrue(ProjectDetailPresentation.activationNotice.contains("Existing and Custom"))
         XCTAssertTrue(presentation.startingPoints.first?.description.contains("QServices/swift-config") == true)
@@ -665,8 +669,8 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(
             state.compositionGuide?.eventChoices.first(where: {
                 $0.type == "development.implementation.requested"
-            })?.routingStatus,
-            "orphaned")
+            }),
+            nil)
 
         let github = try XCTUnwrap(state.draft?.modules.first { $0.instanceId == "github" })
         configuration.apply(
