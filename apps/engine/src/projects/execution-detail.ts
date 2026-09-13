@@ -160,7 +160,15 @@ export function buildExecutionDetail(input: ExecutionDetailInput): Detail {
       causationIds,
       events: detailEvents,
     },
-    failure: failure ?? validationFailure,
+    failure:
+      failure?.code === "git.validation-failed" && validationFailure !== null
+        ? {
+            ...failure,
+            message: validationFailure.message,
+            impact: validationFailure.impact,
+            nextAction: validationFailure.nextAction,
+          }
+        : (failure ?? validationFailure),
     retryDeliveryId: input.retryDeliveryId,
     cancellableExecutionId: activeExecution?.id ?? null,
   };

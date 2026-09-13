@@ -9,22 +9,27 @@ public struct ConnectionsView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            HStack {
-                Text("Connections").font(.title2.bold())
-                Spacer()
-                Button("Actualiser les comptes") {
-                    Task { await model.refresh() }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack {
+                    Text("Comptes et connexions").font(.title2.bold())
+                    Spacer()
+                    Button("Actualiser les comptes") {
+                        Task { await model.refresh() }
+                    }
+                    .disabled(model.isRefreshing)
+                    .accessibilityIdentifier("connections.refresh")
                 }
-                .disabled(model.isRefreshing)
-            }
 
-            GroupBox("GitHub") {
-                content
+                Text("Ces comptes sont disponibles sur ce Mac. Choisissez explicitement un compte dans Accès et agent pour autoriser chaque projet.")
+                    .foregroundStyle(.secondary)
+                GroupBox("GitHub") {
+                    content
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(24)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(24)
         .task { await model.refresh() }
     }
 
@@ -73,7 +78,7 @@ public struct ConnectionsView: View {
                                 presentation.action,
                                 destination: URL(string: "https://cli.github.com/manual/gh_auth_login")!)
                         }
-                        DisclosureGroup("Advanced") {
+                        DisclosureGroup("Détails techniques") {
                             Text("Identifiant de support : \(connection.id)")
                                 .font(.caption)
                                 .textSelection(.enabled)
@@ -81,7 +86,7 @@ public struct ConnectionsView: View {
                     }
                     .padding(12)
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
-                    .accessibilityElement(children: .combine)
+                    .accessibilityElement(children: .contain)
                 }
             }
         }

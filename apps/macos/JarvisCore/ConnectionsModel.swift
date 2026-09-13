@@ -103,7 +103,7 @@ public final class ConnectionsModel {
         }
         return GitHubConnectionPresentation(
             status: isBound ? "Utilisé par ce projet" : "Disponible",
-            diagnostic: isBound ? "Ce compte est autorisé pour ce projet seulement." : "Prêt à être accordé explicitement à ce projet.",
+            diagnostic: isBound ? "Ce compte est autorisé pour ce projet seulement." : "Prêt à être accordé explicitement à un projet.",
             action: isBound ? "Modifier" : "Utiliser pour ce projet",
             isSelectable: true)
     }

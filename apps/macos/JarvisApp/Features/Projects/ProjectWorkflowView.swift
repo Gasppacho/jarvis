@@ -134,6 +134,7 @@ struct ProjectWorkflowView: View {
                     set: { model.setReadyLabel(projectId: project.id, label: $0, moduleID: module.id) }))
                     .textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("workflow.ready-label")
+                    .accessibilityLabel("Label des issues à développer")
             }
             Text(flowConfirmed
                  ? "GitHub vérifie les bloqueurs natifs. La portée du premier démarrage se choisit à l’étape Vérification."
@@ -206,6 +207,7 @@ struct ProjectWorkflowView: View {
                 set: { model.setCommand(projectId: project.id, name: name, command: $0) }))
                 .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier("workflow.command.\(name)")
+                .accessibilityLabel(title)
         }
     }
 

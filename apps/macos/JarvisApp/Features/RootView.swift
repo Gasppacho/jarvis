@@ -90,8 +90,9 @@ struct RootView: View {
                 }
                 .disabled(projects.isRefreshing || !importStateAllowsNewPicker)
                 .accessibilityIdentifier("project.add")
+                .keyboardShortcut("n", modifiers: .command)
                 ForEach(projects.projects) { project in
-                    ProjectRow(project: project).tag(SidebarSelection.project(project.id))
+                    ProjectRow(project: project, isSelected: selectedProjectID == project.id).tag(SidebarSelection.project(project.id))
                 }
                 if projects.projects.isEmpty {
                     ContentUnavailableView {
@@ -249,6 +250,7 @@ private enum SidebarSelection: Hashable {
 
 private struct ProjectRow: View {
     let project: Project
+    let isSelected: Bool
 
     var body: some View {
         HStack {
@@ -261,10 +263,10 @@ private struct ProjectRow: View {
             Spacer()
             Text(statusTitle)
                 .font(.caption.weight(.medium))
-                .foregroundStyle(statusColor)
+                .foregroundStyle(isSelected ? Color.primary : statusColor)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 2)
-                .background(statusColor.opacity(0.15), in: Capsule())
+                .background((isSelected ? Color.primary : statusColor).opacity(0.15), in: Capsule())
         }
     }
 

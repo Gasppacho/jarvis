@@ -31,7 +31,7 @@ struct ProjectExecutionDetailView: View {
                     systemImage: presentation.connectionSymbol)
                     .foregroundStyle(connectionColor)
                     .font(.caption.weight(.medium))
-                    .accessibilityLabel("Live updates: \(presentation.connectionLabel)")
+                    .accessibilityLabel("Actualisation : \(presentation.connectionLabel)")
             }
             .padding(.horizontal, 24)
             .padding(.top, 12)
@@ -89,7 +89,7 @@ struct ProjectExecutionDetailView: View {
             }
             Button("Continuer l’exécution", role: .cancel) {}
         } message: {
-            Text("Jarvis keeps the durable final result and workspace policy after cancellation.")
+            Text("Jarvis conserve le résultat final et applique la politique de conservation du dossier de travail après l’annulation.")
         }
     }
 
@@ -110,7 +110,7 @@ struct ProjectExecutionDetailView: View {
                                 await model.refresh(projectId: projectId, executionId: executionId)
                             }
                         }
-                        .accessibilityLabel("Retry loading execution detail")
+                        .accessibilityLabel("Recharger le détail de l’exécution")
                     }
                 }
                 header(detail)
@@ -539,19 +539,20 @@ struct ProjectExecutionDetailView: View {
                     .foregroundStyle(cancelled ? .orange : .red)
                 Text(failure.impact).font(.callout)
                 Text(failure.nextAction).font(.callout).foregroundStyle(.secondary)
-                Button("Open technical details") {
+                Button("Ouvrir les détails techniques") {
                     isTechnicalDetailsExpanded = true
                 }
-                if let deliveryId = model.state(for: projectId, executionId: executionId).detail?.retryDeliveryId {
-                    Button("Retry execution") {
+                if model.state(for: projectId, executionId: executionId).detail?.retryDeliveryId != nil {
+                    Button("Relancer l’exécution") {
                         Task { _ = await model.retry(projectId: projectId, executionId: executionId) }
                     }
                     .disabled(model.state(for: projectId, executionId: executionId).isRetrying)
-                    .accessibilityLabel("Retry execution delivery \(deliveryId)")
+                    .accessibilityLabel("Relancer l’exécution après correction")
+                    .accessibilityIdentifier("execution.retry")
                 }
             }
         } label: {
-            Label(cancelled ? "Exécution annulée" : "Vérification à traiter", systemImage: cancelled ? "minus.circle" : "xmark.octagon")
+            Label(cancelled ? "Exécution annulée" : "Échec à examiner", systemImage: cancelled ? "minus.circle" : "xmark.octagon")
         }
     }
 }

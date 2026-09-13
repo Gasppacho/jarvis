@@ -24,6 +24,11 @@ La sauvegarde reste visible en bas, avec **Modifications à enregistrer**,
 aucun travail. Changer d'étape ou ouvrir les réglages avancés conserve le brouillon.
 Une réouverture retrouve les valeurs enregistrées et l'étape du projet.
 
+Les raccourcis **⌘N** (ajouter un projet) et **⌘S** (enregistrer le brouillon)
+complètent les contrôles natifs. L’activation reste une action explicite, sans
+raccourci Entrée global. La navigation clavier et VoiceOver font l’objet d’une
+preuve native distincte ; les noms AX seuls ne prouvent pas le parcours.
+
 Les champs ont des libellés permanents. Toute action critique possède un nom
 d'accessibilité et fonctionne au clavier. Un état combine icône et texte ; aucune
 signification ne dépend uniquement de la couleur. Les couleurs système suivent

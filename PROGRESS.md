@@ -456,3 +456,42 @@ pausées et app fermée. Aucun retry/activation déclenché dans cette copie.
 Textes anglais résiduels du moteur/onglets repérés et à harmoniser en L09.
 Préparation/agent/validation/PR réels restent à prouver en L10, et copie PR non
 revendiquée avant ce contrôle. #202 n’est pas déclarée terminée.
+
+
+## L09 — cohérence, accessibilité et documentation (13 septembre, en cours de clôture)
+
+Base8f377ef. Les actions courantes, états d’exécution, Connexions et Catalogue
+emploient le langage du guide. Catalogue replie les contrats ; les descriptions
+connues sont traduites en présentation, sans routage Swift. CmdN ouvre le sélecteur,
+CmdS enregistre le brouillon. Champs critiques avec noms AX explicites ; les cartes
+interactives de connexion conservent leurs enfants accessibles. Badge sélectionné
+avec couleur système, lisible avec sélection active bleue et inactive grise.
+
+Régression API reproduite : le fait terminal git.validation-failed masquait la
+commande échouée par un message générique. La projection conserve le code et la
+possibilité de relance, mais présente le contrôle réel et demande de corriger sa
+cause. Test RED puis GREEN 3/3 :
+`rtk pnpm exec vitest run --project integration apps/engine/test/project-overview.integration.test.ts`.
+Typecheck et deux builds empaquetés réussis. Swift ciblé24/24 avant derniers
+libellés, dernier passage24/24 réussi. Liens locaux des cinq docs :64 vérifiés,0 absent.
+
+Preuves natives isolées sous `/tmp/jarvis-ux-reliability-evidence/l09/` :
+01 sombre1100×800 ;02 contraste défectueux (ne pas présenter comme résultat final),
+03 CmdN sélecteur ;07 VoiceOver nomme Workflow et son état ;08 VO-Espace ouvre
+Workflow et nomme la carte Issue prête ;09 valeur du label lue mais nom absent,
+corrigé ensuite par accessibilityLabel. Sur second build, AX retourne bien
+« Label des issues à développer » et ready-for-agent. CmdS a gardé le focus sur
+ce champ.10/11 contraste corrigé gris/bleu ;12 Catalogue ;14 comptes après fin
+découverte réseau.13 est seulement l’état de recherche.06 déborde sur un terminal,
+à exclure des preuves partagées. Manifestes WIP dans le même dossier.
+
+VoiceOver a réellement été activé (accueil Utiliser VoiceOver), navigué par
+CtrlOption-flèches et actionné par CtrlOption-Espace. Les sous-titres de VoiceOver
+ont été observés ; aucune écoute humaine de la synthèse vocale n’est revendiquée.
+VoiceOver a été désactivé, thème sombre restauré, app quittée. Le parcours clavier
+complet jusqu’à activation et la lecture VO des erreurs restent à établir avec
+l’essai L10 borné ; ces points ne sont pas cochés dans MVP_ACCEPTANCE.
+README/UX/workflow/local/checklist distinguent recommandé ready-for-agent,
+historique agent:ready, préflight et validations exécutées, preuves Harness/natif/réel.
+Relecture Spec finale0 ; Standards initiale0 avec risque contraste identifié puis
+corrigé nativement ; Standards finale0. Aucun projet de fixture activé.

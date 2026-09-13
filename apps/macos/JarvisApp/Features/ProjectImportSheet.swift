@@ -95,6 +95,7 @@ struct ProjectImportSheet: View {
                     get: { projects.importName }, set: { projects.importName = $0 }))
                     .textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("project.import-name")
+                    .accessibilityLabel("Nom du projet")
                 if let error = projects.importNameError {
                     Text(error).font(.callout).foregroundStyle(.red)
                         .accessibilityIdentifier("project.import-name-error")

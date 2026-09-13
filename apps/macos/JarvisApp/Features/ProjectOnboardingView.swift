@@ -94,6 +94,7 @@ struct ProjectOnboardingView: View {
                         Task { await projectConfiguration.saveDraft(projectId: project.id, writeToRepository: false) }
                     }
                     .disabled(state.isSaving || (state.isDraftSaved && !state.saveFailed))
+                    .keyboardShortcut("s", modifiers: .command)
                     .accessibilityIdentifier("project.save")
                 }
                 if let nextStep {
@@ -190,6 +191,7 @@ struct ProjectOnboardingView: View {
                     .textFieldStyle(.roundedBorder)
                     .disabled(state.draft == nil)
                     .accessibilityIdentifier("project.name")
+                    .accessibilityLabel("Nom du projet")
                 ForEach(state.detail?.bindings ?? []) { binding in
                     if let remote = binding.remoteUrl {
                         LabeledContent("Dépôt distant", value: remote).textSelection(.enabled)

@@ -60,13 +60,13 @@ final class ProjectExecutionDetailTests: XCTestCase {
 
     func testPresentsEveryExecutionLifecycleStateWithAStableLabel() {
         let cases: [(ProjectExecutionDetail.ExecutionStatus, String)] = [
-            (.queued, "Queued"),
-            (.running, "Running"),
-            (.cancelling, "Cancelling"),
-            (.completed, "Completed"),
-            (.failed, "Failed"),
-            (.timedOut, "Timed out"),
-            (.cancelled, "Cancelled"),
+            (.queued, "En attente"),
+            (.running, "En cours"),
+            (.cancelling, "Annulation en cours"),
+            (.completed, "Terminée"),
+            (.failed, "Échouée"),
+            (.timedOut, "Délai dépassé"),
+            (.cancelled, "Annulée"),
         ]
 
         for (status, label) in cases {
@@ -77,7 +77,7 @@ final class ProjectExecutionDetailTests: XCTestCase {
             XCTAssertEqual(
                 ProjectExecutionDetailPresentation.executionStatusLabel(status), label)
             XCTAssertEqual(presentation.currentExecution(detail)?.status, status)
-            XCTAssertEqual(presentation.connectionLabel, "Live")
+            XCTAssertEqual(presentation.connectionLabel, "En direct")
             XCTAssertFalse(presentation.isSnapshot)
         }
     }
@@ -87,13 +87,13 @@ final class ProjectExecutionDetailTests: XCTestCase {
 
         let reconnecting = ProjectExecutionDetailPresentation(
             ProjectExecutionDetailState(detail: detail), connection: .reconnecting)
-        XCTAssertEqual(reconnecting.connectionLabel, "Reconnecting…")
+        XCTAssertEqual(reconnecting.connectionLabel, "Reconnexion…")
         XCTAssertEqual(reconnecting.connectionSymbol, "arrow.triangle.2.circlepath")
         XCTAssertTrue(reconnecting.isSnapshot)
 
         let failed = ProjectExecutionDetailPresentation(
             ProjectExecutionDetailState(detail: detail), connection: .failed)
-        XCTAssertEqual(failed.connectionLabel, "Snapshot précédent")
+        XCTAssertEqual(failed.connectionLabel, "Dernier état connu")
         XCTAssertEqual(failed.connectionSymbol, "clock.arrow.circlepath")
         XCTAssertTrue(failed.isSnapshot)
     }
@@ -110,7 +110,7 @@ final class ProjectExecutionDetailTests: XCTestCase {
         }
         XCTAssertEqual(snapshot, detail)
         XCTAssertEqual(message, "Engine disconnected")
-        XCTAssertEqual(presentation.connectionLabel, "Snapshot précédent")
+        XCTAssertEqual(presentation.connectionLabel, "Dernier état connu")
     }
 
     func testMissingEvidenceAndManualReviewLabelsRemainExplicit() {

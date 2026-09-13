@@ -177,6 +177,11 @@ it("keeps the failed work linked after label removal and Engine restart", async 
       return failureDetail.failure.code;
     })
     .toBe("git.validation-failed");
+  const failureDetail = (await (
+    await fixture.engine.call(`${path}/executions/${issue!.executionId}/detail`)
+  ).json()) as { failure: { message: string; nextAction: string } };
+  expect(failureDetail.failure.message).toMatch(/La commande .+ a échoué/);
+  expect(failureDetail.failure.nextAction).toContain("corriger la cause avant de relancer");
   await fixture.restart();
   expect((await overview(fixture)).issues.find((item) => item.issueNumber === 16)).toMatchObject({
     executionId: issue!.executionId,

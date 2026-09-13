@@ -74,13 +74,13 @@ public struct ProjectDetailView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            Picker("View", selection: $selectedTab) {
-                Text("Overview").tag(Tab.overview)
+            Picker("Vue", selection: $selectedTab) {
+                Text("Supervision").tag(Tab.overview)
                 Text("Composition").tag(Tab.composition)
-                Text("Graph").tag(Tab.graph)
-                Text("Timeline").tag(Tab.timeline)
-                Text("Execution").tag(Tab.execution)
-                Text("Dead Letters").tag(Tab.deadLetters)
+                Text("Schéma").tag(Tab.graph)
+                Text("Historique").tag(Tab.timeline)
+                Text("Exécution").tag(Tab.execution)
+                Text("Livraisons en échec").tag(Tab.deadLetters)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -115,9 +115,9 @@ public struct ProjectDetailView: View {
                         close: { selectedTab = executionOrigin })
                 } else {
                     ContentUnavailableView(
-                        "No execution selected",
+                        "Aucune exécution sélectionnée",
                         systemImage: "gearshape",
-                        description: Text("Open an execution from Overview or Timeline."))
+                        description: Text("Ouvrez une exécution depuis la supervision ou l’historique."))
                 }
             case .deadLetters:
                 ProjectDeadLettersView(model: deadLetters, projectId: project.id)

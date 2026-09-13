@@ -1622,15 +1622,15 @@ function nextOverviewStep(
   pollingState: ProjectOverview["polling"]["state"],
   lastWorkFailed: boolean,
 ): string {
-  if (status === "draft") return "Complete validation before activating this Project.";
-  if (status === "paused") return "Resume the Project to admit new work.";
+  if (status === "draft") return "Vérifiez la configuration avant d’activer ce projet.";
+  if (status === "paused") return "Reprenez le projet pour autoriser de nouveaux départs.";
   if (!active && lastWorkFailed)
     return "Ouvrez le dernier travail pour examiner l’échec et le résultat conservé.";
   if (status === "degraded" || pollingState === "failed")
-    return "Refresh the GitHub connection and retry polling.";
-  if (active) return "Monitor the active Development execution.";
-  if (eligible) return "Jarvis will claim the first eligible issue.";
-  return "Waiting for an eligible issue.";
+    return "Vérifiez la connexion GitHub puis relancez la surveillance.";
+  if (active) return "Suivez l’exécution de développement en cours.";
+  if (eligible) return "Jarvis prendra en charge la première issue éligible.";
+  return "En attente d’une issue éligible.";
 }
 
 function readinessHelp(
@@ -1647,7 +1647,7 @@ function readinessHelp(
     if (snapshot.tag?.trim()) labels.add(snapshot.tag.trim());
   }
   if (labels.size === 0) labels.add("ready-for-agent");
-  return `An issue can start when it has the ${[...labels].map((label) => `“${label}”`).join(" or ")} label and no open GitHub native blockers.`;
+  return `Une issue ouverte peut démarrer avec le label ${[...labels].map((label) => `“${label}”`).join(" ou ")} et sans bloqueur GitHub natif ouvert.`;
 }
 
 function validateBindingReferences(
