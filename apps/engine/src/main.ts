@@ -583,6 +583,7 @@ async function main(): Promise<void> {
       externalMappings,
       pollCursors,
       workItemReadiness,
+      developmentAdmissionsStore,
     );
     const consumer = new DeliveryConsumer(
       database.db,

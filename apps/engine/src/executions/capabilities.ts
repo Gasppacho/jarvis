@@ -3,6 +3,7 @@ import type { ModuleCapabilityRequirement } from "../../../../packages/kernel/sr
 import type {
   ExternalMappingCapability,
   AgentRuntimeGrant,
+  DevelopmentAdmissionCapability,
   ModuleHandlerCapabilities,
   PollCursorCapability,
   WorkItemReadinessCapability,
@@ -68,6 +69,10 @@ export interface WorkItemReadinessCapabilityResolver {
   bind(projectId: string, moduleInstanceId: string): WorkItemReadinessCapability;
 }
 
+export interface DevelopmentAdmissionCapabilityResolver {
+  bind(projectId: string): DevelopmentAdmissionCapability;
+}
+
 /** Binds the existing workspace manager to one frozen Project snapshot. */
 export class ProjectWorkspaceCapabilityResolver implements ProjectWorkspaceResolver {
   public constructor(
@@ -121,6 +126,7 @@ export class ProjectModuleCapabilityResolver {
     private readonly externalMappings?: ExternalMappingCapabilityResolver,
     private readonly pollCursors?: PollCursorCapabilityResolver,
     private readonly workItemReadiness?: WorkItemReadinessCapabilityResolver,
+    private readonly developmentAdmissions?: DevelopmentAdmissionCapabilityResolver,
   ) {}
 
   public resolve(
@@ -145,7 +151,8 @@ export class ProjectModuleCapabilityResolver {
       githubRequirement === undefined &&
       workItemsRequirement === undefined &&
       this.externalMappings === undefined &&
-      this.pollCursors === undefined
+      this.pollCursors === undefined &&
+      this.developmentAdmissions === undefined
     ) {
       return {};
     }
@@ -158,7 +165,8 @@ export class ProjectModuleCapabilityResolver {
       githubRequirement === undefined &&
       workItemsRequirement === undefined &&
       this.externalMappings === undefined &&
-      this.pollCursors === undefined
+      this.pollCursors === undefined &&
+      this.developmentAdmissions === undefined
     ) {
       return {};
     }
@@ -188,6 +196,9 @@ export class ProjectModuleCapabilityResolver {
       (moduleId !== "jarvis.module.github" && moduleId !== "jarvis.module.development")
         ? {}
         : { workItemReadiness: this.workItemReadiness.bind(projectId, moduleInstanceId) }),
+      ...(this.developmentAdmissions === undefined || moduleId !== "jarvis.module.development"
+        ? {}
+        : { developmentAdmission: this.developmentAdmissions.bind(projectId) }),
     };
     let resolved: ModuleHandlerCapabilities = capabilities;
     if (agentRequirement !== undefined) {

@@ -296,6 +296,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
     }
 
     const envelope = this.requireEnvelope(delivery);
+    const fixedAdmission = isFixedDevelopmentRequest(envelope);
     const existingDeadLetter =
       delivery.replayed === true || delivery.leaseOwner !== undefined
         ? undefined
@@ -431,7 +432,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
                     true,
                   )
                 : error instanceof ModuleDeliveryDeferredError
-                  ? this.deferDelivery(delivery, executionId, error)
+                  ? this.deferDelivery(delivery, executionId, error, fixedAdmission)
                   : this.recordFailure(
                       delivery,
                       envelope,
@@ -457,7 +458,7 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
       transactionOpen = false;
       if (error instanceof DeliveryLeaseLostError) return this.leaseLostResult();
       if (error instanceof ModuleDeliveryDeferredError) {
-        return this.deferDelivery(delivery, executionId, error);
+        return this.deferDelivery(delivery, executionId, error, fixedAdmission);
       }
       return this.recordFailure(
         delivery,
@@ -759,11 +760,17 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
     delivery: ClaimedDelivery,
     executionId: string,
     deferred: ModuleDeliveryDeferredError,
+    fixedAdmission = false,
   ): ConsumeResult {
     const started =
       this.db
-        .prepare("SELECT 1 FROM execution_checkpoints WHERE execution_id = ? LIMIT 1")
-        .get(executionId) !== undefined;
+        .prepare(
+          `SELECT 1 FROM execution_checkpoints WHERE project_id = ? AND execution_id = ?
+           UNION ALL
+           SELECT 1 FROM workspace_leases WHERE project_id = ? AND execution_id = ?
+           LIMIT 1`,
+        )
+        .get(delivery.projectId, executionId, delivery.projectId, executionId) !== undefined;
     // Only a not-yet-started admission may leave the queue as ineligible.
     // A recovered execution retains its identity and progress for recovery.
     const admission =
@@ -774,9 +781,10 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
       this.db
         .prepare(
           `DELETE FROM executions WHERE id = ? AND status = 'running'
-          AND NOT EXISTS (SELECT 1 FROM execution_checkpoints WHERE execution_id = executions.id)`,
+          AND NOT EXISTS (SELECT 1 FROM execution_checkpoints WHERE project_id = ? AND execution_id = executions.id)
+          AND NOT EXISTS (SELECT 1 FROM workspace_leases WHERE project_id = ? AND execution_id = executions.id)`,
         )
-        .run(executionId);
+        .run(executionId, delivery.projectId, delivery.projectId);
       this.db
         .prepare(
           `INSERT INTO development_admissions (delivery_id, project_id, status, reason, updated_at)
@@ -811,7 +819,10 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
           moduleInstanceId: delivery.moduleInstanceId,
           eventId: delivery.eventId,
           nextAttemptAt,
-          consumedAt: admission.status === "ineligible" ? this.clock.now().toISOString() : null,
+          consumedAt:
+            admission.status === "ineligible" && !fixedAdmission
+              ? this.clock.now().toISOString()
+              : null,
           leaseOwner: delivery.leaseOwner ?? null,
         });
       if (delivery.leaseOwner !== undefined && written.changes !== 1) {
@@ -1588,6 +1599,12 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
     }
     return JSON.parse(row.envelope) as EventEnvelope;
   }
+}
+
+function isFixedDevelopmentRequest(envelope: EventEnvelope): boolean {
+  if (envelope.type !== "development.implementation.requested") return false;
+  const generation = envelope.payload["requestedGeneration"];
+  return typeof generation === "number" && Number.isSafeInteger(generation) && generation > 0;
 }
 
 function readStructuredFailure(

@@ -1385,7 +1385,7 @@ function overviewIssue(
         "L’exécution a été annulée. Son résultat et le travail conservé restent consultables.",
     };
   }
-  if (snapshot.admittedAt !== null) {
+  if (snapshot.admittedAt !== null && input.admission === undefined) {
     return {
       ...base,
       status: "ineligible",
@@ -1456,6 +1456,15 @@ function overviewIssue(
         explanation: "Jarvis could not verify this issue on the latest admission check.",
       };
     }
+  }
+
+  if (snapshot.admittedAt !== null) {
+    return {
+      ...base,
+      status: "ineligible",
+      reason: "already-admitted",
+      explanation: "This issue has already been admitted and will not start twice.",
+    };
   }
 
   if (snapshot.reason === "ready-label-missing") {

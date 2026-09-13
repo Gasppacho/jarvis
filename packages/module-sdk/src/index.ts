@@ -163,6 +163,12 @@ export type WorkItemReadinessStatus = "ready" | "blocked" | "impossible";
 export interface WorkItemReadinessCapability {
   /** Durable identity guard for one project/repository/work-item triple. */
   readonly wasAdmitted?: (repositoryId: string, workItemRef: string) => boolean;
+  /** True only when the supplied fixed-mode observation is still current. */
+  readonly isCurrentObservation?: (
+    repositoryId: string,
+    workItemRef: string,
+    observationRevision: number,
+  ) => boolean;
   readonly observe: (input: {
     readonly repositoryId: string;
     readonly workItemRef: string;
@@ -174,9 +180,21 @@ export interface WorkItemReadinessCapability {
     readonly title?: string;
     readonly tag?: string;
     readonly ruleMatches?: boolean;
+    /** Monotone provider observation revision, when the source is fixed mode. */
+    readonly observationRevision?: number;
     /** False records the observation without consuming its publication identity. */
     readonly admit?: boolean;
   }) => boolean;
+}
+
+/** Durable Development admission hooks; the implementation owns the queue. */
+export interface DevelopmentAdmissionCapability {
+  readonly wasStarted: (repositoryId: string, workItemRef: string) => boolean;
+  readonly wake: (input: {
+    readonly repositoryId: string;
+    readonly workItemRef: string;
+    readonly observationRevision: number;
+  }) => void;
 }
 
 /** Capabilities resolved for one Project and Module Instance only. */
@@ -187,6 +205,7 @@ export interface ModuleHandlerCapabilities {
   readonly externalMappings?: ExternalMappingCapability;
   readonly pollCursor?: PollCursorCapability;
   readonly workItemReadiness?: WorkItemReadinessCapability;
+  readonly developmentAdmission?: DevelopmentAdmissionCapability;
   readonly githubApi?: GitHubApi;
   readonly workItems?: WorkItemsCapability;
   readonly projectBindings?: AgentProjectBindings;

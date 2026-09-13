@@ -279,7 +279,10 @@ export function handleWorkItemObserved(ctx: ModuleHandlerContext): DevelopmentOb
           readyLabel,
           scope,
           alreadyStarted:
-            admission.wasAdmitted?.(observed.repositoryId, observed.workItemRef) ?? false,
+            ctx.capabilities.developmentAdmission?.wasStarted(
+              observed.repositoryId,
+              observed.workItemRef,
+            ) ?? false,
         });
   if (
     decision.eligible &&
@@ -304,9 +307,25 @@ export function handleWorkItemObserved(ctx: ModuleHandlerContext): DevelopmentOb
     observedAt: observed.observedAt,
     title: observed.observation.title,
     ruleMatches: decision.eligible,
+    observationRevision: observed.observationRevision,
     admit: decision.eligible,
     ...(readyLabel === undefined ? {} : { tag: readyLabel }),
   });
+  if (
+    decision.eligible &&
+    (admission.isCurrentObservation?.(
+      observed.repositoryId,
+      observed.workItemRef,
+      observed.observationRevision,
+    ) ??
+      true)
+  ) {
+    ctx.capabilities.developmentAdmission?.wake({
+      repositoryId: observed.repositoryId,
+      workItemRef: observed.workItemRef,
+      observationRevision: observed.observationRevision,
+    });
+  }
   if (!decision.eligible) return { status: "ineligible", reason: decision.reason };
   if (!admitted) return { status: "duplicate", reason: "already-admitted" };
   const request = ctx.publish({
@@ -426,20 +445,41 @@ async function runImplementationRequested(
     MAX_OUTPUT_LIMIT_BYTES,
   );
   let checkpointSequence = ctx.lastCheckpointSequence?.() ?? 0;
+  let existingAllocation = false;
   if (requiresGitHubWorkItem && request.tag !== undefined) {
     if (request.requestedGeneration !== undefined && workItems?.observeState !== undefined) {
-      const observation = await workItems.observeState(request.workItemRef, request.repositoryId);
-      const decision = assessDevelopmentEligibility({
-        repositoryId: request.repositoryId,
-        authorizedRepositoryId: ctx.repository?.repositoryId,
-        workItemRef: request.workItemRef,
-        observation,
-        readyLabel: request.tag,
-        scope: readDevelopmentScope(ctx.configuration["scope"]) ?? { kind: "all" },
-        alreadyStarted: false,
-      });
-      if (!decision.eligible) {
-        throw new ModuleDeliveryDeferredError("blocked", decision.reason);
+      if (workspace.recover !== undefined) {
+        try {
+          const recovered = await workspace.recover({
+            executionId: ctx.executionId,
+            repositoryId: request.repositoryId,
+          });
+          existingAllocation = recovered.retained;
+        } catch {
+          // No durable allocation yet: the current observation still guards admission.
+        }
+      }
+      if (!existingAllocation) {
+        const observation = await workItems.observeState(request.workItemRef, request.repositoryId);
+        const decision = assessDevelopmentEligibility({
+          repositoryId: request.repositoryId,
+          authorizedRepositoryId: ctx.repository?.repositoryId,
+          workItemRef: request.workItemRef,
+          observation,
+          readyLabel: request.tag,
+          scope: readDevelopmentScope(ctx.configuration["scope"]) ?? { kind: "all" },
+          alreadyStarted: false,
+        });
+        if (!decision.eligible) {
+          throw new ModuleDeliveryDeferredError(
+            observation.verification === "unavailable"
+              ? "impossible"
+              : decision.reason === "work-item-closed" || decision.reason === "ready-label-missing"
+                ? "ineligible"
+                : "blocked",
+            decision.reason,
+          );
+        }
       }
     } else if (workItems?.assessReadiness !== undefined) {
       const readiness = await workItems.assessReadiness({
@@ -464,7 +504,7 @@ async function runImplementationRequested(
   const workItem =
     !requiresGitHubWorkItem || workItems === undefined
       ? undefined
-      : await readWorkItem(workItems, request.workItemRef, ctx.repositoryId);
+      : await readWorkItem(workItems, request.workItemRef, ctx.repositoryId, existingAllocation);
 
   let allocation;
   try {
@@ -1749,6 +1789,7 @@ async function readWorkItem(
   capability: NonNullable<ModuleHandlerContext["capabilities"]["workItems"]>,
   workItemRef: string,
   repositoryId: string | undefined,
+  allowClosed = false,
 ): Promise<WorkItem> {
   let item: WorkItem;
   try {
@@ -1776,7 +1817,7 @@ async function readWorkItem(
       "The Work Item reader returned an invalid Work Item.",
     );
   }
-  if (item.state === "closed") {
+  if (item.state === "closed" && !allowClosed) {
     if (capability.assessReadiness !== undefined) {
       throw new ModuleDeliveryDeferredError("ineligible", "work-item-closed");
     }

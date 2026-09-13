@@ -265,11 +265,27 @@ export class WorkItemReadinessStore {
     );
   }
 
+  public isCurrentObservation(
+    projectId: string,
+    repositoryId: string,
+    workItemRef: string,
+    observationRevision: number,
+  ): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT observation_revision FROM github_work_item_readiness
+         WHERE project_id = ? AND repository_id = ? AND work_item_ref = ?`,
+      )
+      .get(projectId, repositoryId, workItemRef) as { observation_revision: number } | undefined;
+    return row?.observation_revision === observationRevision;
+  }
+
   public list(projectId: string, limit = 100): readonly WorkItemReadinessSnapshot[] {
     const rows = this.db
       .prepare(
         `SELECT module_instance_id, repository_id, work_item_ref, issue_number, title, tag,
-                rule_matches, status, reason, blocker_refs, observed_at, admitted_at
+                rule_matches, status, reason, blocker_refs, observed_at, admitted_at,
+                observation_revision
          FROM github_work_item_readiness
          WHERE project_id = @projectId
          ORDER BY observed_at DESC, repository_id, work_item_ref
@@ -380,6 +396,8 @@ export class WorkItemReadinessStore {
     return {
       wasAdmitted: (repositoryId, workItemRef) =>
         this.wasAdmitted(projectId, repositoryId, workItemRef),
+      isCurrentObservation: (repositoryId, workItemRef, observationRevision) =>
+        this.isCurrentObservation(projectId, repositoryId, workItemRef, observationRevision),
       observe: ({
         repositoryId,
         workItemRef,
@@ -392,14 +410,16 @@ export class WorkItemReadinessStore {
         tag,
         ruleMatches = true,
         admit = true,
+        observationRevision,
       }) => {
-        this.db
+        const written = this.db
           .prepare(
             `INSERT INTO github_work_item_readiness
                (project_id, module_instance_id, repository_id, work_item_ref, issue_number, title, tag,
-                rule_matches, status, reason, blocker_refs, observed_at, admitted_at)
+                rule_matches, status, reason, blocker_refs, observed_at, admitted_at, observation_revision)
              VALUES (@projectId, @moduleInstanceId, @repositoryId, @workItemRef, @issueNumber, @title, @tag,
-                     @ruleMatches, @status, @reason, @blockerRefs, @observedAt, NULL)
+                     @ruleMatches, @status, @reason, @blockerRefs, @observedAt, NULL,
+                     COALESCE(@observationRevision, 0))
              ON CONFLICT (project_id, repository_id, work_item_ref) DO UPDATE SET
                issue_number = COALESCE(excluded.issue_number, github_work_item_readiness.issue_number),
                title = COALESCE(excluded.title, github_work_item_readiness.title),
@@ -408,7 +428,9 @@ export class WorkItemReadinessStore {
                status = excluded.status,
                reason = excluded.reason,
                blocker_refs = excluded.blocker_refs,
-               observed_at = excluded.observed_at`,
+               observed_at = excluded.observed_at,
+               observation_revision = excluded.observation_revision
+             WHERE excluded.observation_revision >= github_work_item_readiness.observation_revision`,
           )
           .run({
             projectId,
@@ -423,8 +445,9 @@ export class WorkItemReadinessStore {
             reason,
             blockerRefs: JSON.stringify(blockerRefs),
             observedAt,
+            observationRevision: observationRevision ?? null,
           });
-        if (status !== "ready" || !admit) return false;
+        if (written.changes !== 1 || status !== "ready" || !admit) return false;
         return (
           this.db
             .prepare(
@@ -460,6 +483,7 @@ interface ReadinessRow {
   readonly blocker_refs: string;
   readonly observed_at: string;
   readonly admitted_at: string | null;
+  readonly observation_revision: number;
 }
 
 interface ObservationRow {
