@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import JarvisCore
 import SwiftUI
 
@@ -9,10 +10,12 @@ struct ProjectExecutionDetailView: View {
     let timeline: ProjectTimelineModel
     let projectId: String
     let executionId: String
+    var backLabel = "Retour à l’historique"
     let close: () -> Void
 
     @State private var isTechnicalDetailsExpanded = false
     @State private var isCancelConfirmationPresented = false
+    @State private var copiedPullRequestURL: String?
 
     var body: some View {
         let state = model.state(for: projectId, executionId: executionId)
@@ -20,7 +23,8 @@ struct ProjectExecutionDetailView: View {
             state, connection: timeline.connectionState)
         VStack(spacing: 0) {
             HStack {
-                Button("Back to Timeline", action: close)
+                Button(backLabel, action: close)
+                    .accessibilityIdentifier("execution.back")
                 Spacer()
                 Label(
                     presentation.connectionLabel,
@@ -34,15 +38,15 @@ struct ProjectExecutionDetailView: View {
             Group {
                 switch presentation.state {
                 case .loading:
-                    ProgressView("Loading execution detail…")
+                    ProgressView("Chargement du travail…")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case .failed(let message):
                     ContentUnavailableView {
-                        Label("Execution detail unavailable", systemImage: "exclamationmark.triangle.fill")
+                        Label("Travail indisponible", systemImage: "exclamationmark.triangle.fill")
                     } description: {
                         Text(message)
                     } actions: {
-                        Button("Retry") {
+                        Button("Réessayer") {
                             Task { await model.refresh(projectId: projectId, executionId: executionId) }
                         }
                     }
@@ -67,12 +71,14 @@ struct ProjectExecutionDetailView: View {
         .onChange(of: timeline.state(for: projectId).events) { _, _ in
             Task { await model.refresh(projectId: projectId, executionId: executionId) }
         }
+        .onChange(of: executionId) { _, _ in copiedPullRequestURL = nil }
+        .onChange(of: model.state(for: projectId, executionId: executionId).detail?.pullRequest?.url) { _, _ in copiedPullRequestURL = nil }
         .confirmationDialog(
-            "Cancel this execution?",
+            "Annuler cette exécution ?",
             isPresented: $isCancelConfirmationPresented,
             titleVisibility: .visible
         ) {
-            Button("Cancel execution", role: .destructive) {
+            Button("Annuler l’exécution", role: .destructive) {
                 guard let cancellableExecutionId else { return }
                 Task {
                     _ = await model.cancelExecution(
@@ -81,7 +87,7 @@ struct ProjectExecutionDetailView: View {
                         targetExecutionId: cancellableExecutionId)
                 }
             }
-            Button("Keep running", role: .cancel) {}
+            Button("Continuer l’exécution", role: .cancel) {}
         } message: {
             Text("Jarvis keeps the durable final result and workspace policy after cancellation.")
         }
@@ -99,7 +105,7 @@ struct ProjectExecutionDetailView: View {
                             .font(.callout)
                             .foregroundStyle(.orange)
                         Spacer()
-                        Button("Retry") {
+                        Button("Réessayer") {
                             Task {
                                 await model.refresh(projectId: projectId, executionId: executionId)
                             }
@@ -111,15 +117,17 @@ struct ProjectExecutionDetailView: View {
                 if let failure = detail.failure {
                     failureCard(failure)
                 }
+                if detail.pullRequest != nil { pullRequestCard(detail.pullRequest) }
                 stepper(detail.steps)
                 checksCard(detail.checks)
                 if !detail.agentExcerpts.isEmpty {
-                    excerptsCard(detail.agentExcerpts)
+                    DisclosureGroup("Messages récents de l’agent") { excerptsCard(detail.agentExcerpts) }
                 }
-                executionsCard(detail.executions)
-                workspaceCard(detail)
-                artifactsCard(detail.artifacts)
-                pullRequestCard(detail.pullRequest)
+                DisclosureGroup("Détails des exécutions et fichiers") {
+                    executionsCard(detail.executions)
+                    workspaceCard(detail)
+                    artifactsCard(detail.artifacts)
+                }
                 technicalDetails(
                     detail.technical,
                     workspace: detail.workspace,
@@ -143,29 +151,13 @@ struct ProjectExecutionDetailView: View {
                             .foregroundStyle(.secondary)
                     }
                 } else {
-                    Text("Execution")
+                    Text("Exécution")
                         .font(.title2.bold())
                 }
                 Spacer()
                 if let currentExecution {
                     statusPill(currentExecution.status)
                 }
-            }
-            if let workItem = detail.workItem {
-                Text(workItem.ref)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                if let repositoryId = workItem.repositoryId {
-                    Text("Repository: \(repositoryId)")
-                        .font(.callout)
-                }
-            }
-            if let correlationId = detail.correlationId {
-                Text("Correlation \(correlationId)")
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
             }
             if let lastActivity = detail.lastActivityAt {
                 Label {
@@ -184,15 +176,16 @@ struct ProjectExecutionDetailView: View {
                     let isCancelling = detailState.isCancelling || execution.status == .cancelling
                     Button(
                         isCancelling
-                            ? "Cancelling…"
-                            : "Cancel") {
+                            ? "Annulation…"
+                            : "Annuler") {
                         isCancelConfirmationPresented = true
                     }
                     .disabled(isCancelling)
+                    .accessibilityIdentifier("execution.cancel")
                     .accessibilityLabel(
                         isCancelling
-                            ? "Cancelling execution"
-                            : "Cancel execution")
+                            ? "Annulation de l’exécution"
+                            : "Annuler l’exécution")
                 }
                 Spacer()
             }
@@ -236,49 +229,28 @@ struct ProjectExecutionDetailView: View {
                 }
             }
         } label: {
-            Label("Executions", systemImage: "clock.arrow.circlepath")
+            Label("Exécutions", systemImage: "clock.arrow.circlepath")
         }
     }
 
     private func stepper(_ steps: [ProjectExecutionDetail.Step]) -> some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
-                    HStack(alignment: .top, spacing: 10) {
-                        Image(systemName: stepSymbol(step.status))
-                            .foregroundStyle(stepColor(step.status))
-                            .frame(width: 18)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(step.label).font(.body.weight(.medium))
-                            Text(ProjectExecutionDetailPresentation.stepStatusLabel(step.status))
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(stepColor(step.status))
-                            Text(step.detail)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                            if let occurredAt = step.occurredAt {
-                                Text(occurredAt, format: .dateTime)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
+        GroupBox("Étapes") {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(steps) { step in
+                    DisclosureGroup {
+                        Text(step.detail).font(.callout).foregroundStyle(.secondary)
+                        if let date = step.occurredAt { Text(date, format: .dateTime).font(.caption) }
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: stepSymbol(step.status)).foregroundStyle(stepColor(step.status))
+                            Text(step.label).fontWeight(.medium)
+                            Spacer()
+                            Text(ProjectExecutionDetailPresentation.stepStatusLabel(step.status)).font(.caption).foregroundStyle(stepColor(step.status))
                         }
-                        Spacer()
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel(
-                        "\(step.label): \(ProjectExecutionDetailPresentation.stepStatusLabel(step.status)). \(step.detail)")
-                    if index < steps.count - 1 {
-                        Rectangle()
-                            .fill(.quaternary)
-                            .frame(width: 1, height: 18)
-                            .padding(.leading, 8)
-                            .accessibilityHidden(true)
+                        .accessibilityElement(children: .combine)
                     }
                 }
             }
-        } label: {
-            Label("Progress", systemImage: "list.number")
         }
     }
 
@@ -293,7 +265,7 @@ struct ProjectExecutionDetailView: View {
                         Text(excerpt.text)
                             .font(.callout.monospaced())
                         if excerpt.truncated {
-                            Text("Excerpt truncated")
+                            Text("Extrait tronqué")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -302,7 +274,7 @@ struct ProjectExecutionDetailView: View {
                 }
             }
         } label: {
-            Label("Recent agent output", systemImage: "text.bubble")
+            Label("Messages récents", systemImage: "text.bubble")
         }
     }
 
@@ -329,9 +301,9 @@ struct ProjectExecutionDetailView: View {
                             }
                         }
                         if let output = check.output {
-                            Text(output)
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
+                            DisclosureGroup("Sortie de \(check.name) — tentative \(check.attempt)") {
+                                Text(output).font(.caption.monospaced()).textSelection(.enabled)
+                            }
                         }
                     }
                 }
@@ -356,7 +328,7 @@ struct ProjectExecutionDetailView: View {
                     .foregroundStyle(.secondary)
             }
         } label: {
-            Label("Workspace", systemImage: "folder")
+            Label("Copie de travail", systemImage: "folder")
         }
     }
 
@@ -394,13 +366,22 @@ struct ProjectExecutionDetailView: View {
                             .font(.body.weight(.medium))
                     }
                     if let urlString = pullRequest.url, let url = URL(string: urlString) {
-                        Link("Open Pull Request", destination: url)
+                        HStack {
+                            Link("Ouvrir la PR", destination: url)
+                                .accessibilityIdentifier("execution.pull-request.open")
+                            Button(copiedPullRequestURL == urlString ? "Lien copié" : "Copier le lien") {
+                                NSPasteboard.general.clearContents()
+                                if NSPasteboard.general.setString(urlString, forType: .string) { copiedPullRequestURL = urlString }
+                            }
+                            .accessibilityIdentifier("execution.pull-request.copy")
+                            .accessibilityHint("Copier le lien de la PR créée et vérifiée par GitHub")
+                        }
                     } else {
                         Text("URL indisponible")
                             .foregroundStyle(.secondary)
                     }
                     Label(
-                        "Manual review required before fusion.",
+                        "Relecture et fusion manuelles.",
                         systemImage: "person.crop.circle.badge.checkmark")
                         .font(.callout)
                         .foregroundStyle(.secondary)
@@ -419,7 +400,7 @@ struct ProjectExecutionDetailView: View {
         workspace: ProjectExecutionDetail.Workspace?,
         retryDeliveryId: String?
     ) -> some View {
-        DisclosureGroup("Technical details", isExpanded: $isTechnicalDetailsExpanded) {
+        DisclosureGroup("Détails techniques", isExpanded: $isTechnicalDetailsExpanded) {
             VStack(alignment: .leading, spacing: 8) {
                 labeledIDs("Input event IDs", technical.inputEventIds)
                 if let correlationId = technical.correlationId {

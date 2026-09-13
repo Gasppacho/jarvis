@@ -166,8 +166,19 @@ observées par GitHub avec leur numéro, titre, label de readiness, statut
 (`eligible`, `waiting`, `in-progress`, `blocked`, `ineligible` ou `unavailable`), raison
 contractuelle, explication lisible et références des dépendances ouvertes.
 
+Le champ optionnel `selectedWorkItemRef` projette la portée exacte configurée.
+Pour chaque issue, `executionId` désigne l’exécution active ou la dernière tentative
+durable ; `lastExecutionStatus`, `executionStartedAt` et `executionCompletedAt` sont
+additifs et optionnels. Retirer le label ne masque pas un échec déjà survenu.
+Le journal sélectionne la dernière demande Development/PR par sujet (100 sujets),
+puis le Ledger fournit sa dernière tentative dans le même projet. Une exécution
+terminée ne prouve pas à elle seule la PR : seul `pullRequest` du détail fournit
+ce résultat vérifié. Le dernier travail échoué rend la supervision inactive et
+non pausée `degraded`, sans modifier la politique d’activation ou d’admission.
+
 L'Engine reste l'autorité pour l'éligibilité et la claim. Une issue sans label de
-readiness apparaît comme en attente et ne peut pas être claimée; une issue `blocked`
+readiness ne peut pas être claimée ; elle apparaît en attente si aucun travail
+antérieur ne nécessite de présenter son résultat ; une issue `blocked`
 doit porter au moins une dépendance native GitHub ouverte (`blocked_by`). Une autre
 issue active dans le même Project est représentée comme `in-progress`, et les autres
 issues attendent tant que la règle d'une seule issue à la fois est satisfaite. Le nom

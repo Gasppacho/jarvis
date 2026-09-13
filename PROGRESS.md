@@ -12,7 +12,7 @@ un échec ultérieur du commit (7/7 tests de projection).
 L02 implémentée, relue et gate complet réussi au commit `5906e64` :
 366 unitaires, 385 intégration et 187 Swift ; app empaquetée en 3 min 53 s.
 Les deux échecs Development et le `listen EPERM` ont été reproduits séparément.
-L03 implémentée et relue, commit `ceb3759`. L04 implémentée, relue et vérifiée nativement, commit `9289c1f`. L05 implémentée, relue et vérifiée nativement ; L06 implémentée, relue et vérifiée nativement, commit `86821da` ; L07 implémentée et relue, L08–L10 restent à exécuter dans l’ordre. Aucun push, test GitHub ou merge effectué.
+L03 implémentée et relue, commit `ceb3759`. L04 implémentée, relue et vérifiée nativement, commit `9289c1f`. L05 implémentée, relue et vérifiée nativement ; L06 implémentée, relue et vérifiée nativement, commit `86821da` ; L07 implémentée et relue, L08 implémentée et relue ; L09–L10 restent à exécuter dans l’ordre. Aucun push, test GitHub ou merge effectué.
 Le projet réel et le travail retenu de #204 restent intacts.
 
 La session macOS s'est déverrouillée pendant L04 puis reverrouillée pendant L05.
@@ -42,8 +42,8 @@ Les captures natives tentées en L01 sont inutilisables, donc ne prouvent aucun 
 | L04 | Implémentée, relue ; import, doublon, navigation et reprise natifs vérifiés | `9289c1f` |
 | L05 | Implémentée, double relecture ; parcours natif et reprise vérifiés | `6238cc4` |
 | L06 | Implémentée, relue ; compte réel, découverte et contrôle Codex natifs | `86821da` |
-| L07 | Implémentée, relue ; Swift 24/24, API 11/11, erreur/reprise/liste vide natifs | Ce commit |
-| L08 | À faire — supervision | — |
+| L07 | Implémentée, relue ; Swift 24/24, API 11/11, erreur/reprise/liste vide natifs | `81a5e8d` |
+| L08 | Implémentée, relue ; API 5/5, Swift 15/15, échec et retour natifs | Ce commit |
 | L09 | À faire — accessibilité et documentation | — |
 | L10 | À faire — gate complet, UI et issue réelle → PR | — |
 
@@ -418,3 +418,41 @@ build final réussi. Cas natif avec une issue éligible et une bloquée encore �
 compléter en L09/L10 ; leur portée et admission sont prouvées par Harness.
 Projet fixture garde ready-for-agent, reste draft ; ne jamais l’activer.
 App fermée et apparence sombre restaurée.
+
+
+## L08 — supervision et résultat durable (en cours)
+
+Base 81a5e8d. Reproduction API rouge : vrai validateur exit7 dans Harness,
+retrait du label → executionId null / ready-label-missing. Le journal sélectionne
+maintenant le dernier request Development/PR par sujet (100), le Ledger sa dernière
+tentative ; aucune lecture croisée de tables. L’issue garde executionId, statut et
+dates après échec/retrait/restart. Trois tests API verts ; attente du fait d’échec
+après terminaison du ledger (outbox asynchrone), sans changer l’assertion de cause.
+Contrat additif et Swift mis à jour ; typecheck/contrats réussis.
+
+Supervision : focus actif ou dernier travail, état/étape/activité/durée, ouverture,
+pause des nouveaux départs ; issues prêtes puis autres repliées/filtrables.
+Détail : retour à l’origine, erreur/PR en tête, étapes compactes, sorties repliées,
+UUID et copies de travail sous détails, lien PR copiable depuis l’URL Engine.
+Swift 15/15 avant corrections de relecture. Relecture : préserver avertissement
+stale pendant retry, remonter reconnexion/date GitHub et tous les cas unavailable
+au groupe Actions requises. Correctifs faits ; tests et visuel en cours.
+
+
+L08 : tests API Overview 3/3, détail 2/2 (lien terminal succès aussi vérifié),
+Swift 15/15, typecheck, contrats, architecture et build empaqueté réussis.
+Relectures finales Spec/Standards sans finding après corrections.
+Capture optionnelle `JARVIS_OVERVIEW_CAPTURE_DIR` copie uniquement les données
+Harness après pause et arrêt de l’Engine. Aucun événement injecté ni DB modifiée :
+le fournisseur de test et le runtime de test ont produit le cycle, la commande réelle
+exit7 a échoué. Ce n’est pas une preuve GitHub/Codex réelle.
+
+Visuel app production base81a5e8d + L08 :
+`/tmp/jarvis-ux-reliability-evidence/l08/{build-manifest-reviewed-wip.json,01-failed-work-small.png,02-failure-detail-small.png,03-return-overview.png}`.
+Captures vues : échec/étape/activité/ouverture visibles à1100×800, détail checks
+rouges et commit/PR non commencés, retour réel à la supervision. Confirme aussi
+le rendu échec L01, pas encore réparation/succès natifs. Données de test restent
+pausées et app fermée. Aucun retry/activation déclenché dans cette copie.
+Textes anglais résiduels du moteur/onglets repérés et à harmoniser en L09.
+Préparation/agent/validation/PR réels restent à prouver en L10, et copie PR non
+revendiquée avant ce contrôle. #202 n’est pas déclarée terminée.

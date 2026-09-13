@@ -62,6 +62,19 @@ describe("execution detail", () => {
       title: expect.stringContaining("Implement"),
       url: fixture.fakeGitHub.pullRequests[0]!.htmlUrl,
     });
+    const overview = (await (
+      await fixture.engine.call(`/v1/projects/${fixture.projectId}/overview`)
+    ).json()) as {
+      issues: {
+        issueNumber: number;
+        executionId: string | null;
+        lastExecutionStatus: string | null;
+      }[];
+    };
+    expect(overview.issues.find((issue) => issue.issueNumber === 16)).toMatchObject({
+      executionId: expect.any(String),
+      lastExecutionStatus: "completed",
+    });
     expect(detail.technical.inputEventIds.length).toBe(3);
     expect(detail.technical.events.length).toBeGreaterThanOrEqual(5);
     const publicText = JSON.stringify(detail);

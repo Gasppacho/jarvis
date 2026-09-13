@@ -33,7 +33,11 @@ import {
 import { deriveProjectSubscriptions } from "../../../../packages/project-runtime/src/project-subscriptions.js";
 import { EventJournalReader, type ListEventsQuery } from "../events/timeline.js";
 import type { DeadLetterReader } from "../events/dead-letters.js";
-import { ExecutionLedgerReader, type ListExecutionsQuery } from "../executions/ledger.js";
+import {
+  ExecutionLedgerReader,
+  type ListExecutionsQuery,
+  type LedgerExecutionSummary,
+} from "../executions/ledger.js";
 import type { ExecutionCheckpointStore } from "../executions/checkpoints.js";
 import type { WorkspaceLeaseRepository } from "../../../../packages/workspace/src/lease-repository.js";
 import { buildExecutionDetail } from "./execution-detail.js";
@@ -249,6 +253,22 @@ export class ProjectService implements ProjectRegistry<
         return ref === undefined ? [] : [[ref, execution.id] as const];
       }),
     );
+    const workRequests = this.eventJournal.latestRequestsBySubject(
+      project.id,
+      ["development.implementation.requested", "scm.change-request.creation-requested"],
+      100,
+    );
+    const requestRefs = new Map(workRequests.map((event) => [event.id, event.subjectRef]));
+    const latestExecutions = this.executionLedger.latestByInputEventIds(
+      project.id,
+      workRequests.map((event) => event.id),
+    );
+    const latestByRef = new Map(
+      latestExecutions.flatMap((execution) => {
+        const ref = requestRefs.get(execution.inputEventId);
+        return ref === undefined ? [] : [[ref, execution] as const];
+      }),
+    );
     const admissionByRef = new Map(
       admission.items.flatMap((item) =>
         item.workItemRef === undefined ? [] : [[item.workItemRef, item] as const],
@@ -259,6 +279,10 @@ export class ProjectService implements ProjectRegistry<
         overviewIssue(snapshot, {
           activeRefs,
           activeExecutionIdsByRef,
+          latestExecution:
+            activeExecutions.find(
+              (execution) => execution.id === activeExecutionIdsByRef.get(snapshot.workItemRef),
+            ) ?? latestByRef.get(snapshot.workItemRef),
           admission: admissionByRef.get(snapshot.workItemRef),
           paused,
           hasActiveExecution,
@@ -269,13 +293,29 @@ export class ProjectService implements ProjectRegistry<
         }),
       )
       .filter((issue): issue is ProjectOverviewIssue => issue !== undefined)
+      .sort(
+        (left, right) =>
+          Number(right.status === "in-progress") - Number(left.status === "in-progress") ||
+          (right.executionStartedAt ?? "").localeCompare(left.executionStartedAt ?? "") ||
+          Number(right.status === "eligible") - Number(left.status === "eligible"),
+      )
       .slice(0, 100);
     const polling = aggregatePolling(paused, this.pollingStatus?.read(project.id) ?? []);
+    const lastWorkFailed =
+      latestExecutions[0]?.status === "failed" || latestExecutions[0]?.status === "timed-out";
     const overviewStatus = overviewStatusFor(
       project.status,
       activeExecutions.length,
       polling.state,
+      lastWorkFailed,
     );
+    let selectedWorkItemRef: string | null = null;
+    try {
+      const ref = workflowRule(project.portableConfig).rule.when.equals?.["payload.workItemRef"];
+      if (typeof ref === "string") selectedWorkItemRef = ref;
+    } catch {
+      /* Custom workflows need not have a guide-compatible rule. */
+    }
     const eligible = issues.some((issue) => issue.status === "eligible");
     const stages = overviewStages(polling.state, hasActiveExecution, eligible, project.status);
     return {
@@ -283,9 +323,10 @@ export class ProjectService implements ProjectRegistry<
       kind: "ProjectOverview",
       projectId: project.id,
       name: project.name,
+      selectedWorkItemRef,
       status: overviewStatus,
       primaryAction:
-        overviewStatus === "degraded"
+        overviewStatus === "degraded" && !lastWorkFailed
           ? "refresh"
           : project.status === "paused"
             ? "resume"
@@ -299,7 +340,13 @@ export class ProjectService implements ProjectRegistry<
           project.status === "paused" ||
           project.status === "degraded",
         stages,
-        nextStep: nextOverviewStep(overviewStatus, hasActiveExecution, eligible, polling.state),
+        nextStep: nextOverviewStep(
+          overviewStatus,
+          hasActiveExecution,
+          eligible,
+          polling.state,
+          lastWorkFailed,
+        ),
       },
       issues,
       activeExecutionCount: activeExecutions.length,
@@ -1285,6 +1332,7 @@ function overviewIssue(
   input: {
     readonly activeRefs: ReadonlySet<string>;
     readonly activeExecutionIdsByRef: ReadonlyMap<string, string>;
+    readonly latestExecution: LedgerExecutionSummary | undefined;
     readonly admission: OverviewAdmission | undefined;
     readonly paused: boolean;
     readonly hasActiveExecution: boolean;
@@ -1303,7 +1351,11 @@ function overviewIssue(
     openDependencyCount: blockerRefs.length,
     blockerRefs,
     readinessLabel: snapshot.tag?.trim() || input.fallbackReadinessLabel,
-    executionId: input.activeExecutionIdsByRef.get(snapshot.workItemRef) ?? null,
+    executionId:
+      input.activeExecutionIdsByRef.get(snapshot.workItemRef) ?? input.latestExecution?.id ?? null,
+    lastExecutionStatus: input.latestExecution?.status ?? null,
+    executionStartedAt: input.latestExecution?.createdAt ?? null,
+    executionCompletedAt: input.latestExecution?.completedAt ?? null,
   };
 
   if (input.activeRefs.has(snapshot.workItemRef)) {
@@ -1312,6 +1364,24 @@ function overviewIssue(
       status: "in-progress",
       reason: "execution-active",
       explanation: "An execution is already active for this issue.",
+    };
+  }
+  if (input.latestExecution?.status === "failed" || input.latestExecution?.status === "timed-out") {
+    return {
+      ...base,
+      status: "unavailable",
+      reason: "execution-failed",
+      explanation:
+        "La dernière exécution a échoué. Ouvrez son résultat pour consulter la cause et le travail conservé.",
+    };
+  }
+  if (input.latestExecution?.status === "cancelled") {
+    return {
+      ...base,
+      status: "ineligible",
+      reason: "execution-cancelled",
+      explanation:
+        "L’exécution a été annulée. Son résultat et le travail conservé restent consultables.",
     };
   }
   if (snapshot.admittedAt !== null) {
@@ -1492,13 +1562,14 @@ function overviewStatusFor(
   projectStatus: ProjectRow["status"],
   activeExecutionCount: number,
   pollingState: ProjectOverview["polling"]["state"],
+  lastWorkFailed: boolean,
 ): ProjectOverview["status"] {
   if (projectStatus === "paused") return "paused";
   if (projectStatus === "degraded" || pollingState === "failed") return "degraded";
   if (projectStatus === "draft" || projectStatus === "invalid" || projectStatus === "archived") {
     return "draft";
   }
-  return activeExecutionCount > 0 ? "running" : "ready";
+  return activeExecutionCount > 0 ? "running" : lastWorkFailed ? "degraded" : "ready";
 }
 
 function overviewStages(
@@ -1549,9 +1620,12 @@ function nextOverviewStep(
   active: boolean,
   eligible: boolean,
   pollingState: ProjectOverview["polling"]["state"],
+  lastWorkFailed: boolean,
 ): string {
   if (status === "draft") return "Complete validation before activating this Project.";
   if (status === "paused") return "Resume the Project to admit new work.";
+  if (!active && lastWorkFailed)
+    return "Ouvrez le dernier travail pour examiner l’échec et le résultat conservé.";
   if (status === "degraded" || pollingState === "failed")
     return "Refresh the GitHub connection and retry polling.";
   if (active) return "Monitor the active Development execution.";

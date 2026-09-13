@@ -1147,6 +1147,8 @@ export interface components {
             issues: components["schemas"]["ProjectOverviewIssue"][];
             activeExecutionCount: number;
             activeWorkItemRefs: string[];
+            /** @description Exact work-item scope from the configured workflow, or null for monitoring. */
+            selectedWorkItemRef?: string | null;
             readinessHelp: string;
         };
         ProjectOverviewStage: {
@@ -1169,8 +1171,14 @@ export interface components {
             openDependencyCount: number;
             blockerRefs: string[];
             readinessLabel: string;
-            /** @description The active execution proving the in-progress issue, when one exists. */
+            /** @description Active execution, or latest durable work execution after completion or failure. */
             executionId?: string | null;
+            /** @enum {string|null} */
+            lastExecutionStatus?: "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled" | "timed-out" | null;
+            /** Format: date-time */
+            executionStartedAt?: string | null;
+            /** Format: date-time */
+            executionCompletedAt?: string | null;
         };
         PreflightScopeRequest: {
             compositionFingerprint: string;

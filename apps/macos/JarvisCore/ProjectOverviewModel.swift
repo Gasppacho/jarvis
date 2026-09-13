@@ -1,3 +1,4 @@
+import Foundation
 import Observation
 
 public struct ProjectOverviewState: Sendable, Equatable {
@@ -69,6 +70,13 @@ public final class ProjectOverviewModel {
         }
     }
 
+    public func watch(projectId: String) async {
+        while !Task.isCancelled {
+            await refresh(projectId: projectId)
+            do { try await Task.sleep(for: .seconds(1)) } catch { return }
+        }
+    }
+
     /// A retry asks the Engine to poll GitHub immediately, then displays the
     /// resulting durable snapshot. It is separate from the read-only refresh.
     public func retryPolling(projectId: String) async {
@@ -125,12 +133,12 @@ public final class ProjectOverviewModel {
         revisions[projectId] = revision
         var state = states[projectId] ?? ProjectOverviewState()
         state.isLoading = true
-        state.errorMessage = nil
         states[projectId] = state
 
         do {
             let overview = try await provider(projectId)
             guard revisions[projectId] == revision else { return }
+            guard overview.projectId == projectId else { throw EngineClientError.unexpectedResponse("La réponse appartient à un autre projet.") }
             states[projectId] = ProjectOverviewState(overview: overview)
         } catch is CancellationError {
             guard revisions[projectId] == revision else { return }
@@ -152,7 +160,7 @@ public final class ProjectOverviewModel {
     }
 
     private static let engineUnavailable =
-        "The engine is not running, so this Project Overview is unavailable."
+        "Le moteur est indisponible. La supervision ne peut pas être actualisée."
 
     private static func describe(_ error: Error) -> String {
         let message = error.localizedDescription

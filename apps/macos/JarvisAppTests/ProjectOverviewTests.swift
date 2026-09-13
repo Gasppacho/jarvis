@@ -37,10 +37,10 @@ final class ProjectOverviewTests: XCTestCase {
             ])
         XCTAssertEqual(
             ProjectOverviewPresentation.issueStatusLabel(blocked.status),
-            "Blocked by dependencies")
+            "Bloquée par des dépendances")
         XCTAssertEqual(
             ProjectOverviewPresentation.pollingLabel(overview.polling.state),
-            "Connection failed")
+            "Connexion en échec")
     }
 
     func testRefreshFailureKeepsTheLastSnapshotAsStale() async throws {
@@ -50,8 +50,11 @@ final class ProjectOverviewTests: XCTestCase {
             session: EngineSessionModel(
                 supervisor: EngineSupervisor(resources: .developmentBuild())),
             provider: { _ in
-                if await attempts.next() == 1 { return snapshot }
-                throw FixtureError.offline
+                let attempt = await attempts.next()
+                if attempt == 1 { return snapshot }
+                if attempt == 2 { throw FixtureError.offline }
+                try await Task.sleep(for: .milliseconds(60))
+                return snapshot
             })
 
         await model.refresh(projectId: snapshot.projectId)
@@ -66,6 +69,11 @@ final class ProjectOverviewTests: XCTestCase {
         XCTAssertEqual(
             ProjectOverviewPresentation(state).state,
             .stale(snapshot, state.errorMessage ?? ""))
+        let retry = Task { await model.refresh(projectId: snapshot.projectId) }
+        while !model.state(for: snapshot.projectId).isLoading { await Task.yield() }
+        XCTAssertNotNil(model.state(for: snapshot.projectId).errorMessage, "A pending retry must keep the stale warning")
+        await retry.value
+        XCTAssertNil(model.state(for: snapshot.projectId).errorMessage)
     }
 
     func testInitialFailureIsSeparateFromAStaleSnapshot() async {
@@ -82,6 +90,35 @@ final class ProjectOverviewTests: XCTestCase {
         guard case .failed = ProjectOverviewPresentation(state).state else {
             return XCTFail("an initial provider failure must render as failed")
         }
+    }
+
+    func testFocusPrefersActiveWorkAndKeepsFailureAfterEligibilityChanges() throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        var payload = try decoder.decode(Components.Schemas.ProjectOverviewV1.self, from: Data(Self.fixture.utf8))
+        payload.selectedWorkItemRef = "github://owner/repo/issues/3"
+        payload.issues[2].executionId = "active"
+        payload.issues[2].lastExecutionStatus = .running
+        payload.issues[4].executionId = "failed"
+        payload.issues[4].lastExecutionStatus = .failed
+        payload.issues[4].executionStartedAt = Date()
+        let active = ProjectOverview(payload: payload)
+        XCTAssertEqual(active.selectedWorkItemRef, "github://owner/repo/issues/3")
+        XCTAssertEqual(ProjectOverviewPresentation.focusedIssue(active)?.executionId, "active")
+        payload.issues[2].executionId = nil
+        let failed = ProjectOverview(payload: payload)
+        let focused = try XCTUnwrap(ProjectOverviewPresentation.focusedIssue(failed))
+        XCTAssertEqual(focused.executionId, "failed")
+        XCTAssertEqual(focused.status, .ineligible)
+        XCTAssertEqual(ProjectOverviewPresentation.workStatusLabel(focused), "Échec à examiner")
+    }
+
+    func testAnotherProjectsOverviewIsRejected() async throws {
+        let snapshot = try decode(Self.fixture)
+        let model = ProjectOverviewModel(session: EngineSessionModel(supervisor: EngineSupervisor(resources: .developmentBuild())), provider: { _ in snapshot })
+        await model.refresh(projectId: "other")
+        XCTAssertNil(model.state(for: "other").overview)
+        XCTAssertNotNil(model.state(for: "other").errorMessage)
     }
 
     private func decode(_ json: String) throws -> ProjectOverview {

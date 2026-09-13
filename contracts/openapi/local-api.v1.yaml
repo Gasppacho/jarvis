@@ -1989,6 +1989,9 @@ components:
         activeWorkItemRefs:
           type: array
           items: { type: string }
+        selectedWorkItemRef:
+          type: [string, "null"]
+          description: Exact work-item scope from the configured workflow, or null for monitoring.
         readinessHelp: { type: string, minLength: 1 }
     ProjectOverviewStage:
       type: object
@@ -2018,7 +2021,12 @@ components:
         readinessLabel: { type: string, minLength: 1 }
         executionId:
           type: [string, "null"]
-          description: The active execution proving the in-progress issue, when one exists.
+          description: Active execution, or latest durable work execution after completion or failure.
+        lastExecutionStatus:
+          type: [string, "null"]
+          enum: [queued, running, cancelling, completed, failed, cancelled, timed-out, null]
+        executionStartedAt: { type: [string, "null"], format: date-time }
+        executionCompletedAt: { type: [string, "null"], format: date-time }
     PreflightScopeRequest:
       type: object
       additionalProperties: false

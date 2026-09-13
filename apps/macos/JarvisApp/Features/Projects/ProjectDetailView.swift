@@ -48,6 +48,7 @@ public struct ProjectDetailView: View {
     // across a Project switch rather than losing the selected tab.
     @State private var selectedTab: Tab = .overview
     @State private var selectedExecutionID: String?
+    @State private var executionOrigin: Tab = .overview
 
     public init(
         projects: ProjectsModel,
@@ -88,7 +89,7 @@ public struct ProjectDetailView: View {
 
             switch selectedTab {
             case .overview:
-                ProjectOverviewView(model: overview, projects: projects, projectId: project.id) { id in
+                ProjectOverviewView(model: overview, projects: projects, executionDetail: executionDetail, projectId: project.id) { id in
                     openExecution(id)
                 }
             case .composition:
@@ -110,7 +111,8 @@ public struct ProjectDetailView: View {
                         timeline: timeline,
                         projectId: project.id,
                         executionId: selectedExecutionID,
-                        close: { selectedTab = .timeline })
+                        backLabel: executionOrigin == .overview ? "Retour à la supervision" : "Retour à l’historique",
+                        close: { selectedTab = executionOrigin })
                 } else {
                     ContentUnavailableView(
                         "No execution selected",
@@ -158,6 +160,7 @@ public struct ProjectDetailView: View {
     }
 
     private func openExecution(_ executionID: String) {
+        executionOrigin = selectedTab == .execution ? executionOrigin : selectedTab
         selectedExecutionID = executionID
         selectedTab = .execution
     }
