@@ -607,3 +607,26 @@ aucune écoute humaine ni audit exhaustif d’accessibilité n’est revendiqué
 Les scénarios coûteux de blocage/libération, concurrence, reprise, annulation,
 réponse périmée et custom restent des preuves Harness/Swift, pas des runs GitHub réels.
 Notarisation et Gatekeeper sur machine propre restent hors preuve.
+
+
+## État de livraison final
+
+`rtk pnpm verify` a réussi sur l’arbre propre du commit
+`f53a23421a425cda8961fe885449b502405cc70f`, terminé le 13/09/2026 à 16:16:34
+Europe/Paris : 366 tests unitaires, 389 intégrations, 196 tests Swift ; contrats,
+lint, types, architecture et build réussis. Journal :
+`/tmp/jarvis-ux-reliability-evidence/l10/verify-final.log`.
+Le commit suivant ne contient que cette consignation documentaire.
+
+Le build final a été rouvert sur les données réelles isolées : capture 19 à
+1100×800, projet toujours en pause, scope #205 et dernier travail/PR conservés.
+App quittée ensuite. Capture 18 : page #206 effectivement chargée après ouverture
+depuis Jarvis ; elle contient des titres d’autres onglets et reste une preuve locale,
+à ne pas publier telle quelle. Les captures natives 12, 13, 16, 17 et 19 sont les
+preuves de l’échec, réparation, succès, pause et réouverture.
+
+L01–L10 implémentés et contrôlés avec les limites ci-dessus. La PR d’implémentation
+est publiée depuis cette branche vers main, distincte de la PR de preuve #206.
+Aucune fusion, fermeture d’issue historique, suppression de données réelles ou
+modification de configuration globale Codex. Les preuves sources restent locales
+sous `/tmp/jarvis-ux-reliability-evidence/` ; ne pas effacer ce dossier avant archivage.

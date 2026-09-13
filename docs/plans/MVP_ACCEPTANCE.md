@@ -24,7 +24,8 @@ of older issue criteria from these observations.
 - [x] One real bounded issue [#205](https://github.com/Gasppacho/jarvis/issues/205),
   real Codex, successful second validation and one [PR #206](https://github.com/Gasppacho/jarvis/pull/206)
   created by the GitHub module, followed by pause without merge (L10).
-- [ ] Final clean-worktree `rtk pnpm verify` and identified packaged build (L10).
+- [x] Final clean-worktree `rtk pnpm verify` on `f53a234` (366 unit, 389 integration,
+  196 Swift) and identified packaged build, reopened paused at 1100×800 (L10).
 
 ## Reference workflow acceptance
 
