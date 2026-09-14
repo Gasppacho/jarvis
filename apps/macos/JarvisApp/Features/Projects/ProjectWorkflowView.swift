@@ -6,8 +6,12 @@ struct ProjectWorkflowView: View {
     let model: ProjectConfigurationModel
     let project: Project
     let packages: [ModulePackage]
+    var connections: ConnectionsModel? = nil
+    var overview: ProjectOverviewModel? = nil
     var openAdvanced: (() -> Void)? = nil
     @State private var stage = WorkflowStage.issue
+    @State private var editingGitHub = false
+    @State private var intervalError: String?
 
     private var state: ProjectConfigurationState { model.state(for: project.id) }
     private var hasComposition: Bool {
@@ -109,7 +113,7 @@ struct ProjectWorkflowView: View {
     private var startingPoint: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Une issue ouverte, portant le label choisi et sans bloqueur GitHub ouvert, est développée puis proposée dans une Pull Request. Une issue à la fois ; vous gardez la relecture et le merge.")
-            Button(hasComposition ? "Utiliser le modèle GitHub" : "Choisir ce workflow") {
+            Button(hasComposition ? "Utiliser le modèle GitHub" : "Ajouter GitHub") {
                 model.chooseStartingPoint(projectId: project.id, startingPointId: "github-development")
             }
             .buttonStyle(.borderedProminent)
@@ -125,21 +129,7 @@ struct ProjectWorkflowView: View {
     private var stageSettings: some View {
         switch stage {
         case .issue:
-            let github = state.draft?.modules.filter { $0.enabled && $0.moduleId == "jarvis.module.github" } ?? []
-            if github.isEmpty { Text("Ajoutez GitHub au workflow ou choisissez le modèle proposé.") }
-            ForEach(github) { module in
-                Text("Label des issues à développer").font(.callout.weight(.medium))
-                TextField("Label des issues à développer", text: Binding(
-                    get: { state.draft?.modules.first { $0.id == module.id }?.configurationValues["readyLabel"] ?? "" },
-                    set: { model.setReadyLabel(projectId: project.id, label: $0, moduleID: module.id) }))
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityIdentifier("workflow.ready-label")
-                    .accessibilityLabel("Label des issues à développer")
-            }
-            Text(flowConfirmed
-                 ? "GitHub vérifie les bloqueurs natifs. La portée du premier démarrage se choisit à l’étape Vérification."
-                 : "Le modèle proposé vérifie les bloqueurs natifs. Cette garantie reste à confirmer pour votre règle actuelle.")
-                .font(.callout).foregroundStyle(.secondary)
+            githubCard
         case .development:
             Text("Préparer une copie de travail isolée").font(.headline)
             commandField("install", title: "Commande d’installation")
@@ -221,6 +211,140 @@ struct ProjectWorkflowView: View {
         if item == .validation { return state.draft?.workflowCommandsConfigured == true ? "Choix confirmés" : "À confirmer" }
         guard flowConfirmed else { return "Liens à vérifier" }
         return item == .issue ? "Contrôle des bloqueurs configuré" : "Destination définie"
+    }
+
+    private var githubCard: some View {
+        let github = state.draft?.modules.first { $0.enabled && $0.moduleId == "jarvis.module.github" }
+        return GroupBox {
+            if let github {
+                VStack(alignment: .leading, spacing: 12) {
+                    repositorySummary
+                    intervalControl(github)
+                    accountControl
+                    if let polling = overview?.state(for: project.id).overview?.polling,
+                       let date = polling.lastPollAt {
+                        Label("Dernier contrôle : \(date.formatted(date: .abbreviated, time: .shortened)), \(pollingLabel(polling.state))",
+                              systemImage: "clock")
+                            .font(.callout)
+                    }
+                    Text("GitHub fournit les observations d’issues au projet. Les réglages techniques restent disponibles dans Réglages avancés.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text("Ajoutez GitHub au workflow pour choisir le dépôt, le compte et la fréquence.")
+            }
+        } label: {
+            Label("GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
+                .accessibilityLabel("Carte GitHub")
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var repositorySummary: some View {
+        let repository = state.draft?.repositories.first
+        let binding = repository.flatMap { item in
+            state.detail?.bindings.first { $0.repositoryId == item.id }
+        }
+        return VStack(alignment: .leading, spacing: 4) {
+            LabeledContent("Dépôt", value: binding?.remoteUrl ?? repository?.id ?? "Dépôt non détecté")
+            if let repository { Text("Référence locale : \(repository.id)").font(.caption).foregroundStyle(.secondary) }
+        }
+    }
+
+    private func intervalControl(_ module: ProjectModuleDraft) -> some View {
+        let value = module.configurationValues["pollIntervalSeconds"] ?? "60"
+        let historical = value == "15"
+        return VStack(alignment: .leading, spacing: 4) {
+            Text("Fréquence de vérification").font(.callout.weight(.medium))
+            TextField("Minutes (1 à 60)", text: Binding(
+                get: { historical ? "15 secondes (historique)" : String(max(1, (Int(value) ?? 60) / 60)) },
+                set: { text in
+                    guard let minutes = Int(text), (1...60).contains(minutes) else {
+                        intervalError = "La fréquence doit être comprise entre 1 et 60 minutes."
+                        return
+                    }
+                    intervalError = nil
+                    model.apply(.setModuleConfiguration(module.id, "pollIntervalSeconds", String(minutes * 60)),
+                                projectId: project.id, packages: packages)
+                }))
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("workflow.github.interval")
+                .accessibilityLabel("Fréquence de vérification en minutes")
+            if historical {
+                Text("Historique conservé : 15 secondes. Saisissez 1 à 60 pour choisir une nouvelle fréquence.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if let intervalError { Text(intervalError).font(.caption).foregroundStyle(.red) }
+        }
+    }
+
+    @ViewBuilder
+    private var accountControl: some View {
+        if let connections {
+            let selected = connections.connections.filter {
+                model.hasLocalBinding(projectId: project.id, connectionID: $0.id)
+            }
+            if selected.isEmpty || editingGitHub {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Compte GitHub").font(.callout.weight(.medium))
+                    ForEach(connections.connections) { connection in
+                        let presentation = connections.presentation(for: connection,
+                                                                     isBound: selected.contains(connection))
+                        HStack {
+                            Label(connection.accountLabel, systemImage: presentation.isSelectable ? "person.crop.circle" : "exclamationmark.circle")
+                            Spacer()
+                            if presentation.isSelectable {
+                                Button("Vérifier et utiliser") {
+                                    Task {
+                                        await connections.validate(connectionID: connection.id)
+                                        guard let refreshed = connections.connections.first(where: { $0.id == connection.id }),
+                                              connections.presentation(for: refreshed).isSelectable
+                                        else { return }
+                                        if await model.bindGitHubConnection(projectId: project.id, connectionID: connection.id) != nil {
+                                            editingGitHub = false
+                                        }
+                                    }
+                                }
+                                .disabled(!state.resourceChoices.contains { $0.candidates.contains { $0.ref == connection.id } }
+                                          || state.isSaving || connections.isValidating(connectionID: connection.id))
+                                .accessibilityIdentifier("workflow.github.account.\(connection.id)")
+                            } else {
+                                Text(presentation.status).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    if connections.connections.isEmpty {
+                        Text(connections.errorMessage ?? ConnectionsModel.emptyDiscoveryMessage)
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                }
+            } else if let connection = selected.first {
+                let presentation = connections.presentation(for: connection, isBound: true)
+                VStack(alignment: .leading, spacing: 6) {
+                    LabeledContent("Compte GitHub", value: connection.accountLabel)
+                    Label(presentation.status, systemImage: presentation.isSelectable ? "checkmark.circle" : "exclamationmark.circle")
+                    Text(presentation.diagnostic).font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        Button("Vérifier l’accès") { Task { await connections.validate(connectionID: connection.id) } }
+                            .disabled(connections.isValidating(connectionID: connection.id))
+                            .accessibilityIdentifier("workflow.github.verify")
+                        Button("Modifier") { editingGitHub = true }
+                            .accessibilityIdentifier("workflow.github.modify")
+                    }
+                }
+            }
+        }
+    }
+
+    private func pollingLabel(_ state: ProjectOverview.PollingState) -> String {
+        switch state {
+        case .live: "accès actif"
+        case .reconnecting: "reconnexion"
+        case .failed: "accès à corriger"
+        case .paused: "en pause"
+        case .unavailable: "indisponible"
+        }
     }
 }
 

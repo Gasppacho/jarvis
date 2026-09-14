@@ -36,6 +36,7 @@ public struct ProjectDetailView: View {
     let executionDetail: ProjectExecutionDetailModel
     let projectGraph: ProjectGraphModel
     let deadLetters: ProjectDeadLettersModel
+    let connections: ConnectionsModel?
     let project: Project
 
     @State private var isDeleteConfirmationPresented = false
@@ -59,6 +60,7 @@ public struct ProjectDetailView: View {
         executionDetail: ProjectExecutionDetailModel,
         projectGraph: ProjectGraphModel,
         deadLetters: ProjectDeadLettersModel,
+        connections: ConnectionsModel? = nil,
         project: Project
     ) {
         self.projects = projects
@@ -69,6 +71,7 @@ public struct ProjectDetailView: View {
         self.executionDetail = executionDetail
         self.projectGraph = projectGraph
         self.deadLetters = deadLetters
+        self.connections = connections
         self.project = project
     }
 
@@ -293,7 +296,8 @@ public struct ProjectDetailView: View {
             TextField("Project name", text: projectNameBinding)
                 .textFieldStyle(.roundedBorder)
 
-            ProjectWorkflowView(model: projectConfiguration, project: project, packages: moduleCatalog.packages)
+            ProjectWorkflowView(model: projectConfiguration, project: project, packages: moduleCatalog.packages,
+                                connections: connections, overview: overview)
             slotRequirementsEditor
 
             HStack {

@@ -160,6 +160,7 @@ struct RootView: View {
                         projectConfiguration: projectConfiguration,
                         moduleCatalog: moduleCatalog,
                         connections: connections,
+                        overview: overview,
                         project: project,
                         openAdvanced: { selection = .projectAdvanced(project.id) })
                         .id(project.id)
@@ -173,6 +174,7 @@ struct RootView: View {
                         executionDetail: executionDetail,
                         projectGraph: projectGraph,
                         deadLetters: deadLetters,
+                        connections: connections,
                         project: project)
                 }
             } else {
@@ -200,6 +202,7 @@ struct RootView: View {
                         executionDetail: executionDetail,
                         projectGraph: projectGraph,
                         deadLetters: deadLetters,
+                        connections: connections,
                         project: project)
                 }
                 .id(project.id)

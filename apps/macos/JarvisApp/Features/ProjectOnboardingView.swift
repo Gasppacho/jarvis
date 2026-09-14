@@ -7,6 +7,7 @@ struct ProjectOnboardingView: View {
     let projectConfiguration: ProjectConfigurationModel
     let moduleCatalog: ModuleCatalogModel
     let connections: ConnectionsModel
+    let overview: ProjectOverviewModel?
     let project: Project
     let openAdvanced: () -> Void
 
@@ -20,6 +21,7 @@ struct ProjectOnboardingView: View {
         projectConfiguration: ProjectConfigurationModel,
         moduleCatalog: ModuleCatalogModel,
         connections: ConnectionsModel,
+        overview: ProjectOverviewModel? = nil,
         project: Project,
         openAdvanced: @escaping () -> Void
     ) {
@@ -27,6 +29,7 @@ struct ProjectOnboardingView: View {
         self.projectConfiguration = projectConfiguration
         self.moduleCatalog = moduleCatalog
         self.connections = connections
+        self.overview = overview
         self.project = project
         self.openAdvanced = openAdvanced
         _step = State(initialValue: projects.onboardingNavigation.currentStep(for: project.id))
@@ -171,7 +174,9 @@ struct ProjectOnboardingView: View {
             repositoryStep
         case .workflow:
             ProjectWorkflowView(model: projectConfiguration, project: project,
-                                packages: moduleCatalog.packages, openAdvanced: openAdvanced)
+                                packages: moduleCatalog.packages, connections: connections,
+                                overview: overview,
+                                openAdvanced: openAdvanced)
         case .connections:
             connectionsStep
             runtimeCard
