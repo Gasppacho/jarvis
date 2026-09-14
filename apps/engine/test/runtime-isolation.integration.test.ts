@@ -15,6 +15,7 @@ import {
   makeRealGitRepositoryFixture,
   type RealGitRepositoryFixture,
 } from "./repository-fixture.js";
+import { fixedProjectConfiguration } from "./reference-workflow-fixture.js";
 
 const testBundlePath = fileURLToPath(
   new URL("../../../dist/engine/engine.test-bundle.mjs", import.meta.url),
@@ -226,70 +227,34 @@ async function activateProject(
   environmentAllowlist: readonly string[],
   runtimeEnvironment: Readonly<Record<string, string>>,
 ): Promise<void> {
+  const fixed = fixedProjectConfiguration(projectId);
   const portableConfig: PortableProjectConfiguration = {
-    apiVersion: "jarvis.dev/project/v1",
-    kind: "Project",
-    metadata: { id: projectId, name: projectId },
-    repositories: [{ id: "main", root: ".", defaultBranch: "main", remote: "origin" }],
-    slots: {
-      agentRuntime: { requires: "agent.execute" },
-      tickets: { requires: "work-items.read" },
-    },
-    commands: { test: "node --test" },
-    git: {
-      branchPattern: "agent/{workItemId}-{slug}",
-      commitStrategy: "conventional",
-      pushRemote: "origin",
-      allowForcePush: false,
-    },
+    ...fixed,
+    repositories: fixed.repositories.map((repository) => ({
+      ...repository,
+      remote: "origin",
+    })),
     workspace: {
-      strategy: "git-worktree",
+      ...fixed.workspace,
       maxConcurrentExecutions: 2,
-      retainOnFailureDays: 7,
     },
-    modules: [
-      {
-        instanceId: "automation-rules",
-        moduleId: "jarvis.module.automation-rules",
-        enabled: true,
-        configuration: {
-          rules: [
-            {
-              id: "ready-label-starts-development",
-              when: {
-                eventType: "scm.work-item.tag-added",
-                equals: { "payload.tag": "agent:ready" },
-              },
-              emit: {
-                type: "development.implementation.requested",
-                target: { moduleInstanceId: "development" },
-              },
+    modules: fixed.modules.map((module) =>
+      module.instanceId === "development"
+        ? {
+            ...module,
+            configuration: {
+              ...module.configuration,
+              validationOrder: ["test"],
+              maxRepairCycles: 0,
+              preparation: "none",
+              retainWorkspaceOnSuccess: true,
+              timeoutMs: 300_000,
+              outputLimitBytes: 1_048_576,
+              environmentAllowlist: [...environmentAllowlist],
             },
-          ],
-        },
-      },
-      {
-        instanceId: "development",
-        moduleId: "jarvis.module.development",
-        enabled: true,
-        runtimeSlot: "agentRuntime",
-        bindings: { repository: "main", tickets: "tickets" },
-        configuration: {
-          validationOrder: ["test"],
-          maxRepairCycles: 0,
-          preparation: "none",
-          retainWorkspaceOnSuccess: true,
-          timeoutMs: 300_000,
-          outputLimitBytes: 1_048_576,
-          environmentAllowlist: [...environmentAllowlist],
-        },
-      },
-      {
-        instanceId: "request-worker",
-        moduleId: "jarvis.module.test-request-worker",
-        enabled: true,
-      },
-    ],
+          }
+        : module,
+    ),
   };
   const imported = await engine.call("/v1/projects", {
     method: "POST",
@@ -327,7 +292,7 @@ async function activateProject(
           ref: runtimeRef,
           environment: runtimeEnvironment,
         },
-        tickets: { kind: "connection", ref: "connection/github-work-items" },
+        sourceControl: { kind: "connection", ref: "connection/github-work-items" },
       },
     }),
   });
@@ -368,7 +333,7 @@ async function publishTag(engine: Harness, projectId: string, suffix: string): P
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      type: "scm.work-item.tag-added",
+      type: "scm.work-item.observed",
       version: 1,
       kind: "fact",
       projectId,
@@ -377,7 +342,18 @@ async function publishTag(engine: Harness, projectId: string, suffix: string): P
       subject: { type: "work-item", ref: `fixture://${projectId}/${suffix}` },
       correlationId: `corr_${projectId}`,
       causationId: null,
-      payload: { workItemRef: `fixture://${projectId}/${suffix}`, tag: "agent:ready" },
+      payload: {
+        repositoryId: "main",
+        workItemRef: `fixture://${projectId}/${suffix}`,
+        title: `Fixture ${suffix}`,
+        state: "open",
+        tags: ["ready-to-dev"],
+        dependencies: { status: "complete", openWorkItemRefs: [] },
+        verification: "verified",
+        reasonCode: null,
+        observedAt: new Date().toISOString(),
+        observationRevision: 1,
+      },
     }),
   });
   expect(response.status, await response.clone().text()).toBe(201);
@@ -505,7 +481,7 @@ function seedGitHubConnection(dataRoot: string): void {
     id: "connection/github-work-items",
     provider: "github",
     accountLabel: "Work Items",
-    capabilities: ["work-items.read"],
+    capabilities: ["github.api", "scm.change-request.manage", "work-items.read"],
     status: "available",
     secretRef: "gh://WorkItems",
   });

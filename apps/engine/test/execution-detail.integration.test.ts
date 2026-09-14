@@ -22,7 +22,7 @@ describe("execution detail", () => {
       issueNumber: 16,
       issueTitle: "Execution detail acceptance",
       issueBody: "A bounded detail body.",
-      label: "agent:ready",
+      label: "ready-to-dev",
       actor: "reference-user",
       createdAt: new Date().toISOString(),
     });

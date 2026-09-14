@@ -21,8 +21,10 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import Database from "better-sqlite3";
 import { parse as parseYaml } from "yaml";
 import { explain, localApiValidator } from "./contract.js";
+import { ConnectionDescriptorStore } from "../src/connections/registry.js";
 import { startEngine, type Harness } from "./harness.js";
 import { makeNodeRepositoryFixture, makeRepositoryFixture } from "./repository-fixture.js";
+import { fixedProjectConfiguration } from "./reference-workflow-fixture.js";
 import type { components } from "../src/api/generated/local-api.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
@@ -30,7 +32,7 @@ const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 /** Snapshot of every file's size and mtime, to prove discovery mutates nothing. */
 function setNestedConfigurationValue(config: Record<string, unknown>, value: string): void {
   const modules = config["modules"] as Record<string, unknown>[];
-  const configuration = modules[1]!["configuration"] as Record<string, unknown>;
+  const configuration = modules[0]!["configuration"] as Record<string, unknown>;
   const rules = configuration["rules"] as Record<string, unknown>[];
   const emit = rules[0]!["emit"] as Record<string, unknown>;
   emit["payload"] = { nested: { value } };
@@ -38,7 +40,7 @@ function setNestedConfigurationValue(config: Record<string, unknown>, value: str
 
 function setNestedSecretLiteral(config: Record<string, unknown>, key: string): void {
   const modules = config["modules"] as Record<string, unknown>[];
-  const configuration = modules[1]!["configuration"] as Record<string, unknown>;
+  const configuration = modules[0]!["configuration"] as Record<string, unknown>;
   const rules = configuration["rules"] as Record<string, unknown>[];
   const emit = rules[0]!["emit"] as Record<string, unknown>;
   emit["payload"] = { nested: { [key]: "must-not-appear" } };
@@ -164,8 +166,8 @@ describe("repository discovery and project import", () => {
   const automationInstance = (
     target: Record<string, string> = { moduleInstanceId: "request-worker" },
   ) => ({
-    instanceId: "automation-rules",
-    moduleId: "jarvis.module.automation-rules",
+    instanceId: "test-producer",
+    moduleId: "jarvis.module.test-producer",
     enabled: true,
     configuration: {
       rules: [
@@ -187,6 +189,21 @@ describe("repository discovery and project import", () => {
     enabled: true,
   });
 
+  const developmentInstance = () => ({
+    instanceId: "development",
+    moduleId: "jarvis.module.development",
+    enabled: true,
+    runtimeSlot: "agentRuntime",
+    bindings: { repository: "main", tickets: "tickets" },
+    configuration: { validationOrder: ["test"], maxRepairCycles: 0 },
+  });
+
+  const embeddedTestProducerConfig = () =>
+    embeddedPortableConfig([automationInstance()], {
+      tickets: { requires: "work-items.read" },
+      sourceControl: { requires: "scm.change-request.manage" },
+    });
+
   function asUntargetedFactProducer(manifest: string): string {
     return manifest
       .replace("      kind: request", "      kind: fact")
@@ -197,6 +214,62 @@ describe("repository discovery and project import", () => {
     const fixtureRoot = fixture(() => mkdtempSync(join(tmpdir(), "jarvis-validation-runtime-")));
     const runtimeRoot = join(fixtureRoot, "engine");
     cpSync(join(REPO_ROOT, "dist/engine"), runtimeRoot, { recursive: true });
+    const registryPath = join(runtimeRoot, "module-registry.json");
+    const registry = JSON.parse(readFileSync(registryPath, "utf8")) as {
+      packages: string[];
+    };
+    registry.packages.push("test-producer");
+    writeFileSync(registryPath, JSON.stringify(registry, null, 2), "utf8");
+    mkdirSync(join(runtimeRoot, "modules/test-producer/dist"), { recursive: true });
+    mkdirSync(join(runtimeRoot, "contracts/module-config"), { recursive: true });
+    writeFileSync(
+      join(runtimeRoot, "contracts/module-config/test-producer.v1.schema.json"),
+      JSON.stringify({
+        $schema: "https://json-schema.org/draft/2020-12/schema",
+        type: "object",
+        required: ["rules"],
+        properties: { rules: { type: "array" } },
+        additionalProperties: true,
+      }),
+      "utf8",
+    );
+    writeFileSync(
+      join(runtimeRoot, "modules/test-producer/module.manifest.yaml"),
+      `apiVersion: jarvis.dev/module/v1
+kind: Module
+metadata:
+  id: jarvis.module.test-producer
+  version: 1.0.0
+  displayName: Test Producer
+  description: Test-only producer for composition validation.
+  categories: [automation]
+runtime:
+  entrypoint: dist/index.mjs
+contracts:
+  consumes: []
+  produces:
+    - type: development.implementation.requested
+      version: 1
+      kind: request
+      schemaRef: contracts/events/development.implementation.requested.v1.schema.json
+      targeting:
+        configurationPath: /rules/*/emit
+capabilities:
+  requires: []
+  provides: []
+configuration:
+  schemaRef: contracts/module-config/test-producer.v1.schema.json
+permissions:
+  emit:
+    - development.implementation.requested
+`,
+      "utf8",
+    );
+    writeFileSync(
+      join(runtimeRoot, "modules/test-producer/dist/index.mjs"),
+      "export async function handleTestEvent() { return {}; }\n",
+      "utf8",
+    );
     writeFileSync(
       join(runtimeRoot, "modules/change-request-review/module.manifest.yaml"),
       `apiVersion: jarvis.dev/module/v1
@@ -226,6 +299,11 @@ capabilities:
       "utf8",
     );
     return runtimeRoot;
+  }
+
+  async function startEmbeddedComposition(): Promise<Harness> {
+    const runtimeRoot = runtimeWithEmbeddedValidComposition();
+    return start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
   }
 
   it("detects git, remote, provider, branch, package manager and scripts", async () => {
@@ -437,8 +515,7 @@ capabilities:
   });
 
   it("validates a saved embedded composition deterministically without mutating it", async () => {
-    const runtimeRoot = runtimeWithEmbeddedValidComposition();
-    const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
+    const engine = await startEmbeddedComposition();
     const root = fixture(() => makeNodeRepositoryFixture());
     const portableConfig = embeddedPortableConfig(
       [
@@ -451,9 +528,9 @@ capabilities:
       { tickets: { requires: "work-items.read" } },
     );
 
-    const created = (await (
-      await importProject(engine, { repositoryPath: root, portableConfig })
-    ).json()) as { id: string };
+    const imported = await importProject(engine, { repositoryPath: root, portableConfig });
+    expect(imported.status, await imported.clone().text()).toBe(201);
+    const created = (await imported.json()) as { id: string };
     const bindings = await (await engine.call(`/v1/projects/${created.id}/bindings`)).json();
     expect(
       (
@@ -489,8 +566,8 @@ capabilities:
             kind: "request",
           },
           producer: {
-            instanceId: "automation-rules",
-            moduleId: "jarvis.module.automation-rules",
+            instanceId: "test-producer",
+            moduleId: "jarvis.module.test-producer",
           },
           consumer: {
             instanceId: "request-worker",
@@ -542,7 +619,7 @@ capabilities:
           code: "project.request-orphaned",
           severity: "error",
           message:
-            "Request development.implementation.requested.v1 from automation-rules has no consumer.",
+            "Request development.implementation.requested.v1 from test-producer has no consumer.",
         },
       ],
     });
@@ -612,7 +689,7 @@ capabilities:
   });
 
   it("reports an orphan request with its producer and edge", async () => {
-    const engine = await start();
+    const engine = await startEmbeddedComposition();
     const root = fixture(() => makeNodeRepositoryFixture());
     const portableConfig = embeddedPortableConfig([automationInstance()]);
     const created = (await (
@@ -630,7 +707,7 @@ capabilities:
       code: "project.request-orphaned",
       severity: "error",
       message:
-        "Request development.implementation.requested.v1 from automation-rules has no consumer.",
+        "Request development.implementation.requested.v1 from test-producer has no consumer.",
       target: {
         kind: "request-edge",
         contract: {
@@ -639,8 +716,8 @@ capabilities:
           kind: "request",
         },
         producer: {
-          instanceId: "automation-rules",
-          moduleId: "jarvis.module.automation-rules",
+          instanceId: "test-producer",
+          moduleId: "jarvis.module.test-producer",
         },
       },
     });
@@ -648,13 +725,13 @@ capabilities:
 
   it("reports every candidate for an ambiguous untargeted request in stable order", async () => {
     const runtimeRoot = runtimeWithEmbeddedValidComposition();
-    const producerManifest = join(runtimeRoot, "modules/automation-rules/module.manifest.yaml");
+    const producerManifest = join(runtimeRoot, "modules/test-producer/module.manifest.yaml");
     writeFileSync(
       producerManifest,
       readFileSync(producerManifest, "utf8")
         .replace("      targeting:\n        configurationPath: /rules/*/emit\n", "")
         .replace(
-          "configuration:\n  schemaRef: contracts/module-config/automation-rules.v1.schema.json\n",
+          "configuration:\n  schemaRef: contracts/module-config/test-producer.v1.schema.json\n",
           "",
         ),
       "utf8",
@@ -663,8 +740,8 @@ capabilities:
     const root = fixture(() => makeNodeRepositoryFixture());
     const portableConfig = embeddedPortableConfig([
       {
-        instanceId: "automation-rules",
-        moduleId: "jarvis.module.automation-rules",
+        instanceId: "test-producer",
+        moduleId: "jarvis.module.test-producer",
         enabled: true,
       },
       workerInstance("worker-b"),
@@ -695,8 +772,8 @@ capabilities:
     const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
     const root = fixture(() => makeNodeRepositoryFixture());
     const producer = {
-      instanceId: "automation-rules",
-      moduleId: "jarvis.module.automation-rules",
+      instanceId: "test-producer",
+      moduleId: "jarvis.module.test-producer",
       enabled: true,
       configuration: {
         rules: [
@@ -758,7 +835,7 @@ capabilities:
 
   it("resolves request targets through manifest-declared composition metadata", async () => {
     const runtimeRoot = runtimeWithEmbeddedValidComposition();
-    const manifestPath = join(runtimeRoot, "modules/automation-rules/module.manifest.yaml");
+    const manifestPath = join(runtimeRoot, "modules/test-producer/module.manifest.yaml");
     writeFileSync(
       manifestPath,
       readFileSync(manifestPath, "utf8").replace(
@@ -768,7 +845,7 @@ capabilities:
       "utf8",
     );
     writeFileSync(
-      join(runtimeRoot, "contracts/module-config/automation-rules.v1.schema.json"),
+      join(runtimeRoot, "contracts/module-config/test-producer.v1.schema.json"),
       JSON.stringify({
         $schema: "https://json-schema.org/draft/2020-12/schema",
         type: "object",
@@ -789,8 +866,8 @@ capabilities:
     const engine = await start({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
     const root = fixture(() => makeNodeRepositoryFixture());
     const producer = {
-      instanceId: "automation-rules",
-      moduleId: "jarvis.module.automation-rules",
+      instanceId: "test-producer",
+      moduleId: "jarvis.module.test-producer",
       enabled: true,
       configuration: {
         emissions: [
@@ -1070,7 +1147,7 @@ capabilities:
       await first.dispose();
 
       writeFileSync(
-        join(runtimeRoot, "contracts/module-config/automation-rules.v1.schema.json"),
+        join(runtimeRoot, "contracts/module-config/test-producer.v1.schema.json"),
         JSON.stringify({
           $schema: "https://json-schema.org/draft/2020-12/schema",
           type: "object",
@@ -1088,7 +1165,7 @@ capabilities:
           code: "project.instance-config-invalid",
           target: {
             kind: "module-instance",
-            instanceId: "automation-rules",
+            instanceId: "test-producer",
             field: "/configuration/mode",
           },
         }),
@@ -1125,12 +1202,12 @@ capabilities:
       code: "project.contract-incompatible",
       severity: "error",
       message:
-        "The produced and consumed contracts between automation-rules and request-worker are incompatible.",
+        "The produced and consumed contracts between test-producer and request-worker are incompatible.",
       target: {
         kind: "contract-edge",
         producer: {
-          instanceId: "automation-rules",
-          moduleId: "jarvis.module.automation-rules",
+          instanceId: "test-producer",
+          moduleId: "jarvis.module.test-producer",
           contract: {
             type: "development.implementation.requested",
             version: 1,
@@ -1152,7 +1229,7 @@ capabilities:
 
   it("does not connect an unrelated untargeted request type through schemaRef", async () => {
     const runtimeRoot = runtimeWithEmbeddedValidComposition();
-    const producerManifest = join(runtimeRoot, "modules/automation-rules/module.manifest.yaml");
+    const producerManifest = join(runtimeRoot, "modules/test-producer/module.manifest.yaml");
     writeFileSync(
       producerManifest,
       readFileSync(producerManifest, "utf8").replace(
@@ -1260,7 +1337,7 @@ capabilities:
     const finding = report.findings.find((item) => item.code === "project.contract-incompatible");
     expect(finding?.target).toMatchObject({
       producer: {
-        instanceId: "automation-rules",
+        instanceId: "test-producer",
         contract: {
           type: "development.implementation.requested",
           version: 1,
@@ -1273,7 +1350,7 @@ capabilities:
 
   it("reports incompatible fact contracts at both edge ends", async () => {
     const runtimeRoot = runtimeWithEmbeddedValidComposition();
-    const producerManifest = join(runtimeRoot, "modules/automation-rules/module.manifest.yaml");
+    const producerManifest = join(runtimeRoot, "modules/test-producer/module.manifest.yaml");
     writeFileSync(
       producerManifest,
       asUntargetedFactProducer(readFileSync(producerManifest, "utf8")),
@@ -1310,12 +1387,12 @@ capabilities:
       code: "project.contract-incompatible",
       severity: "error",
       message:
-        "The produced and consumed contracts between automation-rules and request-worker are incompatible.",
+        "The produced and consumed contracts between test-producer and request-worker are incompatible.",
       target: {
         kind: "contract-edge",
         producer: {
-          instanceId: "automation-rules",
-          moduleId: "jarvis.module.automation-rules",
+          instanceId: "test-producer",
+          moduleId: "jarvis.module.test-producer",
           contract: {
             type: "development.implementation.requested",
             version: 1,
@@ -1337,7 +1414,7 @@ capabilities:
 
   it("ignores an unrelated fact type instead of connecting it through schemaRef", async () => {
     const runtimeRoot = runtimeWithEmbeddedValidComposition();
-    const producerManifest = join(runtimeRoot, "modules/automation-rules/module.manifest.yaml");
+    const producerManifest = join(runtimeRoot, "modules/test-producer/module.manifest.yaml");
     writeFileSync(
       producerManifest,
       asUntargetedFactProducer(readFileSync(producerManifest, "utf8")),
@@ -1384,7 +1461,7 @@ capabilities:
       kind: "request",
     };
     const runtimeRoot = runtimeWithEmbeddedValidComposition();
-    const producerManifest = join(runtimeRoot, "modules/automation-rules/module.manifest.yaml");
+    const producerManifest = join(runtimeRoot, "modules/test-producer/module.manifest.yaml");
     writeFileSync(
       producerManifest,
       asUntargetedFactProducer(readFileSync(producerManifest, "utf8")),
@@ -1405,7 +1482,7 @@ capabilities:
     const finding = report.findings.find((item) => item.code === "project.contract-incompatible");
     expect(finding?.target).toMatchObject({
       producer: {
-        instanceId: "automation-rules",
+        instanceId: "test-producer",
         contract: {
           type: "development.implementation.requested",
           version: 1,
@@ -1418,7 +1495,7 @@ capabilities:
 
   it("allows a produced fact with no consumer", async () => {
     const runtimeRoot = runtimeWithEmbeddedValidComposition();
-    const producerManifest = join(runtimeRoot, "modules/automation-rules/module.manifest.yaml");
+    const producerManifest = join(runtimeRoot, "modules/test-producer/module.manifest.yaml");
     writeFileSync(
       producerManifest,
       asUntargetedFactProducer(readFileSync(producerManifest, "utf8")),
@@ -1448,7 +1525,7 @@ capabilities:
       const created = (await (
         await importProject(first, {
           repositoryPath: root,
-          portableConfig: embeddedPortableConfig([automationInstance()]),
+          portableConfig: fixedProjectConfiguration("package-unavailable"),
         })
       ).json()) as { id: string };
       await first.dispose();
@@ -1473,10 +1550,10 @@ capabilities:
         code: "project.module-package-unavailable",
         severity: "error",
         message:
-          "Module Package jarvis.module.unavailable for Module Instance automation-rules is unavailable.",
+          "Module Package jarvis.module.unavailable for Module Instance github is unavailable.",
         target: {
           kind: "module-instance",
-          instanceId: "automation-rules",
+          instanceId: "github",
           field: "/moduleId",
         },
       });
@@ -1759,21 +1836,21 @@ capabilities:
       "invalid package configuration",
       (config: Record<string, unknown>) => {
         const modules = config["modules"] as Record<string, unknown>[];
-        (modules[2]!["configuration"] as Record<string, unknown>)["maxRepairCycles"] = "invalid";
+        (modules[1]!["configuration"] as Record<string, unknown>)["maxRepairCycles"] = "invalid";
       },
     ],
     [
       "unknown project slot",
       (config: Record<string, unknown>) => {
         const modules = config["modules"] as Record<string, unknown>[];
-        modules[2]!["runtimeSlot"] = "missingRuntime";
+        modules[1]!["runtimeSlot"] = "missingRuntime";
       },
     ],
     [
       "unknown project repository",
       (config: Record<string, unknown>) => {
         const modules = config["modules"] as Record<string, unknown>[];
-        const bindings = modules[2]!["bindings"] as Record<string, unknown>;
+        const bindings = modules[1]!["bindings"] as Record<string, unknown>;
         bindings["repository"] = "missingRepository";
       },
     ],
@@ -1847,15 +1924,17 @@ capabilities:
       (config: Record<string, unknown>) => setNestedSecretLiteral(config, "hostName"),
     ],
   ])("rejects %s without replacing the last durable configuration", async (_case, mutate) => {
-    const engine = await start();
+    const engine = await startEmbeddedComposition();
     const root = fixture(() => makeNodeRepositoryFixture());
     const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
       id: string;
       portableConfig: unknown;
     };
-    const portableConfig = parseYaml(
-      readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
-    ) as Record<string, unknown>;
+    const portableConfig = embeddedPortableConfig([automationInstance(), developmentInstance()], {
+      tickets: { requires: "work-items.read" },
+      agentRuntime: { requires: "agent.execute" },
+      sourceControl: { requires: "scm.change-request.manage" },
+    });
     mutate(portableConfig);
 
     const response = await engine.call(`/v1/projects/${created.id}/configuration`, {
@@ -1894,16 +1973,14 @@ capabilities:
   });
 
   it("allows API routes as domain text but rejects them in path-bearing fields", async () => {
-    const engine = await start();
+    const engine = await startEmbeddedComposition();
     const root = fixture(() => makeNodeRepositoryFixture());
     const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
       id: string;
     };
-    const portableConfig = parseYaml(
-      readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
-    ) as Record<string, unknown>;
+    const portableConfig = embeddedTestProducerConfig();
     const modules = portableConfig["modules"] as Record<string, unknown>[];
-    const configuration = modules[1]!["configuration"] as Record<string, unknown>;
+    const configuration = modules[0]!["configuration"] as Record<string, unknown>;
     const rules = configuration["rules"] as Record<string, unknown>[];
     const emit = rules[0]!["emit"] as Record<string, unknown>;
     emit["payload"] = { healthRoute: "/health" };
@@ -1928,18 +2005,16 @@ capabilities:
   });
 
   it("atomically rejects a recognizable token used as an object key without echoing it", async () => {
-    const engine = await start();
+    const engine = await startEmbeddedComposition();
     const root = fixture(() => makeNodeRepositoryFixture());
     const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
       id: string;
       portableConfig: unknown;
     };
-    const portableConfig = parseYaml(
-      readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
-    ) as Record<string, unknown>;
+    const portableConfig = embeddedTestProducerConfig();
     const token = "ghp_abcdefghijklmnopqrstuvwxyz1234567890";
     const modules = portableConfig["modules"] as Record<string, unknown>[];
-    const configuration = modules[1]!["configuration"] as Record<string, unknown>;
+    const configuration = modules[0]!["configuration"] as Record<string, unknown>;
     const rules = configuration["rules"] as Record<string, unknown>[];
     const emit = rules[0]!["emit"] as Record<string, unknown>;
     emit["payload"] = { [token]: "must-not-appear" };
@@ -1961,14 +2036,12 @@ capabilities:
   });
 
   it("rejects recognizable embedded secret values without echoing them", async () => {
-    const engine = await start();
+    const engine = await startEmbeddedComposition();
     const root = fixture(() => makeNodeRepositoryFixture());
     const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
       id: string;
     };
-    const portableConfig = parseYaml(
-      readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
-    ) as Record<string, unknown>;
+    const portableConfig = embeddedTestProducerConfig();
     for (const secret of [
       "https://user:ghp_abcdefghijklmnopqrstuvwxyz1234567890@example.invalid/repo",
       "https://user:password@example.invalid/repo",
@@ -1988,16 +2061,14 @@ capabilities:
   });
 
   it("allows an explicit secret reference where the Module contract permits one", async () => {
-    const engine = await start();
+    const engine = await startEmbeddedComposition();
     const root = fixture(() => makeNodeRepositoryFixture());
     const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
       id: string;
     };
-    const portableConfig = parseYaml(
-      readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
-    ) as Record<string, unknown>;
+    const portableConfig = embeddedTestProducerConfig();
     const modules = portableConfig["modules"] as Record<string, unknown>[];
-    const configuration = modules[1]!["configuration"] as Record<string, unknown>;
+    const configuration = modules[0]!["configuration"] as Record<string, unknown>;
     const rules = configuration["rules"] as Record<string, unknown>[];
     const emit = rules[0]!["emit"] as Record<string, unknown>;
     emit["payload"] = { secretRef: "keychain/project/service" };
@@ -2426,20 +2497,58 @@ capabilities:
   });
 
   describe("project activation (#53)", () => {
-    /** A trivially green composition: no PUT to /bindings, no resource grant needed. */
-    async function setupGreenProject(dataRoot?: string) {
-      const runtimeRoot = runtimeWithEmbeddedValidComposition();
-      const engine = await start({
-        enginePath: join(runtimeRoot, "engine.bundle.mjs"),
-        ...(dataRoot === undefined ? {} : { dataRoot }),
+    /** The production fixed GitHub + Development composition with explicit local bindings. */
+    async function setupFixedProjectOnEngine(engine: Harness, projectId: string) {
+      const connectionId = `connection/${projectId}`;
+      const database = new Database(join(engine.dataRoot, "jarvis.sqlite"));
+      new ConnectionDescriptorStore(database).upsert({
+        id: connectionId,
+        provider: "github",
+        accountLabel: "Project Activation GitHub",
+        capabilities: ["github.api", "scm.change-request.manage", "work-items.read"],
+        status: "available",
+        secretRef: "gh://ProjectActivation",
       });
-      const root = fixture(() => makeNodeRepositoryFixture());
+      database.close();
+      const root = fixture(() =>
+        makeNodeRepositoryFixture({
+          additionalRemotes: [
+            { name: "github", url: "git@github.com:Gasppacho/jarvis.git" },
+          ],
+        }),
+      );
       const created = (await (
         await importProject(engine, {
           repositoryPath: root,
-          portableConfig: embeddedPortableConfig([automationInstance(), workerInstance()]),
+          portableConfig: fixedProjectConfiguration(projectId),
         })
       ).json()) as { id: string };
+      const repositoryBinding = await engine.call(
+        `/v1/projects/${created.id}/repositories/main/binding`,
+        {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            path: root,
+            bookmarkRef: `bookmark/${created.id}/main`,
+          }),
+        },
+      );
+      expect(repositoryBinding.status, await repositoryBinding.clone().text()).toBe(200);
+      const existingBindings = await engine.call(`/v1/projects/${created.id}/bindings`);
+      expect(existingBindings.status).toBe(200);
+      const savedBindings = await engine.call(`/v1/projects/${created.id}/bindings`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...((await existingBindings.json()) as Record<string, unknown>),
+          slots: {
+            sourceControl: { kind: "connection", ref: connectionId },
+            agentRuntime: { kind: "runtime", ref: "runtime/fake-test" },
+          },
+        }),
+      });
+      expect(savedBindings.status, await savedBindings.clone().text()).toBe(200);
       const report = (await (
         await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
       ).json()) as {
@@ -2450,6 +2559,17 @@ capabilities:
       };
       expect(report.valid, JSON.stringify(report.findings)).toBe(true);
       return { engine, projectId: created.id, report, repositoryPath: root };
+    }
+
+    async function setupFixedProject(dataRoot: string | undefined, projectId: string) {
+      const engine = await start({
+        ...(dataRoot === undefined ? {} : { dataRoot }),
+      });
+      return setupFixedProjectOnEngine(engine, projectId);
+    }
+
+    async function setupGreenProject(dataRoot?: string) {
+      return setupFixedProject(dataRoot, "project-activation");
     }
 
     const activate = (engine: Harness, projectId: string, body: Record<string, unknown>) =>
@@ -2555,11 +2675,11 @@ capabilities:
           requestRoutes: unknown[];
         };
         expect(snapshot.moduleInstances.map((instance) => instance.instanceId).sort()).toEqual([
-          "automation-rules",
-          "request-worker",
+          "development",
+          "github",
         ]);
         expect(snapshot.requestRoutes).toEqual(report.requestRoutes);
-        expect(snapshot.bindings.repository.bookmarkRef).toBeNull();
+        expect(snapshot.bindings.repository.bookmarkRef).toBe(`bookmark/${projectId}/main`);
       } finally {
         await rm(dataRoot, { recursive: true, force: true });
       }
@@ -2575,23 +2695,11 @@ capabilities:
         ).status,
       ).toBe(200);
 
-      const otherRoot = fixture(() => makeNodeRepositoryFixture());
-      const other = (await (
-        await importProject(engine, {
-          repositoryPath: otherRoot,
-          portableConfig: embeddedPortableConfig([
-            automationInstance({ moduleInstanceId: "other-worker" }),
-            workerInstance("other-worker"),
-          ]),
-        })
-      ).json()) as { id: string };
-      const otherReport = (await (
-        await engine.call(`/v1/projects/${other.id}/validation-report`, { method: "POST" })
-      ).json()) as { valid: boolean; compositionFingerprint: string; findings: unknown[] };
-      expect(otherReport.valid, JSON.stringify(otherReport.findings)).toBe(true);
+      const other = await setupFixedProjectOnEngine(engine, "project-activation-other");
+      const otherReport = other.report;
       expect(
         (
-          await activate(engine, other.id, {
+          await activate(engine, other.projectId, {
             compositionFingerprint: otherReport.compositionFingerprint,
           })
         ).status,
@@ -2617,73 +2725,72 @@ capabilities:
 
       const firstGraph = await graph(projectId);
       expect(firstGraph).toMatchObject({ valid: true, issues: [] });
-      expect(firstGraph.edges).toHaveLength(1);
-      expect(firstGraph.edges[0]).toMatchObject({
-        kind: "request",
-        from: { instanceId: "automation-rules" },
-        to: { instanceId: "request-worker" },
-        routing: { status: "resolved" },
-      });
-      expect(firstGraph.nodes).toEqual([
-        {
-          instanceId: "automation-rules",
-          moduleId: "jarvis.module.automation-rules",
-          enabled: true,
-          moduleVersion: "1.0.0",
-          displayName: "Automation Rules",
-          findings: [],
-        },
-        {
-          instanceId: "request-worker",
-          moduleId: "jarvis.module.change-request-review",
-          enabled: true,
-          moduleVersion: "1.0.0",
-          displayName: "Request Worker",
-          findings: [],
-        },
-      ]);
+      expect(firstGraph.nodes.map((node) => node.instanceId)).toEqual(["development", "github"]);
+      expect(firstGraph.nodes.every((node) => node.enabled)).toBe(true);
+      expect(firstGraph.edges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: "fact",
+            contract: { type: "scm.work-item.observed", version: 1, kind: "fact" },
+            from: { instanceId: "github", moduleId: "jarvis.module.github" },
+            to: { instanceId: "development", moduleId: "jarvis.module.development" },
+          }),
+          expect.objectContaining({
+            kind: "request",
+            contract: {
+              type: "development.implementation.requested",
+              version: 1,
+              kind: "request",
+            },
+            from: { instanceId: "development", moduleId: "jarvis.module.development" },
+            to: { instanceId: "development", moduleId: "jarvis.module.development" },
+            routing: expect.objectContaining({ status: "resolved" }),
+          }),
+          expect.objectContaining({
+            kind: "request",
+            contract: {
+              type: "scm.change-request.creation-requested",
+              version: 1,
+              kind: "request",
+            },
+            from: { instanceId: "development", moduleId: "jarvis.module.development" },
+            to: { instanceId: "github", moduleId: "jarvis.module.github" },
+            routing: expect.objectContaining({ status: "resolved" }),
+          }),
+        ]),
+      );
 
-      const secondGraph = await graph(other.id);
-      expect(secondGraph.nodes.map((node) => node.instanceId)).toEqual([
-        "automation-rules",
-        "other-worker",
-      ]);
+      const secondGraph = await graph(other.projectId);
+      expect(secondGraph.nodes.map((node) => node.instanceId)).toEqual(["development", "github"]);
       expect(firstGraph.nodes.map((node) => node.instanceId)).not.toContain("other-worker");
 
       const beforeConfig = (await (await engine.call(`/v1/projects/${projectId}`)).json()) as {
         portableConfig: Record<string, unknown>;
       };
       const proposed = structuredClone(beforeConfig.portableConfig);
-      const proposedModules = proposed["modules"] as Record<string, unknown>[];
-      const automation = proposedModules.find(
-        (module) => module["instanceId"] === "automation-rules",
+      const proposedDevelopment = (proposed["modules"] as Record<string, unknown>[]).find(
+        (module) => module["instanceId"] === "development",
       )!;
-      const rules = (automation["configuration"] as Record<string, unknown>)["rules"] as Record<
-        string,
-        unknown
-      >[];
-      ((rules[0]!["emit"] as Record<string, unknown>)["target"] as Record<string, unknown>)[
-        "moduleInstanceId"
-      ] = "later-worker";
-      proposed["modules"] = [automation, structuredClone(workerInstance("later-worker"))];
+      (proposedDevelopment["configuration"] as Record<string, unknown>)["readyLabel"] =
+        "ready-later";
       const saved = await engine.call(`/v1/projects/${projectId}/configuration`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ portableConfig: proposed, writeToRepository: false }),
       });
-      expect(saved.status).toBe(409);
+      expect(saved.status).toBe(200);
       expect(
         (
           (await (await engine.call(`/v1/projects/${projectId}`)).json()) as {
             portableConfig: Record<string, unknown>;
           }
         ).portableConfig,
-      ).toEqual(beforeConfig.portableConfig);
+      ).toEqual(proposed);
       expect((await graph(projectId)).nodes).toEqual(firstGraph.nodes);
 
       expect(
         (await engine.call(`/v1/projects/${projectId}/pause`, { method: "POST" })).status,
-      ).toBe(200);
+      ).toBe(409);
       const savedAfterPause = await engine.call(`/v1/projects/${projectId}/configuration`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
@@ -2703,14 +2810,14 @@ capabilities:
         ).status,
       ).toBe(200);
       expect((await graph(projectId)).nodes.map((node) => node.instanceId)).toEqual([
-        "automation-rules",
-        "later-worker",
+        "development",
+        "github",
       ]);
     });
 
     it("broadcasts fact edges to enabled compatible consumers and keeps unconsumed facts auditable", async () => {
       const runtimeRoot = runtimeWithEmbeddedValidComposition();
-      const producerManifest = join(runtimeRoot, "modules/automation-rules/module.manifest.yaml");
+      const producerManifest = join(runtimeRoot, "modules/test-producer/module.manifest.yaml");
       writeFileSync(
         producerManifest,
         asUntargetedFactProducer(readFileSync(producerManifest, "utf8")),
@@ -2801,8 +2908,8 @@ capabilities:
             kind: "fact",
           },
           from: {
-            instanceId: "automation-rules",
-            moduleId: "jarvis.module.automation-rules",
+            instanceId: "test-producer",
+            moduleId: "jarvis.module.test-producer",
           },
           to: {
             instanceId: "request-worker",
@@ -2908,28 +3015,22 @@ capabilities:
           bindings: { slots: Record<string, unknown> };
           requestRoutes: Record<string, unknown>[];
         };
-        const producer = snapshot.moduleInstances.find(
-          (instance) => instance.instanceId === "automation-rules",
-        )!;
-        const rules = producer.configuration!["rules"] as Record<string, unknown>[];
-        const emit = rules[0]!["emit"] as Record<string, unknown>;
-        emit["target"] = { binding: "tickets" };
-        snapshot.bindings.slots["tickets"] = { kind: "connection", ref: "tickets" };
-        const requestWorker = snapshot.moduleInstances.find(
-          (instance) => instance.instanceId === "request-worker",
-        )!;
-        requestWorker.bindings = { tickets: "tickets" };
+        const github = snapshot.moduleInstances.find((instance) => instance.instanceId === "github")!;
         snapshot.moduleInstances.push({
-          instanceId: "other-worker",
-          moduleId: "jarvis.module.change-request-review",
-          enabled: true,
-          bindings: { tickets: "tickets" },
+          ...structuredClone(github),
+          instanceId: "other-github",
         });
+        const creationRoute = snapshot.requestRoutes.find(
+          (route) =>
+            (route["contract"] as { type?: string })?.type ===
+            "scm.change-request.creation-requested",
+        );
+        if (creationRoute === undefined) throw new Error("fixed creation route is missing");
         snapshot.requestRoutes.push({
-          ...structuredClone(snapshot.requestRoutes[0]),
+          ...structuredClone(creationRoute),
           consumer: {
-            instanceId: "other-worker",
-            moduleId: "jarvis.module.change-request-review",
+            instanceId: "other-github",
+            moduleId: "jarvis.module.github",
           },
         });
         database
@@ -2951,12 +3052,16 @@ capabilities:
           }[];
           issues: { id: string; code: string }[];
         };
-        const requestEdge = graph.edges.find((edge) => edge.kind === "request");
+        const requestEdge = graph.edges.find(
+          (edge) =>
+            edge.kind === "request" &&
+            edge.contract.type === "scm.change-request.creation-requested",
+        );
         expect(graph.valid).toBe(false);
         expect(requestEdge).toMatchObject({
           routing: {
             status: "ambiguous",
-            candidates: [{ instanceId: "other-worker" }, { instanceId: "request-worker" }],
+            candidates: [{ instanceId: "github" }, { instanceId: "other-github" }],
           },
           findings: ["project.request-ambiguous"],
         });
@@ -3042,7 +3147,7 @@ capabilities:
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             path: repositoryPath,
-            bookmarkRef: `bookmark/${projectId}/main`,
+            bookmarkRef: `bookmark/${projectId}/rebound`,
           }),
         });
         expect(rebind.status).toBe(200);
@@ -3195,19 +3300,40 @@ capabilities:
         const body = await getSubscriptions(engine, projectId);
         expect(body.items).toEqual([
           {
-            instanceId: "automation-rules",
-            moduleId: "jarvis.module.automation-rules",
-            contract: { type: "scm.work-item.ready", version: 1, kind: "fact" },
+            instanceId: "development",
+            moduleId: "jarvis.module.development",
+            contract: {
+              type: "development.implementation.requested",
+              version: 1,
+              kind: "request",
+            },
           },
           {
-            instanceId: "automation-rules",
-            moduleId: "jarvis.module.automation-rules",
-            contract: { type: "scm.work-item.tag-added", version: 1, kind: "fact" },
+            instanceId: "development",
+            moduleId: "jarvis.module.development",
+            contract: {
+              type: "scm.work-item.observed",
+              version: 1,
+              kind: "fact",
+            },
           },
           {
-            instanceId: "request-worker",
-            moduleId: "jarvis.module.change-request-review",
-            contract: { type: "development.implementation.requested", version: 1, kind: "request" },
+            instanceId: "github",
+            moduleId: "jarvis.module.github",
+            contract: {
+              type: "scm.change-request.creation-requested",
+              version: 1,
+              kind: "request",
+            },
+          },
+          {
+            instanceId: "github",
+            moduleId: "jarvis.module.github",
+            contract: {
+              type: "scm.work-item.tags-change-requested",
+              version: 1,
+              kind: "request",
+            },
           },
         ]);
       });
@@ -3262,11 +3388,7 @@ capabilities:
         ).toBe(200);
 
         const body = await getSubscriptions(engine, created.id);
-        expect(body.items.map((item) => item.instanceId).sort()).toEqual([
-          "automation-rules",
-          "automation-rules",
-          "request-worker",
-        ]);
+        expect(body.items.map((item) => item.instanceId)).toEqual(["request-worker"]);
         expect(body.items.map((item) => item.instanceId)).not.toContain("disabled-worker");
       });
 
@@ -3335,16 +3457,14 @@ capabilities:
         const subsA = await getSubscriptions(engine, projectA);
         const subsB = await getSubscriptions(engine, projectB);
 
-        expect(subsA.items.map((item) => item.instanceId).sort()).toEqual([
-          "automation-rules",
-          "automation-rules",
-          "request-worker",
-        ]);
+        expect(subsA.items.map((item) => item.instanceId)).toEqual(["request-worker"]);
         expect(subsB.items.map((item) => item.instanceId)).toEqual(["request-worker"]);
-        expect(subsA.items.map((item) => item.contract.type)).toContain("scm.work-item.tag-added");
-        expect(subsB.items.map((item) => item.contract.type)).not.toContain(
-          "scm.work-item.tag-added",
-        );
+        expect(subsA.items.map((item) => item.contract.type)).toEqual([
+          "development.implementation.requested",
+        ]);
+        expect(subsB.items.map((item) => item.contract.type)).toEqual([
+          "development.implementation.requested",
+        ]);
         expect(subsA.projectId).toBe(projectA);
         expect(subsB.projectId).toBe(projectB);
 

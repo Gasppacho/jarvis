@@ -24,7 +24,7 @@ function seedIssue(fixture: ReferenceWorkflowFixture, number: number, blockedBy 
       title: `Overview issue ${number}`,
       body: "A harmless fake issue",
       state: "open",
-      labels: blockedBy ? [{ name: "ready-for-agent" }] : [],
+      labels: blockedBy ? [{ name: "ready-to-dev" }] : [],
       blockedBy: blockedBy
         ? [{ number: 99, title: "Open dependency", body: "", state: "open", labels: [] }]
         : [],
@@ -55,7 +55,6 @@ it("exposes issue reasons, native blockers, last poll and a retained failed snap
   expect(first.polling.state).toBe("live");
   expect(first.workflow.stages.map((stage) => stage.id)).toEqual([
     "github",
-    "rules",
     "development",
     "pull-request",
   ]);
@@ -163,7 +162,7 @@ it("keeps the failed work linked after label removal and Engine restart", async 
     issueNumber: 16,
     issueTitle: "Keep this validation failure visible",
     issueBody: "A bounded fixture",
-    label: "agent:ready",
+    label: "ready-to-dev",
     actor: "reference-user",
     createdAt: new Date().toISOString(),
   });
