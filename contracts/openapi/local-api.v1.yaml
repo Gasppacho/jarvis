@@ -1379,9 +1379,40 @@ components:
       properties:
         code: { type: string }
         message: { type: string }
+    ProjectGuidedMigrationScope:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [kind]
+          properties:
+            kind: { type: string, const: all }
+        - type: object
+          additionalProperties: false
+          required: [kind, workItemRef]
+          properties:
+            kind: { type: string, const: issue }
+            workItemRef: { type: string, minLength: 1, maxLength: 2048 }
+    ProjectGuidedMigrationPlan:
+      type: object
+      additionalProperties: false
+      required: [preserved, removedModule, destination]
+      properties:
+        preserved: { type: object, additionalProperties: true }
+        removedModule: { type: string, const: jarvis.module.automation-rules }
+        destination:
+          type: object
+          additionalProperties: false
+          required: [modules, compositionMode, readyLabel, scope]
+          properties:
+            modules:
+              type: array
+              const: [jarvis.module.github, jarvis.module.development]
+            compositionMode: { type: string, const: fixed-modules }
+            readyLabel: { type: string, minLength: 1 }
+            scope: { $ref: "#/components/schemas/ProjectGuidedMigrationScope" }
     ProjectGuidedMigrationPreview:
       type: object
-      additionalProperties: true
+      additionalProperties: false
       required: [apiVersion, kind, projectId, classification, canApply, compositionFingerprint, reasons, plan]
       properties:
         apiVersion: { type: string, const: jarvis.dev/project-guided-migration/v1 }
@@ -1393,7 +1424,10 @@ components:
         reasons:
           type: array
           items: { $ref: "#/components/schemas/ProjectGuidedMigrationReason" }
-        plan: { type: [object, "null"] }
+        plan:
+          oneOf:
+            - $ref: "#/components/schemas/ProjectGuidedMigrationPlan"
+            - type: "null"
     ProjectGuidedMigrationResult:
       type: object
       additionalProperties: true

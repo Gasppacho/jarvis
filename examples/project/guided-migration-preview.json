@@ -12,7 +12,10 @@
       "modules": ["jarvis.module.github", "jarvis.module.development"],
       "compositionMode": "fixed-modules",
       "readyLabel": "ready-for-agent",
-      "scope": "all"
+      "scope": {
+        "kind": "issue",
+        "workItemRef": "github://Gasppacho/jarvis/issues/231"
+      }
     }
   }
 }

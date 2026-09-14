@@ -877,6 +877,32 @@ export interface components {
             code: string;
             message: string;
         };
+        ProjectGuidedMigrationScope: {
+            /** @constant */
+            kind: "all";
+        } | {
+            /** @constant */
+            kind: "issue";
+            workItemRef: string;
+        };
+        ProjectGuidedMigrationPlan: {
+            preserved: {
+                [key: string]: unknown;
+            };
+            /** @constant */
+            removedModule: "jarvis.module.automation-rules";
+            destination: {
+                /** @constant */
+                modules: [
+                    "jarvis.module.github",
+                    "jarvis.module.development"
+                ];
+                /** @constant */
+                compositionMode: "fixed-modules";
+                readyLabel: string;
+                scope: components["schemas"]["ProjectGuidedMigrationScope"];
+            };
+        };
         ProjectGuidedMigrationPreview: {
             /** @constant */
             apiVersion: "jarvis.dev/project-guided-migration/v1";
@@ -888,9 +914,7 @@ export interface components {
             canApply: boolean;
             compositionFingerprint: string;
             reasons: components["schemas"]["ProjectGuidedMigrationReason"][];
-            plan: Record<string, never> | null;
-        } & {
-            [key: string]: unknown;
+            plan: components["schemas"]["ProjectGuidedMigrationPlan"] | null;
         };
         ProjectGuidedMigrationResult: {
             /** @constant */

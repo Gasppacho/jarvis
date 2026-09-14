@@ -8,6 +8,8 @@ export interface MigrationReason {
   readonly code: string;
   readonly message: string;
 }
+export type GuidedMigrationScope =
+  { readonly kind: "all" } | { readonly kind: "issue"; readonly workItemRef: string };
 export interface GuidedMigrationPlan {
   readonly preserved: {
     readonly projectId: string;
@@ -20,14 +22,14 @@ export interface GuidedMigrationPlan {
     readonly workspace: PortableProjectConfiguration["workspace"];
     readonly bindings: ProjectBindings;
     readonly readyLabel: string;
-    readonly scope: "all";
+    readonly scope: GuidedMigrationScope;
   };
   readonly removedModule: "jarvis.module.automation-rules";
   readonly destination: {
     readonly modules: readonly ["jarvis.module.github", "jarvis.module.development"];
     readonly compositionMode: "fixed-modules";
     readonly readyLabel: string;
-    readonly scope: "all";
+    readonly scope: GuidedMigrationScope;
   };
 }
 
@@ -95,6 +97,10 @@ export function classifyGuidedMigration(
     typeof equals === "object" && equals !== null
       ? (equals as Record<string, unknown>)["payload.tag"]
       : undefined;
+  const workItemRef =
+    typeof equals === "object" && equals !== null
+      ? (equals as Record<string, unknown>)["payload.workItemRef"]
+      : undefined;
   if (typeof rule !== "object" || rule === null || !exactKeys(rule, ["id", "when", "emit"]))
     reasons.push({
       code: "rule-shape",
@@ -113,9 +119,13 @@ export function classifyGuidedMigration(
   if (
     typeof equals !== "object" ||
     equals === null ||
-    !exactKeys(equals, ["payload.tag"]) ||
+    !exactKeys(
+      equals,
+      workItemRef === undefined ? ["payload.tag"] : ["payload.tag", "payload.workItemRef"],
+    ) ||
     typeof tag !== "string" ||
-    tag.trim() === ""
+    tag.trim() === "" ||
+    (workItemRef !== undefined && (typeof workItemRef !== "string" || workItemRef.trim() === ""))
   )
     reasons.push({
       code: "condition-shape",
@@ -149,6 +159,10 @@ export function classifyGuidedMigration(
     });
   if (reasons.length > 0) return { reasons };
   const label = readyLabel as string;
+  const scope: GuidedMigrationScope =
+    typeof workItemRef === "string"
+      ? { kind: "issue", workItemRef: workItemRef.trim() }
+      : { kind: "all" };
   return {
     reasons,
     plan: {
@@ -173,14 +187,14 @@ export function classifyGuidedMigration(
         workspace: configuration.workspace,
         bindings,
         readyLabel: label,
-        scope: "all",
+        scope,
       },
       removedModule: "jarvis.module.automation-rules",
       destination: {
         modules: ["jarvis.module.github", "jarvis.module.development"],
         compositionMode: "fixed-modules",
         readyLabel: label,
-        scope: "all",
+        scope,
       },
     },
   };
@@ -206,7 +220,7 @@ export function migratedConfiguration(
         configuration: {
           ...development.configuration,
           readyLabel: plan.destination.readyLabel,
-          scope: { kind: "all" as const },
+          scope: plan.destination.scope,
         },
       },
     ],
