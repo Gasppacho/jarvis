@@ -1,7 +1,9 @@
 # Issue #235 — L15 final receipt
 
 Date: 2026-09-14. Worktree: `/private/tmp/jarvis-issue-235`. Branch:
-`agent/l15-final-receipt`. Base: `origin/main` at `2e5ab871fe348add3975be309c5eb48f1d69d38e`.
+`agent/l15-final-receipt`. Initial L15 base: `origin/main` at
+`2e5ab871fe348add3975be309c5eb48f1d69d38e`. The correction is integrated in
+`fd753dc`, which contains test fix `bb1cbf7`.
 
 This receipt records evidence executed from this worktree. It keeps three
 proof classes separate: automated Harness evidence, native app evidence, and
@@ -57,30 +59,36 @@ rtk proxy env VITEST_MAX_WORKERS=4 pnpm test:integration
 
 Observed result: **52 test files passed, 400 tests passed**.
 
-The required unmodified command was also executed exactly:
+The original 25 ms fixture interval exposed a real timing seam in the PR
+assertion. `GitHubPollingScheduler` starts an immediate tick and continues
+polling after each completed tick; each scan records a new observed fact and
+observation revision. Under the full-suite scheduling load, another observed
+fact could arrive while the PR chain was completing, producing a third
+`development` execution even though durable admission and Pull Request
+idempotence still prevented a second implementation or PR.
+
+The smallest fix is isolated to this receipt test. In `bb1cbf7` (integrated as
+`fd753dc`), the PR scenario uses a 60-second background interval and calls the
+existing `/overview/refresh` endpoint once after seeding the issue. Repeated
+observations remain covered by `reference-workflow-fixed.integration.test.ts`;
+the exact three-execution assertion remains unchanged.
+
+The corrected focused command passed **2/2 tests**, and the sequential focused
+stress loop passed **20/20 runs**. The post-correction full integration run
+passed **52 test files and 400 tests**.
+
+The required unmodified command was then executed by the coordinator exactly
+on integrated commit `fd753dc`:
 
 ```sh
 rtk pnpm verify
 ```
 
-Observed results: contracts (**21 schemas, 9 event examples, 4 manifests, 47
-API paths**), formatting, TypeScript, architecture (**220 modules, 914
-dependencies**), Engine build, and **372 unit tests passed**. The first run ended
-at **397/400** integration tests and the final rerun at **399/400**, with these
-existing timing/concurrency failures observed across the two runs:
-
-- `reference-workflow-pull-request.integration.test.ts`: 4 executions instead
-  of 3;
-- `github-polling.integration.test.ts`: one rate-limit event observed where the
-  assertion expected zero;
-- `runtime-isolation.integration.test.ts`: one project was not completed when
-  inspected.
-
-Each failed test passed alone with `--pool=forks --maxWorkers=1`, and the full
-integration suite passed with `VITEST_MAX_WORKERS=4`. No production or test
-source was changed to hide these failures. Because the exact required command
-is red on this base, this criterion remains partial pending a stable default
-gate or an accepted baseline disposition.
+Observed result at `fd753dc`: contracts (**21 schemas, 9 event examples, 4
+manifests, 47 API paths**), formatting, TypeScript, architecture (**220
+modules, 914 dependencies**), Engine build, **372/372 unit tests**, **400/400
+integration tests**, packaged release app build, and **202/202 Swift tests**
+all passed. The exact gate exited 0.
 
 The final bounded full gate was then run with:
 
@@ -90,8 +98,8 @@ rtk proxy env VITEST_MAX_WORKERS=4 pnpm verify
 
 Observed result: **exit 0**, contracts, formatting, typecheck, architecture,
 **372 unit tests**, **400 integration tests**, packaged app build, and **202
-Swift tests** passed. This is a reproducible bounded verification command; it
-does not change the status of the exact unbounded command above.
+Swift tests** passed. This remains a separate bounded Harness result; the final
+exact gate result above is the authoritative gate evidence for `fd753dc`.
 
 The remaining checks completed separately:
 
@@ -145,7 +153,7 @@ represented by a Fake GitHub, a Swift model test or the packaged build.
 
 | Criterion | Evidence from this receipt | Status |
 | --- | --- | --- |
-| Exact `rtk pnpm verify` and Harness matrix | Exact gate executed twice: 397/400 then 399/400 integration on the base; serial matrix 58/58 and bounded full integration 400/400 | Partial: default gate timing failures remain |
+| Exact `rtk pnpm verify` and Harness matrix | Coordinator exact gate on `fd753dc`: 372/372 unit, 400/400 integration, release app build and 202/202 Swift; serial matrix 58/58 and focused correction stress 20/20 | Verified for automated gate and Harness |
 | No rule/target/slot setup and truthful readiness | Fixed-module Harness and Swift contract tests pass; no interactive first launch observed | Harness verified, native interaction pending |
 | Unknown/blocked issue does not start; exact scope and pause survive restart | Polling, overview, fixed workflow, cancellation and restart tests pass | Verified by Harness |
 | Migration/retrieval preserves history and old projects stay inactive | Guided migration and legacy retirement tests pass | Verified by Harness |
@@ -153,6 +161,6 @@ represented by a Fake GitHub, a Swift model test or the packaged build.
 | Real GitHub/Codex dogfood | No explicitly authorized sandbox was supplied | Blocked; restart point above |
 | Human PR/review/merge boundary and no notarization claim | Tests stop at PR and no merge was requested; no notarization or Gatekeeper evidence claimed | Verified for boundary; release proof out of scope |
 
-This is a partial receipt. It must not be used to announce complete L15
-acceptance until the default gate disposition and the two blocked evidence
-classes are resolved.
+The exact automated gate is verified on `fd753dc`. L15 remains open for the
+two independent evidence classes above: native interactive captures/navigation
+and an authorized real GitHub/Codex dogfood run.

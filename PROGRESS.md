@@ -635,14 +635,23 @@ sous `/tmp/jarvis-ux-reliability-evidence/` ; ne pas effacer ce dossier avant ar
 
 Le rapport détaillé est dans [issue-235-verification.md](docs/plans/issue-235-verification.md).
 La matrice Harness réutilisée passe en séquentiel (**12 fichiers, 58/58 tests**)
-et la suite intégration complète passe avec `VITEST_MAX_WORKERS=4` (**52 fichiers,
-400/400**). Le `rtk pnpm verify` demandé exactement a été exécuté deux fois mais
-reste partiel sur cette base (**372 unitaires, 397/400 puis 399/400 intégrations**)
-à cause d’échecs de timing qui passent isolément et dans la suite bornée ; aucun
-code n’a été modifié pour les masquer. Le build app et les **202 tests Swift** passent.
+et la suite intégration complète post-correction passe (**52 fichiers, 400/400**).
+
+Le défaut de la preuve PR venait de l’intervalle de polling Harness à 25 ms :
+le scheduler lance un tick immédiat puis répète les observations, et une
+observation supplémentaire pouvait être consommée pendant la chaîne PR. Cela
+produisait une troisième exécution `development`, sans créer de seconde
+admission ou Pull Request. `bb1cbf7`, intégré dans `fd753dc`, isole ce scénario
+avec un polling de fond à 60 s et un rafraîchissement explicite après le seed ;
+l’assertion exacte de trois exécutions est conservée. Le test ciblé passe **2/2**
+et le stress séquentiel passe **20/20**.
+
+Le coordinateur a exécuté `rtk pnpm verify` exactement sur `fd753dc` avec succès :
+**372/372 unitaires, 400/400 intégrations, build de l’app release, 202/202 Swift** ;
+génération, contrats, lint, typecheck et architecture passent également.
 
 L’app assemblée a démarré sur un data root vierge et a créé sa SQLite, mais la
 console macOS était verrouillée (`IOConsoleLocked = Yes`) ; la capture produite
 est noire et ne constitue pas une preuve native. Aucun repository sandbox n’étant
-explicitement autorisé, aucun dogfood GitHub/Codex n’a été lancé ou muté. L15
-reste donc une réception partielle, avec restart point documenté dans le rapport.
+explicitement autorisé, aucun dogfood GitHub/Codex n’a été lancé ou muté. Ces
+deux preuves restent bloquées, avec restart point documenté dans le rapport.
