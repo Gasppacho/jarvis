@@ -199,6 +199,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         public struct Edit: Sendable, Equatable, Hashable {
             public enum Operation: Sendable, Equatable, Hashable {
                 case setProjectName(String)
+                case setRepositoryDefaultBranch(String, String)
                 case chooseStartingPoint(String)
                 case addSlot(String, String)
                 case removeSlot(String)
@@ -237,6 +238,10 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
 
             public static func setProjectName(_ name: String) -> Self {
                 Self(.setProjectName(name), label: "Set project name")
+            }
+
+            public static func setRepositoryDefaultBranch(_ repositoryID: String, _ branch: String) -> Self {
+                Self(.setRepositoryDefaultBranch(repositoryID, branch), label: "Set target branch")
             }
 
             public static func chooseStartingPoint(_ id: String, displayName: String) -> Self {
@@ -651,6 +656,9 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         }
         if let name = state.draft?.name {
             inventory.append(.edit(.setProjectName(name)))
+        }
+        for repository in state.draft?.repositories ?? [] {
+            inventory.append(.edit(.setRepositoryDefaultBranch(repository.id, repository.defaultBranch)))
         }
         inventory.append(contentsOf: startingPoints.map { .edit($0.action) })
         inventory.append(.edit(.addSlot(name: "", requirement: "")))

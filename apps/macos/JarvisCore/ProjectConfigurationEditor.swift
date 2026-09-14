@@ -279,8 +279,8 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
     public var slotRequirements: [String: ProjectSlotDraft]
 
     public var commands: [String: String]
+    public var repositories: [Components.Schemas.ProjectRepositoryConfiguration]
     private let base: Components.Schemas.PortableProjectConfiguration
-    public var repositories: [Components.Schemas.ProjectRepositoryConfiguration] { base.repositories }
     public var isFixedComposition: Bool { base.compositionMode == .fixed_hyphen_modules }
 
     public init(
@@ -290,6 +290,7 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
         base = configuration
         let commandData = (try? JSONEncoder().encode(configuration.commands)) ?? Data()
         commands = (try? JSONDecoder().decode([String: String].self, from: commandData)) ?? [:]
+        repositories = configuration.repositories
         name = configuration.metadata.name
         let packagesById = Dictionary(uniqueKeysWithValues: packages.map { ($0.moduleId, $0) })
         modules = configuration.modules.map {
@@ -489,6 +490,8 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
         metadata["name"] = name
         document["metadata"] = metadata
         document["commands"] = commands
+        let repositoriesData = try JSONEncoder().encode(repositories)
+        document["repositories"] = try JSONSerialization.jsonObject(with: repositoriesData)
         document["slots"] = slotRequirements.mapValues { requirement in
             var value: [String: Any] = ["requires": requirement.requires]
             if let optional = requirement.optional { value["optional"] = optional }

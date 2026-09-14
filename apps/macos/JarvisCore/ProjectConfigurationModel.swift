@@ -332,6 +332,15 @@ public final class ProjectConfigurationModel {
         }
     }
 
+    public func setRepositoryDefaultBranch(projectId: String, repositoryID: String, branch: String) {
+        let value = branch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        editDraft(projectId: projectId) { draft in
+            guard let index = draft.repositories.firstIndex(where: { $0.id == repositoryID }) else { return }
+            draft.repositories[index].defaultBranch = value
+        }
+    }
+
     public func selectValidationCommand(projectId: String, moduleID: UUID, name: String, selected: Bool) {
         editModule(projectId: projectId, moduleId: moduleID) { module in
             var order = module.validationOrder
@@ -435,6 +444,8 @@ public final class ProjectConfigurationModel {
         switch edit.operation {
         case .setProjectName(let name):
             editDraft(projectId: projectId) { $0.name = name }
+        case .setRepositoryDefaultBranch(let repositoryID, let branch):
+            setRepositoryDefaultBranch(projectId: projectId, repositoryID: repositoryID, branch: branch)
         case .chooseStartingPoint(let id):
             chooseStartingPoint(projectId: projectId, startingPointId: id)
         case .addSlot(let name, let requirement):

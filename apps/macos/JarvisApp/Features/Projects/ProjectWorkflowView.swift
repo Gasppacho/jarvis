@@ -141,6 +141,16 @@ struct ProjectWorkflowView: View {
             githubCard
         case .development:
             Text("Préparer une copie de travail isolée").font(.headline)
+            developmentRuntimeCard
+            repositoryBranchControl
+            ForEach(development) { module in
+                TextField("Label de départ", text: configuration(module, "readyLabel"))
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Label de départ des issues")
+                    .accessibilityIdentifier("workflow.development.ready-label")
+                Text("Le label est propre à ce projet. Les nouveaux projets utilisent ready-to-dev.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             commandField("install", title: "Commande d’installation")
             ForEach(development) { module in
                 Picker("Confirmer la préparation", selection: configuration(module, "preparation")) {
@@ -183,6 +193,72 @@ struct ProjectWorkflowView: View {
             }
             Text("L’étape Vérification contrôle les accès et les liens entre ces événements avant d’autoriser le démarrage.")
                 .font(.callout).foregroundStyle(.secondary)
+        }
+    }
+
+    private var developmentRuntimeCard: some View {
+        let runtime = state.runtimePresentation
+        return GroupBox("Agent Codex") {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(runtime.status, systemImage: runtime.icon)
+                if runtime.requiresWorkflow {
+                    Text("Choisissez d’abord le workflow GitHub Development.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(runtime.candidates) { candidate in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(candidate.name)
+                                Text(candidate.subtitle).font(.caption).foregroundStyle(.secondary)
+                                if candidate.bound { Text(runtime.modelLabel).font(.caption) }
+                            }
+                            Spacer()
+                            if candidate.bound {
+                                Label("Utilisé par ce projet", systemImage: "checkmark.circle")
+                                    .font(.caption)
+                            } else {
+                                Button("Utiliser pour ce projet") {
+                                    Task { await model.chooseRuntime(projectId: project.id, ref: candidate.id) }
+                                }
+                                .disabled(!candidate.selectable || state.isSaving)
+                            }
+                        }
+                        if candidate.needsAttention {
+                            Text(candidate.detail).font(.caption).foregroundStyle(.orange)
+                        }
+                    }
+                    if runtime.candidates.isEmpty { Text(runtime.detail).foregroundStyle(.secondary) }
+                    HStack {
+                        Button("Rechercher Codex") {
+                            Task { await model.refreshRuntimeCandidates(projectId: project.id, discover: true) }
+                        }
+                        .disabled(runtime.isBusy || state.isSaving)
+                        Button("Vérifier l’agent") {
+                            Task { await model.checkRuntime(projectId: project.id) }
+                        }
+                        .disabled(!runtime.canCheck || state.isSaving)
+                    }
+                }
+                Text(runtime.approval).font(.caption).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var repositoryBranchControl: some View {
+        ForEach(state.draft?.repositories ?? [], id: \.id) { repository in
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Branche cible").font(.callout.weight(.medium))
+                TextField("Branche cible", text: Binding(
+                    get: { state.draft?.repositories.first(where: { $0.id == repository.id })?.defaultBranch ?? "" },
+                    set: { model.setRepositoryDefaultBranch(projectId: project.id, repositoryID: repository.id, branch: $0) }))
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Branche cible pour \(repository.id)")
+                    .accessibilityIdentifier("workflow.development.branch.\(repository.id)")
+                Text("Détectée pour \(repository.id); modifiable avant l’enregistrement.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 
