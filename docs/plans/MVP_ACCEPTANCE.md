@@ -29,8 +29,11 @@ of older issue criteria from these observations.
 - [ ] L15 final receipt: [rapport exécuté](./issue-235-verification.md) ; le
   `rtk pnpm verify` exact est vérifié sur `fd753dc` (**372/372 unit, 400/400
   integration, build app release, 202/202 Swift**, génération/contrats/lint/
-  typecheck/architecture passés). Les captures natives et le dogfood GitHub/Codex
-  autorisé restent bloqués.
+  typecheck/architecture passés). Le parcours local natif, les captures sombre/
+  clair, l’AX et le clavier sont observés sur l’app empaquetée au commit
+  `3dbd0e3`; le dogfood GitHub/Codex reste **ouvert / needs-info**. Il faut un
+  dépôt sandbox, un compte, une issue bénigne, un budget et un binding runtime
+  Codex explicitement autorisés.
 
 ## Reference workflow acceptance
 

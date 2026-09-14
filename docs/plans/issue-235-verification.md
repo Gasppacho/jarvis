@@ -113,38 +113,78 @@ reported **202 tests passed**.
 
 ## Native app evidence
 
-The packaged app was launched with the prescribed isolated data root:
+The coordinator launched the final packaged app from the integration checkout
+at commit `3dbd0e3`, using the isolated data root
+`/tmp/jarvis-issue-235-native-final-20260914-1035`. The observed local path was:
 
-```sh
-rtk proxy open -n dist/Jarvis.app --args \
-  --data-root /tmp/jarvis-issue-235-native-20260914-0928
-```
+`Add Project` → `Open` dialog → `/private/tmp/jarvis-issue-220-integration-v3`
+→ import sheet → `Create draft` → `Workflow` → `Add GitHub` → `Access and
+agent` → `Verification`.
 
-The process started and created the isolated SQLite database and lock files.
-At capture time `ioreg` reported `IOConsoleLocked = Yes`. `screencapture` wrote
-`/tmp/jarvis-issue-235-native-locked.png`, but visual inspection found a black
-3024×1964 image. It is retained only as a failed capture attempt. There is no
-valid 1100×800 or 1512×949 light/dark capture, and no native keyboard,
-VoiceOver, arrow navigation or restart walkthrough was observed in this run.
+No external GitHub mutation was performed.
 
-The Swift model tests and successful app build remain automated evidence. They
-do not substitute for the missing interactive native evidence.
+The final screenshots are retained under
+`/tmp/jarvis-issue-235-native-final-20260914-1035/`:
+
+- `window-dark-1100x800.png`
+- `window-dark-1512x949.png`
+- `window-light-1100x800.png`
+- `window-light-1512x949.png`
+- `workflow-dark-1512x949.png`
+- `workflow-light-1512x949.png`
+- `workflow-light-1100x800.png`
+- `after-draft-dark-1100x800.png`
+- `after-github-dark-1100x800.png`
+- `import-sheet-dark-1100x800.png`
+- `access-dark-1100x800.png`
+- `verification-dark-1100x800.png`
+- `keyboard-workflow-1100x800.png`
+
+The captures use `screencapture` of logical window bounds. The PNGs are Retina
+2x: 1100×800 logical is 2200×1600 pixels, and 1512×949 logical is 3024×1898
+pixels. Both dark and light appearances were tested, then the original dark
+appearance was restored. The final window is 1100×800 logical at position
+`0,33`.
+
+System Events AX inspection exposed the following native evidence:
+
+- Import sheet: `Ajouter un projet`, `Nom du projet` and the project description.
+- Workflow: the project remote and `Brouillon · Workflow`.
+- Access: `Brouillon · Accès et agent`; account entries `Gasppacho` and
+  `QServicesEntreprise` with `Disponible` and explicit project authorization
+  wording; `Non vérifié`; Codex search instructions; `Rechercher Codex`; and
+  `Aide Codex`.
+- Verification: `Brouillon · Vérification`, `Vérifiez la configuration...`, and
+  verification disabled until the draft is saved.
+
+For keyboard evidence, the AX Workflow stage control was focused and the macOS
+Space key changed the visible stage from `Brouillon · Accès et agent` to
+`Brouillon · Workflow`. A keyboard focus ring was visible on the Verification
+control. AXPress was used only for the final local Verification navigation.
+
+The earlier locked-console attempt and its black
+`/tmp/jarvis-issue-235-native-locked.png` remain failed artifacts and are not
+counted against this final native run. This evidence records the observed local
+app flow, captures, AX labels and keyboard action; it does not establish an
+authorized GitHub/Codex dogfood run.
 
 ## Dogfood protocol and blocker
 
 No GitHub repository, account, issue, branch or budget was explicitly
-authorized for this worktree. No external repository was mutated and no real
-Codex execution was started. Existing historical references to other runs in
-`PROGRESS.md` are not counted as an L15 run.
+authorized for this worktree, and no Codex runtime binding was authorized. No
+external repository was mutated and no real Codex execution was started.
+Existing historical references to other runs in `PROGRESS.md` are not counted
+as an L15 run.
 
 To restart the blocked proof, provide an explicitly authorized sandbox
 repository and a benign dedicated issue. Then record, before activation:
 
 1. repository owner/name, issue number and allowed budget;
 2. the exact issue URL and the project scope shown by the guide;
-3. the created branch and commit SHA;
-4. the resulting PR URL and timeline events;
-5. the paused project state after the run, with no merge.
+3. an authorized Codex runtime binding and its allowed budget;
+4. the created branch and commit SHA;
+5. the resulting PR URL and timeline events;
+6. the paused project state after the run, with no merge.
 
 Until those values exist, the dogfood criterion is **blocked**, rather than
 represented by a Fake GitHub, a Swift model test or the packaged build.
@@ -154,13 +194,14 @@ represented by a Fake GitHub, a Swift model test or the packaged build.
 | Criterion | Evidence from this receipt | Status |
 | --- | --- | --- |
 | Exact `rtk pnpm verify` and Harness matrix | Coordinator exact gate on `fd753dc`: 372/372 unit, 400/400 integration, release app build and 202/202 Swift; serial matrix 58/58 and focused correction stress 20/20 | Verified for automated gate and Harness |
-| No rule/target/slot setup and truthful readiness | Fixed-module Harness and Swift contract tests pass; no interactive first launch observed | Harness verified, native interaction pending |
+| No rule/target/slot setup and truthful readiness | Fixed-module Harness plus the coordinator's observed local guide through Verification, including AX labels and disabled pre-save verification | Verified for supplied local native evidence |
 | Unknown/blocked issue does not start; exact scope and pause survive restart | Polling, overview, fixed workflow, cancellation and restart tests pass | Verified by Harness |
 | Migration/retrieval preserves history and old projects stay inactive | Guided migration and legacy retirement tests pass | Verified by Harness |
-| Native captures and navigation | App build and isolated launch pass; console was locked and capture was black | Blocked |
-| Real GitHub/Codex dogfood | No explicitly authorized sandbox was supplied | Blocked; restart point above |
+| Native captures and navigation | Final packaged app at `3dbd0e3`, 13 screenshots in the final data root, dark/light windows, AX labels and keyboard Space navigation observed | Verified for supplied native evidence |
+| Real GitHub/Codex dogfood | No explicitly authorized sandbox or Codex runtime binding was supplied | Blocked; needs-info; restart point above |
 | Human PR/review/merge boundary and no notarization claim | Tests stop at PR and no merge was requested; no notarization or Gatekeeper evidence claimed | Verified for boundary; release proof out of scope |
 
-The exact automated gate is verified on `fd753dc`. L15 remains open for the
-two independent evidence classes above: native interactive captures/navigation
-and an authorized real GitHub/Codex dogfood run.
+The exact automated gate and the supplied native local evidence are verified.
+L15 remains **open / needs-info** for the authorized real GitHub/Codex dogfood
+run. The required input is an explicitly authorized sandbox repository, account,
+benign dedicated issue, budget and Codex runtime binding.

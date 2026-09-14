@@ -651,7 +651,29 @@ Le coordinateur a exécuté `rtk pnpm verify` exactement sur `fd753dc` avec succ
 génération, contrats, lint, typecheck et architecture passent également.
 
 L’app assemblée a démarré sur un data root vierge et a créé sa SQLite, mais la
-console macOS était verrouillée (`IOConsoleLocked = Yes`) ; la capture produite
-est noire et ne constitue pas une preuve native. Aucun repository sandbox n’étant
-explicitement autorisé, aucun dogfood GitHub/Codex n’a été lancé ou muté. Ces
-deux preuves restent bloquées, avec restart point documenté dans le rapport.
+preuve native finale a ensuite été observée par le coordinateur sur l’app
+empaquetée du checkout d’intégration au commit `3dbd0e3`, avec le data root
+`/tmp/jarvis-issue-235-native-final-20260914-1035`. Le parcours local observé
+est `Add Project` → dialogue Open → `/private/tmp/jarvis-issue-220-integration-v3`
+→ import sheet → `Create draft` → `Workflow` → `Add GitHub` → `Access and agent`
+→ `Verification`. Aucun dépôt GitHub externe n’a été muté.
+
+Le dossier final contient les 13 captures consignées dans
+[le rapport détaillé](docs/plans/issue-235-verification.md), avec fenêtres
+1100×800 et 1512×949 en sombre et clair, PNG Retina 2x, apparence sombre
+restaurée et fenêtre finale 1100×800 logique en `0,33`. System Events a exposé
+les libellés AX de l’import, du workflow, de l’accès et de la vérification,
+notamment `Brouillon · Workflow`, `Brouillon · Accès et agent`, les comptes
+`Gasppacho` et `QServicesEntreprise` avec `Disponible`, l’autorisation projet,
+`Non vérifié`, les commandes de recherche Codex et la vérification désactivée
+avant sauvegarde du draft. Le contrôle Workflow a reçu le focus ; Space a fait
+passer l’affichage d’Access and agent à Workflow, avec anneau de focus sur
+Verification. AXPress n’a servi qu’à la navigation locale finale Verification.
+
+L’ancien essai avec console verrouillée (`IOConsoleLocked = Yes`) et capture
+noire reste un artefact invalide ; il n’est pas compté contre cette preuve
+native finale. Aucun repository sandbox, budget ou binding Codex n’étant
+explicitement autorisé, aucun dogfood GitHub/Codex n’a été lancé ou muté. L15
+reste **ouvert / needs-info** pour ce dogfood ; il faut fournir un dépôt sandbox,
+un compte, une issue bénigne dédiée, un budget et un binding runtime Codex
+explicitement autorisés.
