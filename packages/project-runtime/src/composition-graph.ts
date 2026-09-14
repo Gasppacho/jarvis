@@ -292,7 +292,7 @@ function buildRail(
       slot,
       capability: requirement.requires,
       state,
-      ...(binding === undefined ? {} : { binding }),
+      ...(binding === undefined ? {} : { binding: { kind: binding.kind, ref: binding.ref } }),
       ...(entry === undefined ? {} : { source: entry.source }),
       findings: slotFindingCodes(slot, requirement.requires),
     });

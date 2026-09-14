@@ -22,7 +22,7 @@ import Database from "better-sqlite3";
 import { parse as parseYaml } from "yaml";
 import { explain, localApiValidator } from "./contract.js";
 import { ConnectionDescriptorStore } from "../src/connections/registry.js";
-import { startEngine, type Harness } from "./harness.js";
+import { startEngine, startFakeGitHubApi, type FakeGitHubApi, type Harness } from "./harness.js";
 import { makeNodeRepositoryFixture, makeRepositoryFixture } from "./repository-fixture.js";
 import { fixedProjectConfiguration } from "./reference-workflow-fixture.js";
 import type { components } from "../src/api/generated/local-api.js";
@@ -95,13 +95,30 @@ describe("repository discovery and project import", () => {
     );
   });
 
+  const activationProviders: FakeGitHubApi[] = [];
   afterEach(async () => {
     await Promise.all(started.splice(0).map((engine) => engine.dispose()));
+    await Promise.all(activationProviders.splice(0).map((provider) => provider.close()));
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
   });
 
   async function start(...args: Parameters<typeof startEngine>) {
-    const engine = await startEngine(...args);
+    const provider = await startFakeGitHubApi();
+    activationProviders.push(provider);
+    const bin = mkdtempSync(join(tmpdir(), "jarvis-activation-provider-"));
+    roots.push(bin);
+    writeFileSync(join(bin, "gh"), '#!/bin/sh\nprintf "fixture-activation-token\\n"\n', {
+      mode: 0o755,
+    });
+    const engine = await startEngine({
+      enginePath: join(REPO_ROOT, "dist/engine/engine.test-bundle.mjs"),
+      ...args[0],
+      env: {
+        JARVIS_GH_EXECUTABLE: join(bin, "gh"),
+        JARVIS_GITHUB_API_BASE_URL: provider.baseUrl,
+        ...args[0]?.env,
+      },
+    });
     started.push(engine);
     return engine;
   }
@@ -2556,6 +2573,10 @@ capabilities:
         findings: unknown[];
       };
       expect(report.valid, JSON.stringify(report.findings)).toBe(true);
+      const preflight = (await (
+        await engine.call(`/v1/projects/${created.id}/preflight`, { method: "POST" })
+      ).json()) as { valid: boolean; checks: unknown };
+      expect(preflight.valid, JSON.stringify(preflight.checks)).toBe(true);
       return { engine, projectId: created.id, report, repositoryPath: root };
     }
 

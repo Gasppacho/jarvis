@@ -31,9 +31,11 @@ of older issue criteria from these observations.
   integration, build app release, 202/202 Swift**, génération/contrats/lint/
   typecheck/architecture passés). Le parcours local natif, les captures sombre/
   clair, l’AX et le clavier sont observés sur l’app empaquetée au commit
-  `3dbd0e3`; le dogfood GitHub/Codex reste **ouvert / needs-info**. Il faut un
-  dépôt sandbox, un compte, une issue bénigne, un budget et un binding runtime
-  Codex explicitement autorisés.
+  `3dbd0e3`. Le [nouvel audit #220](./issue-220-audit-2026-09-14.md) apporte
+  l'essai GitHub/Codex autorisé : #236 → commit `45d580d` → PR #237 ouverte,
+  vérification réussie et pause. Réception finale toujours ouverte : correctifs
+  non fusionnés et dernier parcours graphique/VoiceOver bloqué par la session
+  macOS verrouillée. Les preuves historiques ne remplacent pas ce dernier contrôle.
 
 ## Reference workflow acceptance
 

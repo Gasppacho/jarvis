@@ -400,6 +400,10 @@ function portableConfiguration(id: string): Record<string, unknown> {
 
 function githubOnlyConfiguration(id: string): Record<string, unknown> {
   const configuration = portableConfiguration(id);
+  configuration["workspace"] = {
+    ...(configuration["workspace"] as Record<string, unknown>),
+    maxConcurrentExecutions: 1,
+  };
   configuration["slots"] = {
     sourceControl: { requires: "scm.change-request.manage" },
     tickets: { requires: "work-items.read" },

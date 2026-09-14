@@ -4,6 +4,7 @@ import type {
 } from "../../../../packages/modules/github/src/work-item-readiness.js";
 import {
   preflightGitHub,
+  developmentTrigger,
   check,
   isGitHubDevelopmentFlow,
   type ProjectPreflight,
@@ -410,11 +411,13 @@ export class ProjectService implements ProjectRegistry<
       );
     }
     const updated = this.store.setStatus(project.id, "paused");
+    this.preflightRevisions.set(project.id, (this.preflightRevisions.get(project.id) ?? 0) + 1);
+    this.preflights.delete(project.id);
     if (updated === undefined) throw notFound(project.id);
     return toSummary(updated);
   }
 
-  resumeProject(id: unknown): ProjectSummary {
+  async resumeProject(id: unknown): Promise<ProjectSummary> {
     const project = this.requireProject(id);
     if (project.status !== "active" && project.status !== "paused") {
       throw new EngineError(
@@ -423,9 +426,10 @@ export class ProjectService implements ProjectRegistry<
         `Project "${project.id}" must be active or paused before it can resume.`,
       );
     }
-    const updated = this.store.setStatus(project.id, "active");
-    if (updated === undefined) throw notFound(project.id);
-    return toSummary(updated);
+    return this.activateProject({
+      projectId: project.id,
+      compositionFingerprint: this.validateProject(project.id).compositionFingerprint,
+    });
   }
 
   private readonly preflights = new Map<string, ProjectPreflight>();
@@ -514,10 +518,22 @@ export class ProjectService implements ProjectRegistry<
     return report;
   }
 
-  activatePreflightProject(request: ActivateProjectRequest): ProjectSummary {
+  async activatePreflightProject(request: ActivateProjectRequest): Promise<ProjectSummary> {
+    this.requireCurrentPreflight(request);
+    return this.activateProject(request);
+  }
+
+  private requireCurrentPreflight(request: ActivateProjectRequest): void {
     const project = this.requireProject(request.projectId);
     const report = this.preflights.get(project.id);
     const scope = report?.trigger?.scope;
+    const previous = this.store.getResolvedProject(project.id);
+    const previousScope = previous && developmentTrigger(previous.composition)?.scope;
+    const continuingTrial =
+      (project.status === "active" || project.status === "paused") &&
+      scope?.kind === "issue" &&
+      previousScope?.kind === "issue" &&
+      scope.workItemRef === previousScope.workItemRef;
     const selected =
       scope?.kind === "issue"
         ? report?.candidateEligibility.items.find((item) => item.workItemRef === scope.workItemRef)
@@ -525,6 +541,7 @@ export class ProjectService implements ProjectRegistry<
     if (
       project.portableConfig.compositionMode === "fixed-modules" &&
       scope?.kind === "issue" &&
+      !continuingTrial &&
       selected?.status !== "eligible"
     )
       throw activationRejected(
@@ -538,7 +555,6 @@ export class ProjectService implements ProjectRegistry<
         project.id,
         "requires a current successful preflight",
       );
-    return this.activateProject(request);
   }
 
   scopePreflightProject(id: unknown, request: unknown): PortableProjectConfiguration {
@@ -750,7 +766,7 @@ export class ProjectService implements ProjectRegistry<
    * the Project to `active`; a rejection leaves durable state untouched, and
    * repeating activation of an unchanged composition is idempotent.
    */
-  activateProject(request: ActivateProjectRequest): ProjectSummary {
+  async activateProject(request: ActivateProjectRequest): Promise<ProjectSummary> {
     const project = this.requireProject(request.projectId);
     const { validation: report, repositoryIdentities } = this.validateComposition(
       project,
@@ -789,6 +805,11 @@ export class ProjectService implements ProjectRegistry<
         project.id,
         "has no successful validation report for its current composition",
       );
+    }
+
+    if (project.portableConfig.compositionMode === "fixed-modules") {
+      await this.preflightProject(project.id);
+      this.requireCurrentPreflight(request);
     }
 
     const configuration = project.portableConfig;
@@ -1284,7 +1305,7 @@ export class ProjectService implements ProjectRegistry<
       throw new EngineError("api.invalid-request", 400, "writeToRepository must be a boolean.");
     }
     const supplied = request.portableConfig as Partial<StoredPortableProjectConfiguration>;
-    const configuration =
+    let configuration =
       Array.isArray(supplied.modules) &&
       supplied.modules.length === 0 &&
       typeof supplied.slots === "object" &&
@@ -1294,7 +1315,7 @@ export class ProjectService implements ProjectRegistry<
         : requireProjectConfigurationForPersistence(request.portableConfig, this.modules);
     if (
       structuralCompositionChanged(current.portableConfig, configuration) &&
-      (current.status === "active" || this.executionLedger.listActive(current.id).length > 0)
+      (current.status === "active" || this.executionLedger.hasNonTerminalWork(current.id))
     ) {
       throw new EngineError(
         "project.active",
@@ -1302,7 +1323,38 @@ export class ProjectService implements ProjectRegistry<
         `Project "${current.id}" must be paused and quiescent before its module composition can change.`,
       );
     }
-    for (const slot of Object.keys(current.slotBindings)) {
+    const removedSlots = new Set<string>();
+    if (
+      current.portableConfig.compositionMode === "fixed-modules" &&
+      configuration.compositionMode === "fixed-modules"
+    ) {
+      const referencedSlots = (module: PortableProjectConfiguration["modules"][number]) =>
+        [module.runtimeSlot, ...Object.values(module.bindings ?? {})].filter(
+          (slot): slot is string => slot !== undefined,
+        );
+      const retainedSlots = new Set(configuration.modules.flatMap(referencedSlots));
+      for (const module of current.portableConfig.modules) {
+        if (configuration.modules.some((next) => next.moduleId === module.moduleId)) continue;
+        for (const slot of referencedSlots(module)) {
+          if (slot in current.portableConfig.slots && !retainedSlots.has(slot))
+            removedSlots.add(slot);
+        }
+      }
+      const cleaned = {
+        ...configuration,
+        slots: Object.fromEntries(
+          Object.entries(configuration.slots).filter(([slot]) => !removedSlots.has(slot)),
+        ),
+      };
+      configuration =
+        cleaned.modules.length === 0 && Object.keys(cleaned.slots).length === 0
+          ? requirePortableProjectDraft(cleaned)
+          : requireProjectConfigurationForPersistence(cleaned, this.modules);
+    }
+    const slotBindings = Object.fromEntries(
+      Object.entries(current.slotBindings).filter(([slot]) => !removedSlots.has(slot)),
+    );
+    for (const slot of Object.keys(slotBindings)) {
       if (!(slot in configuration.slots)) {
         throw new EngineError(
           "project.config-invalid",
@@ -1313,7 +1365,7 @@ export class ProjectService implements ProjectRegistry<
     }
     validateSlotBindings(
       configuration,
-      current.slotBindings,
+      slotBindings,
       eligibleCandidates(current.id, configuration, this.modules, this.resourceGrants),
       this.modules,
       "project.config-invalid",
@@ -1325,9 +1377,20 @@ export class ProjectService implements ProjectRegistry<
       ? this.repositoryWriter.write(current.repositoryPath, configuration)
       : undefined;
     try {
-      const updated = this.store.transaction(() =>
-        this.store.replaceConfiguration(current.id, configuration, configuration.metadata.name),
-      );
+      const updated = this.store.transaction(() => {
+        if (removedSlots.size > 0)
+          this.store.replaceBindings(
+            current.id,
+            current.repositoryPath,
+            current.bookmarkRef,
+            slotBindings,
+          );
+        return this.store.replaceConfiguration(
+          current.id,
+          configuration,
+          configuration.metadata.name,
+        );
+      });
       if (updated === undefined) throw notFound(current.id);
       return toDetail(updated, this.repositoryAccessibility);
     } catch (error) {

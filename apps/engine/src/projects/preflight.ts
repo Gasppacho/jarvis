@@ -19,7 +19,7 @@ export type PreflightCheck = components["schemas"]["PreflightCheck"];
 
 type PreflightTrigger = NonNullable<components["schemas"]["ProjectPreflightV1"]["trigger"]>;
 
-function developmentTrigger(
+export function developmentTrigger(
   configuration: StoredPortableProjectConfiguration,
 ): PreflightTrigger | undefined {
   const instances = configuration.modules.filter(
@@ -133,27 +133,32 @@ export async function preflightGitHub(input: {
   );
   const tag = trigger?.readyLabel ?? "";
   const ref = trigger?.scope.kind === "issue" ? trigger.scope.workItemRef : undefined;
-  checks.push(
-    check(
-      "development",
-      `Label : ${tag}`,
-      tag !== "",
-      "Development possède le prédicat de readiness et sa cible. Une issue à la fois.",
-      "Workflow",
-    ),
-  );
-  checks.push(
-    check(
-      "concurrency",
-      "Une issue à la fois",
-      input.configuration.workspace.maxConcurrentExecutions === 1,
-      "Réglez la concurrence du projet à 1.",
-      "Workflow",
-    ),
-  );
+  if (development)
+    checks.push(
+      check(
+        "development",
+        `Label : ${tag}`,
+        tag !== "",
+        "Development possède le prédicat de readiness et sa cible. Une issue à la fois.",
+        "Workflow",
+      ),
+    );
+  if (development)
+    checks.push(
+      check(
+        "concurrency",
+        "Une issue à la fois",
+        input.configuration.workspace.maxConcurrentExecutions === 1,
+        "Réglez la concurrence du projet à 1.",
+        "Workflow",
+      ),
+    );
   const github = input.configuration.modules.filter(
     (m) => m.enabled && m.moduleId === "jarvis.module.github",
   );
+  if (github.length === 0 && development === undefined) {
+    return { checks, candidateEligibility: { status: "empty", items } };
+  }
   if (github.length !== 1) {
     checks.push(
       check(
@@ -171,7 +176,6 @@ export async function preflightGitHub(input: {
     };
   }
   const source = github[0]!;
-  const readyLabel = source.configuration?.["readyLabel"] ?? "ready-for-agent";
   const sourceApi = input.apiFor("sourceControl");
   const deadline = input.now() + 10_000;
   const api: GitHubApi | undefined = sourceApi && {
@@ -220,17 +224,32 @@ export async function preflightGitHub(input: {
       const accessible =
         response.status === 200 &&
         body?.permissions?.pull === true &&
-        body.permissions.push === true;
+        (development === undefined || body.permissions.push === true);
       checks.push(
         check(
           `repository:${slug}`,
           `Accès à ${slug}`,
           accessible,
-          "Le compte lié doit pouvoir lire les issues et pousser une branche dans ce dépôt.",
+          development
+            ? "Le compte lié doit pouvoir lire les issues et pousser une branche dans ce dépôt."
+            : "Le compte lié doit pouvoir lire les issues de ce dépôt.",
           "Connections",
         ),
       );
       if (!accessible) continue;
+      if (!development) {
+        await readCurrentIssues(api, slug);
+        checks.push(
+          check(
+            `issues:${slug}`,
+            "Lecture des issues",
+            true,
+            "GitHub peut observer les issues ; aucun développement n’est configuré.",
+            "Connections",
+          ),
+        );
+        continue;
+      }
       const label = await api.get(`/repos/${slug}/labels/${encodeURIComponent(tag)}`);
       const labelBody = label.body as { name?: unknown } | null;
       checks.push(
@@ -238,7 +257,7 @@ export async function preflightGitHub(input: {
           `label:${slug}`,
           `Label : ${tag}`,
           label.status === 200 && labelBody?.name === tag,
-          `Vérifiez le label ${tag} dans GitHub ou corrigez la règle. Jarvis ne crée aucun label.`,
+          `Vérifiez le label ${tag} dans GitHub ou corrigez le label de Development. Jarvis ne crée aucun label.`,
           "Workflow",
         ),
       );
@@ -278,22 +297,24 @@ export async function preflightGitHub(input: {
               : "ineligible",
           openDependencyCount: blockerRefs.length,
           blockerRefs: [...blockerRefs],
-          reason: alreadyAdmitted
-            ? "Cette issue a déjà été admise ; elle ne redémarrera pas automatiquement."
-            : reasonCode === "dependencies-unavailable" ||
-                reasonCode === "dependency-state-unavailable"
-              ? "Impossible de lire les dépendances natives. Development attendra."
-              : blockerRefs.length > 0
-                ? "Dépendance ouverte : Development attendra."
-                : reasonCode === "work-item-closed"
-                  ? "L’issue est fermée. Development ne démarrera pas ; choisissez une issue ouverte."
-                  : reasonCode === "ready-label-missing"
-                    ? "Le label de readiness a été retiré. Corrigez le label ou choisissez une autre issue."
-                    : reasonCode === "work-item-is-pull-request"
-                      ? "Cet objet est une Pull Request, pas une issue."
-                      : reasonCode === "repository-unlinked"
-                        ? "Le dépôt n’est pas autorisé par la configuration Development."
-                        : "Aucune dépendance ouverte.",
+          reason: unavailable
+            ? "Impossible de vérifier l’issue ou ses dépendances. Réessayez avant de démarrer."
+            : alreadyAdmitted
+              ? "Cette issue a déjà été admise ; elle ne redémarrera pas automatiquement."
+              : reasonCode === "dependencies-unavailable" ||
+                  reasonCode === "dependency-state-unavailable"
+                ? "Impossible de lire les dépendances natives. Development attendra."
+                : blockerRefs.length > 0
+                  ? "Dépendance ouverte : Development attendra."
+                  : reasonCode === "work-item-closed"
+                    ? "L’issue est fermée. Development ne démarrera pas ; choisissez une issue ouverte."
+                    : reasonCode === "ready-label-missing"
+                      ? "Le label de readiness a été retiré. Corrigez le label ou choisissez une autre issue."
+                      : reasonCode === "work-item-is-pull-request"
+                        ? "Cet objet est une Pull Request, pas une issue."
+                        : reasonCode === "repository-unlinked"
+                          ? "Le dépôt n’est pas autorisé par la configuration Development."
+                          : "Aucune dépendance ouverte.",
           repositoryId: repository.repositoryId,
         });
       }

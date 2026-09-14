@@ -232,7 +232,7 @@ export function buildServer(deps: ServerDependencies): FastifyInstance {
     if (typeof projectId !== "string" || projectId.trim() === "") {
       throw new EngineError("api.invalid-request", 400, "Project id is required.");
     }
-    const summary = deps.projects.resumeProject(projectId);
+    const summary = await deps.projects.resumeProject(projectId);
     deps.developmentAdmissions?.resume(summary.id);
     return reply.code(200).send(summary);
   });
@@ -279,7 +279,7 @@ export function buildServer(deps: ServerDependencies): FastifyInstance {
         deps.projects.pauseProject(projectId);
         deps.developmentAdmissions.suspend(projectId);
       } else {
-        const summary = deps.projects.resumeProject(projectId);
+        const summary = await deps.projects.resumeProject(projectId);
         deps.developmentAdmissions.resume(summary.id);
       }
       return reply.code(200).send(deps.developmentAdmissions.read(projectId));

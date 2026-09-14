@@ -1241,6 +1241,12 @@ esac
       await waitForRequest(fakeGitHub, "/repos/Gasppacho/jarvis/issues/events");
       await waitForCursor(engine.dataRoot, "bootstrap-empty");
 
+      // Isolate the event-feed failure from the independent snapshot observation.
+      const restoreIssues = fakeGitHub.scriptRoute(
+        "GET",
+        "/repos/Gasppacho/jarvis/issues?state=open&per_page=100&page=1",
+        { status: 200, body: [] },
+      );
       const event = fakeGitHub.appendLabeledIssueEvent({
         owner: "Gasppacho",
         repository: "jarvis",
@@ -1295,9 +1301,11 @@ esac
         }
       } finally {
         restore();
+        restoreIssues();
       }
 
       await waitForFactCount(engine, project.id, 1);
+      await waitForCursor(engine.dataRoot, String(event.id), project.id);
       const database = new Database(`${engine.dataRoot}/jarvis.sqlite`);
       try {
         expect(
@@ -1317,8 +1325,8 @@ esac
             )
             .get(project.id, "github", "main"),
         ).toEqual({
-          external_event_id: "bootstrap-empty",
-          event_timestamp: "1970-01-01T00:00:00.000Z",
+          external_event_id: String(event.id),
+          event_timestamp: "2026-09-11T10:01:00.000Z",
         });
       } finally {
         database.close();
@@ -1486,9 +1494,11 @@ esac
     await waitForCursor(engine.dataRoot, "1", project.id, "secondary");
 
     const beforeNewLabel = await engine.call(`/v1/projects/${project.id}/events`);
-    expect(((await beforeNewLabel.json()) as { readonly items: readonly unknown[] }).items).toEqual(
-      [],
-    );
+    const initialEvents = (await beforeNewLabel.json()) as {
+      readonly items: readonly { readonly type: string }[];
+    };
+    // Bootstrap ignores historical label events, not the current issue snapshot.
+    expect(initialEvents.items.filter(({ type }) => type !== "scm.work-item.observed")).toEqual([]);
     await waitForCursor(engine.dataRoot, "bootstrap-empty", project.id, "main");
 
     const newEvent = fakeGitHub.appendLabeledIssueEvent({
@@ -1947,6 +1957,10 @@ function projectConfig(
   ) as Record<string, unknown>;
   configuration["metadata"] = { id: projectId, name: `Polling Project ${projectId}` };
   configuration["compositionMode"] = "fixed-modules";
+  configuration["workspace"] = {
+    ...(configuration["workspace"] as Record<string, unknown>),
+    maxConcurrentExecutions: 1,
+  };
   configuration["slots"] = {
     sourceControl: { requires: "scm.change-request.manage" },
     agentRuntime: { requires: "agent.execute" },

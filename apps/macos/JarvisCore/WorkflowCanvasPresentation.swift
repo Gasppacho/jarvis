@@ -28,6 +28,8 @@ public struct WorkflowCanvasPresentation: Sendable, Equatable {
 
     public let nodes: [Node]
     public let edges: [Edge]
+    public var connections: [Edge] { edges.filter { $0.to != nil && $0.from != $0.to } }
+    public var unconnectedOutputs: [Edge] { edges.filter { $0.to == nil } }
 
     public init(graph: ProjectCompositionGraph) {
         let ordered = graph.nodes.sorted { $0.instanceId < $1.instanceId }
@@ -48,20 +50,20 @@ public struct WorkflowCanvasPresentation: Sendable, Equatable {
             }
             return Node(
                 id: node.instanceId,
-                title: node.displayName ?? node.moduleId,
+                title: node.moduleId == "jarvis.module.development" ? "Développement" : node.displayName ?? node.moduleId,
                 moduleId: node.moduleId,
                 enabled: node.enabled,
                 x: position.0,
                 y: position.1,
-                accessibilityLabel: "Module \(node.displayName ?? node.moduleId), \(node.enabled ? "enabled" : "disabled")")
+                accessibilityLabel: "Module \(node.displayName ?? node.moduleId), \(node.enabled ? "activé" : "désactivé")")
         }
         edges = graph.edges.enumerated().map { index, edge in
             let route: String
             switch edge.routing {
-            case .resolved(let consumer): route = "resolved to \(consumer.instanceId)"
-            case .orphaned: route = "orphaned, no consumer"
-            case .ambiguous(let candidates): route = "ambiguous: \(candidates.map(\.instanceId).joined(separator: ", "))"
-            case .none: route = edge.kind == .fact ? "broadcast" : "unresolved"
+            case .resolved(let consumer): route = "vers \(consumer.instanceId)"
+            case .orphaned: route = "sans destinataire"
+            case .ambiguous(let candidates): route = "plusieurs destinataires : \(candidates.map(\.instanceId).joined(separator: ", "))"
+            case .none: route = edge.to.map { "diffusion vers \($0.instanceId)" } ?? "sans destinataire"
             }
             return Edge(
                 id: "edge:\(index):\(edge.kind):\(edge.from.instanceId):\(edge.contract.type):\(edge.contract.version)",
@@ -70,10 +72,29 @@ public struct WorkflowCanvasPresentation: Sendable, Equatable {
                 kind: edge.kind,
                 contractType: edge.contract.type,
                 contractVersion: edge.contract.version,
-                label: "\(edge.contract.type).v\(edge.contract.version)",
-                compatibilityLabel: "Engine contract \(edge.contract.type).v\(edge.contract.version) (\(edge.kind == .request ? "request" : "fact"))",
-                triggerLabel: edge.kind == .request ? "Engine routing: \(route)" : "Engine broadcast delivery",
-                accessibilityLabel: "\(edge.kind == .request ? "Request" : "Fact") \(edge.contract.type), \(route)")
+                label: Self.eventName(edge.contract.type),
+                compatibilityLabel: "\(edge.contract.type).v\(edge.contract.version) · \(edge.kind == .request ? "demande" : "fait")",
+                triggerLabel: edge.contract.type == "scm.work-item.observed"
+                    ? "Développement contrôle le label, la portée et les dépendances avant tout départ."
+                    : "Routage : \(route)",
+                accessibilityLabel: "\(Self.eventName(edge.contract.type)), \(route)")
+        }
+    }
+
+    private static func eventName(_ type: String) -> String {
+        switch type {
+        case "scm.work-item.observed": "Observation des issues"
+        case "scm.change-request.creation-requested": "Demande de Pull Request"
+        case "scm.change-request.created": "Pull Request créée"
+        case "scm.change-request.creation-failed": "Création de Pull Request échouée"
+        case "development.implementation.requested": "Demande interne de développement"
+        case "development.implementation.completed": "Développement terminé"
+        case "development.implementation.failed": "Développement échoué"
+        case "scm.work-item.tags-changed": "Labels modifiés"
+        case "scm.work-item.tags-change-failed": "Modification des labels échouée"
+        case "scm.work-item.ready": "Éligibilité historique"
+        case "scm.work-item.tag-added": "Label ajouté (historique)"
+        default: "Événement du module"
         }
     }
 }

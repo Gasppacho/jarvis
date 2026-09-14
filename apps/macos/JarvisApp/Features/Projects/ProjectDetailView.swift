@@ -323,7 +323,8 @@ public struct ProjectDetailView: View {
                     selectedCompositionID = "instance:\(instanceId)"
                     withAnimation { proxy.scrollTo("module-instance-\(instanceId)", anchor: .top) }
                 })
-            slotRequirementsEditor
+            if state.draft?.isFixedComposition != true {
+                slotRequirementsEditor
 
             HStack {
                 Text("Module Instances").font(.headline)
@@ -345,6 +346,13 @@ public struct ProjectDetailView: View {
                 moduleEditor(
                     module,
                     projectSlots: state.draft?.slotRequirements.keys.sorted() ?? [])
+            }
+            } else {
+                DisclosureGroup("Détails techniques des modules") {
+                    ForEach(presentation.moduleCards) { card in
+                        Text(card.technicalDetails).font(.caption.monospaced())
+                    }
+                }
             }
         }
     }

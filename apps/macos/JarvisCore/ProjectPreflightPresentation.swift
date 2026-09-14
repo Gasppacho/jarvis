@@ -40,6 +40,8 @@ public enum ProjectPreflightState: Sendable, Equatable {
             && report.candidateEligibility.items.contains { $0.workItemRef == ref && $0.status == .eligible }
     }
     public var activationTitle: String {
+        if let report, report.trigger == nil { return "Observer les issues" }
+        return
         report?.configuredWorkItemRef.map { "Tester avec l’issue \(Self.issueLabel($0))" }
             ?? "Surveiller les issues prêtes"
     }

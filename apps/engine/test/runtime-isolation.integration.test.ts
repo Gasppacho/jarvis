@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { seedActivatedConsumerProject } from "./activated-project-fixture.js";
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -311,12 +312,7 @@ async function activateProject(
   expect(reportResponse.status, JSON.stringify(report)).toBe(200);
   expect(report.valid, JSON.stringify(report)).toBe(true);
 
-  const activated = await engine.call(`/v1/projects/${projectId}/activate`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ compositionFingerprint: report.compositionFingerprint }),
-  });
-  expect(activated.status, await activated.clone().text()).toBe(200);
+  await seedActivatedConsumerProject(engine, projectId);
 }
 
 async function readBindings(
@@ -370,13 +366,18 @@ async function waitForTerminalExecutions(
   for (;;) {
     const response = await engine.call(`/v1/projects/${projectId}/executions`);
     const body = (await response.json()) as { items: ExecutionSummary[] };
+    // This fixture proves Development runtime isolation, not PR delivery: its
+    // fixture:// subject is intentionally not a GitHub work-item URL.
+    const executions = body.items.filter(
+      ({ moduleInstanceId }) => moduleInstanceId === "development",
+    );
     if (
-      body.items.length >= 2 &&
-      body.items.every(({ status }) =>
+      executions.length >= 2 &&
+      executions.every(({ status }) =>
         ["completed", "failed", "cancelled", "timed-out"].includes(status),
       )
     ) {
-      return body.items;
+      return executions;
     }
     if (Date.now() >= deadline) {
       throw new Error(`Executions for ${projectId} did not reach a terminal state.`);

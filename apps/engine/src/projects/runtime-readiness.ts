@@ -213,6 +213,17 @@ export async function checkProjectRuntimeReadiness(
         "Choisissez explicitement un runtime et autorisez son profil local pour ce projet.",
       );
     const descriptor = runtimes.descriptor(project.id, binding.ref);
+    // The in-process runtime has no CLI executable or login to probe. Its
+    // existing Runtime port remains the readiness authority.
+    if (descriptor?.provider === "fake") {
+      const observed = await runtimes.resolve(project.id, binding.ref)?.describe();
+      if (
+        observed?.status === "available" &&
+        slot.requiredCapabilities.every((capability) => observed.capabilities.includes(capability))
+      )
+        continue;
+      return result("absent", "Le runtime lié au projet n’est pas disponible.");
+    }
     if (descriptor?.provider !== "codex" || descriptor.executablePath === null) {
       return result(
         "absent",

@@ -397,6 +397,15 @@ async function handleFakeGitHubRequest(
   }
 
   const url = new URL(path, `http://${request.headers.host ?? "127.0.0.1"}`);
+  if (method === "GET" && /^\/repos\/[^/]+\/[^/]+$/.test(url.pathname)) {
+    writeJson(response, 200, { permissions: { pull: true, push: true } });
+    return;
+  }
+  const labelMatch = /^\/repos\/[^/]+\/[^/]+\/labels\/([^/]+)$/.exec(url.pathname);
+  if (method === "GET" && labelMatch) {
+    writeJson(response, 200, { name: decodeURIComponent(labelMatch[1]!) });
+    return;
+  }
   const issueMatch = /^\/repos\/([^/]+)\/([^/]+)\/issues\/([1-9]\d*)$/.exec(url.pathname);
   if (method === "GET" && issueMatch !== null) {
     const owner = issueMatch[1];
