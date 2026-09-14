@@ -415,7 +415,7 @@ export class ProjectModuleCapabilityResolver {
     const slot =
       declaredSlot !== undefined && snapshot.bindings.slots[declaredSlot] !== undefined
         ? declaredSlot
-        : inferredSlot ?? declaredSlot;
+        : (inferredSlot ?? declaredSlot);
     if (slot === undefined) {
       return unresolvedOrAbsent(
         requirement,
