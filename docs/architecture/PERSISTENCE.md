@@ -24,6 +24,7 @@ La base est physiquement partagée, mais chaque table a un owner :
 | `workspace_leases` | Workspace |
 | `connections`, `runtime_descriptors` | Registries; secrets remain in Keychain |
 | `github_cursors`, `external_mappings` | GitHub Module |
+| `project_migration_state` | Project Runtime; aperçu courant et historique de conversion guidée |
 | module-specific tables | The owning module only |
 
 Aucun module ne requête les tables d'un autre owner.
@@ -120,6 +121,10 @@ Le lease conserve repository, branch, base SHA, PID éventuel, expiration et cle
 - Une migration appliquée est immuable.
 - Backup automatique avant migration non triviale.
 - Test CI : base vide → latest et snapshot N-1 → latest.
+- La conversion guidée D06 conserve dans `project_migration_state` la configuration
+  et les Local Bindings précédents; sa transaction SQLite est compensée par le
+  writer atomique du repository si `.jarvis/project.yaml` a été explicitement
+  confirmé.
 
 ## Retention
 

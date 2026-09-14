@@ -106,6 +106,13 @@ import {
   projectAgentRuntimeChoices,
 } from "./runtime-readiness.js";
 import { detectedRuntimeEnvironment } from "../runtimes/registry.js";
+import { randomUUID } from "node:crypto";
+import {
+  classifyGuidedMigration,
+  migratedConfiguration,
+  type GuidedMigrationPlan,
+} from "./migration.js";
+import type { ProjectMigrationState } from "./store.js";
 import type { ProjectAgentRuntimeChoices } from "../../../../packages/project-runtime/src/project-types.js";
 import type { LocalAgentRuntimeRegistry } from "./resource-grants.js";
 
@@ -605,6 +612,127 @@ export class ProjectService implements ProjectRegistry<
   validateProject(id: unknown): ProjectValidationReport {
     const project = this.requireProject(id);
     return toWireValidationReport(this.validateComposition(project, undefined).validation);
+  }
+
+  previewGuidedMigration(id: unknown): unknown {
+    const project = this.requireProject(id);
+    const state = this.store.getMigrationState(project.id);
+    if (state?.appliedAt !== null && state?.appliedAt !== undefined)
+      return migrationResult(project, state);
+    const fingerprint = this.validateComposition(project, undefined).validation
+      .compositionFingerprint;
+    if (fingerprint === undefined)
+      throw new EngineError(
+        "system.internal-error",
+        500,
+        "The composition validator produced no compositionFingerprint.",
+      );
+    const bindings = toBindings(project);
+    const classified = classifyGuidedMigration(project.portableConfig, bindings);
+    if (classified.plan !== undefined)
+      this.store.saveMigrationPreview(project.id, fingerprint, classified.plan);
+    return {
+      apiVersion: "jarvis.dev/project-guided-migration/v1",
+      kind: "ProjectGuidedMigrationPreview",
+      projectId: project.id,
+      classification: "engine-only",
+      canApply:
+        classified.plan !== undefined &&
+        project.status === "paused" &&
+        !this.executionLedger.hasNonTerminalWork(project.id),
+      compositionFingerprint: fingerprint,
+      reasons: [
+        ...classified.reasons,
+        ...(project.status === "paused"
+          ? []
+          : [{ code: "project-active", message: "Le projet doit être en pause." }]),
+        ...(this.executionLedger.hasNonTerminalWork(project.id)
+          ? [
+              {
+                code: "work-pending",
+                message: "Une exécution ou une livraison non terminale existe encore.",
+              },
+            ]
+          : []),
+      ],
+      plan: classified.plan ?? null,
+    };
+  }
+
+  applyGuidedMigration(request: {
+    projectId: unknown;
+    compositionFingerprint: unknown;
+    writeToRepository: unknown;
+  }): unknown {
+    const project = this.requireProject(request.projectId);
+    if (
+      typeof request.compositionFingerprint !== "string" ||
+      typeof request.writeToRepository !== "boolean"
+    )
+      throw new EngineError(
+        "api.invalid-request",
+        400,
+        "compositionFingerprint and writeToRepository are required.",
+      );
+    const state = this.store.getMigrationState(project.id);
+    if (state?.appliedAt !== null && state?.appliedAt !== undefined)
+      return migrationResult(project, state);
+    const currentFingerprint = this.validateComposition(project, undefined).validation
+      .compositionFingerprint;
+    if (
+      state === undefined ||
+      state.sourceFingerprint !== request.compositionFingerprint ||
+      currentFingerprint !== request.compositionFingerprint
+    )
+      throw new EngineError(
+        "project.activation-report-stale",
+        409,
+        "The migration preview is missing or stale; request a new preview.",
+      );
+    if (project.status !== "paused")
+      throw new EngineError("project.active", 409, "The project must be paused before migration.");
+    if (this.executionLedger.hasNonTerminalWork(project.id))
+      throw new EngineError(
+        "project.active",
+        409,
+        "The project has non-terminal work and cannot be migrated.",
+      );
+    const plan = state.plan as GuidedMigrationPlan;
+    const configuration = migratedConfiguration(project.portableConfig, plan);
+    requirePortableProjectConfiguration(configuration, this.modules);
+    const compensation = request.writeToRepository
+      ? this.repositoryWriter.write(project.repositoryPath, configuration)
+      : undefined;
+    const bindings = toBindings(project);
+    const historyId = randomUUID();
+    try {
+      const updated = this.store.applyMigration(
+        project.id,
+        request.compositionFingerprint,
+        configuration,
+        bindings,
+        historyId,
+      );
+      if (updated === undefined)
+        throw new EngineError(
+          "project.activation-report-stale",
+          409,
+          "The migration preview is stale; request a new preview.",
+        );
+      const nextState = this.store.getMigrationState(project.id)!;
+      return migrationResult(updated, nextState);
+    } catch (error) {
+      try {
+        compensation?.restore();
+      } catch {
+        throw new EngineError(
+          "project.repository-compensation-failed",
+          500,
+          "The previous portable configuration could not be restored.",
+        );
+      }
+      throw error;
+    }
   }
 
   /**
@@ -2223,5 +2351,24 @@ function toBindings(row: ProjectRow): ProjectBindings {
       ]),
     ),
     slots: row.slotBindings,
+  };
+}
+
+function migrationResult(project: ProjectRow, state: ProjectMigrationState): unknown {
+  return {
+    apiVersion: "jarvis.dev/project-guided-migration/v1",
+    kind: "ProjectGuidedMigrationResult",
+    projectId: project.id,
+    applied: state.appliedAt !== null,
+    appliedAt: state.appliedAt,
+    historyId: state.historyId,
+    configuration: project.portableConfig,
+    backup:
+      state.previousConfiguration === null || state.previousBindings === null
+        ? null
+        : {
+            configuration: state.previousConfiguration,
+            bindings: state.previousBindings,
+          },
   };
 }

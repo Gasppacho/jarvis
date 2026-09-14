@@ -1,0 +1,18 @@
+{
+  "apiVersion": "jarvis.dev/project-guided-migration/v1",
+  "kind": "ProjectGuidedMigrationPreview",
+  "projectId": "historical-project",
+  "classification": "engine-only",
+  "canApply": true,
+  "compositionFingerprint": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "reasons": [],
+  "plan": {
+    "removedModule": "jarvis.module.automation-rules",
+    "destination": {
+      "modules": ["jarvis.module.github", "jarvis.module.development"],
+      "compositionMode": "fixed-modules",
+      "readyLabel": "ready-for-agent",
+      "scope": "all"
+    }
+  }
+}

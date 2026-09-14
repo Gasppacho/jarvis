@@ -38,6 +38,18 @@ export interface ProjectRow {
   readonly updatedAt: string;
 }
 
+export interface ProjectMigrationState {
+  readonly projectId: string;
+  readonly sourceFingerprint: string;
+  readonly plan: unknown;
+  readonly previewedAt: string;
+  readonly appliedAt: string | null;
+  readonly historyId: string | null;
+  readonly previousConfiguration: StoredPortableProjectConfiguration | null;
+  readonly previousBindings: ProjectBindings | null;
+  readonly resultingConfiguration: StoredPortableProjectConfiguration | null;
+}
+
 export interface NewProject {
   readonly id: string;
   readonly name: string;
@@ -143,6 +155,89 @@ export class ProjectStore {
 
   transaction<Result>(operation: () => Result): Result {
     return this.db.transaction(operation)();
+  }
+
+  getMigrationState(projectId: string): ProjectMigrationState | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM project_migration_state WHERE project_id = ?")
+      .get(projectId) as
+      | {
+          project_id: string;
+          source_fingerprint: string;
+          plan: string;
+          previewed_at: string;
+          applied_at: string | null;
+          history_id: string | null;
+          previous_configuration: string | null;
+          previous_bindings: string | null;
+          resulting_configuration: string | null;
+        }
+      | undefined;
+    return row === undefined
+      ? undefined
+      : {
+          projectId: row.project_id,
+          sourceFingerprint: row.source_fingerprint,
+          plan: JSON.parse(row.plan),
+          previewedAt: row.previewed_at,
+          appliedAt: row.applied_at,
+          historyId: row.history_id,
+          previousConfiguration:
+            row.previous_configuration === null ? null : JSON.parse(row.previous_configuration),
+          previousBindings:
+            row.previous_bindings === null ? null : JSON.parse(row.previous_bindings),
+          resultingConfiguration:
+            row.resulting_configuration === null ? null : JSON.parse(row.resulting_configuration),
+        };
+  }
+
+  saveMigrationPreview(projectId: string, fingerprint: string, plan: unknown): void {
+    this.db
+      .prepare(
+        `INSERT INTO project_migration_state
+      (project_id, source_fingerprint, plan, previewed_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(project_id) DO UPDATE SET source_fingerprint = excluded.source_fingerprint,
+        plan = excluded.plan, previewed_at = excluded.previewed_at
+      WHERE project_migration_state.applied_at IS NULL`,
+      )
+      .run(projectId, fingerprint, JSON.stringify(plan), this.clock.now().toISOString());
+  }
+
+  applyMigration(
+    projectId: string,
+    fingerprint: string,
+    configuration: StoredPortableProjectConfiguration,
+    bindings: ProjectBindings,
+    historyId: string,
+  ): ProjectRow | undefined {
+    return this.db.transaction(() => {
+      const current = this.findById(projectId);
+      if (current === undefined) return undefined;
+      const state = this.getMigrationState(projectId);
+      if (state?.appliedAt !== null && state?.appliedAt !== undefined) return current;
+      if (state === undefined || state.sourceFingerprint !== fingerprint) return undefined;
+      const now = this.clock.now().toISOString();
+      this.db
+        .prepare(
+          `UPDATE projects SET portable_config = ?, name = ?, status = 'paused', updated_at = ? WHERE id = ?`,
+        )
+        .run(JSON.stringify(configuration), configuration.metadata.name, now, projectId);
+      this.db
+        .prepare(
+          `UPDATE project_migration_state SET applied_at = ?, history_id = ?,
+        previous_configuration = ?, previous_bindings = ?, resulting_configuration = ? WHERE project_id = ?`,
+        )
+        .run(
+          now,
+          historyId,
+          JSON.stringify(current.portableConfig),
+          JSON.stringify(bindings),
+          JSON.stringify(configuration),
+          projectId,
+        );
+      return this.findById(projectId);
+    })();
   }
 
   /**

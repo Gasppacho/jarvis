@@ -62,6 +62,12 @@ export type LocalProjectRegistry = ProjectRegistry<
     getExecutionDetail(id: unknown, executionId: unknown): ProjectExecutionDetail;
     pauseProject(id: unknown): ProjectSummary;
     resumeProject(id: unknown): ProjectSummary;
+    previewGuidedMigration(id: unknown): unknown;
+    applyGuidedMigration(request: {
+      projectId: unknown;
+      compositionFingerprint: unknown;
+      writeToRepository: unknown;
+    }): unknown;
   };
 export type LocalRepositoryDiscovery = RepositoryDiscoveryPort<RepositoryDiscovery>;
 
@@ -121,6 +127,26 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
       message,
     }));
     return reply.code(200).send({ valid: report.valid, issues });
+  });
+
+  app.post("/v1/projects/:projectId/migration/preview", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    return reply.code(200).send(service.previewGuidedMigration(params?.projectId));
+  });
+
+  app.post("/v1/projects/:projectId/migration/apply", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: unknown } | undefined;
+    const body = request.body as
+      { compositionFingerprint?: unknown; writeToRepository?: unknown } | undefined;
+    return reply.code(200).send(
+      service.applyGuidedMigration({
+        projectId: params?.projectId,
+        compositionFingerprint: body?.compositionFingerprint,
+        writeToRepository: body?.writeToRepository,
+      }),
+    );
   });
 
   app.post("/v1/projects/:projectId/preflight", async (request, reply) => {

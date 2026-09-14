@@ -596,6 +596,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{projectId}/migration/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["previewGuidedMigration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{projectId}/migration/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["applyGuidedMigration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{projectId}/bindings": {
         parameters: {
             query?: never;
@@ -836,6 +872,39 @@ export interface components {
                     remoteUrl?: string | null;
                 };
             };
+        };
+        ProjectGuidedMigrationReason: {
+            code: string;
+            message: string;
+        };
+        ProjectGuidedMigrationPreview: {
+            /** @constant */
+            apiVersion: "jarvis.dev/project-guided-migration/v1";
+            /** @constant */
+            kind: "ProjectGuidedMigrationPreview";
+            projectId: string;
+            /** @constant */
+            classification: "engine-only";
+            canApply: boolean;
+            compositionFingerprint: string;
+            reasons: components["schemas"]["ProjectGuidedMigrationReason"][];
+            plan: Record<string, never> | null;
+        } & {
+            [key: string]: unknown;
+        };
+        ProjectGuidedMigrationResult: {
+            /** @constant */
+            apiVersion: "jarvis.dev/project-guided-migration/v1";
+            /** @constant */
+            kind: "ProjectGuidedMigrationResult";
+            projectId: string;
+            applied: boolean;
+            appliedAt: string | null;
+            historyId: string | null;
+            configuration: Record<string, never>;
+            backup: Record<string, never> | null;
+        } & {
+            [key: string]: unknown;
         };
         ValidationContract: {
             type: string;
@@ -2723,6 +2792,64 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectDetail"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    previewGuidedMigration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Strict D06 migration diagnosis without secrets. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectGuidedMigrationPreview"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
+    applyGuidedMigration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    compositionFingerprint: string;
+                    /** @description Explicit confirmation to update .jarvis/project.yaml. */
+                    writeToRepository: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Idempotent migration result with exportable local backup. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectGuidedMigrationResult"];
                 };
             };
             401: components["responses"]["Unauthorized"];

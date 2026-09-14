@@ -110,6 +110,23 @@ Engine complet mais encore vide de Slots et Module Instances. Cela permet de sau
 et rouvrir un point de départ incomplet sans affaiblir le schéma de la Portable
 Configuration prête à valider.
 
+### Migration guidée historique
+
+`POST /v1/projects/{projectId}/migration/preview` classe sans mutation un ancien
+parcours guidé selon le sous-ensemble strict D06. Le plan expose le label, les
+repositories, remotes, branches, commandes, workspace et Local Bindings conservés,
+le retrait d'Automation Rules et la destination fixe GitHub + Development. Toute
+condition, surcharge, cible, instance ou règle supplémentaire bloque la conversion
+avec une raison lisible.
+
+`POST /v1/projects/{projectId}/migration/apply` exige le fingerprint exact de cet
+aperçu et `writeToRepository: true` pour réécrire `.jarvis/project.yaml`; avec
+`false`, seul l'état local est converti. Le Project doit être pausé et sans
+exécution ou Delivery non terminale. L'opération est transactionnelle, idempotente
+après redémarrage et renvoie la sauvegarde locale exportable (configuration et
+bindings précédents). Les faits d'admission et demandes terminées ne sont pas
+rejoués.
+
 `POST /v1/projects/{projectId}/composition-review` assemble le même inventaire avec le
 rapport de validation et les choix de ressources dans une réponse
 `ProjectCompositionReviewV1`. `readyToValidate` est exactement le résultat Engine de

@@ -916,6 +916,45 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /v1/projects/{projectId}/migration/preview:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      operationId: previewGuidedMigration
+      responses:
+        "200":
+          description: Strict D06 migration diagnosis without secrets.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectGuidedMigrationPreview" }
+        default: { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /v1/projects/{projectId}/migration/apply:
+    parameters:
+      - $ref: "#/components/parameters/ProjectId"
+    post:
+      operationId: applyGuidedMigration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [compositionFingerprint, writeToRepository]
+              properties:
+                compositionFingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+                writeToRepository: { type: boolean, description: Explicit confirmation to update .jarvis/project.yaml. }
+      responses:
+        "200":
+          description: Idempotent migration result with exportable local backup.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProjectGuidedMigrationResult" }
+        default: { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /v1/projects/{projectId}/bindings:
     parameters:
       - $ref: "#/components/parameters/ProjectId"
@@ -1333,6 +1372,41 @@ components:
               remoteUrl:
                 type: [string, "null"]
                 description: Current remote selected by the saved project configuration, with credentials and query metadata removed. Null when unavailable or ambiguous; no origin fallback.
+    ProjectGuidedMigrationReason:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+    ProjectGuidedMigrationPreview:
+      type: object
+      additionalProperties: true
+      required: [apiVersion, kind, projectId, classification, canApply, compositionFingerprint, reasons, plan]
+      properties:
+        apiVersion: { type: string, const: jarvis.dev/project-guided-migration/v1 }
+        kind: { type: string, const: ProjectGuidedMigrationPreview }
+        projectId: { type: string }
+        classification: { type: string, const: engine-only }
+        canApply: { type: boolean }
+        compositionFingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
+        reasons:
+          type: array
+          items: { $ref: "#/components/schemas/ProjectGuidedMigrationReason" }
+        plan: { type: [object, "null"] }
+    ProjectGuidedMigrationResult:
+      type: object
+      additionalProperties: true
+      required: [apiVersion, kind, projectId, applied, appliedAt, historyId, configuration, backup]
+      properties:
+        apiVersion: { type: string, const: jarvis.dev/project-guided-migration/v1 }
+        kind: { type: string, const: ProjectGuidedMigrationResult }
+        projectId: { type: string }
+        applied: { type: boolean }
+        appliedAt: { type: [string, "null"] }
+        historyId: { type: [string, "null"] }
+        configuration: { type: object }
+        backup: { type: [object, "null"] }
     ValidationContract:
       type: object
       additionalProperties: false

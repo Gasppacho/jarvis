@@ -97,6 +97,20 @@ export class ExecutionLedgerReader {
     return rows.map(toSummary);
   }
 
+  public hasNonTerminalWork(projectId: string): boolean {
+    return (
+      this.db
+        .prepare(
+          `SELECT 1 FROM executions WHERE project_id = ?
+      AND status IN ('queued', 'running', 'cancelling') LIMIT 1`,
+        )
+        .get(projectId) !== undefined ||
+      this.db
+        .prepare(`SELECT 1 FROM deliveries WHERE project_id = ? AND consumed_at IS NULL LIMIT 1`)
+        .get(projectId) !== undefined
+    );
+  }
+
   public findById(projectId: string, executionId: string): LedgerExecutionSummary | undefined {
     const row = this.db
       .prepare(
