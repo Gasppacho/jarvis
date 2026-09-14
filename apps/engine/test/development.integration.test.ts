@@ -95,7 +95,7 @@ describe("Development Module tracer bullet", () => {
         2,
       );
       await publishTag(engine, "validation-environment", "environment");
-      const executions = await waitForExecutions(engine, "validation-environment", 2);
+      const executions = await waitForExecutions(engine, "validation-environment", 1);
       const development = executions.find(
         (execution) => execution.moduleInstanceId === "development",
       )!;
@@ -175,7 +175,7 @@ describe("Development Module tracer bullet", () => {
         );
         expect(response.status).toBe(202);
       } else writeFileSync(release, "release");
-      await waitForExecutions(engine, projectId, 2);
+      await waitForExecutions(engine, projectId, 1);
       const failed = (await readDetail(
         outcome === "cancelled" ? "validation-cancelled" : "failed",
       ))!;
@@ -196,28 +196,33 @@ describe("Development Module tracer bullet", () => {
     try {
       for (const number of [1, 2, 3]) {
         seedReadyIssue(number);
-        await publishTag(
+        await publishObserved(
           engine,
           "serial",
-          `serial-${number}`,
-          1,
           `github://Gasppacho/jarvis/issues/${number}`,
+          1,
+          "open",
+          ["ready-to-dev"],
         );
         await expect
           .poll(() =>
             database
               .prepare(
-                "SELECT count(*) AS n FROM deliveries WHERE module_id = 'jarvis.module.development'",
+                "SELECT count(*) AS n FROM deliveries JOIN events ON events.id = deliveries.event_id WHERE deliveries.module_id = 'jarvis.module.development' AND events.type = 'scm.work-item.observed'",
               )
               .get(),
           )
           .toEqual({ n: number });
       }
+      await expect
+        .poll(async () => (await admissionItems(engine, "serial")).map((item) => item.workItemRef), {
+          timeout: 5_000,
+        })
+        .toEqual([
+          "github://Gasppacho/jarvis/issues/2",
+          "github://Gasppacho/jarvis/issues/3",
+        ]);
       const waiting = await admissionItems(engine, "serial");
-      expect(waiting.map((item) => item.workItemRef)).toEqual([
-        "github://Gasppacho/jarvis/issues/2",
-        "github://Gasppacho/jarvis/issues/3",
-      ]);
       // Upgrade compatibility: Requests emitted before #194 omitted tag,
       // but their original causal label Fact remains durable.
       database
@@ -231,13 +236,13 @@ describe("Development Module tracer bullet", () => {
       expect(activeClaim).toMatchObject({ lease_owner: expect.any(String) });
       // The test engine lease is 200ms; dispatching a further fact spans
       // another tick and must renew the same running handler's ownership.
-      await publishTag(
+      await publishObserved(
         engine,
         "serial",
-        "unmatched-heartbeat",
-        1,
         "fixture://heartbeat",
-        "not-ready",
+        1,
+        "open",
+        ["not-ready"],
       );
       await expect
         .poll(() =>
@@ -282,7 +287,7 @@ describe("Development Module tracer bullet", () => {
       expect(
         database
           .prepare(
-            "SELECT attempt_count FROM deliveries WHERE module_id = 'jarvis.module.development'",
+            "SELECT attempt_count FROM deliveries JOIN events ON events.id = deliveries.event_id WHERE deliveries.module_id = 'jarvis.module.development' AND events.type = 'development.implementation.requested'",
           )
           .all(),
       ).toEqual([{ attempt_count: 1 }, { attempt_count: 1 }, { attempt_count: 1 }]);
@@ -290,7 +295,7 @@ describe("Development Module tracer bullet", () => {
       expect(
         database
           .prepare(
-            "SELECT count(*) AS n FROM executions WHERE module_id = 'jarvis.module.development'",
+            "SELECT count(*) AS n FROM executions JOIN events ON events.id = executions.input_event_id WHERE executions.module_id = 'jarvis.module.development' AND events.type = 'development.implementation.requested'",
           )
           .get(),
       ).toEqual({ n: 3 });
@@ -319,18 +324,19 @@ describe("Development Module tracer bullet", () => {
       try {
         for (const number of [1, 2, 3]) {
           seedReadyIssue(number);
-          await publishTag(
+          await publishObserved(
             engine,
             projectId,
-            `${change}-${number}`,
-            1,
             `github://Gasppacho/jarvis/issues/${number}`,
+            1,
+            "open",
+            ["ready-to-dev"],
           );
           await expect
             .poll(() =>
               database
                 .prepare(
-                  "SELECT count(*) AS n FROM deliveries WHERE module_id = 'jarvis.module.development'",
+                  "SELECT count(*) AS n FROM deliveries JOIN events ON events.id = deliveries.event_id WHERE deliveries.module_id = 'jarvis.module.development' AND events.type = 'scm.work-item.observed'",
                 )
                 .get(),
             )
@@ -369,7 +375,7 @@ describe("Development Module tracer bullet", () => {
         expect(
           database
             .prepare(
-              "SELECT attempt_count FROM deliveries JOIN events ON events.id = deliveries.event_id WHERE deliveries.module_id = 'jarvis.module.development' AND json_extract(events.envelope, '$.payload.workItemRef') LIKE '%/2'",
+              "SELECT attempt_count FROM deliveries JOIN events ON events.id = deliveries.event_id WHERE deliveries.module_id = 'jarvis.module.development' AND events.type = 'development.implementation.requested' AND json_extract(events.envelope, '$.payload.workItemRef') LIKE '%/2'",
             )
             .get(),
         ).toEqual({ attempt_count: 0 });
@@ -428,9 +434,9 @@ describe("Development Module tracer bullet", () => {
           },
         });
       }
-      await publishTag(engine, projectId, "fixed-first", 1, firstRef);
+      await publishObserved(engine, projectId, firstRef, 1, "open", ["ready-to-dev"]);
       await expect.poll(() => activeAdmissionRef(database, projectId)).toBe(firstRef);
-      await publishTag(engine, projectId, "fixed-second", 1, secondRef);
+      await publishObserved(engine, projectId, secondRef, 1, "open", ["ready-to-dev"]);
       await expect
         .poll(() =>
           database
@@ -458,6 +464,7 @@ describe("Development Module tracer bullet", () => {
       await expect
         .poll(() => workItemReadinessStatus(database, projectId, secondRef))
         .toBe("blocked");
+      await expect.poll(() => activeAdmissionRef(database, projectId)).toBeUndefined();
       const secondDelivery = database
         .prepare(
           `SELECT deliveries.consumed_at, deliveries.attempt_count
@@ -551,6 +558,7 @@ describe("Development Module tracer bullet", () => {
   it("keeps a closed GitHub Issue pending without a workspace, retry, or dead letter", async () => {
     const fixture = makeRealGitRepositoryFixture({
       remoteUrl: "git@github.com:Gasppacho/jarvis.git",
+      additionalRemotes: [{ name: "github", url: "git@github.com:Gasppacho/jarvis.git" }],
     });
     roots.push(fixture.root, fixture.remoteRoot);
     const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-pending-closed-"));
@@ -580,8 +588,29 @@ describe("Development Module tracer bullet", () => {
       },
     });
 
-    await activateProject(engine, "development-pending-closed", fixture);
-    await publishTag(engine, "development-pending-closed", "closed-pending", 1, workItemRef);
+    await activateProject(
+      engine,
+      "development-pending-closed",
+      fixture,
+      false,
+      300_000,
+      1_048_576,
+      { test: "node --test" },
+      ["test"],
+      false,
+      "origin",
+      0,
+      "runtime/fake-test",
+      { github: true },
+    );
+    await publishObserved(
+      engine,
+      "development-pending-closed",
+      workItemRef,
+      1,
+      "open",
+      ["ready-to-dev"],
+    );
     await waitForAdmission(dataRoot, "development-pending-closed", "ineligible");
     const admission = await engine.call(
       "/v1/projects/development-pending-closed/development-admission",
@@ -638,14 +667,22 @@ describe("Development Module tracer bullet", () => {
       expect(
         database
           .prepare(
-            "SELECT attempt_count FROM deliveries WHERE project_id = ? AND module_instance_id = 'development'",
+            `SELECT COALESCE(
+               (SELECT attempt_count FROM deliveries
+                JOIN events ON events.id = deliveries.event_id
+                WHERE deliveries.project_id = ?
+                  AND deliveries.module_instance_id = 'development'
+                  AND events.type = 'development.implementation.requested'
+                  AND json_extract(events.envelope, '$.payload.workItemRef') = ?),
+               0
+             ) AS attempt_count`,
           )
-          .get("development-pending-closed"),
+          .get("development-pending-closed", workItemRef),
       ).toEqual({ attempt_count: 0 });
       expect(
         database
           .prepare(
-            "SELECT consumed_at FROM deliveries WHERE project_id = ? AND module_instance_id = 'development' AND event_id IN (SELECT id FROM events WHERE json_extract(envelope, '$.payload.workItemRef') = ?)",
+            "SELECT consumed_at FROM deliveries WHERE project_id = ? AND module_instance_id = 'development' AND event_id IN (SELECT id FROM events WHERE type = 'scm.work-item.observed' AND json_extract(envelope, '$.payload.workItemRef') = ?)",
           )
           .get("development-pending-closed", workItemRef),
       ).toMatchObject({ consumed_at: expect.any(String) });
@@ -657,6 +694,7 @@ describe("Development Module tracer bullet", () => {
   it("does not start a new Development workspace while admission is suspended, then resumes it", async () => {
     const fixture = makeRealGitRepositoryFixture({
       remoteUrl: "git@github.com:Gasppacho/jarvis.git",
+      additionalRemotes: [{ name: "github", url: "git@github.com:Gasppacho/jarvis.git" }],
     });
     roots.push(fixture.root, fixture.remoteRoot);
     const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-suspended-"));
@@ -680,13 +718,27 @@ describe("Development Module tracer bullet", () => {
         labels: [{ name: "ready-to-dev" }],
       },
     });
-    await activateProject(engine, "development-suspended", fixture);
+    await activateProject(
+      engine,
+      "development-suspended",
+      fixture,
+      false,
+      300_000,
+      1_048_576,
+      { test: "node --test" },
+      ["test"],
+      false,
+      "origin",
+      0,
+      "runtime/fake-test",
+      { github: true },
+    );
     const suspended = await engine.call(
       "/v1/projects/development-suspended/development-admission/suspend",
       { method: "POST" },
     );
     expect(suspended.status).toBe(200);
-    await publishTag(engine, "development-suspended", "suspended", 1, workItemRef);
+    await publishObserved(engine, "development-suspended", workItemRef, 1, "open", ["ready-to-dev"]);
     await new Promise((resolve) => setTimeout(resolve, 300));
 
     const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
@@ -749,7 +801,7 @@ describe("Development Module tracer bullet", () => {
 
     await activateProject(engine, "development-work-item", fixture);
     await publishTag(engine, "development-work-item", "work-item", 1, workItemRef);
-    const executions = await waitForExecutions(engine, "development-work-item", 2);
+    const executions = await waitForExecutions(engine, "development-work-item", 1);
     const development = executions.find(
       ({ moduleInstanceId }) => moduleInstanceId === "development",
     );
@@ -863,7 +915,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
       "runtime/codex-default",
     );
     await publishTag(engine, projectId, "codex");
-    const executions = await waitForExecutions(engine, projectId, 2);
+    const executions = await waitForExecutions(engine, projectId, 1);
     expect(
       executions.find(({ moduleInstanceId }) => moduleInstanceId === "development"),
       JSON.stringify(executions),
@@ -967,7 +1019,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
     );
     chmodSync(executable, 0o644);
     await publishTag(engine, projectId, "preflight");
-    const executions = await waitForExecutions(engine, projectId, 2);
+    const executions = await waitForExecutions(engine, projectId, 1);
     const development = executions.find(
       ({ moduleInstanceId }) => moduleInstanceId === "development",
     );
@@ -1016,7 +1068,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
       ["test"],
     );
     await publishTag(engine, projectId, "preparation-failure");
-    const executions = await waitForExecutions(engine, projectId, 2);
+    const executions = await waitForExecutions(engine, projectId, 1);
     const development = executions.find(
       ({ moduleInstanceId }) => moduleInstanceId === "development",
     );
@@ -1076,7 +1128,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
       "build",
     ]);
     const firstFact = await publishTag(engine, projectId);
-    const firstExecutions = await waitForExecutions(engine, projectId, 2);
+    const firstExecutions = await waitForExecutions(engine, projectId, 1);
     expect(
       firstExecutions.filter((execution) => execution.moduleInstanceId === "development"),
     ).toHaveLength(1);
@@ -1277,14 +1329,14 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
         (JSON.parse(replayedCreationRequest.envelope) as { idempotencyKey: string }).idempotencyKey,
       ).toBe(creationRequested?.["idempotencyKey"]);
       expect(database.prepare("SELECT COUNT(*) AS count FROM executions").get()).toEqual({
-        count: 2,
+        count: 1,
       });
     } finally {
       database.close();
     }
 
     const secondFact = await publishTag(engine, projectId, "first", 2);
-    const allExecutions = await waitForExecutions(engine, projectId, 4);
+    const allExecutions = await waitForExecutions(engine, projectId, 2);
     const developmentRuns = allExecutions.filter(
       (execution) => execution.moduleInstanceId === "development",
     );
@@ -1310,7 +1362,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
     const liveStream = engine.openStream();
     liveStream.close();
     await publishTag(engine, projectId, "checkpointed");
-    const executions = await waitForExecutions(engine, projectId, 2);
+    const executions = await waitForExecutions(engine, projectId, 1);
     const developmentExecution = executions.find(
       (execution) => execution.moduleInstanceId === "development",
     );
@@ -1379,7 +1431,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
 
     await activateProject(engine, projectId, fixture, "clean");
     await publishTag(engine, projectId, "no-changes");
-    const executions = await waitForExecutions(engine, projectId, 2);
+    const executions = await waitForExecutions(engine, projectId, 1);
     const development = executions.find(
       (execution) => execution.moduleInstanceId === "development",
     );
@@ -1468,7 +1520,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
       "unreachable",
     );
     await publishTag(engine, projectId, "push-failure");
-    const executions = await waitForExecutions(engine, projectId, 2);
+    const executions = await waitForExecutions(engine, projectId, 1);
     const development = executions.find(
       (execution) => execution.moduleInstanceId === "development",
     );
@@ -1561,7 +1613,6 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
     };
     expect(graph).toMatchObject({ valid: true, issues: [] });
     expect(graph.nodes.map(({ instanceId }) => instanceId)).toEqual([
-      "automation-rules",
       "development",
       "request-worker",
     ]);
@@ -1575,7 +1626,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
             version: 1,
             kind: "request",
           }),
-          from: expect.objectContaining({ instanceId: "automation-rules" }),
+          from: expect.objectContaining({ instanceId: "development" }),
           to: expect.objectContaining({ instanceId: "development" }),
           routing: expect.objectContaining({ status: "resolved" }),
         }),
@@ -1728,7 +1779,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
 
     await activateProject(engine, projectId, fixture, "failure");
     await publishTag(engine, projectId, "agent-failure");
-    const executions = await waitForExecutions(engine, projectId, 2);
+    const executions = await waitForExecutions(engine, projectId, 1);
     const development = executions.find(
       (execution) => execution.moduleInstanceId === "development",
     );
@@ -1777,7 +1828,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
 
     await activateProject(engine, projectId, fixture, "oversized", 300_000, 1_024);
     await publishTag(engine, projectId, "output-limit");
-    const executions = await waitForExecutions(engine, projectId, 2);
+    const executions = await waitForExecutions(engine, projectId, 1);
     const development = executions.find(
       (execution) => execution.moduleInstanceId === "development",
     );
@@ -1839,7 +1890,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
       ["test", "build", "lint"],
     );
     await publishTag(engine, projectId, "validation");
-    const executions = await waitForExecutions(engine, projectId, 2);
+    const executions = await waitForExecutions(engine, projectId, 1);
     const development = executions.find(
       (execution) => execution.moduleInstanceId === "development",
     );
@@ -1926,11 +1977,11 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
       1,
     );
     await publishTag(engine, projectId, "repair-success");
-    const executions = await waitForExecutions(engine, projectId, 2);
+    const executions = await waitForExecutions(engine, projectId, 1);
     const development = executions.find(
       (execution) => execution.moduleInstanceId === "development",
     );
-    expect(executions).toHaveLength(2);
+    expect(executions).toHaveLength(1);
     expect(development).toMatchObject({ status: "completed" });
     expect(development).toBeDefined();
 
@@ -2015,11 +2066,11 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
       2,
     );
     await publishTag(engine, projectId, "repair-exhausted");
-    const executions = await waitForExecutions(engine, projectId, 2);
+    const executions = await waitForExecutions(engine, projectId, 1);
     const development = executions.find(
       (execution) => execution.moduleInstanceId === "development",
     );
-    expect(executions).toHaveLength(2);
+    expect(executions).toHaveLength(1);
     expect(development).toMatchObject({ status: "failed" });
     expect(development).toBeDefined();
     expect(repositoryState(fixture.root)).toEqual(before);
@@ -2520,49 +2571,30 @@ async function publishTag(
   suffix = "first",
   generation = 1,
   workItemRef = `fixture://${projectId}/${suffix}`,
-  tag = "ready-to-dev",
 ): Promise<string> {
-  const observedAt = `2026-09-14T00:00:${String(generation).padStart(2, "0")}.000Z`;
-  const observationRevision = recordObservation(
-    engine,
-    projectId,
-    workItemRef,
-    `Fixture ${suffix}`,
-    "open",
-    [tag],
-    observedAt,
-  );
   const response = await engine.call("/test/events", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      type: "scm.work-item.observed",
+      type: "development.implementation.requested",
       version: 1,
-      kind: "fact",
+      kind: "request",
       projectId,
       repositoryId: "main",
-      producer: { moduleId: "jarvis.module.github", moduleInstanceId: "github" },
+      producer: {
+        moduleId: "jarvis.module.development",
+        moduleInstanceId: "development",
+      },
       subject: { type: "work-item", ref: workItemRef },
       correlationId: `corr_${suffix}`,
       causationId: null,
-      payload: {
-        repositoryId: "main",
-        workItemRef,
-        title: `Fixture ${suffix}`,
-        state: "open",
-        tags: [tag],
-        dependencies: { status: "complete", openWorkItemRefs: [] },
-        verification: "verified",
-        reasonCode: null,
-          observedAt,
-          observationRevision,
-        },
-      idempotencyKey: `${projectId}:${workItemRef}:observed:${observationRevision}`,
+      target: { moduleInstanceId: "development" },
+      payload: { workItemRef, repositoryId: "main", baseBranch: "main" },
+      idempotencyKey: `${projectId}:${workItemRef}:request:${generation}`,
     }),
   });
   expect(response.status, await response.clone().text()).toBe(201);
-  const envelope = (await response.json()) as { id: string };
-  return envelope.id;
+  return ((await response.json()) as { id: string }).id;
 }
 
 async function waitForExecutions(
@@ -2667,13 +2699,14 @@ async function publishObserved(
   observationRevision: number,
   state: "open" | "closed",
   tags: readonly string[],
-): Promise<void> {
+  title = "Fixed reopen 2",
+): Promise<string> {
   const observedAt = `2026-09-14T00:00:0${observationRevision}.000Z`;
   const recordedRevision = recordObservation(
     engine,
     projectId,
     workItemRef,
-    "Fixed reopen 2",
+    title,
     state,
     tags,
     observedAt,
@@ -2695,7 +2728,7 @@ async function publishObserved(
       payload: {
         repositoryId: "main",
         workItemRef,
-        title: "Fixed reopen 2",
+        title,
         state,
         tags,
         dependencies: { status: "complete", openWorkItemRefs: [] },
@@ -2707,6 +2740,7 @@ async function publishObserved(
     }),
   });
   expect(response.status, await response.clone().text()).toBe(201);
+  return ((await response.json()) as { id: string }).id;
 }
 
 function recordObservation(

@@ -209,6 +209,20 @@ export function claimDueDeliveries(
              )
              OR (
                projects.status <> 'paused'
+               AND NOT EXISTS (
+                 SELECT 1 FROM development_admission_controls controls
+                 WHERE controls.project_id = deliveries.project_id
+                   AND controls.suspended_at IS NOT NULL
+               )
+               AND EXISTS (
+                 SELECT 1 FROM events observed
+                 WHERE observed.id = deliveries.event_id
+                   AND observed.project_id = deliveries.project_id
+                   AND observed.type = 'scm.work-item.observed'
+               )
+             )
+             OR (
+               projects.status <> 'paused'
                AND
                NOT EXISTS (
                  SELECT 1 FROM development_admission_controls controls
