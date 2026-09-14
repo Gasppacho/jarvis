@@ -66,8 +66,8 @@ valeurs remplacées : modules, règles et exigences de ressources ; nom et comma
 du projet sont conservés. Le modèle déjà présent ne devient pas un choix à refaire.
 
 Le parcours recommandé utilise une issue ouverte portant **ready-for-agent**, sans
-bloqueur GitHub natif ouvert. GitHub produit `scm.work-item.ready`, Automation Rules
-produit `development.implementation.requested`, puis Development prépare le
+bloqueur GitHub natif ouvert. GitHub produit `scm.work-item.observed`, puis
+Development vérifie l'admission et produit `development.implementation.requested` avant de préparer le
 worktree, exécute l'agent et les validations confirmées, commit et pousse. GitHub
 crée la PR après `scm.change-request.creation-requested`. **Une issue à la fois** ;
 **relecture et merge humains**. Les projets historiques conservent `agent:ready`
@@ -196,7 +196,7 @@ sélectionné. Elle affiche :
 
 - le nom du Project et son statut `Draft`, `Ready`, `Running`, `Paused` ou `Degraded` ;
 - l'action cohérente avec ce statut (`Activate`, `Pause`, `Resume` ou `Refresh`) ;
-- le parcours `GitHub → Rules → Development → Pull Request` et la prochaine étape attendue ;
+- le parcours `GitHub → Development → Pull Request` et la prochaine étape attendue ;
 - les issues GitHub pertinentes, avec numéro, titre, statut (`Eligible`, `En attente`,
   `Déjà en cours`, `Bloquée par des dépendances`, `Non éligible` ou `Impossible de
   vérifier`) et explication lisible ;

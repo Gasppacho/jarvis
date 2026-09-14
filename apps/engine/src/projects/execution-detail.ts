@@ -344,8 +344,12 @@ function buildSteps(input: {
   const active = input.executions.find(
     (execution) => execution.status === "running" || execution.status === "cancelling",
   );
-  const received = event(["scm.work-item.tag-added", "scm.work-item.ready"]);
-  const ready = event(["scm.work-item.ready", "development.implementation.requested"]);
+  const received = event([
+    "scm.work-item.observed",
+    "scm.work-item.ready",
+    "scm.work-item.tag-added",
+  ]);
+  const ready = event(["development.implementation.requested"]);
   const preparation = checkpoint(
     "preparation.started",
     "preparation.completed",

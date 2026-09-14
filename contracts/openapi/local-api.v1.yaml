@@ -2021,7 +2021,7 @@ components:
       additionalProperties: false
       required: [id, label, status, detail]
       properties:
-        id: { type: string, enum: [github, rules, development, pull-request] }
+        id: { type: string, enum: [github, development, pull-request] }
         label: { type: string, minLength: 1 }
         status: { type: string, enum: [ready, active, waiting, complete, unavailable] }
         detail: { type: string, minLength: 1 }

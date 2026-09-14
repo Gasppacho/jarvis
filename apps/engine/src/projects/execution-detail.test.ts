@@ -179,6 +179,38 @@ describe("buildExecutionDetail", () => {
     expect(detail.failure).toBeNull();
   });
 
+  it("uses the observed work item as input and the internal request as admission", () => {
+    const detail = buildExecutionDetail({
+      projectId,
+      correlationId: "corr-observed",
+      anchor: execution({ inputEventId: "event-request" }),
+      executions: [],
+      events: [
+        event({
+          id: "event-request",
+          type: "development.implementation.requested",
+          kind: "request",
+          correlationId: "corr-observed",
+          causationId: "event-observed",
+        }),
+        event({
+          id: "event-observed",
+          type: "scm.work-item.observed",
+          kind: "fact",
+          correlationId: "corr-observed",
+          subjectRef: "github:issue/42",
+        }),
+      ],
+      checkpoints: new Map(),
+      leases: new Map(),
+      readiness: [],
+      retryDeliveryId: null,
+    });
+
+    expect(detail.steps[0]).toMatchObject({ id: "issue-received", status: "proved" });
+    expect(detail.steps[1]).toMatchObject({ id: "eligibility-confirmed", status: "proved" });
+  });
+
   it("attributes a Pull Request creation failure to the PR step", () => {
     const detail = buildExecutionDetail({
       projectId,

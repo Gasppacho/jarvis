@@ -17,7 +17,7 @@ final class ProjectOverviewTests: XCTestCase {
         XCTAssertEqual(overview.polling.state, .failed)
         XCTAssertEqual(overview.polling.lastPollAt, Date(timeIntervalSince1970: 1_700_000_000))
         XCTAssertEqual(overview.polling.errorReason, "GitHub returned HTTP 503")
-        XCTAssertEqual(overview.stages.map(\.id), [.github, .rules, .development, .pullRequest])
+        XCTAssertEqual(overview.stages.map(\.id), [.github, .development, .pullRequest])
         XCTAssertEqual(overview.issues.map(\.status), [
             .eligible, .waiting, .inProgress, .blocked, .ineligible, .unavailable,
         ])
@@ -151,7 +151,6 @@ final class ProjectOverviewTests: XCTestCase {
             "available":true,
             "stages":[
               {"id":"github","label":"GitHub","status":"ready","detail":"Repository connected"},
-              {"id":"rules","label":"Rules","status":"ready","detail":"Rule is configured"},
               {"id":"development","label":"Development","status":"active","detail":"One issue is running"},
               {"id":"pull-request","label":"Pull Request","status":"waiting","detail":"The next expected state is a pull request"}
             ],

@@ -22,7 +22,7 @@ public struct ProjectOverview: Sendable, Equatable {
 
     public struct Stage: Identifiable, Sendable, Equatable {
         public enum ID: String, Sendable, Equatable {
-            case github, rules, development
+            case github, development
             case pullRequest = "pull-request"
         }
 
@@ -213,7 +213,6 @@ public struct ProjectOverview: Sendable, Equatable {
     ) -> Stage.ID {
         switch value {
         case .github: .github
-        case .rules: .rules
         case .development: .development
         case .pull_hyphen_request: .pullRequest
         }

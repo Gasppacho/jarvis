@@ -331,7 +331,7 @@ export class ProjectService implements ProjectRegistry<
       }
     }
     const eligible = issues.some((issue) => issue.status === "eligible");
-    const stages = overviewStages(polling.state, hasActiveExecution, eligible, project.status);
+    const stages = overviewStages(polling.state, hasActiveExecution, eligible);
     return {
       apiVersion: "jarvis.dev/project-overview/v1",
       kind: "ProjectOverview",
@@ -1683,7 +1683,6 @@ function overviewStages(
   pollingState: ProjectOverview["polling"]["state"],
   active: boolean,
   eligible: boolean,
-  projectStatus: ProjectRow["status"],
 ): ProjectOverviewStage[] {
   return [
     {
@@ -1697,15 +1696,6 @@ function overviewStages(
             : "unavailable",
       detail:
         pollingState === "paused" ? "Polling paused with the Project." : "Issues and dependencies",
-    },
-    {
-      id: "rules",
-      label: "Rules",
-      status:
-        projectStatus === "active" || projectStatus === "paused" || projectStatus === "degraded"
-          ? "ready"
-          : "unavailable",
-      detail: "Workflow eligibility",
     },
     {
       id: "development",
