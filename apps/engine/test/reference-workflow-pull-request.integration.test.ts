@@ -166,7 +166,12 @@ describe("reference workflow pull request", () => {
   });
 
   it("creates one Pull Request from Development's sourceControl request", async () => {
-    const fixture = await startReferenceWorkflowFixture("reference-pull-request");
+    const fixture = await startReferenceWorkflowFixture("reference-pull-request", {
+      // This test proves one explicit workflow admission. Keep the background
+      // poll outside the workflow window and trigger the seed read directly;
+      // repeated observations are covered by reference-workflow-fixed.
+      JARVIS_GITHUB_POLL_INTERVAL_MS: "60000",
+    });
     fixtures.push(fixture);
     const endpoint = `/v1/projects/${fixture.projectId}`;
     await fixture.engine.call(`${endpoint}/pause`, { method: "POST" });
@@ -201,6 +206,10 @@ describe("reference workflow pull request", () => {
         blockedBy: [],
       },
     });
+    const refreshed = await fixture.engine.call(`${endpoint}/overview/refresh`, {
+      method: "POST",
+    });
+    expect(refreshed.status, await refreshed.clone().text()).toBe(200);
 
     const events = await waitForEventTypes(fixture, [
       "scm.work-item.observed",
