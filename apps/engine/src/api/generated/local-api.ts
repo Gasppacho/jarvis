@@ -914,7 +914,24 @@ export interface components {
             canApply: boolean;
             compositionFingerprint: string;
             reasons: components["schemas"]["ProjectGuidedMigrationReason"][];
-            plan: components["schemas"]["ProjectGuidedMigrationPlan"] | null;
+            plan: {
+                preserved: {
+                    [key: string]: unknown;
+                };
+                /** @constant */
+                removedModule: "jarvis.module.automation-rules";
+                destination: {
+                    /** @constant */
+                    modules: [
+                        "jarvis.module.github",
+                        "jarvis.module.development"
+                    ];
+                    /** @constant */
+                    compositionMode: "fixed-modules";
+                    readyLabel: string;
+                    scope: components["schemas"]["ProjectGuidedMigrationScope"];
+                };
+            } | null;
         };
         ProjectGuidedMigrationResult: {
             /** @constant */

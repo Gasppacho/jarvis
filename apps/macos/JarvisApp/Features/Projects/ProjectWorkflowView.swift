@@ -122,12 +122,21 @@ struct ProjectWorkflowView: View {
     private var startingPoint: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Une issue ouverte, portant le label choisi et sans bloqueur GitHub ouvert, est développée puis proposée dans une Pull Request. Une issue à la fois ; vous gardez la relecture et le merge.")
-            Button(hasComposition ? "Utiliser le modèle GitHub" : "Ajouter GitHub") {
-                model.chooseStartingPoint(projectId: project.id, startingPointId: "github-development")
+            HStack {
+                Button(hasComposition ? "Utiliser le modèle GitHub" : "Ajouter GitHub") {
+                    model.chooseStartingPoint(projectId: project.id, startingPointId: "github-development")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(state.draft == nil || state.compositionGuide?.startingPoints.contains { $0.id == "github-development" } != true)
+                .accessibilityIdentifier("workflow.choose-github")
+                Button("Ajouter Development") {
+                    guard let package = packages.first(where: { $0.moduleId == "jarvis.module.development" }) else { return }
+                    model.addModule(projectId: project.id, package: package)
+                }
+                .buttonStyle(.bordered)
+                .disabled(state.draft == nil || !development.isEmpty)
+                .accessibilityIdentifier("workflow.add-development")
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(state.draft == nil || state.compositionGuide?.startingPoints.contains { $0.id == "github-development" } != true)
-            .accessibilityIdentifier("workflow.choose-github")
             Text("Vous pourrez enregistrer et reprendre un brouillon incomplet.")
                 .font(.callout).foregroundStyle(.secondary)
         }

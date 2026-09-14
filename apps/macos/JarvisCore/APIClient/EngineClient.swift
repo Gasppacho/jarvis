@@ -913,3 +913,45 @@ public struct EngineClient: Sendable {
 }
 
 extension EngineClient: ProjectPreflightAPI {}
+
+extension EngineClient: ProjectMigrationAPI {
+    public func previewGuidedMigration(projectId: String) async throws -> ProjectMigrationPreview {
+        let operation = "POST /v1/projects/\(projectId)/migration/preview"
+        let output = try await underlying.previewGuidedMigration(
+            .init(path: .init(projectId: projectId)))
+        switch output {
+        case .ok(let ok):
+            return ProjectMigrationPreview(try ok.body.json)
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
+    public func applyGuidedMigration(
+        projectId: String,
+        compositionFingerprint: String,
+        writeToRepository: Bool
+    ) async throws -> ProjectMigrationResult {
+        let operation = "POST /v1/projects/\(projectId)/migration/apply"
+        let output = try await underlying.applyGuidedMigration(
+            .init(
+                path: .init(projectId: projectId),
+                body: .json(.init(
+                    compositionFingerprint: compositionFingerprint,
+                    writeToRepository: writeToRepository))))
+        switch output {
+        case .ok(let ok):
+            return ProjectMigrationResult(try ok.body.json)
+        case .unauthorized:
+            throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden:
+            throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(_, let error):
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+}

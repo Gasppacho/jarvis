@@ -92,9 +92,13 @@ public struct ProjectDetailView: View {
 
             switch selectedTab {
             case .overview:
-                ProjectOverviewView(model: overview, projects: projects, executionDetail: executionDetail, projectId: project.id) { id in
-                    openExecution(id)
-                }
+                ProjectOverviewView(
+                    model: overview,
+                    projects: projects,
+                    executionDetail: executionDetail,
+                    projectId: project.id,
+                    onOpenExecution: { openExecution($0) },
+                    onOpenComposition: { selectedTab = .composition })
             case .composition:
                 compositionTab
             case .graph:
@@ -175,10 +179,14 @@ public struct ProjectDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     header
+                    ProjectMigrationView(
+                        model: projectConfiguration,
+                        project: project,
+                        packages: moduleCatalog.packages)
                     if let detail = state.detail {
                         repositorySection(detail).id("repository")
                         if state.draft != nil {
-                            portableConfigurationEditor(detail).id("portable-configuration")
+                            portableConfigurationEditor(detail, proxy: proxy).id("portable-configuration")
                             localBindingsEditor.id("local-bindings")
                             compositionReview(proxy)
                             compositionOutline
@@ -296,7 +304,10 @@ public struct ProjectDetailView: View {
         }
     }
 
-    private func portableConfigurationEditor(_ detail: ProjectDetail) -> some View {
+    private func portableConfigurationEditor(
+        _ detail: ProjectDetail,
+        proxy: ScrollViewProxy
+    ) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Portable Configuration").sectionLabel()
             TextField("Project name", text: projectNameBinding)
@@ -308,7 +319,10 @@ public struct ProjectDetailView: View {
                 packages: moduleCatalog.packages,
                 connections: connections,
                 overview: overview,
-                onSelectModule: { selectedCompositionID = "instance:\($0)" })
+                onSelectModule: { instanceId in
+                    selectedCompositionID = "instance:\(instanceId)"
+                    withAnimation { proxy.scrollTo("module-instance-\(instanceId)", anchor: .top) }
+                })
             slotRequirementsEditor
 
             HStack {

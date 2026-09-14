@@ -1425,9 +1425,23 @@ components:
           type: array
           items: { $ref: "#/components/schemas/ProjectGuidedMigrationReason" }
         plan:
-          oneOf:
-            - $ref: "#/components/schemas/ProjectGuidedMigrationPlan"
-            - type: "null"
+          type: [object, "null"]
+          additionalProperties: false
+          required: [preserved, removedModule, destination]
+          properties:
+            preserved: { type: object, additionalProperties: true }
+            removedModule: { type: string, const: jarvis.module.automation-rules }
+            destination:
+              type: object
+              additionalProperties: false
+              required: [modules, compositionMode, readyLabel, scope]
+              properties:
+                modules:
+                  type: array
+                  const: [jarvis.module.github, jarvis.module.development]
+                compositionMode: { type: string, const: fixed-modules }
+                readyLabel: { type: string, minLength: 1 }
+                scope: { $ref: "#/components/schemas/ProjectGuidedMigrationScope" }
     ProjectGuidedMigrationResult:
       type: object
       additionalProperties: true

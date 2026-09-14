@@ -74,6 +74,10 @@ struct ProjectOnboardingView: View {
                         .disabled(state.isLoading)
                         .accessibilityIdentifier("project.reload")
                     }
+                    ProjectMigrationView(
+                        model: projectConfiguration,
+                        project: project,
+                        packages: moduleCatalog.packages)
                     activeStep
                 }
                 .frame(maxWidth: 900, alignment: .leading)

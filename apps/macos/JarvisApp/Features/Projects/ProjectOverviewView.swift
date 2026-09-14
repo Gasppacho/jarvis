@@ -9,6 +9,7 @@ struct ProjectOverviewView: View {
     let executionDetail: ProjectExecutionDetailModel
     let projectId: String
     var onOpenExecution: ((String) -> Void)? = nil
+    var onOpenComposition: (() -> Void)? = nil
     @State private var issueFilter = ""
 
     var body: some View {
@@ -146,6 +147,10 @@ struct ProjectOverviewView: View {
                 Text(overview.nextStep)
                     .font(.callout)
                     .fixedSize(horizontal: false, vertical: true)
+                if let onOpenComposition {
+                    Button("Ouvrir la composition") { onOpenComposition() }
+                        .accessibilityIdentifier("project.overview.open-composition")
+                }
             }
         } label: {
             Label("Workflow", systemImage: "arrow.triangle.branch")

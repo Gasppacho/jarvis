@@ -36,6 +36,7 @@ public struct ProjectConfigurationState: Sendable, Equatable {
     public var isSaving = false
     public var saveFailed = false
     public var pendingStartingPointID: String?
+    public var migration: ProjectMigrationState = .unchecked
     public var errorMessage: String?
     public var saveStatus: String {
         if isSaving { return "Enregistrement…" }
@@ -71,6 +72,8 @@ public final class ProjectConfigurationModel {
     private let activationProvider: ActivationProvider?
     private let injectedPreflightAPI: (any ProjectPreflightAPI)?
     private var preflightAPI: (any ProjectPreflightAPI)? { injectedPreflightAPI ?? client }
+    private let injectedMigrationAPI: (any ProjectMigrationAPI)?
+    private var migrationAPI: (any ProjectMigrationAPI)? { injectedMigrationAPI ?? client }
     private let injectedRuntimeAPI: (any ProjectRuntimeAPI)?
     private var runtimeRevisions: [String: Int] = [:]
     private var runtimeAPI: (any ProjectRuntimeAPI)? { injectedRuntimeAPI ?? client }
@@ -86,6 +89,7 @@ public final class ProjectConfigurationModel {
         activationProvider = nil
         injectedRuntimeAPI = nil
         injectedPreflightAPI = nil
+        injectedMigrationAPI = nil
     }
 
     init(
@@ -94,7 +98,8 @@ public final class ProjectConfigurationModel {
         validationReportProvider: ValidationReportProvider? = nil,
         activationProvider: ActivationProvider? = nil,
         runtimeAPI: (any ProjectRuntimeAPI)? = nil,
-        preflightAPI: (any ProjectPreflightAPI)? = nil
+        preflightAPI: (any ProjectPreflightAPI)? = nil,
+        migrationAPI: (any ProjectMigrationAPI)? = nil
     ) {
         self.session = session
         self.projects = projects
@@ -102,6 +107,7 @@ public final class ProjectConfigurationModel {
         self.activationProvider = activationProvider
         injectedRuntimeAPI = runtimeAPI
         injectedPreflightAPI = preflightAPI
+        injectedMigrationAPI = migrationAPI
     }
 
     private var client: EngineClient? { session.client }
@@ -167,6 +173,20 @@ public final class ProjectConfigurationModel {
             let compositionReview = try await client.reviewProjectComposition(
                 projectId: projectId,
                 portableConfig: previewConfiguration)
+            let migrationPreview: ProjectMigrationState?
+            var migrationError: String?
+            if let migrationAPI {
+                do {
+                    migrationPreview = .current(try await migrationAPI.previewGuidedMigration(projectId: projectId))
+                    migrationError = nil
+                } catch {
+                    migrationPreview = nil
+                    migrationError = ProjectsModel.describe(error)
+                }
+            } else {
+                migrationPreview = nil
+                migrationError = Self.engineUnavailable
+            }
             let compositionGraph = try? await client.fetchProjectCompositionGraph(
                 projectId: projectId,
                 portableConfig: previewConfiguration)
@@ -191,6 +211,11 @@ public final class ProjectConfigurationModel {
                 $0.compositionGuide = compositionReview.compositionGuide
                 $0.compositionReview = compositionReview
                 $0.compositionGraph = compositionGraph
+                if let migrationPreview {
+                    $0.migration = migrationPreview
+                } else if $0.migration == .unchecked {
+                    $0.migration = .failed(migrationError ?? Self.engineUnavailable)
+                }
                 $0.draft = preservedDraft ?? draft
                 $0.isDraftSaved = preservedDraft == nil
                 if preservedDraft == nil { $0.saveFailed = false }
@@ -292,6 +317,45 @@ public final class ProjectConfigurationModel {
 
     public func cancelStartingPointReplacement(projectId: String) {
         update(projectId) { $0.pendingStartingPointID = nil }
+    }
+
+    public func applyMigration(
+        projectId: String,
+        writeToRepository: Bool,
+        packages: [ModulePackage] = []
+    ) async {
+        guard let preview = state(for: projectId).migration.preview,
+            preview.canApply,
+            let api = migrationAPI
+        else { return }
+        update(projectId) { $0.migration = .loading }
+        do {
+            let result = try await api.applyGuidedMigration(
+                projectId: projectId,
+                compositionFingerprint: preview.compositionFingerprint,
+                writeToRepository: writeToRepository)
+            await projects.refresh()
+            await refresh(projectId: projectId, packages: packages)
+            update(projectId) { $0.migration = .applied(result) }
+        } catch {
+            update(projectId) { $0.migration = .current(preview); $0.errorMessage = ProjectsModel.describe(error) }
+        }
+    }
+
+    public func prepareFixedReconfiguration(projectId: String) {
+        guard state(for: projectId).draft?.isFixedComposition != true,
+            projectIsQuiescentForMigration(projectId: projectId)
+        else { return }
+        chooseStartingPoint(
+            projectId: projectId,
+            startingPointId: "github-development",
+            confirmedReplacement: true)
+    }
+
+    private func projectIsQuiescentForMigration(projectId: String) -> Bool {
+        guard let preview = state(for: projectId).migration.preview else { return false }
+        return state(for: projectId).detail?.project.status == .paused
+            && !preview.reasons.contains { $0.code == "project-active" || $0.code == "work-pending" }
     }
 
     public func setReadyLabel(projectId: String, label: String, moduleID: UUID? = nil) {
