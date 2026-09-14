@@ -7,6 +7,16 @@ import XCTest
 @testable import JarvisCore
 
 final class ProjectMigrationTests: XCTestCase {
+    @MainActor
+    func testFixedSavedConfigurationDoesNotRequestMigrationPreview() throws {
+        let fixed = try configuration(compositionMode: "fixed-modules")
+        let legacy = try configuration(compositionMode: nil)
+
+        XCTAssertFalse(ProjectConfigurationModel.shouldPreviewMigration(fixed))
+        XCTAssertTrue(ProjectConfigurationModel.shouldPreviewMigration(legacy))
+        XCTAssertFalse(ProjectConfigurationModel.shouldPreviewMigration(nil))
+    }
+
     func testTypedEngineClientPreservesTheExplicitPlanAndReasons() async throws {
         let json = """
         {
@@ -65,6 +75,44 @@ final class ProjectMigrationTests: XCTestCase {
         XCTAssertTrue(result.applied)
         XCTAssertEqual(result.historyId, "migration-1")
         XCTAssertTrue(result.hasBackup)
+    }
+
+    private func configuration(compositionMode: String?) throws
+        -> Components.Schemas.PortableProjectConfiguration
+    {
+        var document: [String: Any] = [
+            "apiVersion": "jarvis.dev/project/v1",
+            "kind": "Project",
+            "metadata": ["id": "migration-test", "name": "Migration Test"],
+            "repositories": [[
+                "id": "main", "root": ".", "defaultBranch": "main", "remote": "origin",
+            ]],
+            "slots": [:],
+            "commands": [:],
+            "git": [
+                "branchPattern": "agent/{workItemId}-{slug}",
+                "commitStrategy": "conventional",
+                "pushRemote": "origin",
+                "allowForcePush": false,
+            ],
+            "workspace": [
+                "strategy": "git-worktree",
+                "maxConcurrentExecutions": 1,
+                "retainOnFailureDays": 7,
+            ],
+            "modules": [[
+                "instanceId": "legacy",
+                "moduleId": "jarvis.module.automation-rules",
+                "enabled": true,
+                "bindings": [:],
+                "configuration": [:],
+            ]],
+        ]
+        if let compositionMode { document["compositionMode"] = compositionMode }
+        let data = try JSONSerialization.data(withJSONObject: document)
+        return try JSONDecoder().decode(
+            Components.Schemas.PortableProjectConfiguration.self,
+            from: data)
     }
 }
 

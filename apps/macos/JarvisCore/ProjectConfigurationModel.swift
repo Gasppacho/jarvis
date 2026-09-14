@@ -112,6 +112,15 @@ public final class ProjectConfigurationModel {
 
     private var client: EngineClient? { session.client }
 
+    static func shouldPreviewMigration(
+        _ configuration: Components.Schemas.PortableProjectConfiguration?
+    ) -> Bool {
+        guard let configuration,
+            !configuration.modules.isEmpty || !configuration.slots.additionalProperties.isEmpty
+        else { return false }
+        return configuration.compositionMode != .fixed_hyphen_modules
+    }
+
     public func state(for projectId: String) -> ProjectConfigurationState {
         if let state = states[projectId] { return state }
         var state = ProjectConfigurationState()
@@ -170,12 +179,13 @@ public final class ProjectConfigurationModel {
                 configuration.modules.isEmpty && configuration.slots.additionalProperties.isEmpty
                     ? nil : configuration
             }
+            let shouldPreviewMigration = Self.shouldPreviewMigration(detail.portableConfiguration)
             let compositionReview = try await client.reviewProjectComposition(
                 projectId: projectId,
                 portableConfig: previewConfiguration)
             let migrationPreview: ProjectMigrationState?
             var migrationError: String?
-            if let migrationAPI {
+            if shouldPreviewMigration, let migrationAPI {
                 do {
                     migrationPreview = .current(try await migrationAPI.previewGuidedMigration(projectId: projectId))
                     migrationError = nil
@@ -213,9 +223,9 @@ public final class ProjectConfigurationModel {
                 $0.compositionGraph = compositionGraph
                 if let migrationPreview {
                     $0.migration = migrationPreview
-                } else if $0.migration == .unchecked {
+                } else if shouldPreviewMigration && $0.migration == .unchecked {
                     $0.migration = .failed(migrationError ?? Self.engineUnavailable)
-                }
+                } else if !shouldPreviewMigration { $0.migration = .unchecked }
                 $0.draft = preservedDraft ?? draft
                 $0.isDraftSaved = preservedDraft == nil
                 if preservedDraft == nil { $0.saveFailed = false }
