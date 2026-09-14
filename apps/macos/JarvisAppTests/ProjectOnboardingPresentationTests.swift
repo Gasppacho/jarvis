@@ -22,7 +22,7 @@ final class ProjectOnboardingPresentationTests: XCTestCase {
     func testEmptyStateAndDraftInventoryAreExplicitAndAccessible() {
         let empty = ProjectOnboardingPresentation(project: nil)
         XCTAssertEqual(empty.emptyState?.title, "Bienvenue dans Jarvis")
-        XCTAssertEqual(empty.emptyState?.primaryAction, "Ajouter un projet")
+        XCTAssertEqual(empty.emptyState?.primaryAction, "Choisir un dépôt Git")
 
         let draft = Project(
             id: "draft-1",
