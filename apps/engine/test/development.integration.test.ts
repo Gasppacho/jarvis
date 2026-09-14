@@ -193,16 +193,19 @@ describe("Development Module tracer bullet", () => {
   it("serializes three issues through real agents and PRs, preserving waiting identities across restart and suspension", async () => {
     const { engine, fixture } = await admissionFixture("serial", "await-signal");
     const database = new Database(join(engine.dataRoot, "jarvis.sqlite"));
+    const observedEventIds: string[] = [];
     try {
       for (const number of [1, 2, 3]) {
         seedReadyIssue(number);
-        await publishObserved(
-          engine,
-          "serial",
-          `github://Gasppacho/jarvis/issues/${number}`,
-          1,
-          "open",
-          ["ready-to-dev"],
+        observedEventIds.push(
+          await publishObserved(
+            engine,
+            "serial",
+            `github://Gasppacho/jarvis/issues/${number}`,
+            1,
+            "open",
+            ["ready-to-dev"],
+          ),
         );
         await expect
           .poll(() =>
@@ -236,14 +239,22 @@ describe("Development Module tracer bullet", () => {
       expect(activeClaim).toMatchObject({ lease_owner: expect.any(String) });
       // The test engine lease is 200ms; dispatching a further fact spans
       // another tick and must renew the same running handler's ownership.
-      await publishObserved(engine, "serial", "fixture://heartbeat", 1, "open", ["not-ready"]);
+      observedEventIds.push(
+        await publishObserved(engine, "serial", "fixture://heartbeat", 1, "open", ["not-ready"]),
+      );
       await expect
         .poll(() =>
           database
             .prepare(
-              "SELECT count(*) AS n FROM executions WHERE module_instance_id = 'development'",
+              `SELECT count(*) AS n
+               FROM executions
+               JOIN events ON events.id = executions.input_event_id
+               WHERE executions.project_id = 'serial'
+                 AND executions.module_instance_id = 'development'
+                 AND events.type = 'scm.work-item.observed'
+                 AND events.id IN (${observedEventIds.map(() => "?").join(", ")})`,
             )
-            .get(),
+            .get(...observedEventIds),
         )
         .toEqual({ n: 4 });
       expect(

@@ -1,4 +1,6 @@
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
+import { join } from "node:path";
 import { explain, localApiValidator } from "./contract.js";
 import {
   startReferenceWorkflowFixture,
@@ -16,6 +18,7 @@ describe("execution detail", () => {
   it("projects one correlated issue through checks, push and the created PR", async () => {
     const fixture = await startReferenceWorkflowFixture("execution-detail");
     fixtures.push(fixture);
+    const workItemRef = "github://Gasppacho/jarvis/issues/16";
     fixture.fakeGitHub.appendLabeledIssueEvent({
       owner: "Gasppacho",
       repository: "jarvis",
@@ -27,10 +30,18 @@ describe("execution detail", () => {
       createdAt: new Date().toISOString(),
     });
 
-    await waitForEvent(fixture, "scm.change-request.created");
-    const executions = await readExecutions(fixture);
+    await waitForEvent(fixture, "scm.change-request.created", workItemRef);
+    const targetEvents = readEventsForWorkItem(fixture, workItemRef);
+    const createdEvent = targetEvents.find((event) => event.type === "scm.change-request.created");
+    expect(createdEvent).toBeDefined();
+    const events = targetEvents.filter(
+      (event) => event.correlationId === createdEvent!.correlationId,
+    );
+    const eventIds = new Set(events.map((event) => event.id));
+    const executions = (await readExecutions(fixture)).filter((execution) =>
+      eventIds.has(execution.inputEventId),
+    );
     expect(executions).toHaveLength(3);
-    const events = await readEvents(fixture);
     const implementationEvent = events.find(
       (event) => event.type === "development.implementation.requested",
     );
@@ -47,7 +58,7 @@ describe("execution detail", () => {
     expect(validateDetail(detail), explain(validateDetail)).toBe(true);
     expect(detail.correlationId).toMatch(/^corr_/);
     expect(detail.workItem).toMatchObject({
-      ref: "github://Gasppacho/jarvis/issues/16",
+      ref: workItemRef,
       issueNumber: 16,
       title: "Execution detail acceptance",
     });
@@ -140,24 +151,38 @@ async function readExecutions(fixture: ReferenceWorkflowFixture): Promise<readon
   return body.items;
 }
 
-async function readEvents(
+function readEventsForWorkItem(
   fixture: ReferenceWorkflowFixture,
-): Promise<readonly { readonly id: string; readonly type: string }[]> {
-  const response = await fixture.engine.call(`/v1/projects/${fixture.projectId}/events`);
-  const body = (await response.json()) as {
-    readonly items: readonly { readonly id: string; readonly type: string }[];
-  };
-  return body.items;
+  workItemRef: string,
+): readonly { readonly id: string; readonly type: string; readonly correlationId: string }[] {
+  const database = new Database(join(fixture.engine.dataRoot, "jarvis.sqlite"), { readonly: true });
+  try {
+    const rows = database
+      .prepare(
+        `SELECT id, type, correlation_id AS correlationId
+         FROM events
+         WHERE project_id = ? AND json_extract(envelope, '$.payload.workItemRef') = ?
+         ORDER BY occurred_at, id`,
+      )
+      .all(fixture.projectId, workItemRef) as {
+      readonly id: string;
+      readonly type: string;
+      readonly correlationId: string;
+    }[];
+    return rows;
+  } finally {
+    database.close();
+  }
 }
 
-async function waitForEvent(fixture: ReferenceWorkflowFixture, type: string): Promise<void> {
+async function waitForEvent(
+  fixture: ReferenceWorkflowFixture,
+  type: string,
+  workItemRef: string,
+): Promise<void> {
   const deadline = Date.now() + 15_000;
   for (;;) {
-    const response = await fixture.engine.call(`/v1/projects/${fixture.projectId}/events`);
-    const body = (await response.json()) as {
-      readonly items: readonly { readonly type: string }[];
-    };
-    if (body.items.some((event) => event.type === type)) return;
+    if (readEventsForWorkItem(fixture, workItemRef).some((event) => event.type === type)) return;
     if (Date.now() >= deadline)
       throw new Error(`execution detail timed out\n${fixture.engine.stderr()}`);
     await new Promise((resolve) => setTimeout(resolve, 50));
