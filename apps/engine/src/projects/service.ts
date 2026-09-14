@@ -489,9 +489,7 @@ export class ProjectService implements ProjectRegistry<
     const scope = report?.trigger?.scope;
     const selected =
       scope?.kind === "issue"
-        ? report.candidateEligibility.items.find(
-            (item) => item.workItemRef === scope.workItemRef,
-          )
+        ? report.candidateEligibility.items.find((item) => item.workItemRef === scope.workItemRef)
         : undefined;
     if (
       project.portableConfig.compositionMode === "fixed-modules" &&
