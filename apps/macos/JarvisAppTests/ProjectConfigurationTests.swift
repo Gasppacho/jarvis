@@ -543,7 +543,7 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(
             state.compositionGuide?.startingPoints.map(\.displayName),
             ["GitHub Development", "Custom composition"])
-        XCTAssertEqual(state.compositionGuide?.modulePackages.count, 4)
+        XCTAssertEqual(state.compositionGuide?.modulePackages.count, 3)
         XCTAssertEqual(state.agentRuntimes?.required, false)
         XCTAssertEqual(state.runtimePresentation.status, "Choisissez d’abord un workflow")
 
