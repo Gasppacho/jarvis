@@ -486,15 +486,16 @@ export class ProjectService implements ProjectRegistry<
   activatePreflightProject(request: ActivateProjectRequest): ProjectSummary {
     const project = this.requireProject(request.projectId);
     const report = this.preflights.get(project.id);
+    const scope = report?.trigger?.scope;
     const selected =
-      report?.trigger?.scope.kind === "issue"
+      scope?.kind === "issue"
         ? report.candidateEligibility.items.find(
-            (item) => item.workItemRef === report.trigger!.scope.workItemRef,
+            (item) => item.workItemRef === scope.workItemRef,
           )
         : undefined;
     if (
       project.portableConfig.compositionMode === "fixed-modules" &&
-      report?.trigger?.scope.kind === "issue" &&
+      scope?.kind === "issue" &&
       selected?.status !== "eligible"
     )
       throw activationRejected(

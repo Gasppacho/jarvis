@@ -410,7 +410,7 @@ export class ProjectModuleCapabilityResolver {
     const inferredSlot =
       capability === "work-items.read" && snapshot.composition.compositionMode === "fixed-modules"
         ? snapshot.moduleInstances.find((instance) => instance.moduleId === "jarvis.module.github")
-            ?.bindings?.sourceControl
+            ?.bindings?.["sourceControl"]
         : undefined;
     const slot =
       declaredSlot !== undefined && snapshot.bindings.slots[declaredSlot] !== undefined
