@@ -194,10 +194,7 @@ function oneEvent(events: readonly (WorkflowEvent & { readonly id: string })[], 
   return matches[0]!;
 }
 
-function firstEvent(
-  events: readonly (WorkflowEvent & { readonly id: string })[],
-  type: string,
-) {
+function firstEvent(events: readonly (WorkflowEvent & { readonly id: string })[], type: string) {
   const matches = events.filter((event) => event.type === type);
   expect(matches.length).toBeGreaterThan(0);
   return matches[0]!;

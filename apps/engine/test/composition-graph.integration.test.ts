@@ -330,7 +330,10 @@ describe("project composition graph", () => {
       },
       findings: [],
     });
-    for (const type of ["development.implementation.completed", "development.implementation.failed"]) {
+    for (const type of [
+      "development.implementation.completed",
+      "development.implementation.failed",
+    ]) {
       expect(body.edges).toContainEqual({
         kind: "fact",
         contract: { type, version: 1, kind: "fact" },
@@ -425,10 +428,9 @@ describe("project composition graph", () => {
     );
     expect(repositoryBinding.status, await repositoryBinding.clone().text()).toBe(200);
 
-    const bindings = (await (await engine.call(`/v1/projects/${project.id}/bindings`)).json()) as Record<
-      string,
-      unknown
-    >;
+    const bindings = (await (
+      await engine.call(`/v1/projects/${project.id}/bindings`)
+    ).json()) as Record<string, unknown>;
     const boundResponse = await engine.call(`/v1/projects/${project.id}/bindings`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -456,7 +458,11 @@ describe("project composition graph", () => {
     };
 
     expect(body.nodes.map((node) => node["instanceId"])).toEqual(["development", "github"]);
-    expect(body.nodes.every((node) => node["enabled"] === true && (node["findings"] as unknown[]).length === 0)).toBe(true);
+    expect(
+      body.nodes.every(
+        (node) => node["enabled"] === true && (node["findings"] as unknown[]).length === 0,
+      ),
+    ).toBe(true);
     expect(body.edges).toContainEqual({
       kind: "fact",
       contract: { type: "scm.work-item.observed", version: 1, kind: "fact" },

@@ -416,7 +416,9 @@ describe("GitHub polling Application Harness", () => {
     await waitForEventTypeCount(engine, project.id, "scm.work-item.observed", 1);
     const database = new Database(join(engine.dataRoot, "jarvis.sqlite"));
     const rows = database
-      .prepare("SELECT envelope FROM events WHERE project_id = ? AND type = 'scm.work-item.observed'")
+      .prepare(
+        "SELECT envelope FROM events WHERE project_id = ? AND type = 'scm.work-item.observed'",
+      )
       .all(project.id) as { readonly envelope: string }[];
     database.close();
     const row = rows.find((candidate) => {
@@ -539,11 +541,7 @@ describe("GitHub polling Application Harness", () => {
         ],
       },
     });
-    await waitForObservedDependencies(
-      engine.dataRoot,
-      "github://Gasppacho/jarvis/issues/200",
-      [],
-    );
+    await waitForObservedDependencies(engine.dataRoot, "github://Gasppacho/jarvis/issues/200", []);
     expect(fakeGitHub.requests).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1663,12 +1661,7 @@ esac
         labels: [{ name: "ready-to-dev" }],
       },
     });
-    await waitForObservedState(
-      engine,
-      project.id,
-      "github://Gasppacho/jarvis/issues/21",
-      "open",
-    );
+    await waitForObservedState(engine, project.id, "github://Gasppacho/jarvis/issues/21", "open");
     await waitForEventTypeCount(engine, project.id, "development.implementation.requested", 1);
     await waitForExecutionCount(engine, project.id, 2);
 
@@ -1795,9 +1788,7 @@ esac
            GROUP BY event.type`,
         )
         .all(project.id) as { readonly type: string; readonly count: number }[];
-      expect(
-        executionCounts,
-      ).toEqual(
+      expect(executionCounts).toEqual(
         expect.arrayContaining([
           { type: "development.implementation.requested", count: 2 },
           expect.objectContaining({ type: "scm.work-item.observed", count: expect.any(Number) }),

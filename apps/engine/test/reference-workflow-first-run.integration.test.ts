@@ -288,15 +288,12 @@ it("proves the first guided workflow from native blocker to one PR", async () =>
   ).toHaveLength(2);
   const afterRestart = readDurability(fixture);
   expect(afterRestart.eventCounts).toMatchObject({
-    "development.implementation.requested": durability.eventCounts[
-      "development.implementation.requested"
-    ],
-    "development.implementation.completed": durability.eventCounts[
-      "development.implementation.completed"
-    ],
-    "scm.change-request.creation-requested": durability.eventCounts[
-      "scm.change-request.creation-requested"
-    ],
+    "development.implementation.requested":
+      durability.eventCounts["development.implementation.requested"],
+    "development.implementation.completed":
+      durability.eventCounts["development.implementation.completed"],
+    "scm.change-request.creation-requested":
+      durability.eventCounts["scm.change-request.creation-requested"],
     "scm.change-request.created": durability.eventCounts["scm.change-request.created"],
   });
   expect(afterRestart.eventCounts["scm.work-item.observed"]).toBeGreaterThanOrEqual(

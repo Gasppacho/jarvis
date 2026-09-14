@@ -215,13 +215,13 @@ describe("Development Module tracer bullet", () => {
           .toEqual({ n: number });
       }
       await expect
-        .poll(async () => (await admissionItems(engine, "serial")).map((item) => item.workItemRef), {
-          timeout: 5_000,
-        })
-        .toEqual([
-          "github://Gasppacho/jarvis/issues/2",
-          "github://Gasppacho/jarvis/issues/3",
-        ]);
+        .poll(
+          async () => (await admissionItems(engine, "serial")).map((item) => item.workItemRef),
+          {
+            timeout: 5_000,
+          },
+        )
+        .toEqual(["github://Gasppacho/jarvis/issues/2", "github://Gasppacho/jarvis/issues/3"]);
       const waiting = await admissionItems(engine, "serial");
       // Upgrade compatibility: Requests emitted before #194 omitted tag,
       // but their original causal label Fact remains durable.
@@ -236,14 +236,7 @@ describe("Development Module tracer bullet", () => {
       expect(activeClaim).toMatchObject({ lease_owner: expect.any(String) });
       // The test engine lease is 200ms; dispatching a further fact spans
       // another tick and must renew the same running handler's ownership.
-      await publishObserved(
-        engine,
-        "serial",
-        "fixture://heartbeat",
-        1,
-        "open",
-        ["not-ready"],
-      );
+      await publishObserved(engine, "serial", "fixture://heartbeat", 1, "open", ["not-ready"]);
       await expect
         .poll(() =>
           database
@@ -603,14 +596,9 @@ describe("Development Module tracer bullet", () => {
       "runtime/fake-test",
       { github: true },
     );
-    await publishObserved(
-      engine,
-      "development-pending-closed",
-      workItemRef,
-      1,
-      "open",
-      ["ready-to-dev"],
-    );
+    await publishObserved(engine, "development-pending-closed", workItemRef, 1, "open", [
+      "ready-to-dev",
+    ]);
     await waitForAdmission(dataRoot, "development-pending-closed", "ineligible");
     const admission = await engine.call(
       "/v1/projects/development-pending-closed/development-admission",
@@ -738,7 +726,9 @@ describe("Development Module tracer bullet", () => {
       { method: "POST" },
     );
     expect(suspended.status).toBe(200);
-    await publishObserved(engine, "development-suspended", workItemRef, 1, "open", ["ready-to-dev"]);
+    await publishObserved(engine, "development-suspended", workItemRef, 1, "open", [
+      "ready-to-dev",
+    ]);
     await new Promise((resolve) => setTimeout(resolve, 300));
 
     const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
@@ -2734,8 +2724,8 @@ async function publishObserved(
         dependencies: { status: "complete", openWorkItemRefs: [] },
         verification: "verified",
         reasonCode: null,
-          observedAt,
-          observationRevision: recordedRevision,
+        observedAt,
+        observationRevision: recordedRevision,
       },
     }),
   });

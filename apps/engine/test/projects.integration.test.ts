@@ -2512,9 +2512,7 @@ capabilities:
       database.close();
       const root = fixture(() =>
         makeNodeRepositoryFixture({
-          additionalRemotes: [
-            { name: "github", url: "git@github.com:Gasppacho/jarvis.git" },
-          ],
+          additionalRemotes: [{ name: "github", url: "git@github.com:Gasppacho/jarvis.git" }],
         }),
       );
       const created = (await (
@@ -3015,7 +3013,9 @@ capabilities:
           bindings: { slots: Record<string, unknown> };
           requestRoutes: Record<string, unknown>[];
         };
-        const github = snapshot.moduleInstances.find((instance) => instance.instanceId === "github")!;
+        const github = snapshot.moduleInstances.find(
+          (instance) => instance.instanceId === "github",
+        )!;
         snapshot.moduleInstances.push({
           ...structuredClone(github),
           instanceId: "other-github",

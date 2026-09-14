@@ -263,9 +263,9 @@ describe("project composition choices", () => {
       }>;
     };
     expect(validatePreview(body), explain(validatePreview)).toBe(true);
-    expect(body.modulePackages.some(({ moduleId }) => moduleId === "jarvis.module.automation-rules")).toBe(
-      false,
-    );
+    expect(
+      body.modulePackages.some(({ moduleId }) => moduleId === "jarvis.module.automation-rules"),
+    ).toBe(false);
     const choiceKeys = body.choices.map(
       (choice) =>
         `${String(choice["type"])}.v${String(choice["version"])}.${String(choice["kind"])}`,
