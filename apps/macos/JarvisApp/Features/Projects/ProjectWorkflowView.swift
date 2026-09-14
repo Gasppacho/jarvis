@@ -285,7 +285,7 @@ struct ProjectWorkflowView: View {
             let selected = connections.connections.filter {
                 model.hasLocalBinding(projectId: project.id, connectionID: $0.id)
             }
-            if selected.isEmpty || editingGitHub {
+            if selected.count != 1 || editingGitHub {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Compte GitHub").font(.callout.weight(.medium))
                     ForEach(connections.connections) { connection in
@@ -369,7 +369,7 @@ private enum WorkflowStage: String, CaseIterable, Identifiable {
     }
     var explanation: String {
         switch self {
-        case .issue: "GitHub fournit l’éligibilité des issues. Les règles du workflow déterminent la demande suivante."
+        case .issue: "GitHub transmet les observations vérifiées ; Development reçoit ensuite une demande pour l’issue éligible."
         case .development: "Development prépare un worktree isolé, puis confie l’issue à votre agent."
         case .validation: "Development exécute les commandes choisies avant tout commit et push."
         case .pullRequest: "Une PR vous permet de relire le résultat avant de le fusionner."
