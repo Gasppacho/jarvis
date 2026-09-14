@@ -12,7 +12,6 @@ Jarvis is a multi-context repository. Read this map first, then open only the gl
 | Agent Runtime | [`packages/agent-runtime/CONTEXT.md`](packages/agent-runtime/CONTEXT.md) | Executes project-bound coding agents and MCP clients | Invoked by agentic modules; does not decide business workflow |
 | Workspace | [`packages/workspace/CONTEXT.md`](packages/workspace/CONTEXT.md) | Allocates isolated Git worktrees and leases | Used by development-like modules |
 | GitHub Integration | [`packages/modules/github/CONTEXT.md`](packages/modules/github/CONTEXT.md) | Translates GitHub facts/actions to canonical SCM events | Provider context; upstream and downstream of the Event Bus |
-| Automation Rules | [`packages/modules/automation-rules/CONTEXT.md`](packages/modules/automation-rules/CONTEXT.md) | Maps facts to requested work using project rules | Consumes facts and emits requests; owns no external provider |
 | Development | [`packages/modules/development/CONTEXT.md`](packages/modules/development/CONTEXT.md) | Implements a ticket and publishes a pushed branch | Consumes implementation requests; asks the SCM provider to create a Change Request |
 | Change Request Review | [`packages/modules/change-request-review/CONTEXT.md`](packages/modules/change-request-review/CONTEXT.md) | Reviews a created Change Request | Optional downstream module; emits review publication requests |
 

@@ -20,12 +20,6 @@
         "detail": "Repository connected"
       },
       {
-        "id": "rules",
-        "label": "Rules",
-        "status": "ready",
-        "detail": "The project rule is configured"
-      },
-      {
         "id": "development",
         "label": "Development",
         "status": "active",
@@ -51,7 +45,7 @@
       "explanation": "An execution is already active for this issue.",
       "openDependencyCount": 0,
       "blockerRefs": [],
-      "readinessLabel": "ready-for-agent"
+      "readinessLabel": "ready-to-dev"
     },
     {
       "workItemRef": "github://owner/repo/issues/43",
@@ -63,12 +57,12 @@
       "explanation": "Waiting for the configured readiness label before this issue can start.",
       "openDependencyCount": 0,
       "blockerRefs": [],
-      "readinessLabel": "ready-for-agent"
+      "readinessLabel": "ready-to-dev"
     }
   ],
   "activeExecutionCount": 1,
   "activeWorkItemRefs": [
     "github://owner/repo/issues/42"
   ],
-  "readinessHelp": "The project uses the ready-for-agent label to start new work."
+  "readinessHelp": "The project uses the ready-to-dev label to start new work."
 }

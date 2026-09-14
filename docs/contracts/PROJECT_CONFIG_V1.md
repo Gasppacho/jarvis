@@ -78,7 +78,8 @@ ADR 0014 change l'autre moitié : une ressource déjà accordée à ce Project m
 6. Valider capabilities et contracts.
 7. Produire un `ResolvedProject` immutable pour l'activation.
 
-Un override local ne peut pas changer les modules ou règles métier sans modifier la config portable ; il ne résout que des ressources de machine.
+Un override local ne peut pas changer les modules ou le descriptor d'admission sans
+modifier la config portable ; il ne résout que des ressources de machine.
 
 ## Secret policy
 

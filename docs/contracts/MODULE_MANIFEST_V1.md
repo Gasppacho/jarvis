@@ -58,10 +58,15 @@ Producer :
   kind: request
   schemaRef: contracts/events/scm.change-request.creation-requested.v1.schema.json
   targeting:
-    configurationPath: /rules/*/emit
+    mode: self
 ```
 
-Pour une Request configurée, `targeting.configurationPath` sélectionne les descriptors d’émission `{type, target}` avec un JSON Pointer contenant un segment wildcard `*`. Le Kernel peut ainsi résoudre les targets de composition sans interpréter le modèle métier du module. Pour une Request interne qui cible toujours l’instance productrice, `targeting.mode: self` déclare cette target sans introduire de configuration utilisateur. Le targeting est optionnel pour les producers dont la target n’est pas issue de la configuration.
+Pour une Request issue d'une configuration métier, le targeting décrit explicitement
+la résolution déclarée par le module. Pour une Request interne qui cible toujours
+l'instance productrice, `targeting.mode: self` déclare cette target sans introduire
+de configuration utilisateur. Le targeting est optionnel pour les producers dont
+la target n'est pas issue de la configuration. Aucun targeting utilisateur de règle
+ou de payload n'est exposé par le catalogue fixed-modules.
 
 Le code ne peut enregistrer un handler ou publier un type absent du manifeste. `schemaRef` doit identifier exactement le contrat versionné déclaré, selon la forme canonique `contracts/events/<type>.v<version>.schema.json` ; il documente et résout le payload ainsi que ses `title` et `description` humains pour les choix de composition, mais ne constitue jamais une identité d'événement alternative.
 
@@ -95,18 +100,11 @@ Sans `resolution`, `binding` référence un slot du projet. `resolution.kind: pr
 
 ### Guided configuration semantics
 
-A Module Configuration schema may use standard JSON Schema `$comment` annotations to
-select a specialized editor without inventing a second configuration contract:
-
-- `jarvis:automation-rule-set` marks the repeatable Rule Set array;
-- `jarvis:event-kind=fact` and `jarvis:event-kind=request` mark Event selectors;
-- `jarvis:bounded-match` marks the Rule's exact scalar match object;
-- `jarvis:request-target` marks the Engine-resolved Request target.
-
-These annotations are presentation metadata only. The canonical value remains Module
-Configuration, normal JSON Schema keywords validate custom values, and routing metadata
-comes from the project-scoped composition choices response. Unknown annotations are
-ignored so older shells retain their generic schema editor.
+The guided UI presents only fixed module descriptors and business settings. Module
+Configuration schemas may use standard JSON Schema metadata (`title`, `description`,
+`examples`, `default`, required membership and bounds) for generic controls. Legacy
+rule annotations, when encountered while decoding an archived configuration, are
+ignored as inert migration metadata and never select an editor or create routing.
 
 The Project Wizard also derives its generic controls recursively from standard JSON
 Schema keywords; it never infers meaning from property names. Schema authors provide

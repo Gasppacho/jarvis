@@ -451,7 +451,7 @@ capabilities:
     };
     expect(detail.id).toBe("token-warehouse");
     expect(detail.name).toBe("Token Warehouse");
-    expect(detail.moduleCount).toBe(3);
+    expect(detail.moduleCount).toBe(2);
   });
 
   it("inspects the configured remote without falling back to origin", async () => {
@@ -1766,7 +1766,7 @@ capabilities:
       expect(await replaced.json()).toMatchObject({
         name: "Token Warehouse",
         status: "draft",
-        moduleCount: 3,
+        moduleCount: 2,
         portableConfig,
       });
       const localBindings = (await (
@@ -1793,7 +1793,7 @@ capabilities:
       started.push(second);
       expect(await (await second.call(`/v1/projects/${created.id}`)).json()).toMatchObject({
         portableConfig,
-        moduleCount: 3,
+        moduleCount: 2,
       });
       expect(await (await second.call(`/v1/projects/${created.id}/bindings`)).json()).toEqual(
         persistedBindings,

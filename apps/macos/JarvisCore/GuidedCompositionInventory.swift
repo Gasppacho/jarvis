@@ -32,20 +32,20 @@ public struct GuidedCompositionFixture: Sendable, Equatable {
         }
 
         public let id: String
-        public let draftSentence: String
+        public let label: String
         public let kind: Kind
         public let routing: Routing
         public let routingExplanation: String
 
         public init(
             id: String,
-            draftSentence: String,
+            label: String,
             kind: Kind,
             routing: Routing,
             routingExplanation: String
         ) {
             self.id = id
-            self.draftSentence = draftSentence
+            self.label = label
             self.kind = kind
             self.routing = routing
             self.routingExplanation = routingExplanation
@@ -99,7 +99,7 @@ public struct GuidedCompositionFixture: Sendable, Equatable {
 public enum GuidedCompositionStage: String, CaseIterable, Sendable, Equatable {
     case startingPoint
     case moduleInstances
-    case automationRules
+    case eventPaths
     case resources
     case review
 }
@@ -113,8 +113,6 @@ public struct GuidedCompositionInventory: Sendable, Equatable {
         case chooseStartingPoint
         case addModuleInstance
         case editModuleInstance(String)
-        case addRule
-        case repairEvent(String)
         case bindResource(String)
         case reviewDraft
     }
@@ -192,28 +190,16 @@ public struct GuidedCompositionInventory: Sendable, Equatable {
                 value: "\(fixture.moduleInstances.count) configured",
                 hint: "Choose a Module Package to add."))
 
-        var rules = fixture.eventChoices.map { event in
+        let eventPaths = fixture.eventChoices.map { event in
             Self.row(
                 id: Self.eventRowID(event.id),
-                title: event.draftSentence,
+                title: event.label,
                 detail: event.routingExplanation,
                 status: Self.status(event.routing),
-                action: event.routing == .orphaned || event.routing == .ambiguous
-                    ? .repairEvent(event.id) : nil,
+                action: nil,
                 value: "\(event.kind.rawValue.capitalized); \(event.routing.rawValue)",
-                hint: event.routing == .orphaned || event.routing == .ambiguous
-                    ? "Review Engine routing choices without replacing your sentence."
-                    : "Review this Automation Rule." )
+                hint: "Review the Engine-owned Event path." )
         }
-        rules.append(
-            Self.row(
-                id: "add-rule",
-                title: fixture.eventChoices.isEmpty ? "Add your first Automation Rule" : "Add Automation Rule",
-                detail: "Build a sentence from Engine-provided Event choices.",
-                status: fixture.eventChoices.isEmpty ? .needsAttention : .informational,
-                action: .addRule,
-                value: "\(fixture.eventChoices.count) configured",
-                hint: "Add a sentence-style Automation Rule."))
 
         let resources: [Row]
         if fixture.resourceBindings.isEmpty {
@@ -261,7 +247,7 @@ public struct GuidedCompositionInventory: Sendable, Equatable {
         let unordered = [
             Section(stage: .startingPoint, title: "Starting point", rows: [starting]),
             Section(stage: .moduleInstances, title: "Module Instances", rows: modules),
-            Section(stage: .automationRules, title: "Automation Rules", rows: rules),
+            Section(stage: .eventPaths, title: "Event paths", rows: eventPaths),
             Section(stage: .resources, title: "Resources", rows: resources),
             Section(stage: .review, title: "Review", rows: [review]),
         ]

@@ -12,8 +12,8 @@
   "type": "development.implementation.requested",
   "kind": "request",
   "producer": {
-    "moduleId": "jarvis.module.automation-rules",
-    "moduleInstanceId": "automation-rules"
+    "moduleId": "jarvis.module.development",
+    "moduleInstanceId": "development"
   },
   "subject": {
     "type": "work-item",

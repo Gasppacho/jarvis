@@ -2020,6 +2020,7 @@ components:
         impact: { type: string }
         repairStep: { type: string, enum: [Repository, Workflow, Connections] }
     PreflightRule:
+      description: Deprecated L12 compatibility field. Read-only historical or migration data; fixed-modules preflight never emits it.
       type: object
       additionalProperties: false
       required: [instanceId, ruleId, label, selectedWorkItemRef]
@@ -2083,8 +2084,10 @@ components:
           items:
             $ref: '#/components/schemas/PreflightCheck'
         rule:
+          description: Deprecated L12 compatibility field. Absent from fixed-modules responses; retained only for historical migration decoding.
           $ref: '#/components/schemas/PreflightRule'
         trigger:
+          description: Typed Development admission descriptor for fixed-modules projects.
           $ref: '#/components/schemas/PreflightTrigger'
         candidateEligibility:
           type: object
@@ -2143,7 +2146,7 @@ components:
       additionalProperties: false
       required: [id, label, status, detail]
       properties:
-        id: { type: string, enum: [github, rules, development, pull-request] }
+        id: { type: string, enum: [github, development, pull-request] }
         label: { type: string, minLength: 1 }
         status: { type: string, enum: [ready, active, waiting, complete, unavailable] }
         detail: { type: string, minLength: 1 }

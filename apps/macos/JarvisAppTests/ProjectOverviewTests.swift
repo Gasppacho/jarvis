@@ -43,9 +43,9 @@ final class ProjectOverviewTests: XCTestCase {
             "Connexion en échec")
     }
 
-    func testLegacyOverviewRetainsRulesStage() throws {
+    func testLegacyOverviewUsesFixedMigrationStagesOnly() throws {
         let overview = try decode(Self.fixture)
-        XCTAssertEqual(overview.stages.map(\.id), [.github, .rules, .development, .pullRequest])
+        XCTAssertEqual(overview.stages.map(\.id), [.github, .development, .pullRequest])
     }
 
     func testRefreshFailureKeepsTheLastSnapshotAsStale() async throws {
@@ -156,29 +156,26 @@ final class ProjectOverviewTests: XCTestCase {
             "available":true,
             "stages":[
               {"id":"github","label":"GitHub","status":"ready","detail":"Repository connected"},
-              {"id":"rules","label":"Rules","status":"ready","detail":"Rule is configured"},
               {"id":"development","label":"Development","status":"active","detail":"One issue is running"},
               {"id":"pull-request","label":"Pull Request","status":"waiting","detail":"The next expected state is a pull request"}
             ],
             "nextStep":"Retry GitHub polling"
           },
           "issues":[
-            {"workItemRef":"github://owner/repo/issues/1","title":"Ready issue","issueNumber":1,"repositoryId":"main","status":"eligible","reason":"ready","explanation":"Ready to start.","openDependencyCount":0,"blockerRefs":[],"readinessLabel":"ready-for-agent"},
-            {"workItemRef":"github://owner/repo/issues/2","title":"Missing label","issueNumber":2,"repositoryId":"main","status":"waiting","reason":"ready-label-missing","explanation":"Waiting for the readiness label.","openDependencyCount":0,"blockerRefs":[],"readinessLabel":"ready-for-agent"},
-            {"workItemRef":"github://owner/repo/issues/3","title":"Active issue","issueNumber":3,"repositoryId":"main","status":"in-progress","reason":"execution-active","explanation":"An execution is already active.","openDependencyCount":0,"blockerRefs":[],"readinessLabel":"ready-for-agent"},
-            {"workItemRef":"github://owner/repo/issues/4","title":"Blocked issue","issueNumber":4,"repositoryId":"main","status":"blocked","reason":"open-native-blockers","explanation":"Blocked by two open GitHub native dependencies.","openDependencyCount":2,"blockerRefs":["github://owner/repo/issues/10","github://owner/repo/issues/11"],"readinessLabel":"ready-for-agent"},
-            {"workItemRef":"github://owner/repo/issues/5","title":"Wrong rule","issueNumber":5,"repositoryId":"main","status":"ineligible","reason":"rule-mismatch","explanation":"This issue does not match the active workflow rule.","openDependencyCount":0,"blockerRefs":[],"readinessLabel":"ready-for-agent"},
-            {"workItemRef":"github://owner/repo/issues/6","title":"Unavailable issue","issueNumber":6,"repositoryId":"main","status":"unavailable","reason":"github-request-failed","explanation":"Jarvis could not verify this issue.","openDependencyCount":0,"blockerRefs":[],"readinessLabel":"ready-for-agent"}
+            {"workItemRef":"github://owner/repo/issues/1","title":"Ready issue","issueNumber":1,"repositoryId":"main","status":"eligible","reason":"ready","explanation":"Ready to start.","openDependencyCount":0,"blockerRefs":[],"readinessLabel":"ready-to-dev"},
+            {"workItemRef":"github://owner/repo/issues/2","title":"Missing label","issueNumber":2,"repositoryId":"main","status":"waiting","reason":"ready-label-missing","explanation":"Waiting for the readiness label.","openDependencyCount":0,"blockerRefs":[],"readinessLabel":"ready-to-dev"},
+            {"workItemRef":"github://owner/repo/issues/3","title":"Active issue","issueNumber":3,"repositoryId":"main","status":"in-progress","reason":"execution-active","explanation":"An execution is already active.","openDependencyCount":0,"blockerRefs":[],"readinessLabel":"ready-to-dev"},
+            {"workItemRef":"github://owner/repo/issues/4","title":"Blocked issue","issueNumber":4,"repositoryId":"main","status":"blocked","reason":"open-native-blockers","explanation":"Blocked by two open GitHub native dependencies.","openDependencyCount":2,"blockerRefs":["github://owner/repo/issues/10","github://owner/repo/issues/11"],"readinessLabel":"ready-to-dev"},
+            {"workItemRef":"github://owner/repo/issues/5","title":"Wrong label","issueNumber":5,"repositoryId":"main","status":"ineligible","reason":"readiness-label-mismatch","explanation":"This issue does not have the configured readiness label.","openDependencyCount":0,"blockerRefs":[],"readinessLabel":"ready-to-dev"},
+            {"workItemRef":"github://owner/repo/issues/6","title":"Unavailable issue","issueNumber":6,"repositoryId":"main","status":"unavailable","reason":"github-request-failed","explanation":"Jarvis could not verify this issue.","openDependencyCount":0,"blockerRefs":[],"readinessLabel":"ready-to-dev"}
           ],
           "activeExecutionCount":1,
           "activeWorkItemRefs":["github://owner/repo/issues/3"],
-          "readinessHelp":"The readiness label is ready-for-agent."
+          "readinessHelp":"The readiness label is ready-to-dev."
         }
         """
 
-    private static let fixedFixture = fixture.replacingOccurrences(
-        of: "{\"id\":\"rules\",\"label\":\"Rules\",\"status\":\"ready\",\"detail\":\"Rule is configured\"},\n",
-        with: "")
+    private static let fixedFixture = fixture
 }
 
 private actor CallCounter {

@@ -1,4 +1,7 @@
-# Context: Automation Rules
+# Historical migration context: Automation Rules
+
+This package is retained for L11/L12 migration, archive and export decoding only.
+It is not bundled, catalogued, activated or executed in the current product.
 
 ## Terms
 

@@ -69,7 +69,6 @@ struct ModuleCatalogView: View {
     private func description(for package: ModulePackage) -> String {
         switch package.id {
         case "jarvis.module.github": "Observe les issues GitHub et réalise les actions demandées sur les Pull Requests."
-        case "jarvis.module.automation-rules": "Transforme les événements qui correspondent aux règles du projet en demandes de travail."
         case "jarvis.module.development": "Développe une issue dans un dossier Git isolé, vérifie le résultat et pousse les modifications."
         case "jarvis.module.change-request-review": "Examine une révision de Pull Request et conserve un verdict local."
         default: package.description

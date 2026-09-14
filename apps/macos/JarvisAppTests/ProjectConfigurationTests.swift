@@ -649,8 +649,8 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(
             configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "github" }?.configurationValues["readyLabel"],
             "reviewed-work")
-        XCTAssertTrue(ProjectDetailPresentation.activationNotice.contains("already"))
-        XCTAssertTrue(ProjectDetailPresentation.activationNotice.contains("Existing and Custom"))
+        XCTAssertTrue(ProjectDetailPresentation.activationNotice.contains("carrying"))
+        XCTAssertTrue(ProjectDetailPresentation.activationNotice.contains("Historical compositions"))
         XCTAssertTrue(presentation.startingPoints.first?.description.contains("QServices/swift-config") == true)
         let custom = try XCTUnwrap(configuration.state(for: imported.id).draft)
         configuration.chooseStartingPoint(projectId: imported.id, startingPointId: "custom")

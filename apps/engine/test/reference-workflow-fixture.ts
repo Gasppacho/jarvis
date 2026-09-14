@@ -250,6 +250,7 @@ function referenceProjectConfiguration(projectId: string): PortableProjectConfig
   const configuration = parseYaml(
     readFileSync(join(ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
   ) as PortableProjectConfiguration;
+  const { compositionMode: _compositionMode, ...legacyConfiguration } = configuration;
   const modules = configuration.modules.map((module) => {
     if (module.instanceId === "github") {
       return {
@@ -275,14 +276,34 @@ function referenceProjectConfiguration(projectId: string): PortableProjectConfig
     }
     return module;
   });
+  const historicalAutomationRules = {
+    instanceId: "automation-rules",
+    moduleId: "jarvis.module.automation-rules",
+    enabled: true,
+    configuration: {
+      rules: [
+        {
+          id: "ready-label-starts-development",
+          when: {
+            eventType: "scm.work-item.tag-added",
+            equals: { "payload.tag": "agent:ready" },
+          },
+          emit: {
+            type: "development.implementation.requested",
+            target: { moduleInstanceId: "development" },
+          },
+        },
+      ],
+    },
+  } as const;
   return {
-    ...configuration,
+    ...legacyConfiguration,
     metadata: { id: projectId, name: `Reference Workflow ${projectId}` },
     repositories: configuration.repositories.map((repository) =>
       repository.id === "main" ? { ...repository, remote: "github" } : repository,
     ),
     commands: { ...configuration.commands, test: "node --test" },
-    modules,
+    modules: [...modules, historicalAutomationRules],
   };
 }
 

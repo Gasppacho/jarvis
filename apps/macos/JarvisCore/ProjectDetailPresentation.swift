@@ -3,7 +3,7 @@ import Foundation
 /// Complete, data-driven content and action inventory rendered by ProjectDetailView.
 /// SwiftUI owns only bindings and side-effect handlers; this value is testable in JarvisCore.
 public struct ProjectDetailPresentation: Sendable, Equatable {
-    public static let activationNotice = "The recommended model monitors issues already carrying the ready label: eligible issues can start immediately after activation. It checks native GitHub blockers and runs one issue at a time, ending at a PR for manual review and merge. Existing and Custom compositions retain their configured rules and concurrency. Saving a draft does not start monitoring or an agent."
+    public static let activationNotice = "The fixed model monitors issues carrying ready-to-dev: eligible issues can start after activation. It checks native GitHub blockers and runs one issue at a time, ending at a PR for manual review and merge. Historical compositions remain available for migration or export only. Saving a draft does not start monitoring or an agent."
     public struct SlotRequester: Identifiable, Sendable, Equatable {
         public var id: String { instanceId }
         public let instanceId: String
@@ -56,42 +56,6 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         /// Binding names declared by the selected Module Package's manifest
         /// (ticket 48) — never a name invented by the shell.
         public let declaredBindingNames: [String]
-    }
-
-    public struct AutomationEventOption: Identifiable, Sendable, Equatable {
-        public var id: String { "\(type).v\(version).\(kind)" }
-        public let label: String
-        public let type: String
-        public let version: Int
-        public let kind: String
-        public let detail: String
-        public let routingStatus: String
-        public let routingExplanation: String
-        public let selectedConsumerID: String?
-        public let compatibleConsumerInstanceIDs: [String]
-    }
-
-    public struct AutomationRuleRow: Identifiable, Sendable, Equatable {
-        public enum SelectionStatus: Sendable, Equatable { case known, unknown }
-
-        public let id: UUID
-        public let moduleID: UUID
-        public let ruleID: String
-        public let inputEventType: String
-        public let matchJSON: String
-        public let emissionEventType: String
-        public let payloadJSON: String
-        public let target: AutomationRuleDraft.Target
-        public let targetChoices: [String]
-        public let inputChoices: [AutomationEventOption]
-        public let emissionChoices: [AutomationEventOption]
-        public let inputStatus: SelectionStatus
-        public let emissionStatus: SelectionStatus
-        public let inputHint: String
-        public let emissionHint: String
-        public let routingStatus: String
-        public let routingExplanation: String
-        public let sentence: String
     }
 
     public struct ReviewRow: Identifiable, Sendable, Equatable {
@@ -218,14 +182,6 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 case renameModuleBinding(UUID, String, String)
                 case setModuleBinding(UUID, String, String)
                 case setModuleConfiguration(UUID, String, String)
-                case addAutomationRule(UUID)
-                case removeAutomationRule(UUID, UUID)
-                case setAutomationRuleID(UUID, UUID, String)
-                case setAutomationRuleInput(UUID, UUID, String)
-                case setAutomationRuleMatch(UUID, UUID, String)
-                case setAutomationRuleEmission(UUID, UUID, String, String?)
-                case setAutomationRulePayload(UUID, UUID, String)
-                case setAutomationRuleTarget(UUID, UUID, String)
             }
 
             public let operation: Operation
@@ -332,55 +288,6 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                     label: "Set module configuration")
             }
 
-            public static func addAutomationRule(_ moduleID: UUID) -> Self {
-                Self(.addAutomationRule(moduleID), label: "Add Automation Rule")
-            }
-
-            public static func removeAutomationRule(_ moduleID: UUID, _ ruleID: UUID) -> Self {
-                Self(.removeAutomationRule(moduleID, ruleID), label: "Remove Automation Rule")
-            }
-
-            public static func setAutomationRuleID(
-                _ moduleID: UUID, _ ruleID: UUID, _ value: String
-            ) -> Self {
-                Self(.setAutomationRuleID(moduleID, ruleID, value), label: "Set Rule ID")
-            }
-
-            public static func setAutomationRuleInput(
-                _ moduleID: UUID, _ ruleID: UUID, _ eventType: String
-            ) -> Self {
-                Self(.setAutomationRuleInput(moduleID, ruleID, eventType), label: "Set input Fact")
-            }
-
-            public static func setAutomationRuleMatch(
-                _ moduleID: UUID, _ ruleID: UUID, _ json: String
-            ) -> Self {
-                Self(.setAutomationRuleMatch(moduleID, ruleID, json), label: "Set bounded match")
-            }
-
-            public static func setAutomationRuleEmission(
-                _ moduleID: UUID,
-                _ ruleID: UUID,
-                _ eventType: String,
-                resolvedConsumerID: String?
-            ) -> Self {
-                Self(
-                    .setAutomationRuleEmission(
-                        moduleID, ruleID, eventType, resolvedConsumerID),
-                    label: "Set emitted Request")
-            }
-
-            public static func setAutomationRulePayload(
-                _ moduleID: UUID, _ ruleID: UUID, _ json: String
-            ) -> Self {
-                Self(.setAutomationRulePayload(moduleID, ruleID, json), label: "Set Request payload")
-            }
-
-            public static func setAutomationRuleTarget(
-                _ moduleID: UUID, _ ruleID: UUID, _ target: String
-            ) -> Self {
-                Self(.setAutomationRuleTarget(moduleID, ruleID, target), label: "Set Request target")
-            }
         }
 
         public struct Asynchronous: Sendable, Equatable, Hashable {
@@ -474,7 +381,6 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
     public let startingPoints: [StartingPoint]
     public let modules: [ProjectModuleDraft]
     public let moduleCards: [ModuleCard]
-    public let automationRuleRows: [AutomationRuleRow]
     public let slots: [Slot]
     public let resourceBindings: [ResourceBinding]
     public let capabilityOptions: [String]
@@ -544,50 +450,6 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                     "Instance ID: \(module.instanceId) · Package: \(module.moduleId) · Version: \(choice?.version ?? package?.version ?? "unavailable") · Contracts: \((consumes + produces).joined(separator: ", "))",
                 declaredBindingNames: package?.declaredBindingNames ?? []
             )
-        }
-        let eventChoices = state.compositionGuide?.eventChoices ?? []
-        automationRuleRows = modules.flatMap { module -> [AutomationRuleRow] in
-            guard let rules = module.automationRules else { return [] }
-            let inputChoices = eventChoices.filter {
-                $0.kind == "fact"
-                    && $0.compatibleConsumerInstanceIDs.contains(module.instanceId)
-            }.map(Self.automationEventOption)
-            let emissionChoices = eventChoices.filter {
-                $0.kind == "request" && $0.producerInstanceIDs.contains(module.instanceId)
-            }.map(Self.automationEventOption)
-            return rules.map { rule in
-                let input = inputChoices.first { $0.type == rule.inputEventType }
-                let emission = emissionChoices.first { $0.type == rule.emissionEventType }
-                let targetLabel =
-                    emission?.selectedConsumerID.map(Self.instanceLabel)
-                    ?? Self.targetLabel(rule.target)
-                return AutomationRuleRow(
-                    id: rule.id,
-                    moduleID: module.id,
-                    ruleID: rule.ruleID,
-                    inputEventType: rule.inputEventType,
-                    matchJSON: rule.matchJSON,
-                    emissionEventType: rule.emissionEventType,
-                    payloadJSON: rule.payloadJSON ?? "{}",
-                    target: rule.target,
-                    targetChoices: emission?.compatibleConsumerInstanceIDs ?? [],
-                    inputChoices: inputChoices,
-                    emissionChoices: emissionChoices,
-                    inputStatus: input == nil ? .unknown : .known,
-                    emissionStatus: emission == nil ? .unknown : .known,
-                    inputHint: input == nil
-                        ? "Advanced custom value is unknown to the Event Catalog and blocks readiness."
-                        : input?.detail ?? "",
-                    emissionHint: emission == nil
-                        ? "Advanced custom value is unknown to the Event Catalog and blocks readiness."
-                        : emission?.detail ?? "",
-                    routingStatus: emission?.routingStatus ?? "unknown",
-                    routingExplanation: emission?.routingExplanation
-                        ?? "No Engine routing explanation is available for this custom Request.",
-                    sentence:
-                        "When \(input?.label ?? rule.inputEventType) matches, emit \(emission?.label ?? rule.emissionEventType) to \(targetLabel)."
-                )
-            }
         }
         capabilityOptions = Array(Set(packages.flatMap(\.requiredCapabilityIDs))).sorted()
         let requestersForSlot: (String) -> [SlotRequester] = { slotId in
@@ -693,33 +555,6 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                         .setModuleConfiguration(
                             module.id, $0, module.configurationValues[$0] ?? ""))
                 })
-            if let rules = module.automationRules {
-                inventory.append(.edit(.addAutomationRule(module.id)))
-                for rule in rules {
-                    inventory.append(.edit(.removeAutomationRule(module.id, rule.id)))
-                    inventory.append(.edit(.setAutomationRuleID(module.id, rule.id, rule.ruleID)))
-                    inventory.append(
-                        .edit(
-                            .setAutomationRuleInput(
-                                module.id, rule.id, rule.inputEventType)))
-                    inventory.append(
-                        .edit(.setAutomationRuleMatch(module.id, rule.id, rule.matchJSON)))
-                    inventory.append(
-                        .edit(
-                            .setAutomationRulePayload(
-                                module.id, rule.id, rule.payloadJSON ?? "{}")))
-                    let consumer = eventChoices.first {
-                        $0.type == rule.emissionEventType && $0.kind == "request"
-                    }?.selectedConsumerID
-                    inventory.append(
-                        .edit(
-                            .setAutomationRuleEmission(
-                                module.id,
-                                rule.id,
-                                rule.emissionEventType,
-                                resolvedConsumerID: consumer)))
-                }
-            }
         }
         inventory.append(
             contentsOf: [
@@ -732,9 +567,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 .noOp(.cancelProjectDeletion),
             ])
         actions = inventory
-        reviewRows = Self.reviewRows(
-            review: state.compositionReview,
-            automationRules: automationRuleRows)
+        reviewRows = Self.reviewRows(review: state.compositionReview)
         validation = Self.validation(
             from: state.validation,
             selectedProjectId: project.id)
@@ -1075,24 +908,8 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         )
     }
 
-    private static func reviewRows(
-        review: ProjectCompositionReview?,
-        automationRules: [AutomationRuleRow]
-    ) -> [ReviewRow] {
-        let unknownEventRows = automationRules.compactMap { rule -> ReviewRow? in
-            guard rule.inputStatus == .unknown || rule.emissionStatus == .unknown else {
-                return nil
-            }
-            return makeReviewRow(
-                id: "unknown-event-\(rule.id)",
-                category: .finding,
-                title: "Unknown Advanced Event value",
-                detail: rule.inputStatus == .unknown ? rule.inputHint : rule.emissionHint,
-                status: .needsAttention,
-                repairAction: "Choose a validated Event from the searchable selector.",
-                navigationTarget: "module-\(rule.moduleID)")
-        }
-        guard let review else { return unknownEventRows }
+    private static func reviewRows(review: ProjectCompositionReview?) -> [ReviewRow] {
+        guard let review else { return [] }
 
         var rows = review.compositionGuide.moduleInstances.map { module in
             makeReviewRow(
@@ -1116,11 +933,11 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 detail: "Producers: \(event.producerLabels.joined(separator: ", ")). Consumers: \(event.consumerLabels.joined(separator: ", ")). \(event.routingExplanation)",
                 status: needsRepair ? .needsAttention : .informational,
                 repairAction: needsRepair
-                    ? "Return to Module Instances or Automation Rules and repair this Event path."
+                    ? "Return to Module Instances and repair this Event path."
                     : nil,
                 navigationTarget: needsRepair
                     ? event.producerInstanceIDs.first.map { "module-instance-\($0)" }
-                        ?? "automation-rules"
+                        ?? "starting-point"
                     : nil)
         }
         rows += review.satisfiedCapabilities.map { capability in
@@ -1144,13 +961,12 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
                 repairAction: ready ? nil : binding.repairAction,
                 navigationTarget: ready ? nil : "resource-\(binding.slotId)")
         }
-        rows += unknownEventRows
         rows += review.findings.map { finding in
             let target = finding.targetKind == "project"
                 ? "starting-point"
                 : finding.slot.map { "resource-\($0)" }
                     ?? finding.instanceId.map { "module-instance-\($0)" }
-                    ?? "automation-rules"
+                    ?? "starting-point"
             return makeReviewRow(
                 id: "finding-\(finding.code)-\(finding.message)",
                 category: .finding,
@@ -1203,36 +1019,4 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             accessibilityHint: [detail, repairAction].compactMap { $0 }.joined(separator: " "))
     }
 
-    private static func automationEventOption(
-        _ choice: ProjectCompositionEventChoice
-    ) -> AutomationEventOption {
-        let producers =
-            choice.producerLabels.isEmpty
-            ? "No active producer" : "Producer: \(choice.producerLabels.joined(separator: ", "))"
-        let consumers =
-            choice.consumerLabels.isEmpty
-            ? "No active consumer" : "Consumers: \(choice.consumerLabels.joined(separator: ", "))"
-        return AutomationEventOption(
-            label: choice.label,
-            type: choice.type,
-            version: choice.version,
-            kind: choice.kind,
-            detail:
-                "\(choice.kind.capitalized) · v\(choice.version) · \(producers) · \(consumers) · \(choice.routingStatus)",
-            routingStatus: choice.routingStatus,
-            routingExplanation: choice.routingExplanation,
-            selectedConsumerID: choice.selectedConsumerID,
-            compatibleConsumerInstanceIDs: choice.compatibleConsumerInstanceIDs)
-    }
-
-    private static func instanceLabel(_ id: String) -> String {
-        ProjectCompositionEventChoice.instanceLabel(id)
-    }
-
-    private static func targetLabel(_ target: AutomationRuleDraft.Target) -> String {
-        switch target {
-        case .moduleInstance(let id): instanceLabel(id)
-        case .binding(let id): "binding \(id)"
-        }
-    }
 }

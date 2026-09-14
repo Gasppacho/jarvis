@@ -389,11 +389,11 @@ else { require("node:fs").writeFileSync(${JSON.stringify(join(dataRoot, "unexpec
       `/v1/projects/${first.id}/binding-candidates`,
     );
     const agentRuntime = unavailable.slots.find((slot) => slot.slotId === "agentRuntime");
-    expect(agentRuntime).toMatchObject({
-      ineligibleGrantedResources: [
+    expect(agentRuntime?.ineligibleGrantedResources).toEqual(
+      expect.arrayContaining([
         expect.objectContaining({ reason: expect.stringContaining('"unauthenticated"') }),
-      ],
-    });
+      ]),
+    );
     expect(JSON.stringify(agentRuntime)).not.toContain("/private/fake/codex");
     const report = await json<ValidationBody>(
       engine,
@@ -466,17 +466,22 @@ function portableConfiguration(): Record<string, unknown> {
     readFileSync(join(ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
   ) as Record<string, unknown>;
   const modules = configuration["modules"] as Record<string, unknown>[];
-  const automation = modules.find(
-    (module) => module["moduleId"] === "jarvis.module.automation-rules",
-  );
-  if (automation === undefined) throw new Error("automation-rules fixture is missing");
-  configuration["slots"] = { agentRuntime: { requires: "agent.execute" } };
+  const github = modules.find((module) => module["moduleId"] === "jarvis.module.github");
+  const development = modules.find((module) => module["moduleId"] === "jarvis.module.development");
+  if (github === undefined) throw new Error("github fixture is missing");
+  if (development === undefined) throw new Error("development fixture is missing");
+  configuration["compositionMode"] = undefined;
+  configuration["slots"] = {
+    sourceControl: { requires: "scm.change-request.manage" },
+    agentRuntime: { requires: "agent.execute" },
+  };
   configuration["modules"] = [
-    automation,
     {
-      instanceId: "development",
-      moduleId: "jarvis.module.development",
-      enabled: true,
+      ...github,
+      bindings: {},
+    },
+    {
+      ...development,
       runtimeSlot: "agentRuntime",
       bindings: { repository: "main" },
       configuration: {

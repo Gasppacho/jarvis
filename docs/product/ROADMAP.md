@@ -20,20 +20,20 @@
 - Configuration portable et bindings locaux.
 - Module catalog, instances et validation du graphe.
 
-## M3 — Durable event runtime
+## M3 — Durable event runtime (historical delivery)
 
 - SQLite, migrations, Inbox, Outbox et Execution Ledger.
 - Routing request/fact par projet.
 - Timeline et reprise après redémarrage.
-- Automation Rules vertical slice.
+- Event routing, Inbox/Outbox and bounded retries.
 
-## M4 — Development vertical slice
+## M4 — Development vertical slice (historical delivery)
 
 - Workspace Manager et worktrees.
 - Fake Agent Runtime puis adapter Codex CLI.
 - Development Module : changement, validations, commit et push.
 - GitHub connection, polling entrant et création de Pull Request.
-- Démonstration `agent:ready → PR`.
+- Démonstration historique `agent:ready → PR`, conservée pour l'archive de migration.
 
 ## M5 — Product hardening
 

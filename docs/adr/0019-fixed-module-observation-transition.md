@@ -40,6 +40,20 @@ the later removal tickets.
   from missing rules. Migration and removal happen in later expand → migrate →
   remove tickets, while legacy fixtures remain supported.
 
+## Amendment — L14 (#234)
+
+The remove phase is now applied for the product surfaces and contracts. Fixed
+projects use the typed Development descriptor as their only functional admission
+entry: GitHub publishes the provider-neutral observation, Development evaluates
+the fixed predicate and targets its own implementation Request. The former
+Automation Rules editor, catalog entry and executable mapping are removed.
+
+The D03 wording above records the earlier transition state and remains history;
+it is superseded for fixed projects by the implementation delivered in #233 and
+#234. The optional v1 legacy fields remain read-only, explicitly deprecated and
+absent from fixed-project responses. Legacy schema and fixture data remain inert
+decoders or migration/archive material, with no generated compatibility Rule.
+
 ## Consequences
 
 The GitHub Module can publish canonical state to a Project timeline with only its

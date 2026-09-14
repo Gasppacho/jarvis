@@ -26,7 +26,8 @@ Ce seam couvre le plus de comportement avec le moins de mocks et reste assez rap
 
 ### Domain/application tests
 
-Pour invariants locaux difficiles à exprimer uniquement en E2E : rules matching, retry classification, branch naming, cycle limits, project validation.
+Pour invariants locaux difficiles à exprimer uniquement en E2E : admission fixe,
+retry classification, branch naming, cycle limits, project validation.
 
 ### Integration tests
 
@@ -59,7 +60,7 @@ Pour invariants locaux difficiles à exprimer uniquement en E2E : rules matching
 2. Créer remote Git bare local.
 3. Importer project config GitHub Development avec adapters fake.
 4. Activer projet.
-5. Injecter `scm.work-item.tag-added` pour `agent:ready`.
+5. Injecter `scm.work-item.observed` pour une issue portant `ready-to-dev`.
 6. Attendre `scm.change-request.created` par API.
 7. Vérifier branche distante, commit, tests, idempotency et timeline.
 8. Redémarrer moteur et vérifier persistance.

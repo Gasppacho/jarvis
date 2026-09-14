@@ -361,14 +361,7 @@ export class ProjectService implements ProjectRegistry<
         selectedWorkItemRef = (scope as Record<string, string>)["workItemRef"]!;
     }
     const eligible = issues.some((issue) => issue.status === "eligible");
-    const stages = overviewStages(
-      polling.state,
-      hasActiveExecution,
-      eligible,
-      project.portableConfig.compositionMode === "fixed-modules",
-      legacy,
-      project.status,
-    );
+    const stages = overviewStages(polling.state, hasActiveExecution, eligible);
     return {
       apiVersion: "jarvis.dev/project-overview/v1",
       kind: "ProjectOverview",
@@ -1849,20 +1842,7 @@ function overviewStages(
   pollingState: ProjectOverview["polling"]["state"],
   active: boolean,
   eligible: boolean,
-  fixedModules: boolean,
-  legacy: boolean,
-  projectStatus: ProjectRow["status"],
 ): ProjectOverviewStage[] {
-  const rules: ProjectOverviewStage = {
-    id: "rules",
-    label: "Rules",
-    status: legacy
-      ? "unavailable"
-      : projectStatus === "active" || projectStatus === "paused" || projectStatus === "degraded"
-        ? "ready"
-        : "unavailable",
-    detail: legacy ? "Migration required; execution retired" : "Workflow eligibility",
-  };
   return [
     {
       id: "github",
@@ -1876,7 +1856,6 @@ function overviewStages(
       detail:
         pollingState === "paused" ? "Polling paused with the Project." : "Issues and dependencies",
     },
-    ...(fixedModules ? [] : [rules]),
     {
       id: "development",
       label: "Development",

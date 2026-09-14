@@ -22,7 +22,7 @@
   "causationId": null,
   "payload": {
     "workItemRef": "github://QServices/token-warehouse/issues/42",
-    "tag": "agent:ready",
+    "tag": "ready-to-dev",
     "title": "Add a health endpoint"
   }
 }

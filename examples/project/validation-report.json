@@ -11,8 +11,8 @@
         "kind": "request"
       },
       "producer": {
-        "instanceId": "automation-rules",
-        "moduleId": "jarvis.module.automation-rules"
+        "instanceId": "development",
+        "moduleId": "jarvis.module.development"
       },
       "consumer": {
         "instanceId": "development",

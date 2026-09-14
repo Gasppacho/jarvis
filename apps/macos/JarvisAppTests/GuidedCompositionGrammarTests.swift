@@ -22,10 +22,10 @@ final class GuidedCompositionGrammarTests: XCTestCase {
             })
         XCTAssertTrue(
             inventories[2].rows.contains {
-                $0.id == "event-development-requested" &&
-                    $0.title == "When a work item is ready, request implementation" &&
+                    $0.id == "event-development-requested" &&
+                    $0.title == "Implementation Request" &&
                     $0.detail.contains("No enabled consumer") &&
-                    $0.action == .repairEvent("development.implementation.requested.v1")
+                    $0.action == nil
             })
         XCTAssertTrue(
             inventories[3].rows.contains {
@@ -41,11 +41,11 @@ final class GuidedCompositionGrammarTests: XCTestCase {
         XCTAssertEqual(orphaned.grammar, .guidedStages)
         XCTAssertEqual(
             orphaned.sections.map(\.title),
-            ["Starting point", "Module Instances", "Automation Rules", "Resources", "Review"])
+            ["Starting point", "Module Instances", "Event paths", "Resources", "Review"])
         XCTAssertEqual(orphaned.rows.map(\.keyboardOrder), Array(orphaned.rows.indices))
         XCTAssertEqual(
             orphaned.rows.first { $0.id == "event-development-requested" }?.title,
-            "When a work item is ready, request implementation")
+            "Implementation Request")
         XCTAssertEqual(
             orphaned.rows.first { $0.id == "resource-agent-runtime" }?.accessibility.value,
             "Unbound; 0 eligible choices")
@@ -58,6 +58,10 @@ final class GuidedCompositionGrammarTests: XCTestCase {
             "jarvis.dev/project-composition-choices/v1",
             "jarvis.dev/project-composition-choices/v1",
         ])
+        XCTAssertTrue(orphaned.rows.allSatisfy { row in
+            !row.title.localizedCaseInsensitiveContains("rule") &&
+                !row.title.localizedCaseInsensitiveContains("automation")
+        })
     }
 }
 
@@ -81,7 +85,7 @@ private enum SharedCompositionFixtures {
         eventChoices: [
             .init(
                 id: "development.implementation.requested.v1",
-                draftSentence: "When a work item is ready, request implementation",
+                label: "Implementation Request",
                 kind: .request,
                 routing: .resolved,
                 routingExplanation: "Exactly one enabled consumer: development.")
@@ -99,12 +103,13 @@ private enum SharedCompositionFixtures {
         projectName: "Orphaned Project",
         startingPoint: "Custom",
         moduleInstances: [
-            .init(instanceId: "rules", displayName: "Automation Rules", enabled: true)
+            .init(instanceId: "github", displayName: "GitHub", enabled: true),
+            .init(instanceId: "development", displayName: "Development", enabled: true)
         ],
         eventChoices: [
             .init(
                 id: "development.implementation.requested.v1",
-                draftSentence: "When a work item is ready, request implementation",
+                label: "Implementation Request",
                 kind: .request,
                 routing: .orphaned,
                 routingExplanation: "No enabled consumer can receive this Request.")
@@ -128,7 +133,7 @@ private enum SharedCompositionFixtures {
         eventChoices: [
             .init(
                 id: "development.implementation.requested.v1",
-                draftSentence: "When a work item is ready, request implementation",
+                label: "Implementation Request",
                 kind: .request,
                 routing: .ambiguous,
                 routingExplanation: "More than one enabled consumer can receive this Request.")

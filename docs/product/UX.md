@@ -62,16 +62,16 @@ l'ordre devient vertical. Le schéma projette la composition canonique et les
 événements déclarés par l'Engine ; il ne stocke pas un second graphe et Swift ne
 recalcule aucun routage. Une composition personnalisée conserve ses valeurs.
 Remplacer une composition par le modèle demande une confirmation qui nomme les
-valeurs remplacées : modules, règles et exigences de ressources ; nom et commandes
+valeurs remplacées : modules et exigences de ressources ; nom et commandes
 du projet sont conservés. Le modèle déjà présent ne devient pas un choix à refaire.
 
-Le parcours recommandé utilise une issue ouverte portant **ready-for-agent**, sans
+Le parcours recommandé utilise une issue ouverte portant **ready-to-dev**, sans
 bloqueur GitHub natif ouvert. GitHub produit `scm.work-item.observed`, puis
 Development vérifie l'admission et produit `development.implementation.requested` avant de préparer le
 worktree, exécute l'agent et les validations confirmées, commit et pousse. GitHub
 crée la PR après `scm.change-request.creation-requested`. **Une issue à la fois** ;
-**relecture et merge humains**. Les projets historiques conservent `agent:ready`
-et leur règle historique tant qu'un remplacement explicite n'est pas demandé.
+**relecture et merge humains**. Les projets historiques restent consultables et
+exportables jusqu'à leur migration explicite.
 
 **Préparer et vérifier le projet** présente les commandes détectées comme des
 propositions non encore exécutées. L'utilisateur confirme la préparation, y compris
@@ -117,8 +117,8 @@ l'éligibilité et ne ressemble pas à une liste vide. Toute modification invali
 rapport ; une réponse périmée ou d'un autre projet ne devient jamais courante.
 
 La carte **Première exécution** distingue **Tester avec cette issue** et
-**Surveiller les issues prêtes**. Le choix mono-issue ajoute le filtre exact à la
-règle canonique et conserve les autres valeurs ; sa portée reste visible après
+**Surveiller les issues prêtes**. Le choix mono-issue ajoute le filtre exact au
+descriptor d'admission fixe et conserve les autres valeurs ; sa portée reste visible après
 vérification. Le bouton final reprend l'intention et le numéro de l'issue.
 Élargir à toutes les issues retire uniquement le filtre posé par l'essai, exige
 un nouveau rapport puis une activation explicite. Une issue déjà admise ne redémarre
@@ -146,28 +146,13 @@ ne prouve pas le parcours utilisateur complet.
 
 ## Réglages avancés de composition
 
-Les formulaires existants de modules, règles, ressources et configuration structurée
-restent le chemin d'édition des compositions personnalisées. Leur navigation interne
+Les formulaires existants de modules, ressources et configuration structurée
+restent le chemin d'édition des réglages métier. Leur navigation interne
 ne constitue pas un autre assistant de premier usage. Les ressources éligibles,
 capabilities, compatibilités et destinations viennent de l'Engine. Les valeurs
 inconnues sont conservées et réparables ; le shell n'invente ni ressource ni contrat.
 Le choix d'une ressource écrit les Local Bindings, jamais la Portable Configuration.
 La sauvegarde conserve ces deux documents canoniques, sans lignes de présentation.
-
-### Automation Rules
-
-Une instance Automation Rules présente chaque Rule comme une phrase répétable :
-`When <Fact> matches <bounded match>, emit <Request> to <resolved consumer>`. Le Rule
-Set canonique reste stocké dans Module Configuration; aucune connexion ou sélection
-propre à l'UI n'est persistée.
-
-Les sélecteurs sont recherchables et montrent le libellé humain, le kind, la version,
-les producers/consumers compatibles et l'explication de routage renvoyée par l'Engine.
-Le chemin normal ne propose que les Facts consommables et Requests productibles par
-l'instance. `Advanced custom value` permet de préserver une valeur inconnue pour la
-réparer, la signale explicitement et bloque l'état Ready-to-validate jusqu'à ce que le
-contrat du Module Package la valide. Modifier ou supprimer une Rule ne remplace jamais
-les autres Rules ni les autres champs du Draft.
 
 ### Module Configuration structurée
 
@@ -197,7 +182,7 @@ sélectionné. Elle affiche :
 - le nom du Project et son statut `Draft`, `Ready`, `Running`, `Paused` ou `Degraded` ;
 - l'action cohérente avec ce statut (`Activate`, `Pause`, `Resume` ou `Refresh`) ;
 - le parcours `GitHub → Development → Pull Request` pour `fixed-modules`; les projets legacy
-  conservent `GitHub → Rules → Development → Pull Request` et la prochaine étape attendue ;
+  affichent leur état de migration inerte et la prochaine étape attendue ;
 - les issues GitHub pertinentes, avec numéro, titre, statut (`Eligible`, `En attente`,
   `Déjà en cours`, `Bloquée par des dépendances`, `Non éligible` ou `Impossible de
   vérifier`) et explication lisible ;
@@ -205,8 +190,7 @@ sélectionné. Elle affiche :
   `blocked_by`. Aucun label de blocage local n'est interprété comme une dépendance ;
 - le dernier polling, son état (`live`, `reconnecting`, `failed`, `paused`) et une
   action de nouvelle tentative. Une erreur conserve le dernier snapshot d'issues ;
-- l'aide indiquant le label de readiness configuré (`ready-for-agent` dans le nouveau
-  template, `agent:ready` conservé pour les Projects existants) ;
+- l'aide indiquant le label de readiness configuré (`ready-to-dev` par défaut) ;
 - les exécutions actives et l'action `Pause`, qui bloque les nouveaux claims tout en
   laissant l'exécution active sous surveillance. `Resume` réactive polling et claims.
 
@@ -232,12 +216,11 @@ Le graphe est dérivé des manifests et instances actives. Il n'est pas un édit
 
 ```text
 [GitHub]
-    └─ scm.work-item.ready
-           ↓
-[Automation Rules]
-    └─ development.implementation.requested
+    └─ scm.work-item.observed
            ↓
 [Development]
+    └─ development.implementation.requested
+           ↓
     └─ scm.change-request.creation-requested
            ↓
 [GitHub]

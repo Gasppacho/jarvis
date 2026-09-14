@@ -11,8 +11,8 @@ Livrer une application native macOS autonome qui :
 1. importe un repository local comme projet Jarvis ;
 2. détecte son écosystème et demande une configuration propre au projet ;
 3. active des instances de modules isolées pour ce projet ;
-4. observe GitHub pour un label `agent:ready` ;
-5. traduit ce fait en `development.implementation.requested` via un module de règles ;
+4. observe GitHub pour le label project-scoped `ready-to-dev` ;
+5. laisse Development évaluer l'admission et publier `development.implementation.requested` ;
 6. exécute le module Development dans un Git worktree ;
 7. utilise le runtime agentique lié au projet ;
 8. lance les validations configurées, commit et push ;
@@ -37,9 +37,9 @@ Livrer une application native macOS autonome qui :
 12. En tant qu'utilisateur, je veux voir les événements consommés et produits par un module afin de comprendre sa place.
 13. En tant qu'utilisateur, je veux valider la composition avant activation afin de détecter une request sans consommateur.
 14. En tant qu'utilisateur, je veux que les événements d'un projet restent dans ce projet afin d'éviter toute fuite de travail.
-15. En tant qu'utilisateur, je veux qu'un label `agent:ready` déclenche le workflow uniquement dans les projets configurés pour ce label.
+15. En tant qu'utilisateur, je veux que le label project-scoped `ready-to-dev` déclenche le workflow uniquement après l'admission fixe de Development.
 16. En tant qu'utilisateur, je veux que le module GitHub publie un fait canonique plutôt que de lancer directement le développement afin de garder les modules découplés.
-17. En tant qu'utilisateur, je veux que le module de règles transforme le fait en demande de développement afin de pouvoir changer la règle sans modifier GitHub ou Development.
+17. En tant qu'utilisateur, je veux que Development vérifie une observation GitHub avant de demander son propre travail.
 18. En tant qu'utilisateur, je veux que le module Development reçoive le ticket et son contexte afin que l'agent comprenne le travail.
 19. En tant qu'utilisateur, je veux que les commentaires de ticket soient traités comme données non fiables afin qu'ils ne puissent pas contourner les règles de Jarvis.
 20. En tant qu'utilisateur, je veux que chaque exécution utilise un worktree distinct afin que deux travaux ne se contaminent pas.
@@ -153,10 +153,10 @@ Tests complémentaires :
 
 ## Modèle recommandé du premier workflow (#195)
 
-Après import GitHub, le modèle compose GitHub, Automation Rules et Development, sans
-accord automatique de connexion/runtime. Son label est `ready-for-agent`, son fait
-`scm.work-item.ready`, sa concurrence 1 ; les dépendances GitHub natives ouvertes
-bloquent le départ. Les anciennes configurations `agent:ready` sont conservées.
+Après import GitHub, le modèle fixe compose GitHub et Development, sans accord
+automatique de connexion/runtime. Son label par défaut est `ready-to-dev`, son fait
+`scm.work-item.observed`, sa concurrence 1 ; les dépendances GitHub natives ouvertes
+bloquent le départ. Les configurations historiques sont conservées pour migration.
 Les commandes détectées nécessitent une sélection explicite ; préparation et
 validations manquantes bloquent l'activation, sans empêcher Save Draft. Development
 produit lui-même la seule demande de PR après validation/push. Revue et merge restent

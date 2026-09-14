@@ -27,9 +27,7 @@ final class ProjectPreflightTests: XCTestCase {
     }
 
     func testFinalActionKeepsExactIssueIntentAndRejectsUnverifiedCandidates() throws {
-        var report = try fixture()
-        XCTAssertEqual(ProjectPreflightState.current(report).activationTitle, "Surveiller les issues prêtes")
-        report.rule = .init(instanceId: "rules", ruleId: "ready", label: "ready-for-agent", selectedWorkItemRef: "github://owner/repo/issues/1")
+        var report = try fixture(selectedWorkItemRef: "github://owner/repo/issues/1")
         XCTAssertEqual(ProjectPreflightState.current(report).activationTitle, "Tester avec l’issue #1")
         XCTAssertTrue(ProjectPreflightState.current(report).canStartWorkflow)
         report.candidateEligibility.items[0].status = .ineligible
@@ -38,7 +36,7 @@ final class ProjectPreflightTests: XCTestCase {
         XCTAssertFalse(ProjectPreflightState.current(report).canStartWorkflow)
         XCTAssertEqual(ProjectPreflightState.stale(report).activationTitle, "Tester avec l’issue #1")
         XCTAssertFalse(ProjectPreflightState.stale(report).canStartWorkflow)
-        report.rule = nil
+        report = try fixture()
         XCTAssertTrue(ProjectPreflightState.current(report).canStartWorkflow, "No candidate does not prevent explicit monitoring")
     }
 
@@ -125,8 +123,7 @@ final class ProjectPreflightTests: XCTestCase {
         let previous = UserDefaults.standard.object(forKey: key)
         defer { UserDefaults.standard.set(previous, forKey: key) }
         UserDefaults.standard.removeObject(forKey: key)
-        var report = try fixture()
-        report.rule = .init(instanceId: "rules", ruleId: "ready", label: "ready-for-agent", selectedWorkItemRef: "github://owner/repo/issues/1")
+        let report = try fixture(selectedWorkItemRef: "github://owner/repo/issues/1")
         let api = PreflightStub(report: report)
         let permanent = model(api)
         await permanent.preflight(projectId: "project")
@@ -163,15 +160,19 @@ final class ProjectPreflightTests: XCTestCase {
         return ProjectConfigurationModel(session: session, projects: ProjectsModel(session: session, preferenceNamespace: preferenceNamespace), preflightAPI: api)
     }
 
-    private func fixture(valid: Bool = true, blocked: Bool = false, empty: Bool = false) throws -> Components.Schemas.ProjectPreflightV1 {
+    private func fixture(valid: Bool = true, blocked: Bool = false, empty: Bool = false, selectedWorkItemRef: String? = nil) throws -> Components.Schemas.ProjectPreflightV1 {
         let candidate = """
         {"workItemRef":"github://owner/repo/issues/1","title":"Issue one","repositoryId":"main","status":"\(blocked ? "ineligible" : "eligible")","openDependencyCount":\(blocked ? 1 : 0),"blockerRefs":\(blocked ? "[\"github://owner/repo/issues/99\"]" : "[]"),"reason":"Dependency assessment"}
         """
+        let trigger = selectedWorkItemRef.map {
+            "\"trigger\":{\"moduleInstanceId\":\"development\",\"moduleId\":\"jarvis.module.development\",\"readyLabel\":\"ready-to-dev\",\"scope\":{\"kind\":\"issue\",\"workItemRef\":\"\($0)\"}},"
+        } ?? "\"trigger\":{\"moduleInstanceId\":\"development\",\"moduleId\":\"jarvis.module.development\",\"readyLabel\":\"ready-to-dev\",\"scope\":{\"kind\":\"all\"}},"
         let json = """
         {"apiVersion":"jarvis.dev/project-preflight/v1","kind":"ProjectPreflight","projectId":"project","compositionFingerprint":"\(String(repeating: "a", count: 64))","valid":\(valid),"configurationReady":\(valid),
         "validation":{"apiVersion":"jarvis.dev/project-validation/v1","kind":"ProjectValidationReport","projectId":"project","valid":\(valid),"compositionFingerprint":"\(String(repeating: "a", count: 64))","requestRoutes":[],"satisfiedCapabilities":[],"findings":[]},
         "runtime":{"required":true,"items":[],"readiness":{"status":"ready","checkedAt":null,"detail":"Ready"}},
-        "checks":[{"id":"repository","title":"Repository","status":"passed","impact":"Access","repairStep":"Repository"},{"id":"rule","title":"Rule","status":"passed","impact":"Label","repairStep":"Workflow"},{"id":"runtime","title":"Runtime","status":"passed","impact":"Agent","repairStep":"Connections"}],
+        "checks":[{"id":"repository","title":"Repository","status":"passed","impact":"Access","repairStep":"Repository"},{"id":"workflow","title":"Workflow","status":"passed","impact":"Label","repairStep":"Workflow"},{"id":"runtime","title":"Runtime","status":"passed","impact":"Agent","repairStep":"Connections"}],
+        \(trigger)
         "candidateEligibility":{"status":"\(empty ? "empty" : "available")","items":[\(empty ? "" : candidate)]}}
         """
         return try JSONDecoder().decode(Components.Schemas.ProjectPreflightV1.self, from: Data(json.utf8))

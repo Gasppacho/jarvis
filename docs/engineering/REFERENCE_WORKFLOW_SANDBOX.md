@@ -27,7 +27,7 @@ Confirm the runtime and GitHub connection are available before activating the pr
 
 ## Run
 
-Create one simple, disposable GitHub Issue in the sandbox. Its body must request a small demonstrable change and an automated test. Add the exact label `agent:ready` once, then wait for the workflow to settle.
+Create one simple, disposable GitHub Issue in the sandbox. Its body must request a small demonstrable change and an automated test. Add the exact label `ready-to-dev` once, then wait for the workflow to settle.
 
 Observe the safe Engine/API timeline and GitHub UI. The expected chain is:
 
@@ -37,7 +37,7 @@ Observe the safe Engine/API timeline and GitHub UI. The expected chain is:
 4. one `scm.change-request.creation-requested` request with stable idempotency;
 5. one Pull Request and one `scm.change-request.created` fact.
 
-Record the Issue number, pushed branch, Pull Request URL and the four conceptual execution boundaries: GitHub polling, Automation Rules, Development, and GitHub action. The polling boundary ends after its Outbox fact; it is not a long-running execution spanning the other three. Confirm correlation and causation link the timeline, and that a redelivery leaves one branch and one Pull Request. Do not treat ticket, repository, prompt, or provider payload text as Jarvis policy.
+Record the Issue number, pushed branch, Pull Request URL and the fixed execution boundaries: GitHub observation, Development admission/implementation, and GitHub action. The observation boundary ends after its Outbox fact; it is not a long-running execution spanning the others. Confirm correlation and causation link the timeline, and that a redelivery leaves one branch and one Pull Request. Do not treat ticket, repository, prompt, or provider payload text as Jarvis policy.
 
 ## Cleanup
 

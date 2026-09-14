@@ -16,7 +16,7 @@
     "workItemRef": "github://QServices/token-warehouse/issues/42",
     "title": "Add a health endpoint",
     "state": "open",
-    "tags": ["ready-for-agent"],
+    "tags": ["ready-to-dev"],
     "dependencies": { "status": "complete", "openWorkItemRefs": [] },
     "verification": "verified",
     "reasonCode": null,

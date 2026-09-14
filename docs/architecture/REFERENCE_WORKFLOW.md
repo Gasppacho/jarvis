@@ -2,12 +2,12 @@
 
 ## Recommended guided starting point (#195)
 
-Fresh imports use `ready-for-agent` and the canonical `scm.work-item.ready` v1
-Fact. GitHub confirms the issue is open and its complete native `blocked_by`
-list contains no open blocker. Already-labelled issues are eligible at activation.
-Unknown or blocked observations never start Development. The single Automation
-Rule targets the `development` instance. Development itself requests PR creation
-after validation and push: there is no second PR rule and no merge permission.
+Fresh imports use `compositionMode: fixed-modules`, the project-scoped
+`ready-to-dev` label and the canonical `scm.work-item.observed` v1 Fact. GitHub
+confirms the issue is open and its complete native `blocked_by` list contains no
+open blocker. Development owns the fixed admission predicate, targets its own
+instance, and requests PR creation after validation and push. No user rule,
+editable target, payload mapping or merge permission exists.
 
 The template preserves discovered repository IDs, target branches and remote names;
 `repositories[].remote` identifies the GitHub owner/name through the granted local
@@ -30,13 +30,13 @@ in `packageManager`, with tool paths approved in the project runtime binding.
 
 Custom composition keeps the current draft. Returning to the recommended model asks
 for replacement confirmation; declining preserves edits. This replaces modules,
-rules and slot requirements, preserving project details and command text. Saving
+slot requirements, preserving project details and command text. Saving
 or choosing a model never activates the project. Review announces pre-existing ready
 issues and the manual review/merge boundary before explicit activation.
 
-The existing example below and `examples/project/.jarvis/project.yaml` retain the
-historical `agent:ready` / `scm.work-item.tag-added` policy. Opening and saving an
-existing project does not migrate labels, rules, IDs, parameters or bindings.
+The migration example below retains the historical configuration for read-only
+preview/export. Opening and saving it does not execute or rewrite that historical
+configuration; fixed projects use only the typed Development descriptor.
 `examples/guided-project/.jarvis/project.yaml` illustrates confirmed choices for a
 repository with `verify`; templates do not copy either example into real projects.
 
@@ -48,7 +48,7 @@ second routing model. Save does not activate. Preflight checks current access an
 configuration without running the agent or project validation commands. A scoped
 first trial names the selected issue; broadening scope requires a new verification.
 
-The recommended chain is `scm.work-item.ready` →
+The recommended chain is `scm.work-item.observed` →
 `development.implementation.requested` → Development preparation, agent, validations,
 commit and push → `scm.change-request.creation-requested` → GitHub PR creation.
 Failed checks remain visible across repair attempts and restarts. The overview keeps
@@ -58,28 +58,27 @@ new admissions; cancelling an active execution is a separate explicit action.
 The [progress ledger](../../PROGRESS.md) distinguishes Harness coverage, native
 screenshots and real GitHub/Codex delivery. None substitutes for another.
 
-## Configuration
+## Fixed configuration
 
-The Project enables three Module Instances:
+The Project enables exactly two Module Instances:
 
 ```text
 github
   produces scm.work-item.tag-added
-  produces scm.work-item.ready
   consumes scm.change-request.creation-requested
 
-automation-rules
-  consumes scm.work-item.tag-added
-  consumes scm.work-item.ready
-  produces development.implementation.requested
-
 development
-  consumes development.implementation.requested
+  consumes scm.work-item.observed
+  produces development.implementation.requested
   produces development.implementation.completed
   produces scm.change-request.creation-requested
 ```
 
-## Historical sequence (`agent:ready`)
+Development owns the fixed admission predicate after GitHub observation. The
+descriptor contains `readyLabel`, `scope` and the confirmed project bindings;
+there is no editable rule, target or payload mapping.
+
+## Historical archive: sequence (`agent:ready`)
 
 ```text
 User/GitHub          GitHub Module       Rules Module       Development        Eventing
@@ -106,11 +105,15 @@ User/GitHub          GitHub Module       Rules Module       Development        E
     │                     ├───────────────────────────────────────────────────────►│
 ```
 
+This diagram documents the retired L12 composition for migration and audit. It
+is not an active catalog option, handler or acceptance target.
+
 ## Transaction and execution boundaries
 
 1. GitHub polling execution ends after persisting the Fact in Outbox.
-2. Rules execution ends after persisting the Development Request.
-3. Development execution ends after branch push and both output Events are in Outbox.
+2. Development admission and implementation are separate finite executions;
+   admission ends after persisting the targeted Request.
+3. Development implementation ends after branch push and both output Events are in Outbox.
 4. GitHub action execution ends after PR creation and result Fact publication.
 
 There is no execution spanning all four boundaries and no handler waiting for the next Event.
@@ -120,7 +123,7 @@ There is no execution spanning all four boundaries and no handler waiting for th
 | Concern | Owner |
 |---|---|
 | Detect label | GitHub Module |
-| Decide that label means development | Automation Rules Module |
+| Decide whether an observed issue is eligible | Development Module |
 | Understand ticket | Development Module using bound read capabilities |
 | Worktree and branch | Development Module via Workspace/Git capabilities |
 | Code, tests, commit, push | Development Module |

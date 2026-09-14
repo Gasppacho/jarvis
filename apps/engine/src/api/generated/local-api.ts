@@ -1196,6 +1196,7 @@ export interface components {
             /** @enum {string} */
             repairStep: "Repository" | "Workflow" | "Connections";
         };
+        /** @description Deprecated L12 compatibility field. Read-only historical or migration data; fixed-modules preflight never emits it. */
         PreflightRule: {
             instanceId: string;
             ruleId: string;
@@ -1238,7 +1239,9 @@ export interface components {
             validation: components["schemas"]["ProjectValidationReportV1"];
             runtime: components["schemas"]["ProjectAgentRuntimeChoices"];
             checks: components["schemas"]["PreflightCheck"][];
+            /** @description Deprecated L12 compatibility field. Absent from fixed-modules responses; retained only for historical migration decoding. */
             rule?: components["schemas"]["PreflightRule"];
+            /** @description Typed Development admission descriptor for fixed-modules projects. */
             trigger?: components["schemas"]["PreflightTrigger"];
             candidateEligibility: {
                 /** @enum {string} */
@@ -1278,7 +1281,7 @@ export interface components {
         };
         ProjectOverviewStage: {
             /** @enum {string} */
-            id: "github" | "rules" | "development" | "pull-request";
+            id: "github" | "development" | "pull-request";
             label: string;
             /** @enum {string} */
             status: "ready" | "active" | "waiting" | "complete" | "unavailable";

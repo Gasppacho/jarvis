@@ -24,7 +24,7 @@
   "payload": {
     "repositoryId": "main",
     "workItemRef": "github://QServices/token-warehouse/issues/42",
-    "addTags": ["agent:ready"],
+    "addTags": ["ready-to-dev"],
     "removeTags": ["agent:blocked"]
   }
 }

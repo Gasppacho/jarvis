@@ -35,6 +35,10 @@ scm.change-request.merged
 
 Un fact peut provenir d'une action Jarvis ou d'une action humaine/externe observée.
 
+`scm.work-item.ready` and the tag Facts are retained as legacy transition
+contracts for migration and audit. The fixed product path uses
+`scm.work-item.observed`; no legacy Fact starts an executable rules module.
+
 ## Naming
 
 Format : `<domain>.<entity>.<outcome>` en kebab-case pour les segments composés.

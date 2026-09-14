@@ -370,24 +370,9 @@ public final class ProjectConfigurationModel {
 
     public func setReadyLabel(projectId: String, label: String, moduleID: UUID? = nil) {
         editDraft(projectId: projectId) { draft in
-            guard let github = draft.modules.firstIndex(where: { $0.moduleId == "jarvis.module.github" && (moduleID == nil || $0.id == moduleID) }),
-                let previous = draft.modules[github].configurationValues["readyLabel"]
+            guard let github = draft.modules.firstIndex(where: { $0.moduleId == "jarvis.module.github" && (moduleID == nil || $0.id == moduleID) })
             else { return }
             draft.modules[github].configurationValues["readyLabel"] = label
-            for index in draft.modules.indices {
-                guard var rules = draft.modules[index].automationRules else { continue }
-                for ruleIndex in rules.indices where rules[ruleIndex].inputEventType == "scm.work-item.ready" {
-                    let data = Data(rules[ruleIndex].matchJSON.utf8)
-                    guard var match = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                        match["payload.tag"] as? String == previous
-                    else { continue }
-                    match["payload.tag"] = label
-                    if let encoded = try? JSONSerialization.data(withJSONObject: match, options: [.sortedKeys]) {
-                        rules[ruleIndex].matchJSON = String(decoding: encoded, as: UTF8.self)
-                    }
-                }
-                draft.modules[index].automationRules = rules
-            }
         }
     }
 
@@ -581,66 +566,6 @@ public final class ProjectConfigurationModel {
             editModule(projectId: projectId, moduleId: moduleId) {
                 $0.configurationValues[key] = value
             }
-        case .addAutomationRule(let moduleID):
-            guard
-                let module = state(for: projectId).draft?.modules.first(where: {
-                $0.id == moduleID
-            }),
-                let choices = state(for: projectId).compositionGuide?.eventChoices,
-                let input = choices.first(where: {
-                    $0.kind == "fact"
-                        && $0.compatibleConsumerInstanceIDs.contains(module.instanceId)
-                }),
-                let emission = choices.first(where: {
-                    $0.kind == "request"
-                        && $0.producerInstanceIDs.contains(module.instanceId)
-                })
-            else { return }
-            editDraft(projectId: projectId) {
-                $0.addAutomationRule(
-                    moduleID: moduleID,
-                    inputEventType: input.type,
-                    emissionEventType: emission.type,
-                    resolvedConsumerID: emission.selectedConsumerID
-                        ?? emission.compatibleConsumerInstanceIDs.first)
-            }
-        case .removeAutomationRule(let moduleID, let ruleID):
-            editDraft(projectId: projectId) {
-                $0.removeAutomationRule(moduleID: moduleID, ruleID: ruleID)
-            }
-        case .setAutomationRuleID(let moduleID, let ruleID, let value):
-            editDraft(projectId: projectId) {
-                $0.setAutomationRuleID(moduleID: moduleID, ruleID: ruleID, value: value)
-            }
-        case .setAutomationRuleInput(let moduleID, let ruleID, let eventType):
-            editDraft(projectId: projectId) {
-                $0.setAutomationRuleInput(
-                    moduleID: moduleID, ruleID: ruleID, eventType: eventType)
-            }
-        case .setAutomationRuleMatch(let moduleID, let ruleID, let json):
-            editDraft(projectId: projectId) {
-                $0.setAutomationRuleMatch(moduleID: moduleID, ruleID: ruleID, json: json)
-            }
-        case .setAutomationRuleEmission(
-            let moduleID, let ruleID, let eventType, let resolvedConsumerID):
-            editDraft(projectId: projectId) {
-                $0.setAutomationRuleEmission(
-                    moduleID: moduleID,
-                    ruleID: ruleID,
-                    eventType: eventType,
-                    resolvedConsumerID: resolvedConsumerID)
-            }
-        case .setAutomationRulePayload(let moduleID, let ruleID, let json):
-            editDraft(projectId: projectId) {
-                $0.setAutomationRulePayload(moduleID: moduleID, ruleID: ruleID, json: json)
-            }
-        case .setAutomationRuleTarget(let moduleID, let ruleID, let target):
-            editDraft(projectId: projectId) {
-                $0.setAutomationRuleTarget(
-                    moduleID: moduleID,
-                    ruleID: ruleID,
-                    target: .moduleInstance(target))
-            }
         }
     }
 
@@ -721,8 +646,8 @@ public final class ProjectConfigurationModel {
                 $0.draft = ProjectConfigurationDraft(configuration: configuration, packages: packages)
                 $0.isDraftSaved = false
             }
-            // The Engine returned a rule edit only. Saving it withdraws the old
-            // active composition; the new scope still needs explicit activation.
+            // The Engine returned a scoped fixed-module configuration. Saving it
+            // withdraws the old active composition; activation remains explicit.
             guard await saveDraft(projectId: projectId, writeToRepository: false) != nil else { return }
             UserDefaults.standard.set(workItemRef, forKey: "\(projects.preferenceNamespace)dev.jarvis.project-trial.v1.\(projectId)")
             update(projectId) {

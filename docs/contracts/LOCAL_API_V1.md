@@ -138,13 +138,12 @@ courants. L'opération est read-only : elle ne sauvegarde ni Draft, ni relation 
 le rétablit qu'après une nouvelle réponse Engine.
 
 Le champ additif optionnel githubDevelopmentFlow confirme uniquement que l'Engine
-reconnaît le parcours guidé : règle unique sur scm.work-item.ready, label GitHub
-correspondant, destinations Development puis GitHub résolues, concurrence de 1 et
-absence de demande de merge. Par exemple, le template GitHub produit true même
-avant l'autorisation des accès ; une règle historique scm.work-item.tag-added
-produit false. Ce n'est ni une validation des commandes ni une autorisation de
-démarrer. Si le champ est absent ou faux, Swift présente le dessin comme une
-référence non confirmée, sans reconnaître ni recalculer les règles.
+reconnaît le parcours guidé : descriptor fixe sur l'observation GitHub, label
+ready-to-dev, admission Development, destinations Development puis GitHub résolues,
+concurrence de 1 et absence de demande de merge. Ce n'est ni une validation des
+commandes ni une autorisation de démarrer. Les anciennes valeurs de règle ne sont
+acceptées que par les décodeurs de migration et ne sont jamais reconnues comme une
+configuration exécutable.
 
 La projection de composition sert à prévisualiser la configuration sauvegardée ou une
 proposition avant activation. `POST /v1/projects/{projectId}/composition-graph` projette,
@@ -179,7 +178,7 @@ versioning de cette API.
 `GET /v1/projects/{projectId}/overview` expose le read model project-scoped attendu
 après activation. `ProjectOverviewV1` rassemble le statut du Project, l'action
 principale, le workflow `GitHub → Development → Pull Request` pour les projets fixed
-et `GitHub → Rules → Development → Pull Request` pour les projets legacy, l'étape suivante,
+et le même parcours de migration inerte pour les projets legacy, l'étape suivante,
 l'état du polling (`live`, `reconnecting`, `failed`, `paused` ou `unavailable`), le
 dernier polling réussi et sa raison d'erreur éventuelle. Il expose aussi les issues
 observées par GitHub avec leur numéro, titre, label de readiness, statut
@@ -201,10 +200,10 @@ readiness ne peut pas être claimée ; elle apparaît en attente si aucun travai
 antérieur ne nécessite de présenter son résultat ; une issue `blocked`
 doit porter au moins une dépendance native GitHub ouverte (`blocked_by`). Une autre
 issue active dans le même Project est représentée comme `in-progress`, et les autres
-issues attendent tant que la règle d'une seule issue à la fois est satisfaite. Le nom
+issues attendent tant que la limite fixe d'une seule issue à la fois est satisfaite. Le nom
 lisible du label est renvoyé dans `readinessLabel`; le template courant utilise
-`ready-for-agent` et une configuration existante qui utilise `agent:ready` reste
-inchangée.
+`ready-to-dev`. Les configurations historiques sont lues pour migration/export et
+ne restent pas une voie d'activation.
 
 `POST /v1/projects/{projectId}/overview/refresh` déclenche un polling immédiat si le
 poller est disponible puis renvoie le même snapshot. En cas d'erreur GitHub, le dernier

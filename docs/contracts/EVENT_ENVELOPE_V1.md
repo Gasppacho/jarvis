@@ -20,8 +20,8 @@ L'enveloppe transporte tous les messages intermodules et fournit le scope, la ca
   "occurredAt": "2026-08-28T08:00:00.000Z",
   "projectId": "token-warehouse",
   "producer": {
-    "moduleId": "jarvis.module.automation-rules",
-    "moduleInstanceId": "automation-rules"
+    "moduleId": "jarvis.module.development",
+    "moduleInstanceId": "development"
   },
   "subject": {
     "type": "work-item",

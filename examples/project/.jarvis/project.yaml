@@ -1,5 +1,6 @@
 apiVersion: jarvis.dev/project/v1
 kind: Project
+compositionMode: fixed-modules
 metadata:
   id: token-warehouse
   name: Token Warehouse
@@ -43,20 +44,6 @@ modules:
       pollIntervalSeconds: 60
       repositories:
         - main
-  - instanceId: automation-rules
-    moduleId: jarvis.module.automation-rules
-    enabled: true
-    configuration:
-      rules:
-        - id: ready-label-starts-development
-          when:
-            eventType: scm.work-item.tag-added
-            equals:
-              payload.tag: agent:ready
-          emit:
-            type: development.implementation.requested
-            target:
-              moduleInstanceId: development
   - instanceId: development
     moduleId: jarvis.module.development
     enabled: true
@@ -66,6 +53,7 @@ modules:
       repository: main
       sourceControl: sourceControl
     configuration:
+      readyLabel: ready-to-dev
       validationOrder:
         - lint
         - typecheck

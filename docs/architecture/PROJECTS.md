@@ -11,7 +11,7 @@ Le projet est la frontière où Jarvis assemble :
 - commandes ;
 - conventions Git ;
 - limites de concurrence ;
-- règles de composition ;
+- descriptor d'admission Development fixe ;
 - stockage, événements, exécutions et artefacts scopés.
 
 Le Kernel connaît des packages et ressources globales ; il ne les expose pas automatiquement au projet.
@@ -153,9 +153,8 @@ dans la boucle de dispatch et continue à montrer les exécutions déjà actives
 
 Les raisons d'éligibilité sont contractuelles et affichées par le shell sans être
 recalculées. L'état `blocked` est réservé aux références `blocked_by` GitHub ouvertes;
-un label absent produit une attente, et une règle non correspondante produit une
-non-éligibilité. Le template de projet utilise `ready-for-agent`; la valeur historique
-`agent:ready` reste conservée dans les projets existants.
+un label absent produit une attente. Le template de projet utilise `ready-to-dev`;
+les valeurs historiques restent conservées uniquement pour migration et export.
 
 ## Validation report
 
@@ -249,9 +248,8 @@ Un template accélère le setup sans masquer la composition :
 ```text
 GitHub Development
   - GitHub Module
-  - Automation Rules
   - Development Module
-  - agent:ready rule
+  - Development admission descriptor
   - sourceControl/tickets/agentRuntime slots
 ```
 

@@ -6,7 +6,7 @@ Un utilisateur qui ignore la configuration de Jarvis choisit son dépôt, le sc�
 
 Conserver quatre étapes : **Dépôt → Workflow → Accès et agent → Vérification**. Dans Workflow, un schéma graphique lisible et des réglages usuels ; dans chaque étape une action principale et des choix contextuels. L'édition complète reste disponible sous Réglages avancés avec retour explicite au guide.
 
-Le modèle de référence reste : issue ouverte avec `ready-for-agent`, aucune dépendance GitHub native ouverte, une issue développée à la fois, validation puis commit/push, événement de création de PR traité par GitHub, relecture et merge manuels.
+Le modèle de référence est désormais : issue ouverte avec `ready-to-dev`, aucune dépendance GitHub native ouverte, une issue développée à la fois, validation puis commit/push, événement de création de PR traité par GitHub, relecture et merge manuels. Les anciennes notes de run restent des archives de preuve.
 
 ## Règles d'exécution
 
@@ -125,7 +125,7 @@ L01 et L02 rétablissent la confiance. L03 fixe le langage et le contrat visuel.
 
 ## L09 — P1 : accessibilité, documentation et cohérence finale
 
-**Changement :** labels/hints/identifiants AX pour les actions critiques, parcours clavier complet, focus préservé après sauvegarde/erreur, textes lisibles et états sans dépendance à la couleur. Harmoniser les écrans globaux Connexions et Catalogue avec le langage du guide. Mettre README, UX, workflow de référence, guides locaux et checklists à jour ; distinguer recommandé ready-for-agent des projets historiques agent:ready.
+**Changement :** labels/hints/identifiants AX pour les actions critiques, parcours clavier complet, focus préservé après sauvegarde/erreur, textes lisibles et états sans dépendance à la couleur. Harmoniser les écrans globaux Connexions et Catalogue avec le langage du guide. Mettre README, UX, workflow de référence, guides locaux et checklists à jour ; distinguer le parcours recommandé `ready-to-dev` des données historiques.
 
 **Acceptation :** un utilisateur peut créer/configurer/activer un projet au clavier ; VoiceOver nomme les boutons, valeurs et erreurs ; pas d'UUID exposé par défaut ; docs ne promettent aucune preuve non exécutée. Aucune certification de notarisation/Gatekeeper déduite de ce chantier.
 
@@ -135,7 +135,7 @@ L01 et L02 rétablissent la confiance. L03 fixe le langage et le contrat visuel.
 
 **Préparation :** build du commit candidat identifié ; racine de données isolée ; dépôt Jarvis accessible ; une issue de test courte et dédiée, aucun autre ticket ready activé. Vérifier l'état de #204 avant de la réutiliser : une nouvelle exécution ne doit pas dupliquer un travail existant. Ne pas toucher #202/#203 sans vérifier leur périmètre et dépendances.
 
-**Scénario obligatoire :** ouvrir l'application, importer/configurer sans Advanced, choisir explicitement GitHub et Codex, confirmer les commandes, vérifier, sélectionner une seule issue, activer, observer GitHub → Rules → Development → préparation → Codex → checks → commit/push → request PR → PR réelle. Ouvrir et copier le lien. Mettre le projet en pause à la fin, laisser la PR à relire sans merge.
+**Scénario obligatoire :** ouvrir l'application, importer/configurer sans Advanced, choisir explicitement GitHub et Codex, confirmer les commandes, vérifier, sélectionner une seule issue, activer, observer GitHub → Development → préparation → Codex → checks → commit/push → request PR → PR réelle. Ouvrir et copier le lien. Mettre le projet en pause à la fin, laisser la PR à relire sans merge.
 
 **Scénarios de non-régression :** issue bloquée puis libérée ; deux issues avec concurrence 1 ; erreur de connexion et retry ; commande invalide ; validation échouée puis réparée ; arrêt/reprise du moteur ; annulation ; réponse API périmée ; configuration custom conservée. Les scénarios coûteux peuvent rester au harness si la preuve réelle minimale ci-dessus est faite ; ne pas les appeler tests GitHub réels.
 

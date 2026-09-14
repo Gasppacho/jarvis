@@ -64,8 +64,8 @@ struct ProjectPreflightView: View {
                                 .accessibilityIdentifier("project.preflight.repair.\(check.id)")
                             }.accessibilityElement(children: .contain)
                         }
-                        if let rule = report.rule {
-                            Label("Issue ouverte · label \(rule.label) · aucun bloqueur ouvert", systemImage: "tag")
+                        if let trigger = report.trigger {
+                            Label("Issue ouverte · label \(trigger.readyLabel) · aucun bloqueur ouvert", systemImage: "tag")
                             Text("Une issue à la fois. Résultat attendu : une PR à relire et fusionner manuellement.")
                         }
                         DisclosureGroup("Détails des contrôles (\(report.checks.count))") {

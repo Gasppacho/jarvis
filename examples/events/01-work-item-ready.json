@@ -15,7 +15,7 @@
     "repositoryId": "main",
     "workItemRef": "github://QServices/token-warehouse/issues/42",
     "issueProvider": "github",
-    "tag": "ready-for-agent",
+    "tag": "ready-to-dev",
     "observedAt": "2026-09-12T08:00:00.000Z"
   }
 }

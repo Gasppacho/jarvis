@@ -13,7 +13,7 @@ Le moteur et son runtime sont embarqués ; la configuration reste propre à chaq
 3. **Accès et agent** : choisir explicitement le compte GitHub et Codex pour ce projet.
 4. **Vérification** : contrôler la configuration, choisir une issue précise puis démarrer.
 
-Une issue ouverte portant **ready-for-agent**, sans bloqueur GitHub natif ouvert,
+Une issue ouverte portant **ready-to-dev**, sans bloqueur GitHub natif ouvert,
 peut être admise. Une seule issue est développée à la fois. Les vérifications de
 configuration ne sont pas l’exécution des tests : ceux-ci doivent réussir avant
 le commit et le push. GitHub crée ensuite la PR sur demande du module Development.
@@ -21,7 +21,8 @@ La relecture et le merge restent humains.
 
 La supervision conserve le dernier travail et son éventuel échec. **Mettre en pause**
 empêche les nouveaux départs ; **Annuler l’exécution** interrompt le travail actif.
-Les compositions historiques `agent:ready` sont conservées jusqu’à un remplacement explicite.
+Les compositions historiques sont conservées pour migration ou export explicite ;
+elles ne sont pas activables et ne lancent aucun workflow.
 
 Voir le [parcours détaillé](docs/product/UX.md) et les
 [prérequis de développement local](docs/engineering/LOCAL_DEVELOPMENT.md).

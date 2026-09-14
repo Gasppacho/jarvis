@@ -5,8 +5,8 @@
 | Event | Kind | Producer | Intended consumer | Payload schema |
 |---|---|---|---|---|
 | `scm.work-item.observed` | Fact | GitHub | Observers; future decision modules | `contracts/events/scm.work-item.observed.v1.schema.json` |
-| `scm.work-item.tag-added` | Fact | GitHub | Automation Rules and observers | `contracts/events/scm.work-item.tag-added.v1.schema.json` |
-| `development.implementation.requested` | Request | Development observation admission, Automation Rules or future decision module | Development | `contracts/events/development.implementation.requested.v1.schema.json` |
+| `scm.work-item.tag-added` | Fact | GitHub | Historical migration/archive readers | `contracts/events/scm.work-item.tag-added.v1.schema.json` |
+| `development.implementation.requested` | Request | Development observation admission or future decision module | Development | `contracts/events/development.implementation.requested.v1.schema.json` |
 | `scm.work-item.tags-change-requested` | Request | Authorized modules | Bound GitHub Module | `contracts/events/scm.work-item.tags-change-requested.v1.schema.json` |
 | `scm.work-item.tags-changed` | Fact | GitHub | Observers | `contracts/events/scm.work-item.tags-changed.v1.schema.json` |
 | `scm.work-item.tags-change-failed` | Fact | GitHub | Observers; future remediation | `contracts/events/scm.work-item.tags-change-failed.v1.schema.json` |
@@ -37,12 +37,10 @@ Chaque payload schema versionné porte un `title` humain et une `description`. C
 champs sont la source contractuelle des libellés et aides exposés par la prévisualisation
 de composition; le moteur ne déduit jamais la sémantique d'un nom de propriété.
 
-Les schemas de Module Configuration peuvent relier explicitement un contrôle guidé à
-ces choix avec les annotations JSON Schema `$comment` documentées dans
-`MODULE_MANIFEST_V1.md`. Pour Automation Rules, l'entrée est limitée aux Facts déclarés
-compatibles et l'émission aux Requests déclarées par le Manifest. Les statuts et
-explications de routage affichés restent ceux du read model Engine; le shell ne les
-reconstruit pas.
+Les schemas de Module Configuration ne constituent pas une surface de workflow : les
+contrôles guidés portent sur les réglages métier déclarés par un Module Package. Les
+statuts et explications de routage affichés restent ceux du read model Engine ; le
+shell ne les reconstruit pas.
 
 ## Ownership rule
 

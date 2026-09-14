@@ -34,7 +34,7 @@ struct ProjectWorkflowView: View {
                     Label("Une issue à la fois ; relecture et merge manuels.", systemImage: "person")
                         .font(.callout)
                 } else {
-                    Label("Les liens de ce parcours ne sont pas confirmés pour votre brouillon. Vérifiez les règles avancées ou choisissez le modèle GitHub.",
+                    Label("Les liens de ce parcours ne sont pas confirmés pour votre brouillon. Vérifiez les réglages avancés ou choisissez le modèle GitHub.",
                           systemImage: "exclamationmark.triangle")
                         .font(.callout).foregroundStyle(.orange)
                 }
@@ -92,7 +92,7 @@ struct ProjectWorkflowView: View {
                 model.cancelStartingPointReplacement(projectId: project.id)
             }
         } message: {
-            Text("Les modules, règles, paramètres et associations internes seront remplacés. Le label revient à ready-for-agent ; préparation et validations seront à confirmer. Une seule exécution sera autorisée ; les branches et remotes manquants seront complétés. Le nom, les commandes saisies et les références locales de comptes et d’agent sont conservés. Les accès seront à revérifier.")
+            Text("Les modules, paramètres et associations internes seront remplacés. Le label revient à ready-to-dev ; préparation et validations seront à confirmer. Une seule exécution sera autorisée ; les branches et remotes manquants seront complétés. Le nom, les commandes saisies et les références locales de comptes et d’agent sont conservés. Les accès seront à revérifier.")
         }
     }
 

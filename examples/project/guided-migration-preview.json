@@ -11,7 +11,7 @@
     "destination": {
       "modules": ["jarvis.module.github", "jarvis.module.development"],
       "compositionMode": "fixed-modules",
-      "readyLabel": "ready-for-agent",
+      "readyLabel": "ready-to-dev",
       "scope": {
         "kind": "issue",
         "workItemRef": "github://Gasppacho/jarvis/issues/231"
