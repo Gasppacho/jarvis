@@ -2,15 +2,8 @@ import type {
   GitHubApi,
   ProjectRepositoryIdentity,
 } from "../../../../packages/module-sdk/src/index.js";
-import {
-  assessGitHubWorkItemReadiness,
-  observeGitHubWorkItemState,
-} from "../../../../packages/modules/github/src/work-item-readiness.js";
+import { observeGitHubWorkItemState } from "../../../../packages/modules/github/src/work-item-readiness.js";
 import { assessDevelopmentEligibility } from "../../../../packages/modules/development/src/index.js";
-import {
-  readRules,
-  matchesRuleEvent,
-} from "../../../../packages/modules/automation-rules/src/index.js";
 import { readCurrentIssues } from "../events/github-polling.js";
 import type { StoredPortableProjectConfiguration, ProjectValidationReport } from "./types.js";
 import type { components } from "../api/generated/local-api.js";
@@ -64,34 +57,6 @@ function developmentTrigger(
     : undefined;
 }
 
-// The guided trial is safe only when there is one admission rule. An expert
-// composition remains editable; preflight explains why it cannot narrow it safely.
-export function workflowRule(configuration: StoredPortableProjectConfiguration) {
-  const instances = configuration.modules.filter(
-    (m) => m.enabled && m.moduleId === "jarvis.module.automation-rules",
-  );
-  const rules = instances.flatMap((instance) =>
-    readRules(instance.configuration ?? {}).map((rule) => ({ instance, rule })),
-  );
-  if (rules.length !== 1) throw new Error("Select one readable Development admission rule.");
-  const selected = rules[0]!;
-  const tag = selected.rule.when.equals?.["payload.tag"];
-  if (
-    typeof tag !== "string" ||
-    !tag.trim() ||
-    tag === "blocked" ||
-    selected.rule.when.eventType !== "scm.work-item.ready"
-  )
-    throw new Error("The readiness label or rule is unreadable.");
-  if (
-    ["workItemRef", "repositoryId", "tag", "baseBranch"].some((key) =>
-      Object.hasOwn(selected.rule.emit.payload ?? {}, key),
-    )
-  )
-    throw new Error("Static emission overrides cannot be safely narrowed.");
-  return { ...selected, tag };
-}
-
 /** Recognizes the guide's explanation, not readiness, access or successful commands. */
 export function isGitHubDevelopmentFlow(
   configuration: StoredPortableProjectConfiguration,
@@ -126,39 +91,7 @@ export function isGitHubDevelopmentFlow(
       )
     );
   }
-  try {
-    const { instance, rule, tag } = workflowRule(configuration);
-    const enabled = configuration.modules.filter((module) => module.enabled);
-    const github = enabled.find((module) => module.moduleId === "jarvis.module.github");
-    const development = enabled.find((module) => module.moduleId === "jarvis.module.development");
-    if (
-      enabled.length !== 3 ||
-      !github ||
-      !development ||
-      configuration.workspace.maxConcurrentExecutions !== 1 ||
-      (github.configuration?.["readyLabel"] ?? "ready-for-agent") !== tag ||
-      rule.emit.type !== "development.implementation.requested"
-    )
-      return false;
-    const route = (type: string, producer: string, consumer: string) =>
-      validation.requestRoutes.some(
-        (item) =>
-          item.contract.type === type &&
-          item.contract.version === 1 &&
-          item.producer.instanceId === producer &&
-          item.consumer.instanceId === consumer,
-      );
-    return (
-      route("development.implementation.requested", instance.instanceId, development.instanceId) &&
-      route("scm.change-request.creation-requested", development.instanceId, github.instanceId) &&
-      validation.requestAttempts !== undefined &&
-      !validation.requestAttempts.some(
-        (item) => item.contract.type === "scm.change-request.merge-requested",
-      )
-    );
-  } catch {
-    return false;
-  }
+  return false;
 }
 
 export function check(
@@ -180,68 +113,32 @@ export async function preflightGitHub(input: {
 }): Promise<Pick<ProjectPreflight, "checks" | "candidateEligibility" | "rule" | "trigger">> {
   const checks: PreflightCheck[] = [];
   const items: ProjectPreflight["candidateEligibility"]["items"] = [];
-  const fixed = input.configuration.compositionMode === "fixed-modules";
-  const trigger = fixed ? developmentTrigger(input.configuration) : undefined;
-  let selected: ReturnType<typeof workflowRule> | undefined;
-  if (!fixed) {
-    try {
-      selected = workflowRule(input.configuration);
-    } catch {
-      selected = undefined;
-    }
-  }
-  if (selected === undefined && trigger === undefined) {
+  if (input.configuration.compositionMode !== "fixed-modules") {
     return {
       checks: [
         check(
-          "rule",
-          "Règle et label de readiness",
+          "legacy-configuration",
+          "Configuration historique",
           false,
-          "Dans Workflow, choisissez le fait scm.work-item.ready avec le label actuel, une règle Development unique et une identité dérivée de l’issue. Les déclencheurs historiques et émissions statiques restent conservés mais ne permettent pas cet essai guidé.",
+          "Automation Rules est retiré de l’exécution. Cette configuration reste consultable et exportable ; lancez la migration guidée avant toute activation.",
           "Workflow",
         ),
       ],
       candidateEligibility: { status: "unavailable", items },
     };
   }
-  const rule = selected?.rule;
-  const instance = selected?.instance;
+  const trigger = developmentTrigger(input.configuration);
   const development = input.configuration.modules.find(
     (module) => module.enabled && module.moduleId === "jarvis.module.development",
   );
-  const tag = trigger?.readyLabel ?? selected?.tag ?? "";
-  const ref =
-    trigger?.scope.kind === "issue"
-      ? trigger.scope.workItemRef
-      : rule?.when.equals?.["payload.workItemRef"];
-  const responseTrigger =
-    trigger ??
-    (development === undefined
-      ? undefined
-      : {
-          moduleInstanceId: development.instanceId,
-          moduleId: "jarvis.module.development" as const,
-          readyLabel: tag,
-          scope:
-            typeof ref === "string"
-              ? { kind: "issue" as const, workItemRef: ref }
-              : { kind: "all" as const },
-        });
-  const ruleSummary =
-    instance === undefined || rule === undefined
-      ? undefined
-      : {
-          instanceId: instance.instanceId,
-          ruleId: rule.id,
-          label: tag,
-          selectedWorkItemRef: typeof ref === "string" ? ref : null,
-        };
+  const tag = trigger?.readyLabel ?? "";
+  const ref = trigger?.scope.kind === "issue" ? trigger.scope.workItemRef : undefined;
   checks.push(
     check(
-      "rule",
+      "development",
       `Label : ${tag}`,
       tag !== "",
-      "La règle conserve ses prédicats et sa cible. Une issue à la fois.",
+      "Development possède le prédicat de readiness et sa cible. Une issue à la fois.",
       "Workflow",
     ),
   );
@@ -269,23 +166,12 @@ export async function preflightGitHub(input: {
     );
     return {
       checks,
-      ...(ruleSummary === undefined ? {} : { rule: ruleSummary }),
-      ...(responseTrigger === undefined ? {} : { trigger: responseTrigger }),
+      ...(trigger === undefined ? {} : { trigger }),
       candidateEligibility: { status: "unavailable", items },
     };
   }
   const source = github[0]!;
   const readyLabel = source.configuration?.["readyLabel"] ?? "ready-for-agent";
-  if (!fixed && (rule === undefined || rule.when.eventType === "scm.work-item.ready"))
-    checks.push(
-      check(
-        "source-label",
-        "Label collecté",
-        readyLabel === tag,
-        `Le label collecté (${String(readyLabel)}) doit correspondre à la règle (${tag}).`,
-        "Workflow",
-      ),
-    );
   const sourceApi = input.apiFor("sourceControl");
   const deadline = input.now() + 10_000;
   const api: GitHubApi | undefined = sourceApi && {
@@ -309,8 +195,7 @@ export async function preflightGitHub(input: {
     );
     return {
       checks,
-      ...(ruleSummary === undefined ? {} : { rule: ruleSummary }),
-      ...(responseTrigger === undefined ? {} : { trigger: responseTrigger }),
+      ...(trigger === undefined ? {} : { trigger }),
       candidateEligibility: { status: "unavailable", items },
     };
   }
@@ -359,67 +244,36 @@ export async function preflightGitHub(input: {
       );
       const candidates = await readCurrentIssues(api, slug);
       for (const candidate of candidates) {
-        if (!fixed && !candidate.labels.includes(tag)) continue;
         const workItemRef = `github://${slug}/issues/${candidate.number}`;
         if (typeof ref === "string" && ref !== workItemRef) continue;
-        const observation = fixed
-          ? await observeGitHubWorkItemState({
-              api,
-              owner: repository.owner,
-              repository: repository.name,
-              number: candidate.number,
-            })
-          : undefined;
-        const legacyAssessment = fixed
-          ? undefined
-          : await assessGitHubWorkItemReadiness({
-              api,
-              owner: repository.owner,
-              repository: repository.name,
-              number: candidate.number,
-              tag,
-            });
-        const payload: Record<string, unknown> = {
-          repositoryId: repository.repositoryId,
-          workItemRef,
-          issueProvider: "github",
-          tag,
-        };
+        const observation = await observeGitHubWorkItemState({
+          api,
+          owner: repository.owner,
+          repository: repository.name,
+          number: candidate.number,
+        });
         const alreadyAdmitted = input.wasAdmitted(repository.repositoryId, workItemRef);
-        const matches =
-          rule === undefined ||
-          matchesRuleEvent(rule, {
-            kind: "fact",
-            type: rule.when.eventType,
-            payload,
-          });
-        const decision =
-          observation === undefined
-            ? undefined
-            : assessDevelopmentEligibility({
-                repositoryId: repository.repositoryId,
-                authorizedRepositoryId:
-                  !fixed || development?.bindings?.["repository"] === repository.repositoryId
-                    ? repository.repositoryId
-                    : undefined,
-                workItemRef,
-                observation,
-                readyLabel: tag,
-                scope: trigger?.scope ?? { kind: "all" },
-                alreadyStarted: alreadyAdmitted,
-              });
-        const unavailable =
-          observation?.verification === "unavailable" || legacyAssessment?.status === "impossible";
-        const blockerRefs = decision?.blockerRefs ?? legacyAssessment?.blockerRefs ?? [];
-        const reasonCode = decision?.reason ?? legacyAssessment?.reason;
+        const decision = assessDevelopmentEligibility({
+          repositoryId: repository.repositoryId,
+          authorizedRepositoryId:
+            development?.bindings?.["repository"] === repository.repositoryId
+              ? repository.repositoryId
+              : undefined,
+          workItemRef,
+          observation,
+          readyLabel: tag,
+          scope: trigger?.scope ?? { kind: "all" },
+          alreadyStarted: alreadyAdmitted,
+        });
+        const unavailable = observation.verification === "unavailable";
+        const blockerRefs = decision.blockerRefs;
+        const reasonCode = decision.reason;
         items.push({
           workItemRef,
           title: candidate.title,
           status: unavailable
             ? "unavailable"
-            : (decision?.eligible ?? legacyAssessment?.status === "ready") &&
-                matches &&
-                !alreadyAdmitted
+            : decision.eligible && !alreadyAdmitted
               ? "eligible"
               : "ineligible",
           openDependencyCount: blockerRefs.length,
@@ -437,8 +291,8 @@ export async function preflightGitHub(input: {
                     ? "Le label de readiness a été retiré. Corrigez le label ou choisissez une autre issue."
                     : reasonCode === "work-item-is-pull-request"
                       ? "Cet objet est une Pull Request, pas une issue."
-                      : !matches || reasonCode === "repository-unlinked"
-                        ? "Les autres prédicats de la règle ne correspondent pas."
+                      : reasonCode === "repository-unlinked"
+                        ? "Le dépôt n’est pas autorisé par la configuration Development."
                         : "Aucune dépendance ouverte.",
           repositoryId: repository.repositoryId,
         });
@@ -470,8 +324,7 @@ export async function preflightGitHub(input: {
   }
   return {
     checks,
-    ...(ruleSummary === undefined ? {} : { rule: ruleSummary }),
-    ...(responseTrigger === undefined ? {} : { trigger: responseTrigger }),
+    ...(trigger === undefined ? {} : { trigger }),
     candidateEligibility: {
       status: checks.some((c) => c.status === "failed")
         ? "unavailable"

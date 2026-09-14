@@ -28,7 +28,7 @@ const project = {
 
 const snapshot = {
   moduleInstances: [instance],
-  composition: { repositories: [{ id: "main" }] },
+  composition: { compositionMode: "fixed-modules", repositories: [{ id: "main" }] },
   repositoryIdentities: [
     { repositoryId: "main", provider: "github", owner: "Gasppacho", name: "jarvis" },
   ],
@@ -154,7 +154,23 @@ describe("GitHubPollingScheduler", () => {
             recordAttempt: () => undefined,
             recordResource: ({ idempotencyKey }) => mapped.add(idempotencyKey),
           },
-          workItemReadiness: { observe: () => false },
+          workItems: {
+            read: async () => ({
+              ref: "github://Gasppacho/jarvis/issues/42",
+              number: 42,
+              title: "Recovery issue",
+              body: "",
+              state: "open" as const,
+            }),
+            observeState: async () => ({
+              title: "Recovery issue",
+              state: "open" as const,
+              tags: [],
+              dependencies: { status: "complete" as const, openWorkItemRefs: [] },
+              verification: "verified" as const,
+              reasonCode: null,
+            }),
+          },
         }),
       },
       publisher: {
@@ -167,6 +183,7 @@ describe("GitHubPollingScheduler", () => {
       ids: { next: () => "id" },
       clock: { now: () => now },
       repositoryResolver: new ProjectRepositoryResolver(),
+      observations: { listObserved: () => [], recordObserved: () => 1 },
       pollIntervalMs: 1,
     });
 
@@ -215,7 +232,23 @@ function schedulerFor(api: GitHubApi, pollIntervalMs: number): GitHubPollingSche
           recordAttempt: () => undefined,
           recordResource: () => undefined,
         },
-        workItemReadiness: { observe: () => false },
+        workItems: {
+          read: async () => ({
+            ref: "github://Gasppacho/jarvis/issues/42",
+            number: 42,
+            title: "Recovery issue",
+            body: "",
+            state: "open" as const,
+          }),
+          observeState: async () => ({
+            title: "Recovery issue",
+            state: "open" as const,
+            tags: [],
+            dependencies: { status: "complete" as const, openWorkItemRefs: [] },
+            verification: "verified" as const,
+            reasonCode: null,
+          }),
+        },
       }),
     },
     publisher: { publish: () => null as unknown as EventEnvelope },
@@ -223,6 +256,7 @@ function schedulerFor(api: GitHubApi, pollIntervalMs: number): GitHubPollingSche
     ids: { next: () => "id" },
     clock: { now: () => new Date() },
     repositoryResolver: new ProjectRepositoryResolver(),
+    observations: { listObserved: () => [], recordObserved: () => 1 },
     pollIntervalMs,
   });
 }

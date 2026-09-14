@@ -129,9 +129,9 @@ Le package `shared-kernel` doit rester petit : IDs, clock, result/error primitiv
 
 ```text
 GitHub Poller
-  → fact scm.work-item.tag-added
-Automation Rules
-  → request development.implementation.requested
+  → fact scm.work-item.observed
+Development (fixed-modules)
+  ← request development.implementation.requested
 Development
   → worktree → agent → validate → commit → push
   → fact development.implementation.completed
@@ -142,6 +142,12 @@ GitHub Action Handler
 ```
 
 Chaque flèche après un module correspond à une transaction locale terminée et une nouvelle delivery. Aucune exécution globale ne reste suspendue en attente de l'étape suivante.
+
+En L13, le catalogue et le bundle de production ne contiennent plus de module
+Automation Rules exécutable. Les configurations L11/L12 qui en contiennent
+restent lisibles et exportables; leur décodeur de migration et leurs métadonnées
+historiques sont inertes et ne peuvent ni poller, ni activer, ni rejouer une
+delivery.
 
 ## Repository shape
 
@@ -161,7 +167,7 @@ Chaque flèche après un module correspond à une transaction locale terminée e
 │   ├── local-api/
 │   └── modules/
 │       ├── github/
-│       ├── automation-rules/
+│       ├── automation-rules/  (métadonnées historiques, hors bundle)
 │       ├── development/
 │       └── change-request-review/
 ├── contracts/

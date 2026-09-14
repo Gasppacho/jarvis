@@ -153,7 +153,7 @@ describe("guided historical project migration", () => {
   });
 
   it("previews and applies exact D06 once, preserving the local backup across restart", async () => {
-    const fixture = await startReferenceWorkflowFixture("guided-migration", {}, true);
+    const fixture = await startReferenceWorkflowFixture("guided-migration", {}, true, false);
     try {
       const detail = (await (
         await fixture.engine.call(`/v1/projects/${fixture.projectId}`)

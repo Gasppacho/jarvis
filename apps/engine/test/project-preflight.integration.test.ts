@@ -26,7 +26,7 @@ afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((f) => f.dispose()));
 });
 
-async function setup(env: Readonly<Record<string, string>> = {}, fixed = false) {
+async function setup(env: Readonly<Record<string, string>> = {}, fixed = true) {
   const f = await startReferenceWorkflowFixture("preflight", env, true, fixed);
   fixtures.push(f);
   const path = `/v1/projects/${f.projectId}`;
@@ -318,7 +318,7 @@ function seed(
   f: ReferenceWorkflowFixture,
   number: number,
   blocked = false,
-  label = "ready-for-agent",
+  label = "ready-to-dev",
 ) {
   f.fakeGitHub.seedIssue({
     owner: "Gasppacho",
@@ -412,7 +412,7 @@ it("separates native eligibility, scoped GET failures, label repair and resource
   unavailable();
   const absentLabel = f.fakeGitHub.scriptRoute(
     "GET",
-    "/repos/Gasppacho/jarvis/labels/ready-for-agent",
+    "/repos/Gasppacho/jarvis/labels/ready-to-dev",
     { status: 404, body: {} },
   );
   expect((await report(f, path)).checks).toContainEqual(
@@ -431,234 +431,6 @@ it("separates native eligibility, scoped GET failures, label repair and resource
   );
   expect(f.fakeGitHub.requests.every((r) => r.method === "GET")).toBe(true);
   expect(readFileSync(f.runtimeCounterPath, "utf8")).toBe("");
-});
-
-it("previews only a rule equality, rejects stale fingerprints and out-of-project references", async () => {
-  const { f, path, config } = await setup();
-  seed(f, 1);
-  seed(f, 2);
-  const before = await report(f, path);
-  expect(
-    (
-      await post(f, `${path}/preflight-scope`, {
-        compositionFingerprint: before.compositionFingerprint,
-        workItemRef: "github://Elsewhere/private/issues/1",
-      })
-    ).status,
-  ).toBe(400);
-  for (const invalid of [
-    { scope: "issue", workItemRef: null },
-    { scope: "issue" },
-    { scope: "all", workItemRef: null },
-    { scope: "all", workItemRef: "github://Gasppacho/jarvis/issues/1" },
-  ]) {
-    const response = await f.engine.call(`${path}/preflight-scope`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ compositionFingerprint: before.compositionFingerprint, ...invalid }),
-    });
-    expect(response.status, JSON.stringify(invalid)).toBe(400);
-  }
-  const scoped = (await (
-    await post(f, `${path}/preflight-scope`, {
-      compositionFingerprint: before.compositionFingerprint,
-      workItemRef: "github://Gasppacho/jarvis/issues/1",
-    })
-  ).json()) as PortableProjectConfiguration;
-  const expected = structuredClone(config);
-  const rules = expected.modules[1]!.configuration!["rules"] as {
-    when: { equals: Record<string, string> };
-  }[];
-  rules[0]!.when.equals["payload.workItemRef"] = "github://Gasppacho/jarvis/issues/1";
-  expect(scoped).toEqual(expected);
-  expect(
-    ((await (await f.engine.call(path)).json()) as { portableConfig: unknown }).portableConfig,
-  ).toEqual(config);
-  await save(f, path, scoped);
-  expect(
-    (
-      await post(f, `${path}/preflight-activate`, {
-        compositionFingerprint: before.compositionFingerprint,
-      })
-    ).status,
-  ).toBe(409);
-  const after = await report(f, path);
-  expect(after.compositionFingerprint).not.toBe(before.compositionFingerprint);
-  expect(after.candidateEligibility.items.map((i) => i.workItemRef)).toEqual([
-    "github://Gasppacho/jarvis/issues/1",
-  ]);
-  const restored = await (
-    await post(f, `${path}/preflight-scope`, {
-      compositionFingerprint: after.compositionFingerprint,
-      workItemRef: null,
-    })
-  ).json();
-  expect(restored).toEqual(config);
-  expect(readFileSync(f.runtimeCounterPath, "utf8")).toBe("");
-});
-
-it("admits A once in a trial, then B once after explicit monitoring activation and restart", async () => {
-  const { f, path } = await setup();
-  seed(f, 1);
-  seed(f, 2);
-  const before = await report(f, path);
-  const scoped = (await (
-    await post(f, `${path}/preflight-scope`, {
-      compositionFingerprint: before.compositionFingerprint,
-      workItemRef: "github://Gasppacho/jarvis/issues/1",
-    })
-  ).json()) as PortableProjectConfiguration;
-  await save(f, path, scoped);
-  const trial = await report(f, path);
-  expect(
-    (
-      await post(f, `${path}/preflight-activate`, {
-        compositionFingerprint: trial.compositionFingerprint,
-      })
-    ).status,
-  ).toBe(200);
-  await expect.poll(() => f.fakeGitHub.pullRequests.length, { timeout: 20000 }).toBe(1);
-  expect(readFileSync(f.runtimeCounterPath, "utf8").trim().split("\n")).toHaveLength(1);
-  const current = await report(f, path);
-  const monitoring = (await (
-    await post(f, `${path}/preflight-scope`, {
-      compositionFingerprint: current.compositionFingerprint,
-      workItemRef: null,
-    })
-  ).json()) as PortableProjectConfiguration;
-  await save(f, path, monitoring);
-  const monitor = await report(f, path);
-  expect(monitor.candidateEligibility.items).toContainEqual(
-    expect.objectContaining({
-      workItemRef: "github://Gasppacho/jarvis/issues/1",
-      status: "ineligible",
-      reason: expect.stringContaining("déjà été admise"),
-    }),
-  );
-  expect(monitor.candidateEligibility.items).toContainEqual(
-    expect.objectContaining({
-      workItemRef: "github://Gasppacho/jarvis/issues/2",
-      status: "eligible",
-    }),
-  );
-  expect(
-    (
-      await post(f, `${path}/preflight-activate`, {
-        compositionFingerprint: current.compositionFingerprint,
-      })
-    ).status,
-  ).toBe(409);
-  expect(f.fakeGitHub.pullRequests).toHaveLength(1);
-  expect(
-    (
-      await post(f, `${path}/preflight-activate`, {
-        compositionFingerprint: monitor.compositionFingerprint,
-      })
-    ).status,
-  ).toBe(200);
-  await expect.poll(() => f.fakeGitHub.pullRequests.length, { timeout: 20000 }).toBe(2);
-  await f.restart();
-  await expect
-    .poll(() => f.fakeGitHub.requests.filter((r) => r.path.includes("/issues?state=open")).length)
-    .toBeGreaterThan(2);
-  expect(readFileSync(f.runtimeCounterPath, "utf8").trim().split("\n")).toHaveLength(2);
-});
-
-it("flags legacy triggers and static emission overrides without changing the existing rule", async () => {
-  const { f, path, config } = await setup();
-  for (const variant of ["legacy", "override"]) {
-    const custom = structuredClone(config);
-    const rules = custom.modules[1]!.configuration!["rules"] as {
-      when: { eventType: string; equals: Record<string, string> };
-      emit: { payload?: Record<string, string> };
-    }[];
-    if (variant === "legacy") {
-      rules[0]!.when.eventType = "scm.work-item.tag-added";
-      rules[0]!.when.equals["payload.tag"] = "agent:ready";
-    } else rules[0]!.emit.payload = { workItemRef: "github://Gasppacho/jarvis/issues/999" };
-    await save(f, path, custom);
-    const result = await report(f, path);
-    expect(result.valid, variant).toBe(false);
-    expect(result.checks).toContainEqual(
-      expect.objectContaining({ id: "rule", status: "failed", repairStep: "Workflow" }),
-    );
-    expect(
-      ((await (await f.engine.call(path)).json()) as { portableConfig: unknown }).portableConfig,
-    ).toEqual(custom);
-  }
-});
-
-it("explains an issue closing or losing its label during the scoped assessment", async () => {
-  const { f, path } = await setup();
-  seed(f, 1);
-  const restore = f.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis/issues/1", {
-    status: 200,
-    body: { number: 1, state: "closed", labels: [{ name: "ready-for-agent" }] },
-  });
-  expect((await report(f, path)).candidateEligibility.items[0]).toMatchObject({
-    status: "ineligible",
-    reason: expect.stringContaining("fermée"),
-  });
-  restore();
-  f.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis/issues/1", {
-    status: 200,
-    body: { number: 1, state: "open", labels: [] },
-  });
-  expect((await report(f, path)).candidateEligibility.items[0]).toMatchObject({
-    status: "ineligible",
-    reason: expect.stringContaining("label"),
-  });
-});
-
-it("preserves extra predicates, targets and agent:ready without silent migration", async () => {
-  const { f, path, config } = await setup();
-  const custom = structuredClone(config);
-  const rules = custom.modules[1]!.configuration!["rules"] as {
-    when: { equals: Record<string, string> };
-  }[];
-  rules[0]!.when.equals["payload.repositoryId"] = "main";
-  rules[0]!.when.equals["payload.tag"] = "agent:ready";
-  const source = custom.modules[0]!.configuration as Record<string, unknown>;
-  source["readyLabel"] = "agent:ready";
-  f.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis/labels/agent%3Aready", {
-    status: 200,
-    body: { name: "agent:ready" },
-  });
-  f.fakeGitHub.seedIssue({
-    owner: "Gasppacho",
-    repository: "jarvis",
-    issue: {
-      number: 1,
-      title: "Legacy label",
-      body: "",
-      state: "open",
-      labels: [{ name: "agent:ready" }],
-    },
-  });
-  await save(f, path, custom);
-  const before = await report(f, path);
-  expect(before.valid, JSON.stringify(before.checks)).toBe(true);
-  const scoped = (await (
-    await post(f, `${path}/preflight-scope`, {
-      compositionFingerprint: before.compositionFingerprint,
-      workItemRef: "github://Gasppacho/jarvis/issues/1",
-    })
-  ).json()) as PortableProjectConfiguration;
-  await save(f, path, scoped);
-  const trial = await report(f, path);
-  const restored = await (
-    await post(f, `${path}/preflight-scope`, {
-      compositionFingerprint: trial.compositionFingerprint,
-      workItemRef: null,
-    })
-  ).json();
-  expect(restored).toEqual(custom);
-  expect((await f.engine.callUnauthenticated(`${path}/preflight`, { method: "POST" })).status).toBe(
-    401,
-  );
-  expect((await f.engine.call("/v1/projects/missing/preflight", { method: "POST" })).status).toBe(
-    404,
-  );
 });
 
 it("does not contact GitHub for an unbound project and rejects a response predating an edit", async () => {

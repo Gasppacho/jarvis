@@ -44,6 +44,20 @@ export interface HandlerFailureClassification {
 const INTERNAL_HANDLER_FAILURE_CODE = "system.internal-error";
 const DEAD_LETTER_REPLAY_LEASE_MS = 30_000;
 
+function isHistoricalAutomationRulesProject(db: Database.Database, projectId: string): boolean {
+  return (
+    db
+      .prepare(
+        `SELECT 1
+         FROM projects, json_each(projects.portable_config, '$.modules') AS legacy_modules
+         WHERE projects.id = @projectId
+           AND json_extract(legacy_modules.value, '$.moduleId') = 'jarvis.module.automation-rules'
+         LIMIT 1`,
+      )
+      .get({ projectId }) !== undefined
+  );
+}
+
 class DeliveryLeaseLostError extends Error {
   public constructor() {
     super("The Delivery lease was lost before its terminal state could be committed.");
@@ -295,6 +309,14 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
       };
     }
 
+    if (isHistoricalAutomationRulesProject(this.db, delivery.projectId)) {
+      throw new EngineError(
+        "project.activation-not-validated",
+        409,
+        "Automation Rules deliveries remain preserved for history but cannot be executed or replayed after L13.",
+      );
+    }
+
     const envelope = this.requireEnvelope(delivery);
     const fixedAdmission = isFixedDevelopmentRequest(envelope);
     const existingDeadLetter =
@@ -505,6 +527,13 @@ export class DeliveryConsumer implements ExecutionCancellationPort, DeadLetterRe
         "delivery.not-found",
         404,
         "No Dead Letter with the requested ID exists.",
+      );
+    }
+    if (isHistoricalAutomationRulesProject(this.db, row.projectId)) {
+      throw new EngineError(
+        "project.activation-not-validated",
+        409,
+        "Automation Rules Dead Letters remain preserved for history but cannot be replayed after L13.",
       );
     }
 

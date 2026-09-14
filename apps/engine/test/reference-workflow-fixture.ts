@@ -35,7 +35,8 @@ export async function startReferenceWorkflowFixture(
   projectId = "reference-workflow",
   extraEnv: Readonly<Record<string, string>> = {},
   guidedDraft = false,
-  fixedModules = false,
+  fixedModules = true,
+  activateProject = true,
 ): Promise<ReferenceWorkflowFixture> {
   const repository = makeRealGitRepositoryFixture({
     additionalRemotes: [{ name: "github", url: "git@github.com:Gasppacho/jarvis.git" }],
@@ -118,10 +119,10 @@ export async function startReferenceWorkflowFixture(
       project.id,
       repository.root,
       runtimeCounterPath,
-      !guidedDraft,
+      !guidedDraft && activateProject,
       fixedModules,
     );
-    if (!guidedDraft)
+    if (!guidedDraft && activateProject && fixedModules)
       await waitFor(
         () =>
           fakeGitHub.requests.some(

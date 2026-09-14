@@ -3,8 +3,8 @@ kind: Module
 metadata:
   id: jarvis.module.automation-rules
   version: 1.0.0
-  displayName: Automation Rules
-  description: Translates matching project Facts into targeted Requests.
+  displayName: Automation Rules (historical)
+  description: L12 metadata retained for migration decode and raw export; never bundled or executed after L13.
   categories:
     - automation
 runtime:

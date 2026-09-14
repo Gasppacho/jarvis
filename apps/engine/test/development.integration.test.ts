@@ -2392,6 +2392,7 @@ async function activateProject(
   const portableConfig = {
     apiVersion: "jarvis.dev/project/v1",
     kind: "Project",
+    compositionMode: "fixed-modules" as const,
     metadata: { id: projectId, name: "Development tracer" },
     repositories: [
       {
@@ -2420,32 +2421,14 @@ async function activateProject(
     },
     modules: [
       {
-        instanceId: "automation-rules",
-        moduleId: "jarvis.module.automation-rules",
-        enabled: true,
-        configuration: {
-          rules: [
-            {
-              id: "ready-label-starts-development",
-              when: {
-                eventType: "scm.work-item.tag-added",
-                equals: { "payload.tag": "agent:ready" },
-              },
-              emit: {
-                type: "development.implementation.requested",
-                target: { moduleInstanceId: "development" },
-              },
-            },
-          ],
-        },
-      },
-      {
         instanceId: "development",
         moduleId: "jarvis.module.development",
         enabled: true,
         runtimeSlot: "agentRuntime",
         bindings: { repository: "main", tickets: "tickets" },
         configuration: {
+          readyLabel: "ready-to-dev",
+          scope: { kind: "all" },
           validationOrder,
           maxRepairCycles,
           preparation: commands.install === undefined ? "none" : "install",
@@ -2561,13 +2544,13 @@ async function publishTag(
   suffix = "first",
   generation = 1,
   workItemRef = `fixture://${projectId}/${suffix}`,
-  tag = "agent:ready",
+  tag = "ready-to-dev",
 ): Promise<string> {
   const response = await engine.call("/test/events", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      type: "scm.work-item.tag-added",
+      type: "scm.work-item.observed",
       version: 1,
       kind: "fact",
       projectId,
@@ -2577,10 +2560,18 @@ async function publishTag(
       correlationId: `corr_${suffix}`,
       causationId: null,
       payload: {
+        repositoryId: "main",
         workItemRef,
-        tag,
+        title: `Fixture ${suffix}`,
+        state: "open",
+        tags: [tag],
+        dependencies: { status: "complete", openWorkItemRefs: [] },
+        verification: "verified",
+        reasonCode: null,
+        observedAt: `2026-09-14T00:00:${String(generation).padStart(2, "0")}.000Z`,
+        observationRevision: generation,
       },
-      ...(generation === 1 ? {} : { metadata: { generation } }),
+      idempotencyKey: `${projectId}:${workItemRef}:observed:${generation}`,
     }),
   });
   expect(response.status, await response.clone().text()).toBe(201);

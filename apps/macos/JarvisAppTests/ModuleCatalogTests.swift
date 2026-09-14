@@ -29,7 +29,6 @@ final class ModuleCatalogTests: XCTestCase {
         XCTAssertEqual(
             moduleCatalog.packages.map(\.id),
             [
-                "jarvis.module.automation-rules@1.0.0",
                 "jarvis.module.change-request-review@1.0.0",
                 "jarvis.module.development@1.0.0",
                 "jarvis.module.github@1.0.0",
@@ -48,26 +47,6 @@ final class ModuleCatalogTests: XCTestCase {
         for package in moduleCatalog.packages {
             XCTAssertEqual(package.presentationFields.map(\.label), expectedLabels)
         }
-
-        let automation = try XCTUnwrap(
-            moduleCatalog.packages.first { $0.moduleId == "jarvis.module.automation-rules" })
-        XCTAssertEqual(automation.version, "1.0.0")
-        XCTAssertEqual(automation.displayName, "Automation Rules")
-        XCTAssertEqual(
-            automation.description,
-            "Translates matching project Facts into targeted Requests.")
-        XCTAssertEqual(automation.categories, ["automation"])
-        XCTAssertEqual(automation.consumes, ["scm.work-item.ready.v1", "scm.work-item.tag-added.v1"])
-        XCTAssertEqual(automation.produces, ["development.implementation.requested.v1"])
-        XCTAssertEqual(automation.requires, [])
-        XCTAssertEqual(automation.requiredCapabilityIDs, [])
-        XCTAssertEqual(automation.declaredBindingNames, [])
-        XCTAssertEqual(automation.provides, [])
-        XCTAssertEqual(
-            automation.configurationSchemaRef,
-            "contracts/module-config/automation-rules.v1.schema.json")
-        XCTAssertTrue(
-            automation.configurationSchema?.contains("Automation Rules Module Config v1") == true)
 
         let review = try XCTUnwrap(
             moduleCatalog.packages.first { $0.moduleId == "jarvis.module.change-request-review" })

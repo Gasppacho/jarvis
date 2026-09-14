@@ -381,7 +381,8 @@ replace the normal activation validation report or Development preflight.
 `POST /v1/projects/{projectId}/preflight` returns `ProjectPreflightV1`
 (`jarvis.dev/project-preflight/v1`): the existing versioned validation report,
 its composition fingerprint, bounded runtime readiness, actionable checks with
-`Repository`, `Workflow` or `Connections` destinations, the label/rule scope,
+`Repository`, `Workflow` or `Connections` destinations, the Development label
+scope,
 and `candidateEligibility`. A fixed-modules response also carries the typed
 `trigger` descriptor (`moduleInstanceId`, Development `readyLabel`, and explicit
 `scope` of `issue` or `all`); the legacy `rule` field remains transitional.
@@ -390,12 +391,10 @@ configuration; `empty` candidates and open blockers alone do not invalidate it.
 Unknown GitHub/dependency reads produce failed checks. A previously admitted
 candidate is shown as ineligible for automatic admission.
 
-The guided path supports one readable `scm.work-item.ready` admission Rule,
-without static work-item/repository/tag/base-branch emission overrides. Other
-configurations remain saved and editable, with a Workflow finding explaining
-why the guided scope cannot promise the selected Work Item. Historical
-`agent:ready` labels are retained; switching the legacy `tag-added` trigger to
-durable readiness is an explicit user edit, never a migration on save.
+The fixed path uses Development's durable `readyLabel` and scope. Historical
+Automation Rules configurations remain saved, readable and exportable, but
+the preflight is blocked with an explicit migration-required finding; legacy
+labels and raw rules are never silently rewritten or executed.
 
 GitHub calls are authenticated GETs for linked repositories, labels, issues and
 native `blocked_by`, using the existing provider assessment and pagination.
@@ -410,10 +409,10 @@ agent executions.
 `POST /v1/projects/{projectId}/preflight-scope` accepts
 `{compositionFingerprint, scope: "issue", workItemRef}` and returns a Portable Configuration
 proposal only. The reference must belong to the current scoped preview; `scope: "all"` (without `workItemRef`)
-removes only `when.equals["payload.workItemRef"]`. The label, other predicates,
-rule identity, target, resources and every other configuration field remain
-unchanged. The shell tracks which exact filter its trial added, so an existing
-permanent filter is never silently replaced or offered for trial restoration.
+removes the Development scope filter. The label, target, resources and every
+other configuration field remain unchanged. The optional legacy `rule` response
+field is retained for L12 wire compatibility, is read-only and deprecated; it
+is never populated by the L13 fixed path.
 The proposal does not save, activate or enqueue anything. The shell saves it
 locally as a Draft; selection then reevaluates preflight, while restoration
 requires the user's explicit new preflight and activation.

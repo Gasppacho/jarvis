@@ -5,7 +5,6 @@ import type {
 import {
   preflightGitHub,
   check,
-  workflowRule,
   isGitHubDevelopmentFlow,
   type ProjectPreflight,
 } from "./preflight.js";
@@ -118,6 +117,34 @@ import type { LocalAgentRuntimeRegistry } from "./resource-grants.js";
 
 const PROJECT_YAML = join(".jarvis", "project.yaml");
 const MAX_PROJECT_YAML_BYTES = 512 * 1024;
+const LEGACY_AUTOMATION_RULES_MODULE_ID = "jarvis.module.automation-rules";
+
+function isHistoricalAutomationRulesConfiguration(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const candidate = value as { compositionMode?: unknown; modules?: unknown };
+  return (
+    candidate.compositionMode !== "fixed-modules" &&
+    Array.isArray(candidate.modules) &&
+    candidate.modules.some(
+      (module) =>
+        typeof module === "object" &&
+        module !== null &&
+        !Array.isArray(module) &&
+        (module as { moduleId?: unknown }).moduleId === LEGACY_AUTOMATION_RULES_MODULE_ID,
+    )
+  );
+}
+
+function requireProjectConfigurationForPersistence(
+  value: unknown,
+  modules: ModuleHost,
+): StoredPortableProjectConfiguration {
+  if (isHistoricalAutomationRulesConfiguration(value)) {
+    validatePortableConfig(value);
+    return value as StoredPortableProjectConfiguration;
+  }
+  return requirePortableProjectConfiguration(value, modules);
+}
 const INITIAL_STATUS = "draft" as const;
 
 export class RepositoryDiscoveryService implements RepositoryDiscoveryPort<RepositoryDiscovery> {
@@ -210,7 +237,7 @@ export class ProjectService implements ProjectRegistry<
       };
     }
     if (!resolved.isDiscoveredDraft) {
-      requirePortableProjectConfiguration(portableConfig, this.modules);
+      requireProjectConfigurationForPersistence(portableConfig, this.modules);
     }
     const id = allocateProjectId(portableConfig, this.store);
     const name = portableConfig.metadata.name || id;
@@ -236,6 +263,7 @@ export class ProjectService implements ProjectRegistry<
 
   getProjectOverview(id: unknown): ProjectOverview {
     const project = this.requireProject(id);
+    const legacy = project.portableConfig.compositionMode !== "fixed-modules";
     const readiness = this.readiness?.list?.(project.id) ?? [];
     const admission = this.developmentAdmissions?.read(project.id) ?? {
       suspended: false,
@@ -293,6 +321,7 @@ export class ProjectService implements ProjectRegistry<
           admission: admissionByRef.get(snapshot.workItemRef),
           paused,
           hasActiveExecution,
+          legacy,
           fallbackReadinessLabel:
             typeof fallbackReadinessLabel === "string" && fallbackReadinessLabel.trim() !== ""
               ? fallbackReadinessLabel.trim()
@@ -315,6 +344,7 @@ export class ProjectService implements ProjectRegistry<
       activeExecutions.length,
       polling.state,
       lastWorkFailed,
+      legacy,
     );
     let selectedWorkItemRef: string | null = null;
     if (project.portableConfig.compositionMode === "fixed-modules") {
@@ -329,13 +359,6 @@ export class ProjectService implements ProjectRegistry<
         typeof (scope as Record<string, unknown>)["workItemRef"] === "string"
       )
         selectedWorkItemRef = (scope as Record<string, string>)["workItemRef"]!;
-    } else {
-      try {
-        const ref = workflowRule(project.portableConfig).rule.when.equals?.["payload.workItemRef"];
-        if (typeof ref === "string") selectedWorkItemRef = ref;
-      } catch {
-        /* Custom workflows need not have a guide-compatible rule. */
-      }
     }
     const eligible = issues.some((issue) => issue.status === "eligible");
     const stages = overviewStages(
@@ -343,6 +366,7 @@ export class ProjectService implements ProjectRegistry<
       hasActiveExecution,
       eligible,
       project.portableConfig.compositionMode === "fixed-modules",
+      legacy,
       project.status,
     );
     return {
@@ -373,12 +397,13 @@ export class ProjectService implements ProjectRegistry<
           eligible,
           polling.state,
           lastWorkFailed,
+          legacy,
         ),
       },
       issues,
       activeExecutionCount: activeExecutions.length,
       activeWorkItemRefs: [...activeRefs].sort(),
-      readinessHelp: readinessHelp(project, readiness),
+      readinessHelp: readinessHelp(project, readiness, legacy),
     };
   }
 
@@ -589,22 +614,11 @@ export class ProjectService implements ProjectRegistry<
         ),
       };
     } else {
-      let selected: ReturnType<typeof workflowRule>;
-      try {
-        selected = workflowRule(configuration);
-      } catch {
-        throw new EngineError("api.invalid-request", 400, "Repair the workflow rule first.");
-      }
-      const instance = configuration.modules.find(
-        (m) => m.instanceId === selected.instance.instanceId,
-      )!;
-      const rules = instance.configuration!["rules"] as {
-        id: string;
-        when: { equals: Record<string, unknown> };
-      }[];
-      const equals = rules.find((r) => r.id === selected.rule.id)!.when.equals;
-      if (ref === null) delete equals["payload.workItemRef"];
-      else equals["payload.workItemRef"] = ref;
+      throw new EngineError(
+        "project.activation-not-validated",
+        409,
+        "Legacy Automation Rules configuration requires guided migration before changing scope.",
+      );
     }
     return configuration;
   }
@@ -1209,7 +1223,7 @@ export class ProjectService implements ProjectRegistry<
     const configuration =
       proposedConfiguration === undefined
         ? project.portableConfig
-        : requirePortableProjectConfiguration(proposedConfiguration, this.modules);
+        : requireProjectConfigurationForPersistence(proposedConfiguration, this.modules);
     const validation = this.compositionValidator.validate({
       projectId: project.id,
       configuration,
@@ -1284,7 +1298,7 @@ export class ProjectService implements ProjectRegistry<
       supplied.slots !== null &&
       Object.keys(supplied.slots).length === 0
         ? requirePortableProjectDraft(request.portableConfig)
-        : requirePortableProjectConfiguration(request.portableConfig, this.modules);
+        : requireProjectConfigurationForPersistence(request.portableConfig, this.modules);
     if (
       structuralCompositionChanged(current.portableConfig, configuration) &&
       (current.status === "active" || this.executionLedger.listActive(current.id).length > 0)
@@ -1361,7 +1375,10 @@ export class ProjectService implements ProjectRegistry<
     proposedConfiguration: unknown,
   ): ProjectResourceChoices {
     const current = this.requireProject(projectId);
-    const configuration = requirePortableProjectConfiguration(proposedConfiguration, this.modules);
+    const configuration = requireProjectConfigurationForPersistence(
+      proposedConfiguration,
+      this.modules,
+    );
     return resourceChoices(
       current,
       configuration,
@@ -1568,6 +1585,7 @@ function overviewIssue(
     readonly admission: OverviewAdmission | undefined;
     readonly paused: boolean;
     readonly hasActiveExecution: boolean;
+    readonly legacy: boolean;
     readonly fallbackReadinessLabel: string;
   },
 ): ProjectOverviewIssue | undefined {
@@ -1614,6 +1632,15 @@ function overviewIssue(
       reason: "execution-cancelled",
       explanation:
         "L’exécution a été annulée. Son résultat et le travail conservé restent consultables.",
+    };
+  }
+  if (input.legacy) {
+    return {
+      ...base,
+      status: "unavailable",
+      reason: "legacy-automation-rules-removed",
+      explanation:
+        "Cette configuration historique est conservée en lecture et export, mais son exécution est bloquée. Lancez la migration guidée.",
     };
   }
   if (snapshot.admittedAt !== null && input.admission === undefined) {
@@ -1804,12 +1831,14 @@ function overviewStatusFor(
   activeExecutionCount: number,
   pollingState: ProjectOverview["polling"]["state"],
   lastWorkFailed: boolean,
+  legacy: boolean,
 ): ProjectOverview["status"] {
   if (projectStatus === "paused") return "paused";
   if (projectStatus === "degraded" || pollingState === "failed") return "degraded";
   if (projectStatus === "draft" || projectStatus === "invalid" || projectStatus === "archived") {
     return "draft";
   }
+  if (legacy) return "degraded";
   return activeExecutionCount > 0 ? "running" : lastWorkFailed ? "degraded" : "ready";
 }
 
@@ -1818,16 +1847,18 @@ function overviewStages(
   active: boolean,
   eligible: boolean,
   fixedModules: boolean,
+  legacy: boolean,
   projectStatus: ProjectRow["status"],
 ): ProjectOverviewStage[] {
   const rules: ProjectOverviewStage = {
     id: "rules",
     label: "Rules",
-    status:
-      projectStatus === "active" || projectStatus === "paused" || projectStatus === "degraded"
+    status: legacy
+      ? "unavailable"
+      : projectStatus === "active" || projectStatus === "paused" || projectStatus === "degraded"
         ? "ready"
         : "unavailable",
-    detail: "Workflow eligibility",
+    detail: legacy ? "Migration required; execution retired" : "Workflow eligibility",
   };
   return [
     {
@@ -1864,8 +1895,10 @@ function nextOverviewStep(
   eligible: boolean,
   pollingState: ProjectOverview["polling"]["state"],
   lastWorkFailed: boolean,
+  legacy: boolean,
 ): string {
   if (status === "draft") return "Vérifiez la configuration avant d’activer ce projet.";
+  if (legacy) return "Exportez cette configuration puis lancez la migration guidée.";
   if (status === "paused") return "Reprenez le projet pour autoriser de nouveaux départs.";
   if (!active && lastWorkFailed)
     return "Ouvrez le dernier travail pour examiner l’échec et le résultat conservé.";
@@ -1879,7 +1912,10 @@ function nextOverviewStep(
 function readinessHelp(
   project: ProjectRow,
   snapshots: readonly WorkItemReadinessSnapshot[],
+  legacy: boolean,
 ): string {
+  if (legacy)
+    return "Cette configuration historique reste consultable et exportable, mais Automation Rules est retiré : lancez la migration guidée avant toute activation.";
   const labels = new Set(
     project.portableConfig.modules
       .filter((module) => module.moduleId === "jarvis.module.github")

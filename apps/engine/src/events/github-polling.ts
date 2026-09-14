@@ -1,20 +1,14 @@
-import {
-  readRules,
-  matchesRuleEvent,
-} from "../../../../packages/modules/automation-rules/src/index.js";
 import type {
   GitHubApi,
   ModuleHandlerCapabilities,
   ProjectRepositoryIdentity,
   PollCursorCapability,
-  WorkItemReadinessCapability,
 } from "../../../../packages/module-sdk/src/index.js";
 import type { WorkItemStateObservation } from "../../../../packages/module-sdk/src/index.js";
 import type { Clock } from "../../../../packages/kernel/src/clock.js";
 import type { ModuleHost } from "../../../../packages/kernel/src/module-host.js";
 import type { IdGenerator } from "../../../../packages/kernel/src/id-generator.js";
 import { GitHubApiError } from "../../../../packages/modules/github/src/api-client.js";
-import { assessGitHubWorkItemReadiness } from "../../../../packages/modules/github/src/work-item-readiness.js";
 import {
   GitHubTranslationError,
   latestGitHubIssueEvent,
@@ -111,7 +105,7 @@ export class GitHubPollingScheduler {
       const snapshot = this.dependencies.projects.getResolvedProject(project.id);
       if (snapshot === undefined) continue;
       for (const instance of snapshot.moduleInstances) {
-        if (!this.shouldPoll(instance)) continue;
+        if (!this.shouldPoll(instance, snapshot)) continue;
         const key = `${project.id}:${instance.instanceId}`;
         if (this.inFlight.has(key)) continue;
 
@@ -139,10 +133,14 @@ export class GitHubPollingScheduler {
     await Promise.allSettled(operations);
   }
 
-  private shouldPoll(instance: ProjectModuleInstanceConfiguration): boolean {
+  private shouldPoll(
+    instance: ProjectModuleInstanceConfiguration,
+    snapshot: ResolvedProjectSnapshot,
+  ): boolean {
     return (
       instance.enabled &&
       instance.moduleId === GITHUB_MODULE_ID &&
+      snapshot.composition.compositionMode === "fixed-modules" &&
       this.dependencies.modules.composition(instance.moduleId) !== undefined
     );
   }
@@ -198,21 +196,9 @@ export class GitHubPollingScheduler {
       );
       return;
     }
-    const workItemReadiness = capabilities.workItemReadiness;
-    const fixedModules = snapshot.composition.compositionMode === "fixed-modules";
-    if (!fixedModules && workItemReadiness === undefined) {
-      logPollingFailure(projectId, instance.instanceId, "capability", "readiness-unavailable");
-      this.dependencies.pollingStatus?.failModule(
-        projectId,
-        instance.instanceId,
-        "readiness-unavailable",
-      );
-      return;
-    }
     if (
-      fixedModules &&
-      (capabilities.workItems?.observeState === undefined ||
-        this.dependencies.observations === undefined)
+      capabilities.workItems?.observeState === undefined ||
+      this.dependencies.observations === undefined
     ) {
       logPollingFailure(projectId, instance.instanceId, "capability", "observation-unavailable");
       this.dependencies.pollingStatus?.failModule(
@@ -263,10 +249,8 @@ export class GitHubPollingScheduler {
           githubApi,
           pollCursor,
           externalMappings,
-          workItemReadiness,
           capabilities.workItems,
           instance.configuration,
-          snapshot,
         );
       }),
     );
@@ -279,10 +263,8 @@ export class GitHubPollingScheduler {
     githubApi: GitHubApi,
     pollCursor: PollCursorCapability,
     externalMappings: NonNullable<ModuleHandlerCapabilities["externalMappings"]>,
-    workItemReadiness: WorkItemReadinessCapability | undefined,
     workItems: ModuleHandlerCapabilities["workItems"],
     configuration: Readonly<Record<string, unknown>> | undefined,
-    snapshot: ResolvedProjectSnapshot,
   ): Promise<void> {
     const repositoryId = repository.repositoryId;
     const githubRepositoryId = `${repository.owner}/${repository.name}`;
@@ -290,32 +272,18 @@ export class GitHubPollingScheduler {
     let failed = false;
     let failureReason: string | undefined;
     try {
-      if (snapshot.composition.compositionMode === "fixed-modules") {
-        await scanObserved(
-          githubApi,
-          githubRepositoryId,
-          repository,
-          projectId,
-          moduleInstanceId,
-          workItems?.observeState,
-          this.dependencies,
-        );
-      } else {
-        await scanReadiness(
-          githubApi,
-          githubRepositoryId,
-          repository,
-          readyLabel(configuration),
-          projectId,
-          moduleInstanceId,
-          workItemReadiness!,
-          this.dependencies,
-          snapshot,
-        );
-      }
+      await scanObserved(
+        githubApi,
+        githubRepositoryId,
+        repository,
+        projectId,
+        moduleInstanceId,
+        workItems?.observeState,
+        this.dependencies,
+      );
     } catch (error: unknown) {
       failed = true;
-      failureReason = `${snapshot.composition.compositionMode === "fixed-modules" ? "observation" : "readiness"}-${classifyPollingFailure(error)}`;
+      failureReason = `observation-${classifyPollingFailure(error)}`;
       logPollingFailure(projectId, moduleInstanceId, githubRepositoryId, failureReason);
     }
     try {
@@ -396,100 +364,6 @@ interface CurrentGitHubIssue {
   readonly number: number;
   readonly title: string;
   readonly labels: readonly string[];
-}
-
-async function scanReadiness(
-  githubApi: GitHubApi,
-  githubRepositoryId: string,
-  repository: ProjectRepositoryIdentity,
-  tag: string,
-  projectId: string,
-  moduleInstanceId: string,
-  readiness: WorkItemReadinessCapability,
-  dependencies: Pick<GitHubPollingDependencies, "publisher" | "transaction" | "ids" | "clock">,
-  snapshot: ResolvedProjectSnapshot,
-): Promise<void> {
-  if (repository.provider !== "github") throw new Error("unsupported repository provider");
-  const candidates = await readCurrentIssues(githubApi, githubRepositoryId);
-  const rules = snapshot.moduleInstances
-    .filter(
-      (instance) => instance.enabled && instance.moduleId === "jarvis.module.automation-rules",
-    )
-    .flatMap((instance) => readRules(instance.configuration ?? {}))
-    .filter((rule) => rule.when.eventType === "scm.work-item.ready");
-  const observations: Array<{
-    readonly candidate: CurrentGitHubIssue;
-    readonly assessment: Awaited<ReturnType<typeof assessGitHubWorkItemReadiness>>;
-    readonly observedAt: string;
-    readonly payload: {
-      readonly repositoryId: string;
-      readonly workItemRef: string;
-      readonly issueProvider: "github";
-      readonly tag: string;
-      readonly observedAt: string;
-    };
-    readonly admit: boolean;
-    readonly workItemRef: string;
-  }> = [];
-  for (const candidate of candidates) {
-    const workItemRef = `github://${repository.owner}/${repository.name}/issues/${candidate.number}`;
-    const observedAt = dependencies.clock.now().toISOString();
-    const assessment = await assessGitHubWorkItemReadiness({
-      api: githubApi,
-      owner: repository.owner,
-      repository: repository.name,
-      number: candidate.number,
-      tag,
-    });
-    const payload = {
-      repositoryId: repository.repositoryId,
-      workItemRef,
-      issueProvider: "github" as const,
-      tag,
-      observedAt,
-    };
-    const admit =
-      rules.length === 0 ||
-      rules.some((rule) =>
-        matchesRuleEvent(rule, { kind: "fact", type: "scm.work-item.ready", payload }),
-      );
-    observations.push({ candidate, assessment, observedAt, payload, admit, workItemRef });
-  }
-  dependencies.transaction(() => {
-    for (const observation of observations) {
-      const admitted = readiness.observe({
-        repositoryId: repository.repositoryId,
-        workItemRef: observation.workItemRef,
-        status: observation.assessment.status,
-        reason: observation.assessment.reason,
-        blockerRefs: observation.assessment.blockerRefs,
-        observedAt: observation.observedAt,
-        issueNumber: observation.candidate.number,
-        title: observation.candidate.title,
-        tag,
-        ruleMatches: observation.admit,
-        admit: observation.admit,
-      });
-      if (!admitted) continue;
-      dependencies.publisher.publish({
-        type: "scm.work-item.ready",
-        version: 1,
-        kind: "fact",
-        projectId,
-        repositoryId: repository.repositoryId,
-        producer: { moduleId: GITHUB_MODULE_ID, moduleInstanceId },
-        subject: { type: "work-item", ref: observation.workItemRef },
-        correlationId: `corr_${dependencies.ids.next()}`,
-        causationId: null,
-        idempotencyKey: readinessIdentity(
-          projectId,
-          repository.repositoryId,
-          observation.workItemRef,
-        ),
-        payload: observation.payload,
-      });
-    }
-  });
 }
 
 async function scanObserved(
@@ -647,10 +521,6 @@ function unavailableState(reasonCode: string): WorkItemStateObservation {
   };
 }
 
-function readinessIdentity(projectId: string, repositoryId: string, workItemRef: string): string {
-  return `${projectId}:${repositoryId}:${workItemRef}:ready-v1`;
-}
-
 export async function readCurrentIssues(
   githubApi: GitHubApi,
   githubRepositoryId: string,
@@ -719,11 +589,6 @@ function hasNextPage(response: unknown): boolean {
   if (!isRecord(headers)) return false;
   const link = headers["link"];
   return typeof link === "string" && /(?:^|,)\s*<[^>]+>;\s*rel="next"(?:,|$)/.test(link);
-}
-
-function readyLabel(configuration: Readonly<Record<string, unknown>> | undefined): string {
-  const value = configuration?.["readyLabel"];
-  return typeof value === "string" && value.trim() !== "" ? value : "ready-for-agent";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

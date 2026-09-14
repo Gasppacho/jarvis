@@ -14,10 +14,6 @@ import { resolveRequestConsumer as resolveProjectRequestConsumer } from "../../.
 import { deriveProjectSubscriptions } from "../../../packages/project-runtime/src/project-subscriptions.js";
 import { SavedProjectCompositionValidator } from "../../../packages/project-runtime/src/composition-validator.js";
 import {
-  AUTOMATION_RULES_MODULE_ID,
-  handleWorkItemTagAdded,
-} from "../../../packages/modules/automation-rules/src/index.js";
-import {
   DEVELOPMENT_MODULE_ID,
   handleWorkItemObserved,
   handleImplementationRequested,
@@ -412,9 +408,8 @@ async function main(): Promise<void> {
   // Outbox dispatcher, Delivery consumer and their loop are wired for real,
   // unconditionally, using the same `ProjectStore`/`ModuleHost` routing a real
   // Module Instance would resolve through (docs/architecture/EVENTS.md
-  // "Routing > Facts"). The Automation Rules handler is registered here;
-  // provider adapters will become additional production event sources in
-  // later tickets. The loop is also reachable through the test-only inbound
+  // "Routing > Facts"). Provider adapters are registered here alongside the
+  // Development handler. The loop is also reachable through the test-only inbound
   // publication route below, without making that route part of the product API.
   //
   // `JARVIS_ENABLE_TEST_HOOKS=1` additively registers an inbound publication
@@ -537,7 +532,6 @@ async function main(): Promise<void> {
       requestConsumerResolver,
     );
     const handlers: ModuleHandlerLookup = (moduleId) => {
-      if (moduleId === AUTOMATION_RULES_MODULE_ID) return handleWorkItemTagAdded;
       if (moduleId === DEVELOPMENT_MODULE_ID) {
         if (__JARVIS_TEST_HOOKS__)
           return (ctx) =>

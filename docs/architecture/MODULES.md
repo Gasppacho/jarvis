@@ -44,7 +44,9 @@ Aucun état mutable n'est partagé entre ces instances.
 Les catégories facilitent l'UI, mais n'introduisent pas de types d'extension différents :
 
 - `provider` : traduit un service externe vers/depuis les événements canoniques ;
-- `automation` : transforme des faits en requests selon des règles ;
+- `automation` : catégorie historique; aucun moteur Automation Rules n'est
+  exécutable depuis L13, mais ses métadonnées restent disponibles pour le
+  décodage de migration et l'export brut ;
 - `agentic` : réalise un travail cognitif/technique avec une loop et un runtime agentique ;
 - `decision` : agrège des faits et décide d'émettre une request sensible ;
 - `observer` : métriques, audit ou notification sans piloter la suite.
@@ -85,6 +87,10 @@ Le manifeste déclare :
 - stratégie de concurrence.
 
 Il ne déclare pas l'ordre global du workflow.
+
+Le manifeste historique `jarvis.module.automation-rules` conserve son identité
+et son schéma pour lire les configurations L11/L12. Il n'est plus découvert
+dans le catalogue de production et son ancien entrypoint n'est jamais chargé.
 
 ## Subscription model
 
@@ -172,6 +178,11 @@ Discovered → Validated → Configured → Active → Draining → Inactive
 - `Degraded` : certaines capabilities indisponibles ; aucune nouvelle request concernée n'est acceptée.
 - `Draining` : arrêt des nouvelles deliveries.
 - `Inactive` : aucun handler actif.
+
+Une instance legacy contenant Automation Rules peut rester enregistrée pour
+consultation. Elle est `Degraded`, ses deliveries restent conservées et aucun
+handler, polling ou replay legacy n'est ouvert; seule la migration guidée ou
+l'export brut peut la faire évoluer.
 
 ## Concurrency
 

@@ -73,14 +73,13 @@ describe("bundled Module Package catalogue", () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as { items: CatalogItem[] };
     expect(body.items.map((item) => item.moduleId)).toEqual([
-      "jarvis.module.automation-rules",
       "jarvis.module.change-request-review",
       "jarvis.module.development",
     ]);
   }
 
   it("exposes every official MVP Module Package through the Local API", async () => {
-    for (const name of ["automation-rules", "change-request-review", "development", "github"]) {
+    for (const name of ["change-request-review", "development", "github"]) {
       expect(existsSync(join(REPO_ROOT, "dist/engine/modules", name, "module.manifest.yaml"))).toBe(
         true,
       );
@@ -97,7 +96,7 @@ describe("bundled Module Package catalogue", () => {
     expect(response.status).toBe(200);
 
     const body = (await response.json()) as { items: CatalogItem[] };
-    expect(body.items).toHaveLength(4);
+    expect(body.items).toHaveLength(3);
     for (const item of body.items) {
       expect(validatePackage(item), explain(validatePackage)).toBe(true);
     }
@@ -107,19 +106,6 @@ describe("bundled Module Package catalogue", () => {
         configurationSchemaTitle: configurationSchema?.["title"] ?? null,
       })),
     ).toEqual([
-      {
-        moduleId: "jarvis.module.automation-rules",
-        version: "1.0.0",
-        displayName: "Automation Rules",
-        description: "Translates matching project Facts into targeted Requests.",
-        categories: ["automation"],
-        consumes: ["scm.work-item.ready.v1", "scm.work-item.tag-added.v1"],
-        produces: ["development.implementation.requested.v1"],
-        requires: [],
-        provides: [],
-        configurationSchemaRef: "contracts/module-config/automation-rules.v1.schema.json",
-        configurationSchemaTitle: "Automation Rules Module Config v1",
-      },
       {
         moduleId: "jarvis.module.change-request-review",
         version: "1.0.0",
@@ -223,11 +209,6 @@ describe("bundled Module Package catalogue", () => {
         },
         maxRepairCycles: { title: "Maximum repair cycles", default: 2 },
         retainWorkspaceOnSuccess: { title: "Retain successful workspace", default: false },
-      },
-    });
-    expect(schemas["jarvis.module.automation-rules"]).toMatchObject({
-      properties: {
-        rules: { title: "Automation Rules", description: expect.any(String), minItems: 1 },
       },
     });
   });

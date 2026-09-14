@@ -192,6 +192,11 @@ export function claimDueDeliveries(
          FROM deliveries
          JOIN projects ON projects.id = deliveries.project_id
          WHERE deliveries.consumed_at IS NULL
+           AND NOT EXISTS (
+             SELECT 1
+             FROM json_each(projects.portable_config, '$.modules') AS legacy_modules
+             WHERE json_extract(legacy_modules.value, '$.moduleId') = 'jarvis.module.automation-rules'
+           )
            AND (deliveries.next_attempt_at IS NULL OR deliveries.next_attempt_at <= @now)
            AND (deliveries.lease_expires_at IS NULL OR deliveries.lease_expires_at <= @now)
            AND (

@@ -125,6 +125,10 @@ Le lease conserve repository, branch, base SHA, PID éventuel, expiration et cle
   et les Local Bindings précédents; sa transaction SQLite est compensée par le
   writer atomique du repository si `.jarvis/project.yaml` a été explicitement
   confirmé.
+- Le retrait L13 ne supprime aucune table ni donnée historique. Une configuration
+  contenant `jarvis.module.automation-rules` reste consultable et exportable;
+  ses deliveries non terminales restent pending et sont refusées avec un
+  diagnostic de migration compatible, sans polling, consommation ou replay.
 
 ## Retention
 
