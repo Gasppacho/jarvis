@@ -486,6 +486,22 @@ export class ProjectService implements ProjectRegistry<
   activatePreflightProject(request: ActivateProjectRequest): ProjectSummary {
     const project = this.requireProject(request.projectId);
     const report = this.preflights.get(project.id);
+    const selected =
+      report?.trigger?.scope.kind === "issue"
+        ? report.candidateEligibility.items.find(
+            (item) => item.workItemRef === report.trigger!.scope.workItemRef,
+          )
+        : undefined;
+    if (
+      project.portableConfig.compositionMode === "fixed-modules" &&
+      report?.trigger?.scope.kind === "issue" &&
+      selected?.status !== "eligible"
+    )
+      throw activationRejected(
+        "project.activation-not-validated",
+        project.id,
+        "the selected fixed-modules candidate is not currently eligible",
+      );
     if (!report?.valid || report.compositionFingerprint !== request.compositionFingerprint)
       throw activationRejected(
         "project.activation-not-validated",
@@ -515,15 +531,25 @@ export class ProjectService implements ProjectRegistry<
     const ref = body.scope === "all" ? null : body.workItemRef;
     if (body.scope === "all" && Object.hasOwn(body, "workItemRef"))
       throw new EngineError("api.invalid-request", 400, "All scope cannot name a selected issue.");
-    if (
-      body.scope === "issue" &&
-      (typeof ref !== "string" ||
-        !report.candidateEligibility.items.some((item) => item.workItemRef === ref))
-    )
+    const candidate =
+      typeof ref === "string"
+        ? report.candidateEligibility.items.find((item) => item.workItemRef === ref)
+        : undefined;
+    if (body.scope === "issue" && candidate === undefined)
       throw new EngineError(
         "api.invalid-request",
         400,
         "Select an issue from this project's current preview.",
+      );
+    if (
+      body.scope === "issue" &&
+      project.portableConfig.compositionMode === "fixed-modules" &&
+      candidate?.status !== "eligible"
+    )
+      throw activationRejected(
+        "project.activation-not-validated",
+        project.id,
+        "the selected fixed-modules candidate is not currently eligible",
       );
     const configuration = structuredClone(project.portableConfig) as PortableProjectConfiguration;
     if (project.portableConfig.compositionMode === "fixed-modules") {

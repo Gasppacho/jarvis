@@ -109,15 +109,16 @@ console.log(JSON.stringify({type: "turn.completed", usage: {input_tokens: 1, out
     status: 200,
     body: { name: "ready-for-agent" },
   });
+  if (fixed)
+    f.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis/labels/ready-to-dev", {
+      status: 200,
+      body: { name: "ready-to-dev" },
+    });
   return { f, path, config };
 }
 
 it("preflights fixed-modules from Development and scopes without an Automation Rule", async () => {
   const { f, path } = await setup({}, true);
-  f.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis/labels/ready-to-dev", {
-    status: 200,
-    body: { name: "ready-to-dev" },
-  });
   const ready = await report(f, path);
   expect(ready.valid, JSON.stringify(ready.checks)).toBe(true);
   expect(ready.rule).toBeUndefined();
@@ -145,6 +146,92 @@ it("preflights fixed-modules from Development and scopes without an Automation R
   expect(
     configuration.modules.some((module) => module.moduleId === "jarvis.module.automation-rules"),
   ).toBe(false);
+});
+
+it("rejects an ineligible fixed-modules trial before activation", async () => {
+  const { f, path } = await setup({ JARVIS_GITHUB_POLL_INTERVAL_MS: "25" }, true);
+  seed(f, 1, true, "ready-to-dev");
+  const ready = await report(f, path);
+  expect(ready.valid).toBe(true);
+  expect(ready.candidateEligibility.items[0]).toMatchObject({ status: "ineligible" });
+  const rejected = await post(f, `${path}/preflight-scope`, {
+    compositionFingerprint: ready.compositionFingerprint,
+    scope: "issue",
+    workItemRef: "github://Gasppacho/jarvis/issues/1",
+  });
+  expect(rejected.status).toBe(409);
+  expect(f.fakeGitHub.pullRequests).toHaveLength(0);
+  expect(readFileSync(f.runtimeCounterPath, "utf8")).toBe("");
+  expect(await (await f.engine.call(`${path}/executions`)).json()).toEqual({ items: [] });
+});
+
+it("runs fixed-modules A, preserves it across restart, then admits B after scope all", async () => {
+  const { f, path } = await setup({ JARVIS_GITHUB_POLL_INTERVAL_MS: "25" }, true);
+  seed(f, 1, false, "ready-to-dev");
+  seed(f, 2, false, "ready-to-dev");
+  const before = await report(f, path);
+  const scopedA = await post(f, `${path}/preflight-scope`, {
+    compositionFingerprint: before.compositionFingerprint,
+    scope: "issue",
+    workItemRef: "github://Gasppacho/jarvis/issues/1",
+  });
+  expect(scopedA.status).toBe(200);
+  await save(f, path, (await scopedA.json()) as PortableProjectConfiguration);
+  const trialA = await report(f, path);
+  expect(trialA.trigger?.scope).toEqual({
+    kind: "issue",
+    workItemRef: "github://Gasppacho/jarvis/issues/1",
+  });
+  expect(
+    (
+      await post(f, `${path}/preflight-activate`, {
+        compositionFingerprint: trialA.compositionFingerprint,
+      })
+    ).status,
+  ).toBe(200);
+  await expect.poll(() => f.fakeGitHub.pullRequests.length, { timeout: 20000 }).toBe(1);
+  expect(readFileSync(f.runtimeCounterPath, "utf8").trim().split("\n")).toHaveLength(1);
+
+  await f.restart();
+  await expect
+    .poll(
+      () =>
+        f.fakeGitHub.requests.filter((request) => request.path.includes("/issues?state=open"))
+          .length,
+    )
+    .toBeGreaterThan(2);
+  expect(f.fakeGitHub.pullRequests).toHaveLength(1);
+  expect(readFileSync(f.runtimeCounterPath, "utf8").trim().split("\n")).toHaveLength(1);
+
+  const current = await report(f, path);
+  const monitoring = await post(f, `${path}/preflight-scope`, {
+    compositionFingerprint: current.compositionFingerprint,
+    scope: "all",
+  });
+  expect(monitoring.status).toBe(200);
+  await save(f, path, (await monitoring.json()) as PortableProjectConfiguration);
+  const all = await report(f, path);
+  expect(all.trigger?.scope).toEqual({ kind: "all" });
+  expect(
+    (
+      await post(f, `${path}/preflight-activate`, {
+        compositionFingerprint: all.compositionFingerprint,
+      })
+    ).status,
+  ).toBe(200);
+  await expect.poll(() => f.fakeGitHub.pullRequests.length, { timeout: 20000 }).toBe(2);
+  expect(readFileSync(f.runtimeCounterPath, "utf8").trim().split("\n")).toHaveLength(2);
+
+  await f.restart();
+  await expect
+    .poll(
+      () =>
+        f.fakeGitHub.requests.filter((request) => request.path.includes("/issues?state=open"))
+          .length,
+    )
+    .toBeGreaterThan(4);
+  expect(f.fakeGitHub.pullRequests).toHaveLength(2);
+  expect(readFileSync(f.runtimeCounterPath, "utf8").trim().split("\n")).toHaveLength(2);
 });
 
 it("preflights a ready configuration with no candidates without starting work", async () => {
@@ -227,7 +314,12 @@ it("inspects selected scripts transitively without executing package-manager shi
   expect(readFileSync(f.runtimeCounterPath, "utf8")).toBe("");
 });
 
-function seed(f: ReferenceWorkflowFixture, number: number, blocked = false) {
+function seed(
+  f: ReferenceWorkflowFixture,
+  number: number,
+  blocked = false,
+  label = "ready-for-agent",
+) {
   f.fakeGitHub.seedIssue({
     owner: "Gasppacho",
     repository: "jarvis",
@@ -236,7 +328,7 @@ function seed(f: ReferenceWorkflowFixture, number: number, blocked = false) {
       title: `Issue ${number}`,
       body: "Implement a small tested improvement",
       state: "open",
-      labels: [{ name: "ready-for-agent" }],
+      labels: [{ name: label }],
       blockedBy: blocked
         ? [{ number: 99, state: "open", title: "Dependency 99", body: "", labels: [] }]
         : [],

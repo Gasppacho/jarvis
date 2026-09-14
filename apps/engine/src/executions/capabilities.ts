@@ -406,7 +406,16 @@ export class ProjectModuleCapabilityResolver {
     requirement: ModuleCapabilityRequirement,
     capability: "github.api" | "work-items.read",
   ): GitHubApiClient | undefined {
-    const slot = capabilitySlot(requirement, undefined);
+    const declaredSlot = capabilitySlot(requirement, undefined);
+    const inferredSlot =
+      capability === "work-items.read" && snapshot.composition.compositionMode === "fixed-modules"
+        ? snapshot.moduleInstances.find((instance) => instance.moduleId === "jarvis.module.github")
+            ?.bindings?.sourceControl
+        : undefined;
+    const slot =
+      declaredSlot !== undefined && snapshot.bindings.slots[declaredSlot] !== undefined
+        ? declaredSlot
+        : inferredSlot ?? declaredSlot;
     if (slot === undefined) {
       return unresolvedOrAbsent(
         requirement,

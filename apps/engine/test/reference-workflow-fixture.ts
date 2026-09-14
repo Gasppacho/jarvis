@@ -290,20 +290,29 @@ function fixedProjectConfiguration(projectId: string): PortableProjectConfigurat
   return {
     ...configuration,
     compositionMode: "fixed-modules",
+    slots: {
+      agentRuntime: { requires: "agent.execute" },
+      sourceControl: { requires: "scm.change-request.manage" },
+    },
     modules: configuration.modules
       .filter((module) => module.instanceId !== "automation-rules")
-      .map((module) =>
-        module.instanceId === "development"
-          ? {
-              ...module,
-              configuration: {
-                ...module.configuration,
-                readyLabel: "ready-to-dev",
-                scope: { kind: "all" },
-              },
-            }
-          : module,
-      ),
+      .map((module) => {
+        if (module.instanceId === "github") {
+          return { ...module, bindings: { sourceControl: "sourceControl" } };
+        }
+        if (module.instanceId === "development") {
+          return {
+            ...module,
+            bindings: { repository: "main" },
+            configuration: {
+              ...module.configuration,
+              readyLabel: "ready-to-dev",
+              scope: { kind: "all" },
+            },
+          };
+        }
+        return module;
+      }),
   };
 }
 

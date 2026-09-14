@@ -622,7 +622,7 @@ public final class ProjectConfigurationModel {
               state(for: projectId).isDraftSaved, let api = preflightAPI else { return }
         guard workItemRef != nil || state(for: projectId).canRestoreTrial else { return }
         guard report.configuredWorkItemRef == nil || state(for: projectId).canRestoreTrial else {
-            update(projectId) { $0.errorMessage = "La règle possède déjà un filtre exact. Modifiez-le dans Workflow pour conserver votre périmètre existant." }
+            update(projectId) { $0.errorMessage = "La portée possède déjà un filtre exact. Relancez la vérification pour modifier le périmètre." }
             return
         }
         let revision = validationRevisions[projectId, default: 0]
