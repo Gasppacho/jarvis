@@ -59,8 +59,10 @@ describe("runtime isolation acceptance", () => {
     const projectBPath = "./node_modules/.bin:/private/tmp/runtime-tools:/usr/bin:/bin";
     const engineOnly = "engine-only-value";
     const secret = "runtime-isolation-secret";
-    const fixtureA = makeRealGitRepositoryFixture();
-    const fixtureB = makeRealGitRepositoryFixture();
+    const githubRemote = "git@github.com:Gasppacho/jarvis.git";
+    const fixtureOptions = { additionalRemotes: [{ name: "github", url: githubRemote }] };
+    const fixtureA = makeRealGitRepositoryFixture(fixtureOptions);
+    const fixtureB = makeRealGitRepositoryFixture(fixtureOptions);
     roots.push(fixtureA.root, fixtureA.remoteRoot, fixtureB.root, fixtureB.remoteRoot);
 
     const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-ri-"));
@@ -232,7 +234,7 @@ async function activateProject(
     ...fixed,
     repositories: fixed.repositories.map((repository) => ({
       ...repository,
-      remote: "origin",
+      remote: "github",
     })),
     workspace: {
       ...fixed.workspace,

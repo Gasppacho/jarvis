@@ -1,15 +1,12 @@
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
+import Database from "better-sqlite3";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { parse as parseYaml } from "yaml";
 import { explain, localApiValidator } from "./contract.js";
 import { startEngine, type Harness } from "./harness.js";
 import { makeNodeRepositoryFixture } from "./repository-fixture.js";
 import { fixedProjectConfiguration } from "./reference-workflow-fixture.js";
-
-const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
+import { ConnectionDescriptorStore } from "../src/connections/registry.js";
 
 /**
  * The composition graph is a read-only projection of the same validator the
@@ -42,7 +39,11 @@ describe("project composition graph", () => {
     engines.push(engine);
     const repositoryPath = makeNodeRepositoryFixture();
     repositories.push(repositoryPath);
-    const portableConfig = fixedProjectConfiguration("composition-graph");
+    const fixed = fixedProjectConfiguration("composition-graph");
+    const portableConfig = {
+      ...fixed,
+      repositories: fixed.repositories.map((repository) => ({ ...repository, remote: "origin" })),
+    };
     const imported = await engine.call("/v1/projects", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -53,7 +54,7 @@ describe("project composition graph", () => {
       id: string;
       portableConfig: Record<string, unknown>;
     };
-    return { engine, project };
+    return { engine, project, repositoryPath };
   }
 
   const graph = (engine: Harness, projectId: string, portableConfig?: Record<string, unknown>) =>
@@ -154,13 +155,8 @@ describe("project composition graph", () => {
       projectId: project.id,
     });
 
-    // Nodes: stable identity, module package identity, display name, enabled state -
-    // sorted by instanceId (automation-rules, development, github).
-    expect(body.nodes.map((node) => node.instanceId)).toEqual([
-      "automation-rules",
-      "development",
-      "github",
-    ]);
+    // Nodes: the fixed composition contains only GitHub and Development.
+    expect(body.nodes.map((node) => node.instanceId)).toEqual(["development", "github"]);
     expect(body.nodes.every((node) => node.enabled)).toBe(true);
     expect(body.nodes).toContainEqual(
       expect.objectContaining({
@@ -171,12 +167,12 @@ describe("project composition graph", () => {
       }),
     );
 
-    // Edges: request routing resolves via a direct configured target regardless of
-    // unbound Local Bindings; the broadcast fact edge carries no routing.
+    // Edges: fixed Development owns its internal request and GitHub observes work
+    // items for Development. Missing Local Bindings affect the rail, not routing.
     expect(body.edges).toContainEqual({
       kind: "request",
       contract: { type: "development.implementation.requested", version: 1, kind: "request" },
-      from: { instanceId: "automation-rules", moduleId: "jarvis.module.automation-rules" },
+      from: { instanceId: "development", moduleId: "jarvis.module.development" },
       to: { instanceId: "development", moduleId: "jarvis.module.development" },
       routing: {
         status: "resolved",
@@ -186,15 +182,15 @@ describe("project composition graph", () => {
     });
     expect(body.edges).toContainEqual({
       kind: "fact",
-      contract: { type: "scm.work-item.tag-added", version: 1, kind: "fact" },
+      contract: { type: "scm.work-item.observed", version: 1, kind: "fact" },
       from: { instanceId: "github", moduleId: "jarvis.module.github" },
-      to: { instanceId: "automation-rules", moduleId: "jarvis.module.automation-rules" },
+      to: { instanceId: "development", moduleId: "jarvis.module.development" },
       findings: [],
     });
 
     // Rail: every required Slot has no Local Binding, so each is unresolved and
     // references the finding it caused.
-    for (const slot of ["sourceControl", "tickets", "agentRuntime"]) {
+    for (const slot of ["sourceControl", "agentRuntime"]) {
       const item = body.rail.find((entry) => entry["kind"] === "slot" && entry["slot"] === slot);
       expect(item, `expected a rail item for slot ${slot}`).toMatchObject({
         state: "unresolved",
@@ -299,10 +295,6 @@ describe("project composition graph", () => {
     const modules = proposed["modules"] as Array<Record<string, unknown>>;
     const github = modules.find((module) => module["instanceId"] === "github")!;
     github["enabled"] = false;
-    modules.splice(
-      modules.findIndex((module) => module["instanceId"] === "development"),
-      1,
-    );
 
     const response = await graph(engine, project.id, proposed);
     expect(response.status, await response.clone().text()).toBe(200);
@@ -315,19 +307,37 @@ describe("project composition graph", () => {
     expect(body.nodes).toContainEqual(
       expect.objectContaining({ instanceId: "github", enabled: false }),
     );
-    expect(body.nodes.map((node) => node.instanceId)).toEqual(["automation-rules", "github"]);
+    expect(body.nodes.map((node) => node.instanceId)).toEqual(["development", "github"]);
 
-    // The disabled github produces no fact edge; the only edge left is the
-    // now-orphaned request, which names no candidates.
-    expect(body.edges).toEqual([
-      {
-        kind: "request",
-        contract: { type: "development.implementation.requested", version: 1, kind: "request" },
-        from: { instanceId: "automation-rules", moduleId: "jarvis.module.automation-rules" },
-        routing: { status: "orphaned" },
-        findings: ["project.request-orphaned"],
+    // The disabled GitHub produces no fact edge; Development's Change Request
+    // request is now orphaned because its only GitHub consumer is disabled.
+    expect(body.edges).toHaveLength(4);
+    expect(body.edges).toContainEqual({
+      kind: "request",
+      contract: { type: "scm.change-request.creation-requested", version: 1, kind: "request" },
+      from: { instanceId: "development", moduleId: "jarvis.module.development" },
+      routing: { status: "orphaned" },
+      findings: ["project.request-orphaned"],
+    });
+    expect(body.edges).toContainEqual({
+      kind: "request",
+      contract: { type: "development.implementation.requested", version: 1, kind: "request" },
+      from: { instanceId: "development", moduleId: "jarvis.module.development" },
+      to: { instanceId: "development", moduleId: "jarvis.module.development" },
+      routing: {
+        status: "resolved",
+        consumer: { instanceId: "development", moduleId: "jarvis.module.development" },
       },
-    ]);
+      findings: [],
+    });
+    for (const type of ["development.implementation.completed", "development.implementation.failed"]) {
+      expect(body.edges).toContainEqual({
+        kind: "fact",
+        contract: { type, version: 1, kind: "fact" },
+        from: { instanceId: "development", moduleId: "jarvis.module.development" },
+        findings: [],
+      });
+    }
     expect(body.findings.map((finding) => finding.code)).toContain("project.request-orphaned");
 
     await assertDeterministicAndUnmutated(
@@ -372,7 +382,7 @@ describe("project composition graph", () => {
     );
 
     // The direct-target request is untouched by the duplication; each github
-    // instance still broadcasts its own fact to automation-rules.
+    // instance still publishes its historical fact contract without a Rules consumer.
     expect(
       body.edges.find((edge) => edge.contract.type === "development.implementation.requested")
         ?.routing?.status,
@@ -392,88 +402,46 @@ describe("project composition graph", () => {
     );
   });
 
-  it("projects a fully bound saved composition: resolved routing, bound rail, no findings", async () => {
-    const fixtureRoot = mkdtempSync(join(tmpdir(), "jarvis-composition-graph-"));
-    runtimeRoots.push(fixtureRoot);
-    const runtimeRoot = join(fixtureRoot, "engine");
-    cpSync(join(REPO_ROOT, "dist/engine"), runtimeRoot, { recursive: true });
-    // A zero-requirement worker: providing work-items.read is enough to bind the
-    // Project's only Slot and resolve automation-rules' direct-target request.
-    writeFileSync(
-      join(runtimeRoot, "modules/change-request-review/module.manifest.yaml"),
-      `apiVersion: jarvis.dev/module/v1
-kind: Module
-metadata:
-  id: jarvis.module.change-request-review
-  version: 1.0.0
-  displayName: Request Worker
-  description: Test worker for a fully bound composition graph.
-  categories: [automation]
-runtime:
-  entrypoint: dist/index.mjs
-contracts:
-  consumes:
-    - type: development.implementation.requested
-      version: 1
-      kind: request
-      schemaRef: contracts/events/development.implementation.requested.v1.schema.json
-      handler: handleImplementationRequested
-  produces: []
-capabilities:
-  requires: []
-  provides:
-    - id: work-items.read
-      description: Embedded work item access.
-`,
-      "utf8",
-    );
-    const engine = await startEngine({ enginePath: join(runtimeRoot, "engine.bundle.mjs") });
-    engines.push(engine);
-    const repositoryPath = makeNodeRepositoryFixture();
-    repositories.push(repositoryPath);
-    const portableConfig = parseYaml(
-      readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
-    ) as Record<string, unknown>;
-    portableConfig["slots"] = { tickets: { requires: "work-items.read" } };
-    portableConfig["modules"] = [
-      {
-        instanceId: "automation-rules",
-        moduleId: "jarvis.module.automation-rules",
-        enabled: true,
-        configuration: {
-          rules: [
-            {
-              id: "emit-request",
-              when: { eventType: "scm.work-item.tag-added" },
-              emit: {
-                type: "development.implementation.requested",
-                target: { moduleInstanceId: "request-worker" },
-              },
-            },
-          ],
-        },
-      },
-      {
-        instanceId: "request-worker",
-        moduleId: "jarvis.module.change-request-review",
-        enabled: true,
-      },
-    ];
-    const imported = await engine.call("/v1/projects", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ repositoryPath, portableConfig }),
+  it("projects a fully bound fixed composition: resolved routing, bound rail, no findings", async () => {
+    const { engine, project, repositoryPath } = await setupCanonicalProject();
+    const database = new Database(join(engine.dataRoot, "jarvis.sqlite"));
+    new ConnectionDescriptorStore(database).upsert({
+      id: "connection/composition-graph-github",
+      provider: "github",
+      accountLabel: "Composition Graph GitHub",
+      capabilities: ["github.api", "scm.change-request.manage", "work-items.read"],
+      status: "available",
+      secretRef: "gh://CompositionGraph",
     });
-    expect(imported.status, await imported.clone().text()).toBe(201);
-    const project = (await imported.json()) as { id: string };
+    database.close();
 
-    const bindings = await (await engine.call(`/v1/projects/${project.id}/bindings`)).json();
+    const repositoryBinding = await engine.call(
+      `/v1/projects/${project.id}/repositories/main/binding`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: repositoryPath, bookmarkRef: "bookmark/composition-graph" }),
+      },
+    );
+    expect(repositoryBinding.status, await repositoryBinding.clone().text()).toBe(200);
+
+    const bindings = (await (await engine.call(`/v1/projects/${project.id}/bindings`)).json()) as Record<
+      string,
+      unknown
+    >;
     const boundResponse = await engine.call(`/v1/projects/${project.id}/bindings`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        ...(bindings as Record<string, unknown>),
-        slots: { tickets: { kind: "module-instance", ref: "request-worker" } },
+        ...bindings,
+        slots: {
+          ...(bindings["slots"] as Record<string, unknown>),
+          sourceControl: {
+            kind: "connection",
+            ref: "connection/composition-graph-github",
+          },
+          agentRuntime: { kind: "runtime", ref: "runtime/fake-test" },
+        },
       }),
     });
     expect(boundResponse.status, await boundResponse.clone().text()).toBe(200);
@@ -487,48 +455,43 @@ capabilities:
       findings: Array<unknown>;
     };
 
-    expect(body.nodes).toEqual([
-      expect.objectContaining({
-        instanceId: "automation-rules",
-        moduleId: "jarvis.module.automation-rules",
-        enabled: true,
-        findings: [],
-      }),
-      expect.objectContaining({
-        instanceId: "request-worker",
-        moduleId: "jarvis.module.change-request-review",
-        displayName: "Request Worker",
-        enabled: true,
-        findings: [],
-      }),
-    ]);
-    expect(body.edges).toEqual([
-      {
-        kind: "request",
-        contract: { type: "development.implementation.requested", version: 1, kind: "request" },
-        from: { instanceId: "automation-rules", moduleId: "jarvis.module.automation-rules" },
-        to: { instanceId: "request-worker", moduleId: "jarvis.module.change-request-review" },
-        routing: {
-          status: "resolved",
-          consumer: {
-            instanceId: "request-worker",
-            moduleId: "jarvis.module.change-request-review",
-          },
-        },
-        findings: [],
+    expect(body.nodes.map((node) => node["instanceId"])).toEqual(["development", "github"]);
+    expect(body.nodes.every((node) => node["enabled"] === true && (node["findings"] as unknown[]).length === 0)).toBe(true);
+    expect(body.edges).toContainEqual({
+      kind: "fact",
+      contract: { type: "scm.work-item.observed", version: 1, kind: "fact" },
+      from: { instanceId: "github", moduleId: "jarvis.module.github" },
+      to: { instanceId: "development", moduleId: "jarvis.module.development" },
+      findings: [],
+    });
+    expect(body.edges).toContainEqual({
+      kind: "request",
+      contract: { type: "development.implementation.requested", version: 1, kind: "request" },
+      from: { instanceId: "development", moduleId: "jarvis.module.development" },
+      to: { instanceId: "development", moduleId: "jarvis.module.development" },
+      routing: {
+        status: "resolved",
+        consumer: { instanceId: "development", moduleId: "jarvis.module.development" },
       },
-    ]);
-    expect(body.rail).toEqual([
-      {
-        kind: "slot",
-        slot: "tickets",
-        capability: "work-items.read",
-        state: "bound",
-        binding: { kind: "module-instance", ref: "request-worker" },
-        source: { kind: "module-instance", ref: "request-worker" },
-        findings: [],
+      findings: [],
+    });
+    expect(body.edges).toContainEqual({
+      kind: "request",
+      contract: { type: "scm.change-request.creation-requested", version: 1, kind: "request" },
+      from: { instanceId: "development", moduleId: "jarvis.module.development" },
+      to: { instanceId: "github", moduleId: "jarvis.module.github" },
+      routing: {
+        status: "resolved",
+        consumer: { instanceId: "github", moduleId: "jarvis.module.github" },
       },
-    ]);
+      findings: [],
+    });
+    expect(body.rail.every((item) => (item["findings"] as unknown[]).length === 0)).toBe(true);
+    expect(
+      body.rail
+        .filter((item) => item["kind"] === "slot")
+        .every((item) => item["state"] === "bound"),
+    ).toBe(true);
     expect(body.findings).toEqual([]);
 
     await assertDeterministicAndUnmutated(

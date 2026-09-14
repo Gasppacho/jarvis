@@ -452,7 +452,7 @@ function readDurability(fixture: ReferenceWorkflowFixture): DurabilitySnapshot {
   try {
     const readiness = database
       .prepare(
-        `SELECT status, blocker_refs AS blockerRefs, admitted_at AS admittedAt
+        `SELECT status, reason, blocker_refs AS blockerRefs, admitted_at AS admittedAt
          FROM github_work_item_readiness WHERE project_id = ? AND work_item_ref = ?`,
       )
       .get(fixture.projectId, "github://Gasppacho/jarvis/issues/201") as Readiness;

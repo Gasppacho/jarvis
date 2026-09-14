@@ -47,11 +47,13 @@ it("exposes issue reasons, native blockers, last poll and a retained failed snap
   seedIssue(fixture, 1);
   seedIssue(fixture, 2, true);
 
-  const first = (await (
-    await fixture.engine.call(`/v1/projects/${fixture.projectId}/overview/refresh`, {
-      method: "POST",
-    })
-  ).json()) as ProjectOverview;
+  await fixture.engine.call(`/v1/projects/${fixture.projectId}/overview/refresh`, {
+    method: "POST",
+  });
+  await expect
+    .poll(async () => (await overview(fixture)).issues.length, { timeout: 15_000 })
+    .toBe(2);
+  const first = await overview(fixture);
   expect(first.polling.state).toBe("live");
   expect(first.workflow.stages.map((stage) => stage.id)).toEqual([
     "github",
@@ -70,7 +72,7 @@ it("exposes issue reasons, native blockers, last poll and a retained failed snap
       expect.objectContaining({
         issueNumber: 2,
         status: "blocked",
-        reason: "open-native-blockers",
+        reason: "open-dependencies",
         openDependencyCount: 1,
         blockerRefs: ["github://Gasppacho/jarvis/issues/99"],
       }),

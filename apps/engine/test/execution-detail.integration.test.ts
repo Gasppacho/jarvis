@@ -29,9 +29,18 @@ describe("execution detail", () => {
 
     await waitForEvent(fixture, "scm.change-request.created");
     const executions = await readExecutions(fixture);
-    expect(executions).toHaveLength(3);
+    expect(executions).toHaveLength(4);
+    const events = await readEvents(fixture);
+    const implementationEvent = events.find(
+      (event) => event.type === "development.implementation.requested",
+    );
+    expect(implementationEvent).toBeDefined();
+    const implementationExecution = executions.find(
+      (execution) => execution.inputEventId === implementationEvent!.id,
+    );
+    expect(implementationExecution).toBeDefined();
     const detailResponse = await fixture.engine.call(
-      `/v1/projects/${fixture.projectId}/executions/${executions[0]!.id}/detail`,
+      `/v1/projects/${fixture.projectId}/executions/${implementationExecution!.id}/detail`,
     );
     expect(detailResponse.status).toBe(200);
     const detail = (await detailResponse.json()) as Detail;
@@ -96,7 +105,11 @@ describe("execution detail", () => {
   });
 });
 
-type Execution = { readonly id: string };
+type Execution = {
+  readonly id: string;
+  readonly inputEventId: string;
+  readonly moduleInstanceId: string;
+};
 type Detail = {
   readonly correlationId: string | null;
   readonly workItem: {
@@ -124,6 +137,16 @@ type Detail = {
 async function readExecutions(fixture: ReferenceWorkflowFixture): Promise<readonly Execution[]> {
   const response = await fixture.engine.call(`/v1/projects/${fixture.projectId}/executions`);
   const body = (await response.json()) as { readonly items: readonly Execution[] };
+  return body.items;
+}
+
+async function readEvents(
+  fixture: ReferenceWorkflowFixture,
+): Promise<readonly { readonly id: string; readonly type: string }[]> {
+  const response = await fixture.engine.call(`/v1/projects/${fixture.projectId}/events`);
+  const body = (await response.json()) as {
+    readonly items: readonly { readonly id: string; readonly type: string }[];
+  };
   return body.items;
 }
 

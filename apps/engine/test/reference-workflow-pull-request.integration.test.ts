@@ -19,6 +19,7 @@ describe("reference workflow pull request", () => {
     const fixture = await startReferenceWorkflowFixture("guided-pull-request", {}, true);
     fixtures.push(fixture);
     const endpoint = `/v1/projects/${fixture.projectId}`;
+    const selectedWorkItemRef = "github://Gasppacho/jarvis/issues/197";
     const detail = (await (await fixture.engine.call(endpoint)).json()) as {
       status: string;
       portableConfig: PortableProjectConfiguration;
@@ -143,7 +144,7 @@ describe("reference workflow pull request", () => {
         .all(fixture.projectId) as { envelope: string }[];
       expect(rows).toHaveLength(1);
       expect(JSON.parse(rows[0]!.envelope).payload).toMatchObject({
-        workItemRef: "github://Gasppacho/jarvis/issues/195",
+        workItemRef: selectedWorkItemRef,
         headCommit: pushed,
         validation: { passed: true, commands: [{ name: "verify", status: "passed" }] },
       });

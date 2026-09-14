@@ -34,7 +34,7 @@ describe("Development push crash recovery", () => {
       database
         .prepare("SELECT count(*) AS n FROM executions WHERE module_instance_id = 'development'")
         .get(),
-    ).toEqual({ n: 1 });
+    ).toEqual({ n: 3 });
     console.log(
       JSON.stringify({
         failpoint,
@@ -236,7 +236,7 @@ async function crash(failpoint = "after-development-push-before-checkpoint") {
     issueNumber: 191,
     issueTitle: "Recover pushed change",
     issueBody: "Keep the existing pushed implementation.",
-    label: "agent:ready",
+    label: "ready-to-dev",
     actor: "recovery-user",
     createdAt: new Date().toISOString(),
   });
