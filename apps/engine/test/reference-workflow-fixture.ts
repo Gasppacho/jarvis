@@ -50,7 +50,7 @@ export async function startReferenceWorkflowFixture(
     if (!guidedDraft) {
       const configuration = fixedModules
         ? fixedProjectConfiguration(projectId)
-        : referenceProjectConfiguration(projectId);
+        : legacyReferenceProjectConfiguration(projectId);
       mkdirSync(join(repository.root, ".jarvis"), { recursive: true });
       writeFileSync(
         join(repository.root, ".jarvis", "project.yaml"),
@@ -250,7 +250,6 @@ function referenceProjectConfiguration(projectId: string): PortableProjectConfig
   const configuration = parseYaml(
     readFileSync(join(ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
   ) as PortableProjectConfiguration;
-  const { compositionMode: _compositionMode, ...legacyConfiguration } = configuration;
   const modules = configuration.modules.map((module) => {
     if (module.instanceId === "github") {
       return {
@@ -276,6 +275,20 @@ function referenceProjectConfiguration(projectId: string): PortableProjectConfig
     }
     return module;
   });
+  return {
+    ...configuration,
+    metadata: { id: projectId, name: `Reference Workflow ${projectId}` },
+    repositories: configuration.repositories.map((repository) =>
+      repository.id === "main" ? { ...repository, remote: "github" } : repository,
+    ),
+    commands: { ...configuration.commands, test: "node --test" },
+    modules,
+  };
+}
+
+function legacyReferenceProjectConfiguration(projectId: string): PortableProjectConfiguration {
+  const configuration = referenceProjectConfiguration(projectId);
+  const { compositionMode: _compositionMode, ...legacyConfiguration } = configuration;
   const historicalAutomationRules = {
     instanceId: "automation-rules",
     moduleId: "jarvis.module.automation-rules",
@@ -299,11 +312,7 @@ function referenceProjectConfiguration(projectId: string): PortableProjectConfig
   return {
     ...legacyConfiguration,
     metadata: { id: projectId, name: `Reference Workflow ${projectId}` },
-    repositories: configuration.repositories.map((repository) =>
-      repository.id === "main" ? { ...repository, remote: "github" } : repository,
-    ),
-    commands: { ...configuration.commands, test: "node --test" },
-    modules: [...modules, historicalAutomationRules],
+    modules: [...configuration.modules, historicalAutomationRules],
   };
 }
 

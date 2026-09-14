@@ -1372,6 +1372,9 @@ function githubProjectConfiguration(
   const configuration = parseYaml(
     readFileSync(join(ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
   ) as Record<string, unknown>;
+  // This low-level mutation harness needs its dedicated test producer; it is
+  // not an active/reference workflow and contains no Automation Rules.
+  delete configuration["compositionMode"];
   configuration["metadata"] = { id, name: id };
   configuration["slots"] = {
     sourceControl: { requires: "scm.change-request.manage" },
@@ -1390,6 +1393,15 @@ function githubProjectConfiguration(
         repositories: ["main"],
       },
     },
+    ...(includeTagsRequestProducer
+      ? [
+          {
+            instanceId: "tags-producer",
+            moduleId: TAGS_REQUEST_PRODUCER_MODULE_ID,
+            enabled: true,
+          },
+        ]
+      : []),
     {
       instanceId: "development",
       moduleId: "jarvis.module.development",
@@ -1406,15 +1418,6 @@ function githubProjectConfiguration(
         environmentAllowlist: [],
       },
     },
-    ...(includeTagsRequestProducer
-      ? [
-          {
-            instanceId: "tags-producer",
-            moduleId: TAGS_REQUEST_PRODUCER_MODULE_ID,
-            enabled: true,
-          },
-        ]
-      : []),
   ];
   return configuration;
 }
