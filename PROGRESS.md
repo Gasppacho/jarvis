@@ -630,3 +630,19 @@ est publiée depuis cette branche vers main, distincte de la PR de preuve #206.
 Aucune fusion, fermeture d’issue historique, suppression de données réelles ou
 modification de configuration globale Codex. Les preuves sources restent locales
 sous `/tmp/jarvis-ux-reliability-evidence/` ; ne pas effacer ce dossier avant archivage.
+
+## L15 — réception finale de la base #234 (14 septembre 2026)
+
+Le rapport détaillé est dans [issue-235-verification.md](docs/plans/issue-235-verification.md).
+La matrice Harness réutilisée passe en séquentiel (**12 fichiers, 58/58 tests**)
+et la suite intégration complète passe avec `VITEST_MAX_WORKERS=4` (**52 fichiers,
+400/400**). Le `rtk pnpm verify` demandé exactement a été exécuté deux fois mais
+reste partiel sur cette base (**372 unitaires, 397/400 puis 399/400 intégrations**)
+à cause d’échecs de timing qui passent isolément et dans la suite bornée ; aucun
+code n’a été modifié pour les masquer. Le build app et les **202 tests Swift** passent.
+
+L’app assemblée a démarré sur un data root vierge et a créé sa SQLite, mais la
+console macOS était verrouillée (`IOConsoleLocked = Yes`) ; la capture produite
+est noire et ne constitue pas une preuve native. Aucun repository sandbox n’étant
+explicitement autorisé, aucun dogfood GitHub/Codex n’a été lancé ou muté. L15
+reste donc une réception partielle, avec restart point documenté dans le rapport.

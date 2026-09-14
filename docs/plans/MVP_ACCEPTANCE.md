@@ -26,6 +26,9 @@ of older issue criteria from these observations.
   created by the GitHub module, followed by pause without merge (L10).
 - [x] Final clean-worktree `rtk pnpm verify` on `f53a234` (366 unit, 389 integration,
   196 Swift) and identified packaged build, reopened paused at 1100×800 (L10).
+- [ ] L15 final receipt: [rapport exécuté](./issue-235-verification.md) ; Harness
+  séquentiel et suite intégration bornée verts, mais `rtk pnpm verify` exact reste
+  partiel sur la base #234 et les captures natives/dogfood sont bloqués.
 
 ## Reference workflow acceptance
 
