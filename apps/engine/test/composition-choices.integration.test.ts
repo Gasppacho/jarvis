@@ -390,7 +390,7 @@ describe("project composition choices", () => {
     const reopened = (await (await engine.call(`/v1/projects/${project.id}`)).json()) as {
       portableConfig: Record<string, unknown>;
     };
-    expect(reopened.portableConfig.modules).toEqual(project.portableConfig.modules);
+    expect(reopened.portableConfig["modules"]).toEqual(project.portableConfig["modules"]);
   });
 
   it("keeps the fixed implementation Request routed to Development", async () => {

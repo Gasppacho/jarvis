@@ -3047,6 +3047,7 @@ capabilities:
           valid: boolean;
           edges: {
             kind: string;
+            contract: { type: string };
             routing?: { status: string; candidates?: { instanceId: string }[] };
             findings: string[];
           }[];

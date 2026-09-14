@@ -2750,6 +2750,7 @@ function recordObservation(
       workItemRef,
       title,
       observation: {
+        title,
         state,
         tags,
         dependencies: { status: "complete", openWorkItemRefs: [] },

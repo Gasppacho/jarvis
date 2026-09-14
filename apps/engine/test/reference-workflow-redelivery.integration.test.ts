@@ -234,6 +234,7 @@ type Execution = {
   readonly id: string;
   readonly moduleInstanceId: string;
   readonly status: string;
+  readonly inputEventId: string;
 };
 type Mapping = {
   readonly idempotency_key: string;
