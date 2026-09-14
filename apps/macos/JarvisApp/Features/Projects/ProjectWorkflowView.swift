@@ -288,7 +288,7 @@ struct ProjectWorkflowView: View {
 
     private func configuration(_ module: ProjectModuleDraft, _ key: String) -> Binding<String> {
         Binding(
-            get: { state.draft?.modules.first { $0.id == module.id }?.configurationValues[key] ?? "" },
+            get: { state.draft?.modules.first { $0.id == module.id }?.configurationValue(for: key) ?? "" },
             set: { model.apply(.setModuleConfiguration(module.id, key, $0), projectId: project.id, packages: packages) })
     }
 

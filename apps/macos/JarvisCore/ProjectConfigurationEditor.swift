@@ -151,6 +151,12 @@ public struct ProjectModuleDraft: Identifiable, Sendable, Equatable {
         }
     }
 
+    /// Displays the Engine's effective default without materializing it in the Draft.
+    public func configurationValue(for key: String) -> String {
+        configurationValues[key]
+            ?? (moduleId == "jarvis.module.development" && key == "readyLabel" ? "ready-to-dev" : "")
+    }
+
     init(payload: Components.Schemas.ModuleInstanceConfiguration, package: ModulePackage?) {
         id = UUID()
         instanceId = payload.instanceId

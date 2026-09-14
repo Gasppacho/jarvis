@@ -241,7 +241,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             }
 
             public static func setRepositoryDefaultBranch(_ repositoryID: String, _ branch: String) -> Self {
-                Self(.setRepositoryDefaultBranch(repositoryID, branch), label: "Set target branch")
+                Self(.setRepositoryDefaultBranch(repositoryID, branch), label: "Modifier la branche cible")
             }
 
             public static func chooseStartingPoint(_ id: String, displayName: String) -> Self {

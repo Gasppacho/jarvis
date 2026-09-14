@@ -38,6 +38,24 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(noOp.label, "Cancel")
     }
 
+    func testDevelopmentReadyLabelUsesEffectiveDefaultWithoutWritingToDraft() throws {
+        let package = try schemaFixturePackage(moduleId: "jarvis.module.development")
+        let module = ProjectModuleDraft(package: package, instanceId: "development")
+
+        XCTAssertNil(module.configurationValues["readyLabel"])
+        XCTAssertEqual(module.configurationValue(for: "readyLabel"), "ready-to-dev")
+
+        var draft = ProjectConfigurationDraft(
+            configuration: try projectConfiguration(projectId: "round-trip"),
+            packages: [package])
+        draft.repositories[0].defaultBranch = "develop"
+        let reopened = ProjectConfigurationDraft(
+            configuration: try draft.payload(),
+            packages: [package])
+        XCTAssertEqual(reopened.repositories.first?.defaultBranch, "develop")
+        XCTAssertNil(reopened.modules.first?.configurationValues["readyLabel"])
+    }
+
     @MainActor
     func testRuntimeCheckRefusesAnUnsavedDraftInsteadOfCertifyingTheOlderProfile() async throws {
         let repository = try makeRepository()
