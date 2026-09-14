@@ -247,6 +247,12 @@ public struct ProjectDetailView: View {
                 case .addModule = edit.operation
             else { return nil }
             return edit
+        }.filter { edit in
+            guard state.draft?.isFixedComposition == true,
+                let operational = state.compositionGuide?.modulePackages.map(\.moduleId)
+            else { return true }
+            guard case .addModule(let packageId) = edit.operation else { return true }
+            return operational.contains(packageId)
         }
     }
 
@@ -296,8 +302,13 @@ public struct ProjectDetailView: View {
             TextField("Project name", text: projectNameBinding)
                 .textFieldStyle(.roundedBorder)
 
-            ProjectWorkflowView(model: projectConfiguration, project: project, packages: moduleCatalog.packages,
-                                connections: connections, overview: overview)
+            ProjectWorkflowView(
+                model: projectConfiguration,
+                project: project,
+                packages: moduleCatalog.packages,
+                connections: connections,
+                overview: overview,
+                onSelectModule: { selectedCompositionID = "instance:\($0)" })
             slotRequirementsEditor
 
             HStack {
@@ -544,7 +555,15 @@ public struct ProjectDetailView: View {
     @ViewBuilder
     private func configurationFields(_ module: ProjectModuleDraft) -> some View {
         if module.automationRules != nil {
-            automationRulesEditor(module)
+            if state.draft?.isFixedComposition == true {
+                Label(
+                    "Links are computed by Engine in fixed mode; Automation Rules are read-only legacy data.",
+                    systemImage: "lock")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                automationRulesEditor(module)
+            }
         } else if !module.configurationFields.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Schema-backed configuration").font(.subheadline.weight(.semibold))

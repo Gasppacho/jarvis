@@ -9,6 +9,7 @@ struct ProjectWorkflowView: View {
     var connections: ConnectionsModel? = nil
     var overview: ProjectOverviewModel? = nil
     var openAdvanced: (() -> Void)? = nil
+    var onSelectModule: ((String) -> Void)? = nil
     @State private var stage = WorkflowStage.issue
     @State private var editingGitHub = false
     @State private var intervalError: String?
@@ -36,6 +37,14 @@ struct ProjectWorkflowView: View {
                     Label("Les liens de ce parcours ne sont pas confirmés pour votre brouillon. Vérifiez les règles avancées ou choisissez le modèle GitHub.",
                           systemImage: "exclamationmark.triangle")
                         .font(.callout).foregroundStyle(.orange)
+                }
+                if let graph = state.compositionGraph {
+                    WorkflowCanvasView(
+                        presentation: WorkflowCanvasPresentation(graph: graph),
+                        onSelectModule: { instanceId in
+                            onSelectModule?(instanceId)
+                            if onSelectModule == nil { openAdvanced?() }
+                        })
                 }
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 10) {
