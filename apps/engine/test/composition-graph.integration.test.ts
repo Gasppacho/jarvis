@@ -7,6 +7,7 @@ import { parse as parseYaml } from "yaml";
 import { explain, localApiValidator } from "./contract.js";
 import { startEngine, type Harness } from "./harness.js";
 import { makeNodeRepositoryFixture } from "./repository-fixture.js";
+import { fixedProjectConfiguration } from "./reference-workflow-fixture.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
@@ -41,9 +42,7 @@ describe("project composition graph", () => {
     engines.push(engine);
     const repositoryPath = makeNodeRepositoryFixture();
     repositories.push(repositoryPath);
-    const portableConfig = parseYaml(
-      readFileSync(join(REPO_ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
-    ) as Record<string, unknown>;
+    const portableConfig = fixedProjectConfiguration("composition-graph");
     const imported = await engine.call("/v1/projects", {
       method: "POST",
       headers: { "content-type": "application/json" },

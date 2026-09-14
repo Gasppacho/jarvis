@@ -16,15 +16,17 @@ describe("reference workflow Work Item naming", () => {
   it("uses the Issue number and title while keeping each execution distinct", async () => {
     const fixture = await startReferenceWorkflowFixture("reference-naming");
     fixtures.push(fixture);
-    fixture.fakeGitHub.appendLabeledIssueEvent({
+    fixture.fakeGitHub.seedIssue({
       owner: "Gasppacho",
       repository: "jarvis",
-      issueNumber: 21,
-      issueTitle: "Add a health endpoint",
-      issueBody: "Implement the endpoint.",
-      label: "agent:ready",
-      actor: "reference-user",
-      createdAt: new Date().toISOString(),
+      issue: {
+        number: 21,
+        title: "Add a health endpoint",
+        body: "Implement the endpoint.",
+        state: "open",
+        labels: [{ name: "ready-to-dev" }],
+        blockedBy: [],
+      },
     });
 
     await waitForEvent(fixture, "scm.change-request.creation-requested");

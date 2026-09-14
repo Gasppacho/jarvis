@@ -67,15 +67,17 @@ function appendIssue(
   issueTitle: string,
   issueBody: string,
 ): void {
-  fixture.fakeGitHub.appendLabeledIssueEvent({
+  fixture.fakeGitHub.seedIssue({
     owner: "Gasppacho",
     repository: "jarvis",
-    issueNumber,
-    issueTitle,
-    issueBody,
-    label: "agent:ready",
-    actor: "reference-user",
-    createdAt: new Date().toISOString(),
+    issue: {
+      number: issueNumber,
+      title: issueTitle,
+      body: issueBody,
+      state: "open",
+      labels: [{ name: "ready-to-dev" }],
+      blockedBy: [],
+    },
   });
 }
 
@@ -89,11 +91,11 @@ function readJournal(database: Database.Database, projectId: string): readonly W
 
 function chainFor(events: readonly WorkflowEvent[], issueNumber: number): readonly WorkflowEvent[] {
   const ref = `github://Gasppacho/jarvis/issues/${issueNumber}`;
-  const tag = events.find(
-    (event) => event.type === "scm.work-item.tag-added" && event.payload?.workItemRef === ref,
+  const observation = events.find(
+    (event) => event.type === "scm.work-item.observed" && event.payload?.workItemRef === ref,
   );
-  expect(tag).toBeDefined();
-  return events.filter((event) => event.correlationId === tag!.correlationId);
+  expect(observation).toBeDefined();
+  return events.filter((event) => event.correlationId === observation!.correlationId);
 }
 
 function expectChain(events: readonly WorkflowEvent[]): void {
@@ -102,13 +104,13 @@ function expectChain(events: readonly WorkflowEvent[]): void {
     expect(matches).toHaveLength(1);
     return matches[0]!;
   };
-  const tag = byType("scm.work-item.tag-added");
+  const observation = byType("scm.work-item.observed");
   const implementation = byType("development.implementation.requested");
   const completed = byType("development.implementation.completed");
   const creation = byType("scm.change-request.creation-requested");
   const created = byType("scm.change-request.created");
-  expect(tag.causationId).toBeNull();
-  expect(implementation.causationId).toBe(tag.id);
+  expect(observation.causationId).toBeNull();
+  expect(implementation.causationId).toBe(observation.id);
   expect(completed.causationId).toBe(implementation.id);
   expect(creation.causationId).toBe(implementation.id);
   expect(created.causationId).toBe(creation.id);
@@ -149,7 +151,7 @@ function expectExecutions(
       events
         .filter((event) =>
           [
-            "scm.work-item.tag-added",
+            "scm.work-item.observed",
             "development.implementation.requested",
             "scm.change-request.creation-requested",
           ].includes(event.type),

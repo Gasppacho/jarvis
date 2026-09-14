@@ -286,7 +286,7 @@ function referenceProjectConfiguration(projectId: string): PortableProjectConfig
   };
 }
 
-function fixedProjectConfiguration(projectId: string): PortableProjectConfiguration {
+export function fixedProjectConfiguration(projectId: string): PortableProjectConfiguration {
   const configuration = referenceProjectConfiguration(projectId);
   return {
     ...configuration,

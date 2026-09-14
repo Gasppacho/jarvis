@@ -27,7 +27,6 @@ describe("reference workflow pull request", () => {
     expect(detail.status).toBe("draft");
     expect(draft.modules.map((module) => module.moduleId)).toEqual([
       "jarvis.module.github",
-      "jarvis.module.automation-rules",
       "jarvis.module.development",
     ]);
     expect(draft.workspace.maxConcurrentExecutions).toBe(1);
@@ -36,8 +35,8 @@ describe("reference workflow pull request", () => {
     ]);
     expect(draft.git.pushRemote).toBe("origin");
     expect(draft.modules[0]?.configuration?.["repositories"]).toEqual(["main"]);
-    expect(draft.modules[2]?.configuration?.["validationOrder"]).toEqual([]);
-    expect(draft.modules[2]?.configuration?.["preparation"]).toBeUndefined();
+    expect(draft.modules[1]?.configuration?.["validationOrder"]).toEqual([]);
+    expect(draft.modules[1]?.configuration?.["preparation"]).toBeUndefined();
     expect(JSON.stringify(draft)).not.toMatch(
       /agent:ready|merge-requested|Gasppacho|QServices|\/Users\//,
     );
@@ -73,9 +72,9 @@ describe("reference workflow pull request", () => {
             : [],
         },
       });
-    seed(195, "ready-for-agent");
-    seed(196, "ready-for-agent", true);
-    seed(197, "agent:ready");
+    seed(195, "triage");
+    seed(196, "ready-to-dev", true);
+    seed(197, "ready-to-dev");
     // Many accelerated polling intervals elapse while the saved draft is inactive.
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(
@@ -119,12 +118,11 @@ describe("reference workflow pull request", () => {
     expect(ready.valid).toBe(true);
     expect(ready.requestRoutes.map((route) => route.consumer.instanceId).sort()).toEqual([
       "development",
-      "development",
       "github",
     ]);
     await fixture.activate();
     const events = await waitForEventTypes(fixture, [
-      "scm.work-item.ready",
+      "scm.work-item.observed",
       "development.implementation.completed",
       "scm.change-request.created",
     ]);
@@ -185,24 +183,26 @@ describe("reference workflow pull request", () => {
       portableConfig: PortableProjectConfiguration;
     };
     expect(reopened.portableConfig).toEqual(before.portableConfig);
-    expect(JSON.stringify(reopened.portableConfig.modules[1])).toContain("agent:ready");
+    expect(JSON.stringify(reopened.portableConfig)).not.toContain("automation-rules");
     expect(await (await fixture.engine.call(`${endpoint}/bindings`)).json()).toEqual(
       bindingsBefore,
     );
     await fixture.activate();
-    fixture.fakeGitHub.appendLabeledIssueEvent({
+    fixture.fakeGitHub.seedIssue({
       owner: "Gasppacho",
       repository: "jarvis",
-      issueNumber: 16,
-      issueTitle: "Demonstrate agent:ready to Pull Request end-to-end",
-      issueBody: "Reference workflow acceptance body.",
-      label: "agent:ready",
-      actor: "reference-user",
-      createdAt: new Date().toISOString(),
+      issue: {
+        number: 16,
+        title: "Demonstrate ready to Pull Request end-to-end",
+        body: "Reference workflow acceptance body.",
+        state: "open",
+        labels: [{ name: "ready-to-dev" }],
+        blockedBy: [],
+      },
     });
 
     const events = await waitForEventTypes(fixture, [
-      "scm.work-item.tag-added",
+      "scm.work-item.observed",
       "development.implementation.requested",
       "development.implementation.completed",
       "scm.change-request.creation-requested",
@@ -211,7 +211,7 @@ describe("reference workflow pull request", () => {
     const executions = await waitForExecutions(fixture);
     expect(executions).toHaveLength(3);
     expect(executions.map((execution) => execution.moduleInstanceId).sort()).toEqual([
-      "automation-rules",
+      "development",
       "development",
       "github",
     ]);
@@ -329,7 +329,7 @@ async function waitForExecutions(fixture: ReferenceWorkflowFixture): Promise<rea
     const response = await fixture.engine.call(`/v1/projects/${fixture.projectId}/executions`);
     const body = (await response.json()) as { readonly items: readonly Execution[] };
     if (
-      body.items.length >= 3 &&
+      body.items.length >= 2 &&
       body.items.some((execution) => execution.moduleInstanceId === "github") &&
       body.items.every((execution) => execution.status === "completed")
     )

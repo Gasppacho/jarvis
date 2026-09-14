@@ -13,20 +13,22 @@ afterEach(async () => {
 });
 
 describe("reference workflow pushed branch", () => {
-  it("turns one agent:ready label into one validated pushed branch", async () => {
+  it("turns one ready label into one validated pushed branch", async () => {
     const fixture = await startReferenceWorkflowFixture("reference-pushed-branch");
     fixtures.push(fixture);
     const before = repositoryState(fixture.repositoryRoot);
 
-    fixture.fakeGitHub.appendLabeledIssueEvent({
+    fixture.fakeGitHub.seedIssue({
       owner: "Gasppacho",
       repository: "jarvis",
-      issueNumber: 16,
-      issueTitle: "Demonstrate agent:ready to Pull Request end-to-end",
-      issueBody: "Reference workflow acceptance body.",
-      label: "agent:ready",
-      actor: "reference-user",
-      createdAt: new Date().toISOString(),
+      issue: {
+        number: 16,
+        title: "Demonstrate ready to Pull Request end-to-end",
+        body: "Reference workflow acceptance body.",
+        state: "open",
+        labels: [{ name: "ready-to-dev" }],
+        blockedBy: [],
+      },
     });
 
     await waitForEvents(fixture);
@@ -38,7 +40,7 @@ describe("reference workflow pushed branch", () => {
           `SELECT envelope FROM outbox
            WHERE project_id = ?
              AND json_extract(envelope, '$.type') IN (
-               'scm.work-item.tag-added',
+               'scm.work-item.observed',
                'development.implementation.requested',
                'development.implementation.completed',
                'scm.change-request.creation-requested'
@@ -64,7 +66,7 @@ describe("reference workflow pushed branch", () => {
       expect(repositoryState(fixture.repositoryRoot)).toEqual(before);
       expect(
         executions.filter((execution) => execution.moduleInstanceId === "development"),
-      ).toHaveLength(1);
+      ).toHaveLength(2);
       expect(executions.every((execution) => execution.status === "completed")).toBe(true);
       const branches = gitDir(fixture.bareRemoteRoot, [
         "for-each-ref",
@@ -113,7 +115,7 @@ type ProjectExecution = {
 
 async function waitForEvents(fixture: ReferenceWorkflowFixture): Promise<readonly ProjectEvent[]> {
   const expected = new Set([
-    "scm.work-item.tag-added",
+    "scm.work-item.observed",
     "development.implementation.requested",
     "development.implementation.completed",
     "scm.change-request.creation-requested",

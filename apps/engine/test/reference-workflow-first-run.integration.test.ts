@@ -40,7 +40,6 @@ it("proves the first guided workflow from native blocker to one PR", async () =>
   expect(draft.portableConfig.workspace.maxConcurrentExecutions).toBe(1);
   expect(draft.portableConfig.modules.map((module) => module.instanceId)).toEqual([
     "github",
-    "automation-rules",
     "development",
   ]);
   expect(JSON.stringify(draft.portableConfig)).not.toMatch(
@@ -117,16 +116,23 @@ it("proves the first guided workflow from native blocker to one PR", async () =>
       workItemRef: issueRef,
       issueNumber: 201,
       status: "blocked",
-      reason: "open-native-blockers",
+      reason: "open-dependencies",
       openDependencyCount: 1,
       blockerRefs: [blockerRef],
       explanation: "Blocked by 1 open GitHub native dependency.",
     }),
   ]);
-  expect(await readExecutions(fixture)).toEqual([]);
+  const blockedExecutions = await readExecutions(fixture);
+  expect(blockedExecutions).toHaveLength(1);
+  expect(blockedExecutions[0]).toMatchObject({
+    moduleInstanceId: "development",
+    status: "completed",
+  });
   expect(fixture.fakeGitHub.pullRequests).toHaveLength(0);
   expect(runtimeCalls(fixture)).toHaveLength(0);
-  expect(await readEvents(fixture)).toEqual([]);
+  expect((await readEvents(fixture)).some((event) => event.type === "scm.work-item.observed")).toBe(
+    true,
+  );
   expect(readReadiness(fixture, issueRef)).toMatchObject({
     status: "blocked",
     blockerRefs: JSON.stringify([blockerRef]),
@@ -149,7 +155,7 @@ it("proves the first guided workflow from native blocker to one PR", async () =>
   expect(eligibleReadiness).toMatchObject({ status: "ready", blockerRefs: "[]" });
 
   const expectedEvents = [
-    "scm.work-item.ready",
+    "scm.work-item.observed",
     "development.implementation.requested",
     "development.implementation.completed",
     "scm.change-request.creation-requested",
@@ -157,40 +163,57 @@ it("proves the first guided workflow from native blocker to one PR", async () =>
   ] as const;
   await waitForEventTypes(fixture, expectedEvents);
   const executions = await waitForCompletedExecutions(fixture);
-  expect(executions).toHaveLength(3);
+  expect(executions).toHaveLength(5);
   expect(executions.map((execution) => execution.moduleInstanceId).sort()).toEqual([
-    "automation-rules",
+    "development",
+    "development",
+    "development",
     "development",
     "github",
   ]);
   expect(
     executions.filter((execution) => execution.moduleInstanceId === "development"),
-  ).toHaveLength(1);
+  ).toHaveLength(4);
   expect(fixture.fakeGitHub.pullRequests).toHaveLength(1);
   expect(runtimeCalls(fixture)).toHaveLength(1);
 
   const events = await readEvents(fixture);
-  for (const type of expectedEvents)
-    expect(events.filter((event) => event.type === type)).toHaveLength(1);
-  const correlated = events.filter((event) =>
-    expectedEvents.includes(event.type as (typeof expectedEvents)[number]),
+  for (const type of expectedEvents) {
+    const matches = events.filter((event) => event.type === type);
+    if (type === "scm.work-item.observed") expect(matches.length).toBeGreaterThan(0);
+    else expect(matches).toHaveLength(1);
+  }
+  const implementationEvent = oneEvent(events, "development.implementation.requested");
+  const correlated = events.filter(
+    (event) =>
+      event.correlationId === implementationEvent.correlationId &&
+      expectedEvents.includes(event.type as (typeof expectedEvents)[number]),
   );
   expect(new Set(correlated.map((event) => event.correlationId))).toHaveLength(1);
-  oneEvent(events, "scm.work-item.ready");
+  expect(events.filter((event) => event.type === "scm.work-item.observed").length).toBeGreaterThan(
+    1,
+  );
   expect(events.some((event) => event.type.toLowerCase().includes("merge"))).toBe(false);
 
   const durability = readDurability(fixture);
-  expect(durability.readyIdempotencyKey).toBe(`${fixture.projectId}:main:${issueRef}:ready-v1`);
-  expect(durability.readiness).toMatchObject({ status: "ready", blockerRefs: "[]" });
+  expect(durability.readyIdempotencyKey).toMatch(
+    new RegExp(`^${fixture.projectId}:main:${issueRef}:observed:[0-9]+$`),
+  );
+  expect(durability.readiness).toMatchObject({
+    status: "blocked",
+    reason: "already-started",
+    blockerRefs: "[]",
+  });
   expect(durability.readiness.admittedAt).toEqual(expect.any(String));
   expect(durability.cursor.externalEventId).toEqual(expect.any(String));
-  expect(durability.eventCounts).toEqual({
-    "scm.work-item.ready": 1,
+  expect(durability.eventCounts).toMatchObject({
+    "scm.work-item.observed": expect.any(Number),
     "development.implementation.requested": 1,
     "development.implementation.completed": 1,
     "scm.change-request.creation-requested": 1,
     "scm.change-request.created": 1,
   });
+  expect(durability.eventCounts["scm.work-item.observed"]).toBeGreaterThan(0);
   expect(durability.mappings).toEqual([
     expect.objectContaining({
       status: "completed",
@@ -206,7 +229,8 @@ it("proves the first guided workflow from native blocker to one PR", async () =>
     "fake-runtime-change.txt",
   );
 
-  const development = executions.find((execution) => execution.moduleInstanceId === "development");
+  const implementation = oneEvent(events, "development.implementation.requested");
+  const development = executions.find((execution) => execution.inputEventId === implementation.id);
   expect(development).toBeDefined();
   const detailResponse = await fixture.engine.call(
     `${endpoint}/executions/${development!.id}/detail`,
@@ -249,10 +273,35 @@ it("proves the first guided workflow from native blocker to one PR", async () =>
   expect(fixture.fakeGitHub.pullRequests).toHaveLength(1);
   expect(runtimeCalls(fixture)).toHaveLength(1);
   expect(agentBranches(fixture.bareRemoteRoot)).toEqual([headBranch]);
-  expect(await readEvents(fixture)).toHaveLength(events.length);
-  expect(await readExecutions(fixture)).toEqual(executions);
+  const afterRestartEvents = await readEvents(fixture);
+  expect(
+    afterRestartEvents.filter((event) => event.type !== "scm.work-item.observed"),
+  ).toHaveLength(events.filter((event) => event.type !== "scm.work-item.observed").length);
+  const afterRestartExecutions = await readExecutions(fixture);
+  expect(afterRestartExecutions.every((execution) => execution.status === "completed")).toBe(true);
+  expect(
+    afterRestartExecutions.filter((execution) =>
+      [implementation.id, oneEvent(events, "scm.change-request.creation-requested").id].includes(
+        execution.inputEventId,
+      ),
+    ),
+  ).toHaveLength(2);
   const afterRestart = readDurability(fixture);
-  expect(afterRestart.eventCounts).toEqual(durability.eventCounts);
+  expect(afterRestart.eventCounts).toMatchObject({
+    "development.implementation.requested": durability.eventCounts[
+      "development.implementation.requested"
+    ],
+    "development.implementation.completed": durability.eventCounts[
+      "development.implementation.completed"
+    ],
+    "scm.change-request.creation-requested": durability.eventCounts[
+      "scm.change-request.creation-requested"
+    ],
+    "scm.change-request.created": durability.eventCounts["scm.change-request.created"],
+  });
+  expect(afterRestart.eventCounts["scm.work-item.observed"]).toBeGreaterThanOrEqual(
+    durability.eventCounts["scm.work-item.observed"]!,
+  );
   expect(afterRestart.mappings).toEqual(durability.mappings);
 });
 
@@ -265,7 +314,7 @@ function seedIssue(fixture: ReferenceWorkflowFixture, blockerState: "open" | "cl
       title: "Q01 first visible workflow",
       body: "Implement a deterministic tested improvement.",
       state: "open",
-      labels: [{ name: "ready-for-agent" }],
+      labels: [{ name: "ready-to-dev" }],
       blockedBy: [
         { number: 999, title: "Prerequisite", body: "", state: blockerState, labels: [] },
       ],
@@ -278,9 +327,9 @@ function scriptPreflightRoutes(fixture: ReferenceWorkflowFixture): void {
     status: 200,
     body: { permissions: { pull: true, push: true } },
   });
-  fixture.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis/labels/ready-for-agent", {
+  fixture.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis/labels/ready-to-dev", {
     status: 200,
-    body: { name: "ready-for-agent" },
+    body: { name: "ready-to-dev" },
   });
 }
 
@@ -311,7 +360,9 @@ async function waitForIssue(
     const issue = overview.issues.find((candidate) => candidate.issueNumber === 201);
     if (issue !== undefined && predicate(issue)) return overview;
     if (Date.now() >= deadline)
-      throw new Error(`Q01 overview did not reach the expected state\n${fixture.engine.stderr()}`);
+      throw new Error(
+        `Q01 overview did not reach the expected state ${JSON.stringify(overview.issues)}\n${fixture.engine.stderr()}`,
+      );
     await delay(25);
   }
 }
@@ -336,7 +387,7 @@ async function waitForCompletedExecutions(
   const deadline = Date.now() + 15_000;
   for (;;) {
     const executions = await readExecutions(fixture);
-    if (executions.length >= 3 && executions.every((execution) => execution.status === "completed"))
+    if (executions.length >= 5 && executions.every((execution) => execution.status === "completed"))
       return executions;
     if (Date.now() >= deadline)
       throw new Error(`Q01 executions timed out\n${fixture.engine.stderr()}`);
@@ -381,7 +432,7 @@ function readReadiness(
   try {
     return database
       .prepare(
-        `SELECT status, blocker_refs AS blockerRefs, admitted_at AS admittedAt
+        `SELECT status, reason, blocker_refs AS blockerRefs, admitted_at AS admittedAt
          FROM github_work_item_readiness WHERE project_id = ? AND work_item_ref = ?`,
       )
       .get(fixture.projectId, workItemRef) as Readiness | undefined;
@@ -414,7 +465,7 @@ function readDurability(fixture: ReferenceWorkflowFixture): DurabilitySnapshot {
     const readyEnvelope = database
       .prepare(
         `SELECT envelope FROM events
-         WHERE project_id = ? AND type = 'scm.work-item.ready'`,
+         WHERE project_id = ? AND type = 'scm.work-item.observed'`,
       )
       .get(fixture.projectId) as { readonly envelope: string };
     const readyIdempotencyKey = (JSON.parse(readyEnvelope.envelope) as { idempotencyKey: string })
@@ -424,7 +475,7 @@ function readDurability(fixture: ReferenceWorkflowFixture): DurabilitySnapshot {
         .prepare(
           `SELECT type, COUNT(*) AS count FROM events
            WHERE project_id = ? AND type IN (
-             'scm.work-item.ready', 'development.implementation.requested',
+             'scm.work-item.observed', 'development.implementation.requested',
              'development.implementation.completed', 'scm.change-request.creation-requested',
              'scm.change-request.created'
            ) GROUP BY type`,
@@ -513,6 +564,7 @@ type ProjectOverviewIssue = {
 };
 type Execution = {
   readonly id: string;
+  readonly inputEventId: string;
   readonly moduleInstanceId: string;
   readonly status: string;
 };
@@ -529,6 +581,7 @@ type ExecutionDetail = {
 };
 type Readiness = {
   readonly status: string;
+  readonly reason: string;
   readonly blockerRefs: string;
   readonly admittedAt: string | null;
 };

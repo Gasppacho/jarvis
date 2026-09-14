@@ -1699,7 +1699,7 @@ function overviewIssue(
           explanation: "Waiting for the configured readiness label before this issue can start.",
         };
       }
-      if (blockerRefs.length > 0) {
+      if (snapshot.reason === "open-dependencies" || blockerRefs.length > 0) {
         return {
           ...base,
           status: "blocked",
@@ -1733,7 +1733,10 @@ function overviewIssue(
       explanation: "Waiting for the configured readiness label before this issue can start.",
     };
   }
-  if (snapshot.reason === "open-native-blockers" && blockerRefs.length > 0) {
+  if (
+    (snapshot.reason === "open-dependencies" || snapshot.reason === "open-native-blockers") &&
+    blockerRefs.length > 0
+  ) {
     return {
       ...base,
       status: "blocked",

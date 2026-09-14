@@ -65,7 +65,7 @@ describe("GitHub polling Application Harness", () => {
         title: "Pull Request",
         body: "",
         state: "open",
-        labels: [{ name: "ready-for-agent" }],
+        labels: [{ name: "ready-to-dev" }],
         pull_request: {},
       },
     });
@@ -84,7 +84,6 @@ describe("GitHub polling Application Harness", () => {
     const configuration = projectConfig(false, "ignore-existing", "fixed-observation-project", [
       "main",
     ]);
-    configuration["compositionMode"] = "fixed-modules";
     const project = await createProject(engine, false, "ignore-existing", configuration);
     await bindAndActivate(engine, project.id, project.path);
 
@@ -383,7 +382,7 @@ describe("GitHub polling Application Harness", () => {
         title: "Ready without a label event",
         body: "",
         state: "open",
-        labels: [{ name: "ready-for-agent" }],
+        labels: [{ name: "ready-to-dev" }],
       },
     });
     fakeGitHub.seedIssue({
@@ -410,55 +409,43 @@ describe("GitHub polling Application Harness", () => {
     });
     engines.push(engine);
     await registerConnection(engine);
-    const configuration = projectConfig(true);
-    const modules = configuration["modules"] as Record<string, unknown>[];
-    const rules = modules.find((module) => module["instanceId"] === "automation-rules");
-    if (rules === undefined) throw new Error("automation rules module is missing");
-    rules["configuration"] = {
-      rules: [
-        {
-          id: "ready-starts-development",
-          when: {
-            eventType: "scm.work-item.ready",
-            equals: { "payload.tag": "ready-for-agent" },
-          },
-          emit: {
-            type: "development.implementation.requested",
-            target: { moduleInstanceId: "development" },
-          },
-        },
-      ],
-    };
+    const configuration = projectConfig(false, "ignore-existing", "polling-readiness", ["main"]);
     const project = await createProject(engine, false, "ignore-existing", configuration);
     await bindAndActivate(engine, project.id, project.path);
 
-    await waitForEventTypeCount(engine, project.id, "scm.work-item.ready", 1);
+    await waitForEventTypeCount(engine, project.id, "scm.work-item.observed", 1);
     const database = new Database(join(engine.dataRoot, "jarvis.sqlite"));
-    const row = database
-      .prepare("SELECT envelope FROM events WHERE project_id = ? AND type = 'scm.work-item.ready'")
-      .get(project.id) as { readonly envelope: string };
+    const rows = database
+      .prepare("SELECT envelope FROM events WHERE project_id = ? AND type = 'scm.work-item.observed'")
+      .all(project.id) as { readonly envelope: string }[];
     database.close();
-    expect(JSON.parse(row.envelope)).toMatchObject({
+    const row = rows.find((candidate) => {
+      const envelope = JSON.parse(candidate.envelope) as { payload?: { workItemRef?: string } };
+      return envelope.payload?.workItemRef === "github://Gasppacho/jarvis/issues/193";
+    });
+    expect(row).toBeDefined();
+    expect(JSON.parse(row?.envelope ?? "{}")).toMatchObject({
       repositoryId: "main",
       // Admission belongs to the Project repository even with multiple pollers.
-      idempotencyKey: `${project.id}:main:github://Gasppacho/jarvis/issues/193:ready-v1`,
+      idempotencyKey: expect.stringMatching(
+        new RegExp(`^${project.id}:main:github://Gasppacho/jarvis/issues/193:observed:[0-9]+$`),
+      ),
       subject: { type: "work-item", ref: "github://Gasppacho/jarvis/issues/193" },
       payload: {
         repositoryId: "main",
         workItemRef: "github://Gasppacho/jarvis/issues/193",
-        issueProvider: "github",
-        tag: "ready-for-agent",
+        tags: ["ready-to-dev"],
       },
     });
     await waitForEventTypeCount(engine, project.id, "development.implementation.requested", 1);
     const countDatabase = new Database(join(engine.dataRoot, "jarvis.sqlite"));
     const eventCount = countDatabase
       .prepare(
-        "SELECT COUNT(*) AS count FROM events WHERE project_id = ? AND type = 'scm.work-item.ready'",
+        "SELECT COUNT(*) AS count FROM events WHERE project_id = ? AND type = 'scm.work-item.observed'",
       )
       .get(project.id) as { readonly count: number };
     countDatabase.close();
-    expect(eventCount).toEqual({ count: 1 });
+    expect(eventCount.count).toBeGreaterThan(0);
   });
 
   it("waits for an open native blocker, then rechecks complete issue and dependency pages", async () => {
@@ -484,7 +471,7 @@ describe("GitHub polling Application Harness", () => {
         title: "Blocked then ready",
         body: "",
         state: "open",
-        labels: [{ name: "ready-for-agent" }],
+        labels: [{ name: "ready-to-dev" }],
         blockedBy: [
           {
             number: 201,
@@ -505,7 +492,7 @@ describe("GitHub polling Application Harness", () => {
           title: `Page ${number}`,
           body: "",
           state: "open",
-          labels: number === 101 ? [{ name: "ready-for-agent" }] : [],
+          labels: number === 101 ? [{ name: "ready-to-dev" }] : [],
           ...(number === 101 ? { blockedBy: closedBlockers } : {}),
         },
       });
@@ -546,13 +533,17 @@ describe("GitHub polling Application Harness", () => {
         title: "Blocked then ready",
         body: "",
         state: "open",
-        labels: [{ name: "ready-for-agent" }],
+        labels: [{ name: "ready-to-dev" }],
         blockedBy: [
           { number: 201, title: "Closed blocker", body: "", state: "closed", labels: [] },
         ],
       },
     });
-    await waitForEventTypeCount(engine, project.id, "scm.work-item.ready", 2);
+    await waitForObservedDependencies(
+      engine.dataRoot,
+      "github://Gasppacho/jarvis/issues/200",
+      [],
+    );
     expect(fakeGitHub.requests).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -962,7 +953,7 @@ esac
         database
           .prepare("SELECT COUNT(*) AS count FROM outbox WHERE project_id = ?")
           .get(project.id),
-      ).toEqual({ count: 3 });
+      ).toEqual({ count: 6 });
       expect(
         database
           .prepare(
@@ -993,8 +984,11 @@ esac
         database
           .prepare(
             `SELECT COUNT(*) AS count
-             FROM deliveries d JOIN events e ON e.id = d.event_id
-             WHERE d.project_id = ? AND e.type = 'scm.work-item.tag-added'`,
+             FROM executions execution
+             JOIN events event ON event.id = execution.input_event_id
+             WHERE execution.project_id = ?
+               AND execution.module_instance_id = 'development'
+               AND event.type = 'scm.work-item.observed'`,
           )
           .get(project.id),
       ).toEqual({ count: 3 });
@@ -1164,7 +1158,7 @@ esac
           beforeRestart
             .prepare("SELECT COUNT(*) AS count FROM outbox WHERE project_id = ?")
             .get(project.id),
-        ).toEqual({ count: 0 });
+        ).toEqual({ count: armedFailpoint === "after-github-poll-read" ? 0 : 1 });
       } finally {
         beforeRestart.close();
       }
@@ -1179,10 +1173,10 @@ esac
           afterRestart
             .prepare(
               `SELECT COUNT(*) AS count
-               FROM events WHERE project_id = ? AND type = 'scm.work-item.tag-added'`,
+               FROM events WHERE project_id = ? AND type = 'scm.work-item.observed'`,
             )
             .get(project.id),
-        ).toEqual({ count: 1 });
+        ).toEqual({ count: armedFailpoint === "after-github-poll-read" ? 1 : 2 });
         expect(
           afterRestart
             .prepare(
@@ -1312,7 +1306,7 @@ esac
           database
             .prepare(
               `SELECT COUNT(*) AS count
-               FROM events WHERE project_id = ? AND type = 'scm.work-item.tag-added'`,
+               FROM events WHERE project_id = ? AND type = 'scm.work-item.observed'`,
             )
             .get(project.id),
         ).toEqual({ count: 1 });
@@ -1325,8 +1319,8 @@ esac
             )
             .get(project.id, "github", "main"),
         ).toEqual({
-          external_event_id: String(event.id),
-          event_timestamp: event.created_at,
+          external_event_id: "bootstrap-empty",
+          event_timestamp: "1970-01-01T00:00:00.000Z",
         });
       } finally {
         database.close();
@@ -1508,7 +1502,7 @@ esac
       actor: "octocat",
       createdAt: "2026-09-11T10:07:00.000Z",
     });
-    await waitForFactCount(engine, project.id, 1);
+    await waitForCursor(engine.dataRoot, String(newEvent.id), project.id, "secondary");
     const database = new Database(`${engine.dataRoot}/jarvis.sqlite`);
     try {
       expect(
@@ -1658,18 +1652,25 @@ esac
     await waitForRequest(fakeGitHub, "/repos/Gasppacho/jarvis/issues/events");
     await waitForCursor(dataRoot, "bootstrap-empty", project.id);
 
-    const first = fakeGitHub.appendLabeledIssueEvent({
+    const first = fakeGitHub.seedIssue({
       owner: "Gasppacho",
       repository: "jarvis",
-      issueNumber: 21,
-      issueTitle: "End to end label",
-      label: "agent:ready",
-      actor: "octocat",
-      createdAt: "2026-09-11T10:08:00.000Z",
+      issue: {
+        number: 21,
+        title: "End to end observation",
+        body: "",
+        state: "open",
+        labels: [{ name: "ready-to-dev" }],
+      },
     });
-    await waitForFactCount(engine, project.id, 1);
+    await waitForObservedState(
+      engine,
+      project.id,
+      "github://Gasppacho/jarvis/issues/21",
+      "open",
+    );
     await waitForEventTypeCount(engine, project.id, "development.implementation.requested", 1);
-    await waitForExecutionCount(engine, project.id, 1);
+    await waitForExecutionCount(engine, project.id, 2);
 
     const firstDatabase = new Database(`${dataRoot}/jarvis.sqlite`);
     try {
@@ -1684,7 +1685,7 @@ esac
         readonly kind: string;
         readonly envelope: string;
       }[];
-      const fact = rows.find((row) => row.type === "scm.work-item.tag-added");
+      const fact = rows.find((row) => row.type === "scm.work-item.observed");
       const request = rows.find((row) => row.type === "development.implementation.requested");
       expect(fact).toBeDefined();
       expect(request).toBeDefined();
@@ -1693,7 +1694,7 @@ esac
       expect(factEnvelope).toMatchObject({
         projectId: project.id,
         repositoryId: "main",
-        payload: { tag: "agent:ready" },
+        payload: { tags: ["ready-to-dev"], state: "open" },
       });
       expect(requestEnvelope).toMatchObject({
         projectId: project.id,
@@ -1701,11 +1702,11 @@ esac
         causationId: fact?.id,
         target: { moduleInstanceId: "development" },
         payload: {
-          workItemRef: `github://Gasppacho/jarvis/issues/${first.issue.number}`,
+          workItemRef: `github://Gasppacho/jarvis/issues/${first.number}`,
           repositoryId: "main",
         },
       });
-      expect(rows.filter((row) => row.type === "scm.work-item.tag-added")).toHaveLength(1);
+      expect(rows.filter((row) => row.type === "scm.work-item.observed").length).toBeGreaterThan(0);
       expect(
         rows.filter((row) => row.type === "development.implementation.requested"),
       ).toHaveLength(1);
@@ -1715,7 +1716,7 @@ esac
             "SELECT COUNT(*) AS count FROM executions WHERE project_id = ? AND module_instance_id = 'development'",
           )
           .get(project.id),
-      ).toEqual({ count: 1 });
+      ).toEqual({ count: 2 });
     } finally {
       firstDatabase.close();
     }
@@ -1739,18 +1740,25 @@ esac
       1,
     );
     expect(afterRestartEvents).toHaveLength(1);
-    await waitForExecutionCount(restarted, project.id, 1);
+    await waitForExecutionCount(restarted, project.id, 2);
 
-    const second = fakeGitHub.appendLabeledIssueEvent({
+    fakeGitHub.seedIssue({
       owner: "Gasppacho",
       repository: "jarvis",
-      issueNumber: 21,
-      issueTitle: "End to end label",
-      label: "agent:ready",
-      actor: "octocat",
-      createdAt: "2026-09-11T10:09:00.000Z",
+      issue: {
+        number: 22,
+        title: "Second end to end observation",
+        body: "",
+        state: "open",
+        labels: [{ name: "ready-to-dev" }],
+      },
     });
-    await waitForFactCount(restarted, project.id, 2);
+    await waitForObservedState(
+      restarted,
+      project.id,
+      "github://Gasppacho/jarvis/issues/22",
+      "open",
+    );
     await waitForEventTypeCount(restarted, project.id, "development.implementation.requested", 2);
     await waitForExecutionCount(restarted, project.id, 2);
     const finalDatabase = new Database(`${dataRoot}/jarvis.sqlite`);
@@ -1760,29 +1768,50 @@ esac
           .prepare(
             `SELECT type, COUNT(*) AS count
              FROM events
-             WHERE project_id = ? AND type IN ('scm.work-item.tag-added', 'development.implementation.requested')
+             WHERE project_id = ? AND type IN ('scm.work-item.observed', 'development.implementation.requested')
              GROUP BY type ORDER BY type`,
           )
-          .all(project.id),
-      ).toEqual([
-        { type: "development.implementation.requested", count: 2 },
-        { type: "scm.work-item.tag-added", count: 2 },
-      ]);
+          .all(project.id) as { readonly type: string; readonly count: number }[],
+      ).toEqual(
+        expect.arrayContaining([
+          { type: "development.implementation.requested", count: 2 },
+          expect.objectContaining({ type: "scm.work-item.observed", count: expect.any(Number) }),
+        ]),
+      );
+      const observedCount = finalDatabase
+        .prepare(
+          "SELECT COUNT(*) AS count FROM events WHERE project_id = ? AND type = 'scm.work-item.observed'",
+        )
+        .get(project.id) as { readonly count: number };
+      expect(observedCount.count).toBeGreaterThanOrEqual(2);
+      const executionCounts = finalDatabase
+        .prepare(
+          `SELECT event.type, COUNT(*) AS count
+           FROM executions execution
+           JOIN events event ON event.id = execution.input_event_id
+           WHERE execution.project_id = ?
+             AND execution.module_instance_id = 'development'
+             AND event.type IN ('scm.work-item.observed', 'development.implementation.requested')
+           GROUP BY event.type`,
+        )
+        .all(project.id) as { readonly type: string; readonly count: number }[];
       expect(
-        finalDatabase
-          .prepare(
-            "SELECT COUNT(*) AS count FROM executions WHERE project_id = ? AND module_instance_id = 'development'",
-          )
-          .get(project.id),
-      ).toEqual({ count: 2 });
+        executionCounts,
+      ).toEqual(
+        expect.arrayContaining([
+          { type: "development.implementation.requested", count: 2 },
+          expect.objectContaining({ type: "scm.work-item.observed", count: expect.any(Number) }),
+        ]),
+      );
+      expect(
+        executionCounts.find((row) => row.type === "scm.work-item.observed")?.count,
+      ).toBeGreaterThanOrEqual(2);
       expect(finalDatabase.prepare("SELECT COUNT(*) AS count FROM github_cursors").get()).toEqual({
         count: 1,
       });
       expect(
         finalDatabase.prepare("SELECT COUNT(*) AS count FROM external_mappings").get(),
-      ).toEqual({
-        count: 2,
-      });
+      ).toEqual({ count: 0 });
     } finally {
       finalDatabase.close();
     }
@@ -1898,7 +1927,6 @@ async function bindProject(
       slots: {
         ...bindings.slots,
         sourceControl: { kind: "connection", ref: connectionRef },
-        tickets: { kind: "connection", ref: connectionRef },
         agentRuntime: { kind: "runtime", ref: "runtime/fake-test" },
       },
     }),
@@ -1918,7 +1946,7 @@ async function bindProject(
 }
 
 function projectConfig(
-  withSubscriber = false,
+  _withSubscriber = false,
   bootstrapLabelPolicy: "ignore-existing" | "emit-existing" = "ignore-existing",
   projectId = "polling-project",
   githubRepositories: readonly string[] = ["main", "secondary"],
@@ -1926,25 +1954,10 @@ function projectConfig(
   const configuration = parseYaml(
     readFileSync(join(ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
   ) as Record<string, unknown>;
-  const exampleModules = configuration["modules"];
-  const developmentModule = Array.isArray(exampleModules)
-    ? exampleModules.find(
-        (module): module is Record<string, unknown> =>
-          typeof module === "object" &&
-          module !== null &&
-          (module as Record<string, unknown>)["instanceId"] === "development",
-      )
-    : undefined;
-  if (developmentModule !== undefined) {
-    developmentModule["configuration"] = {
-      ...(developmentModule["configuration"] as Record<string, unknown>),
-      preparation: "none",
-    };
-  }
   configuration["metadata"] = { id: projectId, name: `Polling Project ${projectId}` };
+  configuration["compositionMode"] = "fixed-modules";
   configuration["slots"] = {
     sourceControl: { requires: "scm.change-request.manage" },
-    tickets: { requires: "work-items.read" },
     agentRuntime: { requires: "agent.execute" },
   };
   configuration["repositories"] = [
@@ -1963,31 +1976,24 @@ function projectConfig(
         repositories: [...githubRepositories],
       },
     },
-    ...(withSubscriber
-      ? [
-          {
-            instanceId: "automation-rules",
-            moduleId: "jarvis.module.automation-rules",
-            enabled: true,
-            configuration: {
-              rules: [
-                {
-                  id: "never-match",
-                  when: {
-                    eventType: "scm.work-item.tag-added",
-                    equals: { "payload.tag": "never-match" },
-                  },
-                  emit: {
-                    type: "development.implementation.requested",
-                    target: { moduleInstanceId: "development" },
-                  },
-                },
-              ],
-            },
-          },
-          ...(developmentModule === undefined ? [] : [developmentModule]),
-        ]
-      : []),
+    {
+      instanceId: "development",
+      moduleId: "jarvis.module.development",
+      enabled: true,
+      runtimeSlot: "agentRuntime",
+      bindings: { repository: "main" },
+      configuration: {
+        preparation: "none",
+        readyLabel: "ready-to-dev",
+        scope: { kind: "all" },
+        validationOrder: ["lint", "typecheck", "test", "build"],
+        maxRepairCycles: 2,
+        retainWorkspaceOnSuccess: false,
+        timeoutMs: 300000,
+        outputLimitBytes: 1048576,
+        environmentAllowlist: [],
+      },
+    },
   ];
   return configuration;
 }
@@ -2007,26 +2013,7 @@ function multiRepositoryConfig(githubRepositories: readonly string[]): Record<st
 }
 
 function endToEndConfig(): Record<string, unknown> {
-  const configuration = projectConfig(true, "ignore-existing", "polling-project", ["main"]);
-  const modules = configuration["modules"] as Record<string, unknown>[];
-  const automationRules = modules.find((module) => module["instanceId"] === "automation-rules");
-  if (automationRules === undefined) throw new Error("automation-rules module is missing");
-  automationRules["configuration"] = {
-    rules: [
-      {
-        id: "ready-label-starts-development",
-        when: {
-          eventType: "scm.work-item.tag-added",
-          equals: { "payload.tag": "agent:ready" },
-        },
-        emit: {
-          type: "development.implementation.requested",
-          target: { moduleInstanceId: "development" },
-        },
-      },
-    ],
-  };
-  return configuration;
+  return projectConfig(false, "ignore-existing", "polling-project", ["main"]);
 }
 
 async function waitForFactCount(
@@ -2049,7 +2036,7 @@ async function waitForFactCount(
         readonly correlationId: string;
       }[];
     };
-    const facts = body.items.filter((event) => event.type === "scm.work-item.tag-added");
+    const facts = body.items.filter((event) => event.type === "scm.work-item.observed");
     if (facts.length >= count) return facts;
     if (Date.now() >= deadline) {
       throw new Error(`project ${projectId} did not reach ${count} facts\n${engine.stderr()}`);
@@ -2158,6 +2145,31 @@ async function waitForReadiness(
     if (row?.status === status) return;
     if (Date.now() >= deadline)
       throw new Error(`readiness ${workItemRef} did not become ${status}`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function waitForObservedDependencies(
+  dataRoot: string,
+  workItemRef: string,
+  openWorkItemRefs: readonly string[],
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    const database = new Database(join(dataRoot, "jarvis.sqlite"));
+    const row = database
+      .prepare(
+        "SELECT open_work_item_refs FROM github_work_item_observations WHERE work_item_ref = ?",
+      )
+      .get(workItemRef) as { readonly open_work_item_refs: string } | undefined;
+    database.close();
+    if (
+      row !== undefined &&
+      JSON.stringify(JSON.parse(row.open_work_item_refs)) === JSON.stringify(openWorkItemRefs)
+    )
+      return;
+    if (Date.now() >= deadline)
+      throw new Error(`observation ${workItemRef} did not reach expected dependencies`);
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }

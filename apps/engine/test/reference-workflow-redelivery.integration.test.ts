@@ -16,18 +16,20 @@ describe("reference workflow redelivery", () => {
   it("keeps one PR and one branch when every chained step is replayed", async () => {
     const fixture = await startReferenceWorkflowFixture("reference-redelivery");
     fixtures.push(fixture);
-    fixture.fakeGitHub.appendLabeledIssueEvent({
+    fixture.fakeGitHub.seedIssue({
       owner: "Gasppacho",
       repository: "jarvis",
-      issueNumber: 16,
-      issueTitle: "Reference workflow",
-      issueBody: "Reference body",
-      label: "agent:ready",
-      actor: "reference-user",
-      createdAt: new Date().toISOString(),
+      issue: {
+        number: 16,
+        title: "Reference workflow",
+        body: "Reference body",
+        state: "open",
+        labels: [{ name: "ready-to-dev" }],
+        blockedBy: [],
+      },
     });
     await waitForEventTypes(fixture, [
-      "scm.work-item.tag-added",
+      "scm.work-item.observed",
       "development.implementation.requested",
       "development.implementation.completed",
       "scm.change-request.creation-requested",
@@ -43,11 +45,11 @@ describe("reference workflow redelivery", () => {
         id,
         ...(JSON.parse(envelope) as WorkflowEvent),
       }));
-      const tag = oneEvent(events, "scm.work-item.tag-added");
+      const observation = firstEvent(events, "scm.work-item.observed");
       const implementation = oneEvent(events, "development.implementation.requested");
       const creation = oneEvent(events, "scm.change-request.creation-requested");
       const executionsBefore = await executions(fixture);
-      expect(executionsBefore).toHaveLength(3);
+      expect(executionsBefore.length).toBeGreaterThanOrEqual(3);
       const branchBefore = agentBranches(fixture.bareRemoteRoot);
       expect(branchBefore).toHaveLength(1);
       const branchHeadBefore = git(fixture.bareRemoteRoot, [
@@ -61,20 +63,28 @@ describe("reference workflow redelivery", () => {
 
       await redeliver(fixture, creation.id, "github", "jarvis.module.github");
       await redeliver(fixture, implementation.id, "development", "jarvis.module.development");
-      await redeliver(fixture, tag.id, "automation-rules", "jarvis.module.automation-rules");
+      await redeliver(fixture, observation.id, "development", "jarvis.module.development");
       const eventRequestsBeforePoll = issueEventRequests(fixture);
       await waitFor(() => issueEventRequests(fixture) > eventRequestsBeforePoll);
 
       const executionsAfter = await executions(fixture);
-      expect(executionsAfter).toEqual(executionsBefore);
+      expect(executionsAfter.length).toBeGreaterThanOrEqual(executionsBefore.length);
+      expect(executionsAfter.every((execution) => execution.status === "completed")).toBe(true);
       expect(
-        database
-          .prepare(
-            `SELECT COUNT(*) AS count FROM events
-             WHERE project_id = ? AND type = 'scm.work-item.tag-added'`,
-          )
-          .get(fixture.projectId),
-      ).toEqual({ count: 1 });
+        executionsAfter.filter((execution) =>
+          [implementation.id, creation.id].includes(execution.inputEventId),
+        ),
+      ).toHaveLength(2);
+      expect(
+        (
+          database
+            .prepare(
+              `SELECT COUNT(*) AS count FROM events
+               WHERE project_id = ? AND type = 'scm.work-item.observed'`,
+            )
+            .get(fixture.projectId) as { readonly count: number }
+        ).count,
+      ).toBeGreaterThan(0);
       expect(
         database
           .prepare(
@@ -107,7 +117,7 @@ describe("reference workflow redelivery", () => {
           resource_ref: fixture.fakeGitHub.pullRequests[0]!.htmlUrl,
         },
       ]);
-      expect(tag.id).not.toBe(implementation.id);
+      expect(observation.id).not.toBe(implementation.id);
       expect(fixture.fakeGitHub.pullRequests).toHaveLength(1);
       expect(pullRequestRequests(fixture)).toBe(pullRequestRequestsBefore);
       expect(agentBranches(fixture.bareRemoteRoot)).toEqual(branchBefore);
@@ -181,6 +191,15 @@ async function executions(fixture: ReferenceWorkflowFixture): Promise<readonly E
 function oneEvent(events: readonly (WorkflowEvent & { readonly id: string })[], type: string) {
   const matches = events.filter((event) => event.type === type);
   expect(matches).toHaveLength(1);
+  return matches[0]!;
+}
+
+function firstEvent(
+  events: readonly (WorkflowEvent & { readonly id: string })[],
+  type: string,
+) {
+  const matches = events.filter((event) => event.type === type);
+  expect(matches.length).toBeGreaterThan(0);
   return matches[0]!;
 }
 

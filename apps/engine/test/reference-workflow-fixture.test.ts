@@ -37,20 +37,8 @@ describe("reference workflow Application Harness", () => {
         readonly configuration?: Readonly<Record<string, unknown>>;
       }[];
     };
-    const automation = configuration.modules.find(
-      (module) => module.instanceId === "automation-rules",
-    );
-    expect(automation?.configuration?.["rules"]).toEqual([
-      expect.objectContaining({
-        emit: {
-          type: "development.implementation.requested",
-          target: { moduleInstanceId: "development" },
-        },
-      }),
-    ]);
     expect(configuration.modules.map(({ instanceId }) => instanceId)).toEqual([
       "github",
-      "automation-rules",
       "development",
     ]);
 
