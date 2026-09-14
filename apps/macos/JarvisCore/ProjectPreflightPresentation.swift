@@ -1,6 +1,18 @@
 import Foundation
 import JarvisAPI
 
+public extension Components.Schemas.ProjectPreflightV1 {
+    var configuredWorkItemRef: String? {
+        if let trigger {
+            switch trigger.scope {
+            case .case1: return nil
+            case .case2(let scope): return scope.workItemRef
+            }
+        }
+        return rule?.selectedWorkItemRef
+    }
+}
+
 public protocol ProjectPreflightAPI: Sendable {
     func preflightProject(projectId: String) async throws -> Components.Schemas.ProjectPreflightV1
     func scopePreflightProject(projectId: String, fingerprint: String, workItemRef: String?) async throws -> Components.Schemas.PortableProjectConfiguration
@@ -23,12 +35,12 @@ public enum ProjectPreflightState: Sendable, Equatable {
     }
     public var canStartWorkflow: Bool {
         guard canActivate, let report else { return false }
-        guard let ref = report.rule?.selectedWorkItemRef else { return true }
+        guard let ref = report.configuredWorkItemRef else { return true }
         return report.candidateEligibility.status == .available
             && report.candidateEligibility.items.contains { $0.workItemRef == ref && $0.status == .eligible }
     }
     public var activationTitle: String {
-        report?.rule?.selectedWorkItemRef.map { "Tester avec l’issue \(Self.issueLabel($0))" }
+        report?.configuredWorkItemRef.map { "Tester avec l’issue \(Self.issueLabel($0))" }
             ?? "Surveiller les issues prêtes"
     }
     public static func issueLabel(_ ref: String) -> String {

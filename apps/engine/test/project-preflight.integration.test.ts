@@ -26,8 +26,8 @@ afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((f) => f.dispose()));
 });
 
-async function setup(env: Readonly<Record<string, string>> = {}) {
-  const f = await startReferenceWorkflowFixture("preflight", env, true);
+async function setup(env: Readonly<Record<string, string>> = {}, fixed = false) {
+  const f = await startReferenceWorkflowFixture("preflight", env, true, fixed);
   fixtures.push(f);
   const path = `/v1/projects/${f.projectId}`;
   const detail = (await (await f.engine.call(path)).json()) as {
@@ -111,6 +111,41 @@ console.log(JSON.stringify({type: "turn.completed", usage: {input_tokens: 1, out
   });
   return { f, path, config };
 }
+
+it("preflights fixed-modules from Development and scopes without an Automation Rule", async () => {
+  const { f, path } = await setup({}, true);
+  f.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis/labels/ready-to-dev", {
+    status: 200,
+    body: { name: "ready-to-dev" },
+  });
+  const ready = await report(f, path);
+  expect(ready.valid, JSON.stringify(ready.checks)).toBe(true);
+  expect(ready.rule).toBeUndefined();
+  expect(ready.trigger).toEqual({
+    moduleInstanceId: "development",
+    moduleId: "jarvis.module.development",
+    readyLabel: "ready-to-dev",
+    scope: { kind: "all" },
+  });
+  expect(ready.candidateEligibility).toEqual({ status: "empty", items: [] });
+  const scoped = await post(f, `${path}/preflight-scope`, {
+    compositionFingerprint: ready.compositionFingerprint,
+    scope: "all",
+  });
+  expect(scoped.status).toBe(200);
+  const configuration = (await scoped.json()) as PortableProjectConfiguration;
+  expect(configuration.modules).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        moduleId: "jarvis.module.development",
+        configuration: expect.objectContaining({ scope: { kind: "all" } }),
+      }),
+    ]),
+  );
+  expect(
+    configuration.modules.some((module) => module.moduleId === "jarvis.module.automation-rules"),
+  ).toBe(false);
+});
 
 it("preflights a ready configuration with no candidates without starting work", async () => {
   const { f, path } = await setup();

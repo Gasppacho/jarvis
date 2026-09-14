@@ -84,7 +84,7 @@ struct ProjectPreflightView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     if let scope = state.pendingScopeDescription { Text(scope) }
                     if let report = state.preflight.report {
-                        if let ref = report.rule?.selectedWorkItemRef {
+                        if let ref = report.configuredWorkItemRef {
                             Label("Essai limité à \(ProjectPreflightState.issueLabel(ref))", systemImage: "scope").font(.headline)
                             Text("Les autres issues ne seront pas démarrées. Le bouton final lance cet essai après vérification.")
                             if state.canRestoreTrial {
@@ -110,7 +110,7 @@ struct ProjectPreflightView: View {
                                 if !item.blockerRefs.isEmpty {
                                     Text("Bloqueurs ouverts : \(item.blockerRefs.map(ProjectPreflightState.issueLabel).joined(separator: ", "))")
                                 }
-                                if report.rule?.selectedWorkItemRef != item.workItemRef {
+                                if report.configuredWorkItemRef != item.workItemRef {
                                     Button("Choisir \(ProjectPreflightState.issueLabel(item.workItemRef)) pour l’essai") {
                                         Task { await model.scopeWorkflow(projectId: project.id, workItemRef: item.workItemRef, packages: packages) }
                                     }

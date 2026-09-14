@@ -310,11 +310,25 @@ export class ProjectService implements ProjectRegistry<
       lastWorkFailed,
     );
     let selectedWorkItemRef: string | null = null;
-    try {
-      const ref = workflowRule(project.portableConfig).rule.when.equals?.["payload.workItemRef"];
-      if (typeof ref === "string") selectedWorkItemRef = ref;
-    } catch {
-      /* Custom workflows need not have a guide-compatible rule. */
+    if (project.portableConfig.compositionMode === "fixed-modules") {
+      const scope = project.portableConfig.modules.find(
+        (module) => module.enabled && module.moduleId === "jarvis.module.development",
+      )?.configuration?.["scope"];
+      if (
+        typeof scope === "object" &&
+        scope !== null &&
+        !Array.isArray(scope) &&
+        (scope as Record<string, unknown>)["kind"] === "issue" &&
+        typeof (scope as Record<string, unknown>)["workItemRef"] === "string"
+      )
+        selectedWorkItemRef = (scope as Record<string, string>)["workItemRef"]!;
+    } else {
+      try {
+        const ref = workflowRule(project.portableConfig).rule.when.equals?.["payload.workItemRef"];
+        if (typeof ref === "string") selectedWorkItemRef = ref;
+      } catch {
+        /* Custom workflows need not have a guide-compatible rule. */
+      }
     }
     const eligible = issues.some((issue) => issue.status === "eligible");
     const stages = overviewStages(polling.state, hasActiveExecution, eligible, project.status);
@@ -512,22 +526,48 @@ export class ProjectService implements ProjectRegistry<
         "Select an issue from this project's current preview.",
       );
     const configuration = structuredClone(project.portableConfig) as PortableProjectConfiguration;
-    let selected: ReturnType<typeof workflowRule>;
-    try {
-      selected = workflowRule(configuration);
-    } catch {
-      throw new EngineError("api.invalid-request", 400, "Repair the workflow rule first.");
+    if (project.portableConfig.compositionMode === "fixed-modules") {
+      const development = configuration.modules.find(
+        (module) => module.enabled && module.moduleId === "jarvis.module.development",
+      );
+      if (development?.configuration === undefined)
+        throw new EngineError(
+          "api.invalid-request",
+          400,
+          "Repair the Development configuration first.",
+        );
+      return {
+        ...configuration,
+        modules: configuration.modules.map((module) =>
+          module.instanceId === development.instanceId
+            ? {
+                ...module,
+                configuration: {
+                  ...module.configuration,
+                  scope: ref === null ? { kind: "all" } : { kind: "issue", workItemRef: ref },
+                },
+              }
+            : module,
+        ),
+      };
+    } else {
+      let selected: ReturnType<typeof workflowRule>;
+      try {
+        selected = workflowRule(configuration);
+      } catch {
+        throw new EngineError("api.invalid-request", 400, "Repair the workflow rule first.");
+      }
+      const instance = configuration.modules.find(
+        (m) => m.instanceId === selected.instance.instanceId,
+      )!;
+      const rules = instance.configuration!["rules"] as {
+        id: string;
+        when: { equals: Record<string, unknown> };
+      }[];
+      const equals = rules.find((r) => r.id === selected.rule.id)!.when.equals;
+      if (ref === null) delete equals["payload.workItemRef"];
+      else equals["payload.workItemRef"] = ref;
     }
-    const instance = configuration.modules.find(
-      (m) => m.instanceId === selected.instance.instanceId,
-    )!;
-    const rules = instance.configuration!["rules"] as {
-      id: string;
-      when: { equals: Record<string, unknown> };
-    }[];
-    const equals = rules.find((r) => r.id === selected.rule.id)!.when.equals;
-    if (ref === null) delete equals["payload.workItemRef"];
-    else equals["payload.workItemRef"] = ref;
     return configuration;
   }
 

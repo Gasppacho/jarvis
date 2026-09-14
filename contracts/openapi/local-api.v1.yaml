@@ -1906,6 +1906,27 @@ components:
         ruleId: { type: string }
         label: { type: string }
         selectedWorkItemRef: { type: [string, 'null'] }
+    PreflightTrigger:
+      type: object
+      additionalProperties: false
+      required: [moduleInstanceId, moduleId, readyLabel, scope]
+      properties:
+        moduleInstanceId: { type: string }
+        moduleId: { const: jarvis.module.development }
+        readyLabel: { type: string, minLength: 1 }
+        scope:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [kind]
+              properties:
+                kind: { const: all }
+            - type: object
+              additionalProperties: false
+              required: [kind, workItemRef]
+              properties:
+                kind: { const: issue }
+                workItemRef: { type: string, minLength: 1 }
     PreflightCandidate:
       type: object
       additionalProperties: false
@@ -1941,6 +1962,8 @@ components:
             $ref: '#/components/schemas/PreflightCheck'
         rule:
           $ref: '#/components/schemas/PreflightRule'
+        trigger:
+          $ref: '#/components/schemas/PreflightTrigger'
         candidateEligibility:
           type: object
           additionalProperties: false

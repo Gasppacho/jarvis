@@ -25,7 +25,7 @@ public struct ProjectConfigurationState: Sendable, Equatable {
     public var preflightReceivedAt: Date?
     public var trialWorkItemRef: String?
     public var pendingScopeDescription: String?
-    public var canRestoreTrial: Bool { trialWorkItemRef != nil && trialWorkItemRef == preflight.report?.rule?.selectedWorkItemRef }
+    public var canRestoreTrial: Bool { trialWorkItemRef != nil && trialWorkItemRef == preflight.report?.configuredWorkItemRef }
 
     public var validation: ProjectValidationState = .unvalidated
     public var activation: ProjectActivationState = .idle
@@ -621,7 +621,7 @@ public final class ProjectConfigurationModel {
         guard case .current(let report) = state(for: projectId).preflight,
               state(for: projectId).isDraftSaved, let api = preflightAPI else { return }
         guard workItemRef != nil || state(for: projectId).canRestoreTrial else { return }
-        guard report.rule?.selectedWorkItemRef == nil || state(for: projectId).canRestoreTrial else {
+        guard report.configuredWorkItemRef == nil || state(for: projectId).canRestoreTrial else {
             update(projectId) { $0.errorMessage = "La règle possède déjà un filtre exact. Modifiez-le dans Workflow pour conserver votre périmètre existant." }
             return
         }

@@ -1092,6 +1092,20 @@ export interface components {
             label: string;
             selectedWorkItemRef: string | null;
         };
+        PreflightTrigger: {
+            moduleInstanceId: string;
+            /** @constant */
+            moduleId: "jarvis.module.development";
+            readyLabel: string;
+            scope: {
+                /** @constant */
+                kind: "all";
+            } | {
+                /** @constant */
+                kind: "issue";
+                workItemRef: string;
+            };
+        };
         PreflightCandidate: {
             workItemRef: string;
             title: string;
@@ -1115,6 +1129,7 @@ export interface components {
             runtime: components["schemas"]["ProjectAgentRuntimeChoices"];
             checks: components["schemas"]["PreflightCheck"][];
             rule?: components["schemas"]["PreflightRule"];
+            trigger?: components["schemas"]["PreflightTrigger"];
             candidateEligibility: {
                 /** @enum {string} */
                 status: "empty" | "available" | "unavailable";

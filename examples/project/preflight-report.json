@@ -75,5 +75,11 @@
   "candidateEligibility": {
     "status": "empty",
     "items": []
+  },
+  "trigger": {
+    "moduleInstanceId": "development",
+    "moduleId": "jarvis.module.development",
+    "readyLabel": "ready-for-agent",
+    "scope": { "kind": "all" }
   }
 }

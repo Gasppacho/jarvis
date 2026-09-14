@@ -362,7 +362,10 @@ replace the normal activation validation report or Development preflight.
 (`jarvis.dev/project-preflight/v1`): the existing versioned validation report,
 its composition fingerprint, bounded runtime readiness, actionable checks with
 `Repository`, `Workflow` or `Connections` destinations, the label/rule scope,
-and `candidateEligibility`. `valid` and `configurationReady` describe the
+and `candidateEligibility`. A fixed-modules response also carries the typed
+`trigger` descriptor (`moduleInstanceId`, Development `readyLabel`, and explicit
+`scope` of `issue` or `all`); the legacy `rule` field remains transitional.
+`valid` and `configurationReady` describe the
 configuration; `empty` candidates and open blockers alone do not invalidate it.
 Unknown GitHub/dependency reads produce failed checks. A previously admitted
 candidate is shown as ineligible for automatic admission.

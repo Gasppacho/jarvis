@@ -113,7 +113,14 @@ export async function startReferenceWorkflowFixture(
       ).json()) as ProjectBindings;
       if (Object.keys(bindings.slots).length !== 0) throw new Error("template granted resources");
     }
-    await bindAndActivate(engine, project.id, repository.root, runtimeCounterPath, !guidedDraft);
+    await bindAndActivate(
+      engine,
+      project.id,
+      repository.root,
+      runtimeCounterPath,
+      !guidedDraft,
+      fixedModules,
+    );
     if (!guidedDraft)
       await waitFor(
         () =>
@@ -340,6 +347,7 @@ async function bindAndActivate(
   repositoryRoot: string,
   runtimeCounterPath: string,
   shouldActivate = true,
+  fixedModules = false,
 ): Promise<void> {
   const repositoryBinding = await engine.call(
     `/v1/projects/${encodeURIComponent(projectId)}/repositories/main/binding`,
@@ -356,21 +364,24 @@ async function bindAndActivate(
   );
   await requireStatus(bindingsResponse, 200, "read reference bindings");
   const bindings = (await bindingsResponse.json()) as ProjectBindings;
+  const slots = {
+    ...bindings.slots,
+    sourceControl: { kind: "connection", ref: "connection/reference-github" },
+    agentRuntime: {
+      kind: "runtime",
+      ref: "runtime/fake-test",
+      environment: { JARVIS_FAKE_COUNTER_PATH: runtimeCounterPath },
+    },
+    ...(!fixedModules
+      ? { tickets: { kind: "connection", ref: "connection/reference-github" } }
+      : {}),
+  };
   const saved = await engine.call(`/v1/projects/${encodeURIComponent(projectId)}/bindings`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       ...bindings,
-      slots: {
-        ...bindings.slots,
-        sourceControl: { kind: "connection", ref: "connection/reference-github" },
-        tickets: { kind: "connection", ref: "connection/reference-github" },
-        agentRuntime: {
-          kind: "runtime",
-          ref: "runtime/fake-test",
-          environment: { JARVIS_FAKE_COUNTER_PATH: runtimeCounterPath },
-        },
-      },
+      slots,
     }),
   });
   await requireStatus(saved, 200, "save reference bindings");

@@ -2,7 +2,11 @@ import type {
   GitHubApi,
   ProjectRepositoryIdentity,
 } from "../../../../packages/module-sdk/src/index.js";
-import { assessGitHubWorkItemReadiness } from "../../../../packages/modules/github/src/work-item-readiness.js";
+import {
+  assessGitHubWorkItemReadiness,
+  observeGitHubWorkItemState,
+} from "../../../../packages/modules/github/src/work-item-readiness.js";
+import { assessDevelopmentEligibility } from "../../../../packages/modules/development/src/index.js";
 import {
   readRules,
   matchesRuleEvent,
@@ -19,6 +23,46 @@ export type ProjectPreflight = Omit<
   readonly runtime: import("../../../../packages/project-runtime/src/project-types.js").ProjectAgentRuntimeChoices;
 };
 export type PreflightCheck = components["schemas"]["PreflightCheck"];
+
+type PreflightTrigger = NonNullable<components["schemas"]["ProjectPreflightV1"]["trigger"]>;
+
+function developmentTrigger(
+  configuration: StoredPortableProjectConfiguration,
+): PreflightTrigger | undefined {
+  const instances = configuration.modules.filter(
+    (module) => module.enabled && module.moduleId === "jarvis.module.development",
+  );
+  if (instances.length !== 1) return undefined;
+  const instance = instances[0]!;
+  const rawLabel = instance.configuration?.["readyLabel"];
+  const label = rawLabel === undefined ? "ready-to-dev" : rawLabel;
+  const rawScope = instance.configuration?.["scope"];
+  const scope: PreflightTrigger["scope"] | undefined =
+    rawScope === undefined ||
+    (typeof rawScope === "object" &&
+      rawScope !== null &&
+      !Array.isArray(rawScope) &&
+      (rawScope as Record<string, unknown>)["kind"] === "all")
+      ? { kind: "all" as const }
+      : typeof rawScope === "object" &&
+          rawScope !== null &&
+          !Array.isArray(rawScope) &&
+          (rawScope as Record<string, unknown>)["kind"] === "issue" &&
+          typeof (rawScope as Record<string, unknown>)["workItemRef"] === "string"
+        ? {
+            kind: "issue" as const,
+            workItemRef: (rawScope as Record<string, string>)["workItemRef"]!,
+          }
+        : undefined;
+  return typeof label === "string" && label.trim() !== "" && scope !== undefined
+    ? {
+        moduleInstanceId: instance.instanceId,
+        moduleId: "jarvis.module.development",
+        readyLabel: label.trim(),
+        scope,
+      }
+    : undefined;
+}
 
 // The guided trial is safe only when there is one admission rule. An expert
 // composition remains editable; preflight explains why it cannot narrow it safely.
@@ -133,13 +177,20 @@ export async function preflightGitHub(input: {
   wasAdmitted: (repositoryId: string, workItemRef: string) => boolean;
   repositories: readonly ProjectRepositoryIdentity[];
   apiFor: (slot: string) => GitHubApi | undefined;
-}): Promise<Pick<ProjectPreflight, "checks" | "candidateEligibility" | "rule">> {
+}): Promise<Pick<ProjectPreflight, "checks" | "candidateEligibility" | "rule" | "trigger">> {
   const checks: PreflightCheck[] = [];
   const items: ProjectPreflight["candidateEligibility"]["items"] = [];
-  let selected: ReturnType<typeof workflowRule>;
-  try {
-    selected = workflowRule(input.configuration);
-  } catch {
+  const fixed = input.configuration.compositionMode === "fixed-modules";
+  const trigger = fixed ? developmentTrigger(input.configuration) : undefined;
+  let selected: ReturnType<typeof workflowRule> | undefined;
+  if (!fixed) {
+    try {
+      selected = workflowRule(input.configuration);
+    } catch {
+      selected = undefined;
+    }
+  }
+  if (selected === undefined && trigger === undefined) {
     return {
       checks: [
         check(
@@ -153,19 +204,43 @@ export async function preflightGitHub(input: {
       candidateEligibility: { status: "unavailable", items },
     };
   }
-  const { rule, instance, tag } = selected;
-  const ref = rule.when.equals?.["payload.workItemRef"];
-  const ruleSummary: NonNullable<ProjectPreflight["rule"]> = {
-    instanceId: instance.instanceId,
-    ruleId: rule.id,
-    label: tag,
-    selectedWorkItemRef: typeof ref === "string" ? ref : null,
-  };
+  const rule = selected?.rule;
+  const instance = selected?.instance;
+  const development = input.configuration.modules.find(
+    (module) => module.enabled && module.moduleId === "jarvis.module.development",
+  );
+  const tag = trigger?.readyLabel ?? selected?.tag ?? "";
+  const ref =
+    trigger?.scope.kind === "issue"
+      ? trigger.scope.workItemRef
+      : rule?.when.equals?.["payload.workItemRef"];
+  const responseTrigger =
+    trigger ??
+    (development === undefined
+      ? undefined
+      : {
+          moduleInstanceId: development.instanceId,
+          moduleId: "jarvis.module.development" as const,
+          readyLabel: tag,
+          scope:
+            typeof ref === "string"
+              ? { kind: "issue" as const, workItemRef: ref }
+              : { kind: "all" as const },
+        });
+  const ruleSummary =
+    instance === undefined || rule === undefined
+      ? undefined
+      : {
+          instanceId: instance.instanceId,
+          ruleId: rule.id,
+          label: tag,
+          selectedWorkItemRef: typeof ref === "string" ? ref : null,
+        };
   checks.push(
     check(
       "rule",
       `Label : ${tag}`,
-      true,
+      tag !== "",
       "La règle conserve ses prédicats et sa cible. Une issue à la fois.",
       "Workflow",
     ),
@@ -192,11 +267,16 @@ export async function preflightGitHub(input: {
         "Workflow",
       ),
     );
-    return { checks, rule: ruleSummary, candidateEligibility: { status: "unavailable", items } };
+    return {
+      checks,
+      ...(ruleSummary === undefined ? {} : { rule: ruleSummary }),
+      ...(responseTrigger === undefined ? {} : { trigger: responseTrigger }),
+      candidateEligibility: { status: "unavailable", items },
+    };
   }
   const source = github[0]!;
   const readyLabel = source.configuration?.["readyLabel"] ?? "ready-for-agent";
-  if (rule.when.eventType === "scm.work-item.ready")
+  if (!fixed && (rule === undefined || rule.when.eventType === "scm.work-item.ready"))
     checks.push(
       check(
         "source-label",
@@ -227,7 +307,12 @@ export async function preflightGitHub(input: {
         "Connections",
       ),
     );
-    return { checks, rule: ruleSummary, candidateEligibility: { status: "unavailable", items } };
+    return {
+      checks,
+      ...(ruleSummary === undefined ? {} : { rule: ruleSummary }),
+      ...(responseTrigger === undefined ? {} : { trigger: responseTrigger }),
+      candidateEligibility: { status: "unavailable", items },
+    };
   }
   const references = source.configuration?.["repositories"];
   const repositories = input.repositories.filter(
@@ -274,52 +359,85 @@ export async function preflightGitHub(input: {
       );
       const candidates = await readCurrentIssues(api, slug);
       for (const candidate of candidates) {
-        if (!candidate.labels.includes(tag)) continue;
+        if (!fixed && !candidate.labels.includes(tag)) continue;
         const workItemRef = `github://${slug}/issues/${candidate.number}`;
         if (typeof ref === "string" && ref !== workItemRef) continue;
-        const assessment = await assessGitHubWorkItemReadiness({
-          api,
-          owner: repository.owner,
-          repository: repository.name,
-          number: candidate.number,
-          tag,
-        });
+        const observation = fixed
+          ? await observeGitHubWorkItemState({
+              api,
+              owner: repository.owner,
+              repository: repository.name,
+              number: candidate.number,
+            })
+          : undefined;
+        const legacyAssessment = fixed
+          ? undefined
+          : await assessGitHubWorkItemReadiness({
+              api,
+              owner: repository.owner,
+              repository: repository.name,
+              number: candidate.number,
+              tag,
+            });
         const payload: Record<string, unknown> = {
           repositoryId: repository.repositoryId,
           workItemRef,
           issueProvider: "github",
           tag,
         };
-        const matches = matchesRuleEvent(rule, {
-          kind: "fact",
-          type: rule.when.eventType,
-          payload,
-        });
         const alreadyAdmitted = input.wasAdmitted(repository.repositoryId, workItemRef);
+        const matches =
+          rule === undefined ||
+          matchesRuleEvent(rule, {
+            kind: "fact",
+            type: rule.when.eventType,
+            payload,
+          });
+        const decision =
+          observation === undefined
+            ? undefined
+            : assessDevelopmentEligibility({
+                repositoryId: repository.repositoryId,
+                authorizedRepositoryId:
+                  !fixed || development?.bindings?.["repository"] === repository.repositoryId
+                    ? repository.repositoryId
+                    : undefined,
+                workItemRef,
+                observation,
+                readyLabel: tag,
+                scope: trigger?.scope ?? { kind: "all" },
+                alreadyStarted: alreadyAdmitted,
+              });
+        const unavailable =
+          observation?.verification === "unavailable" || legacyAssessment?.status === "impossible";
+        const blockerRefs = decision?.blockerRefs ?? legacyAssessment?.blockerRefs ?? [];
+        const reasonCode = decision?.reason ?? legacyAssessment?.reason;
         items.push({
           workItemRef,
           title: candidate.title,
-          status:
-            assessment.status === "impossible"
-              ? "unavailable"
-              : assessment.status === "ready" && matches && !alreadyAdmitted
-                ? "eligible"
-                : "ineligible",
-          openDependencyCount: assessment.blockerRefs.length,
-          blockerRefs: [...assessment.blockerRefs],
+          status: unavailable
+            ? "unavailable"
+            : (decision?.eligible ?? legacyAssessment?.status === "ready") &&
+                matches &&
+                !alreadyAdmitted
+              ? "eligible"
+              : "ineligible",
+          openDependencyCount: blockerRefs.length,
+          blockerRefs: [...blockerRefs],
           reason: alreadyAdmitted
             ? "Cette issue a déjà été admise ; elle ne redémarrera pas automatiquement."
-            : assessment.status === "impossible"
+            : reasonCode === "dependencies-unavailable" ||
+                reasonCode === "dependency-state-unavailable"
               ? "Impossible de lire les dépendances natives. Development attendra."
-              : assessment.blockerRefs.length > 0
+              : blockerRefs.length > 0
                 ? "Dépendance ouverte : Development attendra."
-                : assessment.reason === "work-item-closed"
+                : reasonCode === "work-item-closed"
                   ? "L’issue est fermée. Development ne démarrera pas ; choisissez une issue ouverte."
-                  : assessment.reason === "ready-label-missing"
+                  : reasonCode === "ready-label-missing"
                     ? "Le label de readiness a été retiré. Corrigez le label ou choisissez une autre issue."
-                    : assessment.reason === "work-item-is-pull-request"
+                    : reasonCode === "work-item-is-pull-request"
                       ? "Cet objet est une Pull Request, pas une issue."
-                      : !matches
+                      : !matches || reasonCode === "repository-unlinked"
                         ? "Les autres prédicats de la règle ne correspondent pas."
                         : "Aucune dépendance ouverte.",
           repositoryId: repository.repositoryId,
@@ -352,7 +470,8 @@ export async function preflightGitHub(input: {
   }
   return {
     checks,
-    rule: ruleSummary,
+    ...(ruleSummary === undefined ? {} : { rule: ruleSummary }),
+    ...(responseTrigger === undefined ? {} : { trigger: responseTrigger }),
     candidateEligibility: {
       status: checks.some((c) => c.status === "failed")
         ? "unavailable"
