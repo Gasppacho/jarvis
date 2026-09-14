@@ -29,7 +29,7 @@ describe("execution detail", () => {
 
     await waitForEvent(fixture, "scm.change-request.created");
     const executions = await readExecutions(fixture);
-    expect(executions).toHaveLength(4);
+    expect(executions).toHaveLength(3);
     const events = await readEvents(fixture);
     const implementationEvent = events.find(
       (event) => event.type === "development.implementation.requested",

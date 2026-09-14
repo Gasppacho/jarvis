@@ -130,6 +130,7 @@ describe("runtime isolation acceptance", () => {
 
     const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
     try {
+      await waitForTerminalDevelopmentResults(database, [projectA, projectB]);
       const resultA = readDevelopmentResult(database, projectA);
       const resultB = readDevelopmentResult(database, projectB);
       expect(resultA).toMatchObject({
@@ -384,6 +385,26 @@ async function waitForTerminalExecutions(
   }
 }
 
+async function waitForTerminalDevelopmentResults(
+  database: Database.Database,
+  projectIds: readonly string[],
+): Promise<void> {
+  const terminalStatuses = new Set(["completed", "failed", "cancelled", "timed-out"]);
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    const results = projectIds.map((projectId) =>
+      readDevelopmentResultIfPresent(database, projectId),
+    );
+    if (results.every((result) => result !== undefined && terminalStatuses.has(result.status))) {
+      return;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error("Development results did not reach a terminal state.");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 function developmentExecution(executions: readonly ExecutionSummary[]): ExecutionSummary {
   const execution = executions.find(({ moduleInstanceId }) => moduleInstanceId === "development");
   expect(execution).toBeDefined();
@@ -391,11 +412,28 @@ function developmentExecution(executions: readonly ExecutionSummary[]): Executio
 }
 
 function readDevelopmentResult(database: Database.Database, projectId: string): DevelopmentResult {
+  const result = readDevelopmentResultIfPresent(database, projectId);
+  expect(result).toBeDefined();
+  return result!;
+}
+
+function readDevelopmentResultIfPresent(
+  database: Database.Database,
+  projectId: string,
+): DevelopmentResult | undefined {
   const row = database
-    .prepare("SELECT result FROM inbox WHERE project_id = ? AND module_instance_id = 'development'")
+    .prepare(
+      `SELECT inbox.result
+       FROM inbox
+       JOIN events ON events.id = inbox.event_id
+       WHERE inbox.project_id = ?
+         AND inbox.module_instance_id = 'development'
+         AND events.type = 'development.implementation.requested'
+       ORDER BY inbox.created_at DESC
+       LIMIT 1`,
+    )
     .get(projectId) as { result: string } | undefined;
-  expect(row).toBeDefined();
-  return JSON.parse(row!.result) as DevelopmentResult;
+  return row === undefined ? undefined : (JSON.parse(row.result) as DevelopmentResult);
 }
 
 function readAgentObservation(
