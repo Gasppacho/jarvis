@@ -53,6 +53,12 @@ it("exposes issue reasons, native blockers, last poll and a retained failed snap
     })
   ).json()) as ProjectOverview;
   expect(first.polling.state).toBe("live");
+  expect(first.workflow.stages.map((stage) => stage.id)).toEqual([
+    "github",
+    "rules",
+    "development",
+    "pull-request",
+  ]);
   expect(first.polling.lastPollAt).toEqual(expect.any(String));
   expect(first.issues).toEqual(
     expect.arrayContaining([
@@ -90,6 +96,19 @@ it("exposes issue reasons, native blockers, last poll and a retained failed snap
   expect(failed.issues).toEqual(first.issues);
   expect(JSON.stringify(failed)).not.toContain("provider secret");
   expect((await overview(fixture)).issues).toEqual(first.issues);
+});
+
+it("omits the Rules stage for the fixed composition", async () => {
+  const fixture = await startReferenceWorkflowFixture("overview-fixed", {}, false, true);
+  fixtures.push(fixture);
+  const response = await fixture.engine.call(`/v1/projects/${fixture.projectId}/overview`);
+  expect(response.status).toBe(200);
+  const body = (await response.json()) as ProjectOverview;
+  expect(body.workflow.stages.map((stage) => stage.id)).toEqual([
+    "github",
+    "development",
+    "pull-request",
+  ]);
 });
 
 it("pauses new admissions durably while keeping Resume explicit", async () => {

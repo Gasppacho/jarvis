@@ -10,7 +10,7 @@ import XCTest
 @MainActor
 final class ProjectOverviewTests: XCTestCase {
     func testFixtureMapsStatusesReasonsBlockersAndPolling() throws {
-        let overview = try decode(Self.fixture)
+        let overview = try decode(Self.fixedFixture)
 
         XCTAssertEqual(overview.status, .degraded)
         XCTAssertEqual(overview.primaryAction, .refresh)
@@ -41,6 +41,11 @@ final class ProjectOverviewTests: XCTestCase {
         XCTAssertEqual(
             ProjectOverviewPresentation.pollingLabel(overview.polling.state),
             "Connexion en échec")
+    }
+
+    func testLegacyOverviewRetainsRulesStage() throws {
+        let overview = try decode(Self.fixture)
+        XCTAssertEqual(overview.stages.map(\.id), [.github, .rules, .development, .pullRequest])
     }
 
     func testRefreshFailureKeepsTheLastSnapshotAsStale() async throws {
@@ -151,6 +156,7 @@ final class ProjectOverviewTests: XCTestCase {
             "available":true,
             "stages":[
               {"id":"github","label":"GitHub","status":"ready","detail":"Repository connected"},
+              {"id":"rules","label":"Rules","status":"ready","detail":"Rule is configured"},
               {"id":"development","label":"Development","status":"active","detail":"One issue is running"},
               {"id":"pull-request","label":"Pull Request","status":"waiting","detail":"The next expected state is a pull request"}
             ],
@@ -169,6 +175,10 @@ final class ProjectOverviewTests: XCTestCase {
           "readinessHelp":"The readiness label is ready-for-agent."
         }
         """
+
+    private static let fixedFixture = fixture.replacingOccurrences(
+        of: "{\"id\":\"rules\",\"label\":\"Rules\",\"status\":\"ready\",\"detail\":\"Rule is configured\"},\n",
+        with: "")
 }
 
 private actor CallCounter {

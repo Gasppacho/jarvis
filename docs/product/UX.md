@@ -196,7 +196,8 @@ sélectionné. Elle affiche :
 
 - le nom du Project et son statut `Draft`, `Ready`, `Running`, `Paused` ou `Degraded` ;
 - l'action cohérente avec ce statut (`Activate`, `Pause`, `Resume` ou `Refresh`) ;
-- le parcours `GitHub → Development → Pull Request` et la prochaine étape attendue ;
+- le parcours `GitHub → Development → Pull Request` pour `fixed-modules`; les projets legacy
+  conservent `GitHub → Rules → Development → Pull Request` et la prochaine étape attendue ;
 - les issues GitHub pertinentes, avec numéro, titre, statut (`Eligible`, `En attente`,
   `Déjà en cours`, `Bloquée par des dépendances`, `Non éligible` ou `Impossible de
   vérifier`) et explication lisible ;

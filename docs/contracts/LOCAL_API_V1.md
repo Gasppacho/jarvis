@@ -159,7 +159,8 @@ versioning de cette API.
 
 `GET /v1/projects/{projectId}/overview` expose le read model project-scoped attendu
 après activation. `ProjectOverviewV1` rassemble le statut du Project, l'action
-principale, le workflow `GitHub → Development → Pull Request`, l'étape suivante,
+principale et, pour une composition `fixed-modules`, le workflow `GitHub → Development → Pull Request`;
+les projets legacy conservent `GitHub → Rules → Development → Pull Request`, avec l'étape suivante,
 l'état du polling (`live`, `reconnecting`, `failed`, `paused` ou `unavailable`), le
 dernier polling réussi et sa raison d'erreur éventuelle. Il expose aussi les issues
 observées par GitHub avec leur numéro, titre, label de readiness, statut

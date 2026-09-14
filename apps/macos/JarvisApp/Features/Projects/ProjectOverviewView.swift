@@ -337,6 +337,7 @@ struct ProjectOverviewView: View {
     private func stageSymbol(_ stage: ProjectOverview.Stage) -> String {
         switch stage.id {
         case .github: "chevron.left.forwardslash.chevron.right"
+        case .rules: "line.3.horizontal.decrease.circle"
         case .development: "hammer"
         case .pullRequest: "arrow.triangle.pull"
         }

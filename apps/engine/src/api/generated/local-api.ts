@@ -1168,7 +1168,7 @@ export interface components {
         };
         ProjectOverviewStage: {
             /** @enum {string} */
-            id: "github" | "development" | "pull-request";
+            id: "github" | "rules" | "development" | "pull-request";
             label: string;
             /** @enum {string} */
             status: "ready" | "active" | "waiting" | "complete" | "unavailable";
