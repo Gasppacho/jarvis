@@ -254,18 +254,18 @@ struct ProjectWorkflowView: View {
 
     private func intervalControl(_ module: ProjectModuleDraft) -> some View {
         let value = module.configurationValues["pollIntervalSeconds"] ?? "60"
-        let historical = value == "15"
+        let historical = Int(value) == GitHubPollingFrequency.historicalSeconds
         return VStack(alignment: .leading, spacing: 4) {
             Text("Fréquence de vérification").font(.callout.weight(.medium))
             TextField("Minutes (1 à 60)", text: Binding(
-                get: { historical ? "15 secondes (historique)" : String(max(1, (Int(value) ?? 60) / 60)) },
+                get: { GitHubPollingFrequency.display(seconds: Int(value)) },
                 set: { text in
-                    guard let minutes = Int(text), (1...60).contains(minutes) else {
+                    guard let seconds = GitHubPollingFrequency.seconds(fromMinutes: text) else {
                         intervalError = "La fréquence doit être comprise entre 1 et 60 minutes."
                         return
                     }
                     intervalError = nil
-                    model.apply(.setModuleConfiguration(module.id, "pollIntervalSeconds", String(minutes * 60)),
+                    model.apply(.setModuleConfiguration(module.id, "pollIntervalSeconds", String(seconds)),
                                 projectId: project.id, packages: packages)
                 }))
                 .textFieldStyle(.roundedBorder)
