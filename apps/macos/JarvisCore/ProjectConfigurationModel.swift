@@ -440,7 +440,35 @@ public final class ProjectConfigurationModel {
     }
 
     public func addModule(projectId: String, package: ModulePackage) {
-        editDraft(projectId: projectId) { $0.add(package: package) }
+        let current = state(for: projectId)
+        guard let draft = current.draft else { return }
+        if draft.isFixedComposition || (draft.modules.isEmpty && draft.slotRequirements.isEmpty),
+            let guide = current.compositionGuide,
+            let template = guide.startingPoints.first(where: { $0.id == "github-development" })?.template,
+            let proposed = template.modules.first(where: { $0.moduleId == package.moduleId }) {
+            guard !draft.modules.contains(where: { $0.moduleId == package.moduleId }) else { return }
+            editDraft(projectId: projectId) { draft in
+                if !draft.isFixedComposition {
+                    var fixed = ProjectConfigurationDraft(configuration: template, packages: guide.modulePackages)
+                    fixed.name = draft.name
+                    fixed.commands = draft.commands
+                    fixed.repositories = draft.repositories
+                    fixed.modules = []
+                    fixed.slotRequirements = [:]
+                    draft = fixed
+                }
+                draft.modules.append(ProjectModuleDraft(payload: proposed, package: package))
+                let slots = Array(proposed.bindings?.additionalProperties.values ?? [:].values)
+                    + [proposed.runtimeSlot].compactMap { $0 }
+                for slot in slots where draft.slotRequirements[slot] == nil {
+                    if let requirement = template.slots.additionalProperties[slot] {
+                        draft.slotRequirements[slot] = ProjectSlotDraft(payload: requirement)
+                    }
+                }
+            }
+        } else {
+            editDraft(projectId: projectId) { $0.add(package: package) }
+        }
     }
 
     public func removeModule(projectId: String, moduleId: UUID) {
@@ -844,6 +872,8 @@ public final class ProjectConfigurationModel {
                 reviewError =
                     "The Draft was saved, but its Engine review could not be refreshed. Reload this Project before validation."
             }
+            let bindings = try? await client.getProjectBindings(projectId: projectId)
+            let graph = try? await client.fetchProjectCompositionGraph(projectId: projectId, portableConfig: nil)
             update(projectId) {
                 $0.detail = detail
                 $0.saveFailed = false
@@ -851,6 +881,11 @@ public final class ProjectConfigurationModel {
                     $0.isDraftSaved = false
                     return
                 }
+                let savedSlots = detail.portableConfiguration?.slots.additionalProperties ?? [:]
+                let retainedSlots = $0.draft?.slotRequirements.filter { savedSlots[$0.key] != nil } ?? [:]
+                $0.draft?.slotRequirements = retainedSlots
+                $0.localBindings = bindings
+                $0.compositionGraph = graph
                 $0.compositionGuide = review?.compositionGuide ?? $0.compositionGuide
                 $0.compositionReview = review
                 $0.candidates = review?.resourceChoices.candidates ?? []

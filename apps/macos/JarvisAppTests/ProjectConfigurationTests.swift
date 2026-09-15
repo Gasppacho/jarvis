@@ -547,6 +547,20 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(state.agentRuntimes?.required, false)
         XCTAssertEqual(state.runtimePresentation.status, "Choisissez d’abord un workflow")
 
+        let githubPackage = try XCTUnwrap(catalog.packages.first { $0.moduleId == "jarvis.module.github" })
+        configuration.addModule(projectId: imported.id, package: githubPackage)
+        await configuration.refreshCompositionChoices(projectId: imported.id)
+        let githubOnly = try XCTUnwrap(configuration.state(for: imported.id).draft)
+        XCTAssertEqual(githubOnly.modules.map(\.moduleId), ["jarvis.module.github"])
+        XCTAssertEqual(githubOnly.modules[0].configurationValues["repositories"], "[\"main\"]")
+        XCTAssertEqual(githubOnly.modules[0].bindings["sourceControl"], "sourceControl")
+        XCTAssertNil(githubOnly.slotRequirements["agentRuntime"])
+        configuration.editDraft(projectId: imported.id) { $0.modules[0].enabled = false }
+        configuration.addModule(projectId: imported.id, package: githubPackage)
+        XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.count, 1)
+        configuration.editDraft(projectId: imported.id) { $0.modules = []; $0.slotRequirements = [:] }
+        await configuration.refreshCompositionChoices(projectId: imported.id)
+
         configuration.apply(.addSlot(name: "custom-slot", requirement: "agent.execute"), projectId: imported.id, packages: catalog.packages)
         let slotsOnly = configuration.state(for: imported.id).draft
         configuration.chooseStartingPoint(projectId: imported.id, startingPointId: "github-development")
@@ -568,6 +582,10 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertTrue(proposedDevelopment.configurationValues["preparation", default: ""].isEmpty)
         XCTAssertFalse(state.draft?.workflowCommandsConfigured ?? true)
         XCTAssertEqual(state.compositionReview?.githubDevelopmentFlow, true)
+        let canvas = WorkflowCanvasPresentation(graph: try XCTUnwrap(state.compositionGraph))
+        XCTAssertEqual(Set(canvas.connections.map(\.contractType)), ["scm.work-item.observed", "scm.change-request.creation-requested"])
+        XCTAssertTrue(canvas.edges.contains { $0.contractType == "development.implementation.requested" && $0.from == $0.to })
+        XCTAssertFalse(canvas.connections.contains { $0.from == $0.to })
 
         XCTAssertEqual(
             state.resourceChoices.map(\.slotId),
@@ -689,6 +707,13 @@ final class ProjectConfigurationTests: XCTestCase {
                 $0.type == "development.implementation.requested"
             }),
             nil)
+
+        configuration.removeModule(projectId: imported.id, moduleId: development.id)
+        let removedSave = await configuration.saveDraft(projectId: imported.id, writeToRepository: false)
+        XCTAssertNotNil(removedSave)
+        XCTAssertNil(configuration.state(for: imported.id).draft?.slotRequirements["agentRuntime"])
+        let repeatedSave = await configuration.saveDraft(projectId: imported.id, writeToRepository: false)
+        XCTAssertNotNil(repeatedSave)
 
         let github = try XCTUnwrap(state.draft?.modules.first { $0.instanceId == "github" })
         configuration.apply(

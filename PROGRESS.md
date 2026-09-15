@@ -1,5 +1,24 @@
 # Fiabilité et UX Jarvis — progression
 
+## Audit #220 / réception #235 — 2026-09-15
+
+[Rapport et reprise](docs/plans/issue-220-audit-2026-09-14.md).
+Baseline publiée vérifiée : 372 unitaires, 400 intégration, 202 Swift.
+Gate final exact `rtk pnpm verify` réussi à 07:37:44 CEST : 372 unitaires,
+406 intégration, 202 Swift, contrats/types/architecture et build macOS release.
+Écarts Engine/UI corrigés dans le worktree isolé `codex/issue-220-audit-20260914`.
+Essai réel autorisé sur Jarvis : [#236](https://github.com/Gasppacho/jarvis/issues/236)
+→ Codex → commit `45d580d` → [PR #237](https://github.com/Gasppacho/jarvis/pull/237),
+deux lignes graphiques/test modifiées, vérification réussie, projets en pause.
+Aucune fusion. Réception native terminée en clair/sombre, aux deux tailles,
+avec VoiceOver (liens, erreur complète et correction), import, retrait,
+réenregistrement et reprise. Huit captures sont jointes au rapport.
+Préflight réel : 23 observations disponibles en 6,1 secondes ; configuration
+incomplète toujours bloquée. #220 et #235 restent ouvertes pour la relecture
+et la fusion manuelles des PR #238 et #237.
+
+## Historique L01–L10
+
 Plan autorisé : [L01–L10](docs/plans/jarvis-ux-audit-2026-09-13/PLAN.md).
 Worktree : `/Users/quentin/02_Code/jarvis-ux-reliability-20260913`.
 Branche : `codex/ux-reliability-20260913` ; base : `64eb2945b04755590ac7534ad0c7d939084953da`.

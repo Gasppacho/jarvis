@@ -4,8 +4,10 @@
 
 Décision du 13 septembre 2026 : **Dépôt → Workflow → Accès et agent → Vérification**
 est l'unique parcours recommandé. Il remplace les anciens assistants à cinq étapes
-et le second panneau de navigation. Les réglages de composition restent accessibles
-dans **Réglages avancés**, avec un retour explicite au guide du même projet.
+et le second panneau de navigation. Les modules fixes se règlent dans leurs cartes ;
+les diagnostics restent accessibles dans **Réglages avancés**, avec un retour
+explicite au guide du même projet. Après activation, l'onglet **Composition**
+réutilise ces cartes et replie les bindings et contrats techniques.
 Le plan et les preuves de livraison sont suivis dans
 [`PROGRESS.md`](../../PROGRESS.md) ; les captures de la maquette d'audit représentent
 des données fictives, pas des résultats exécutés.
@@ -50,20 +52,23 @@ dossier reste local à ce Mac et peut être réautorisé depuis cette étape.
 
 ## Workflow
 
-La carte **Développer une issue GitHub** applique la proposition existante de
-l'Engine. Elle n'accorde aucune ressource locale. Le schéma explicatif présente :
+**Ajouter GitHub** et **Ajouter Développement** ajoutent chacun un seul module,
+sans activation ni accord de ressource. GitHub seul permet l'observation ;
+Développement seul reste un brouillon non activable. Le schéma présente les
+échanges calculés par l'Engine, y compris le retour :
 
 ```text
-Issue prête → Développement → Vérifications → Pull Request
+GitHub → observation des issues → Développement
+GitHub ← demande de Pull Request ← Développement
 ```
 
-Chaque carte révèle son explication et les réglages usuels. À petite largeur,
-l'ordre devient vertical. Le schéma projette la composition canonique et les
-événements déclarés par l'Engine ; il ne stocke pas un second graphe et Swift ne
-recalcule aucun routage. Une composition personnalisée conserve ses valeurs.
-Remplacer une composition par le modèle demande une confirmation qui nomme les
-valeurs remplacées : modules et exigences de ressources ; nom et commandes
-du projet sont conservés. Le modèle déjà présent ne devient pas un choix à refaire.
+Chaque carte révèle ses réglages usuels et son retrait du brouillon. Un package
+déjà présent, même désactivé, ne peut pas être ajouté deux fois. Le schéma projette
+les événements déclarés par l'Engine ; Swift ne recalcule aucun routage. Trait plein
+pour les demandes, pointillés pour les faits, flèches et liste équivalente indiquent
+les destinataires. Les sorties sans destinataire sont consultables séparément ;
+l'auto-demande interne reste technique. Les configurations historiques restent
+inertes jusqu'à leur migration ou reconstruction explicite.
 
 Le parcours recommandé utilise une issue ouverte portant **ready-to-dev**, sans
 bloqueur GitHub natif ouvert. GitHub produit `scm.work-item.observed`, puis
@@ -146,17 +151,16 @@ ne prouve pas le parcours utilisateur complet.
 
 ## Réglages avancés de composition
 
-Les formulaires existants de modules, ressources et configuration structurée
-restent le chemin d'édition des réglages métier. Leur navigation interne
-ne constitue pas un autre assistant de premier usage. Les ressources éligibles,
-capabilities, compatibilités et destinations viennent de l'Engine. Les valeurs
-inconnues sont conservées et réparables ; le shell n'invente ni ressource ni contrat.
-Le choix d'une ressource écrit les Local Bindings, jamais la Portable Configuration.
-La sauvegarde conserve ces deux documents canoniques, sans lignes de présentation.
+En mode fixe, les cartes GitHub et Développement sont le chemin d'édition métier.
+Les éditeurs génériques de modules et exigences de slots ne sont pas proposés.
+Les bindings, capabilities, compatibilités et destinations issus de l'Engine sont
+regroupés sous **Détails techniques de la composition**. Le choix d'une ressource
+écrit les Local Bindings, jamais un secret dans la Portable Configuration.
+La sauvegarde conserve ces documents canoniques, sans lignes de présentation.
 
-### Module Configuration structurée
+### Historique : Module Configuration structurée
 
-Chaque Module Configuration embarquée est éditée récursivement depuis son JSON Schema :
+Le formulaire générique antérieur au mode fixe éditait la configuration depuis son JSON Schema :
 contrôles scalaires, enums, objets, collections et valeurs répétables. Le contrôle montre
 le `title`, la `description`, les exemples, l'état requis ou optionnel, le défaut et les
 bornes appartenant au schema. Le JSON brut reste sous `Advanced` pour la réparation et
@@ -167,8 +171,9 @@ précédent, indique comment les réparer ou les retrouver, et restaure ces vale
 l'utilisateur revient au package. Le wizard ne déduit aucune sémantique du nom d'une
 propriété et ne crée ni nom de Slot ni capability factice : le nom reste saisi, tandis que
 la capability est offerte depuis le Module Catalog ou explicitement saisie sous `Advanced`.
-La sauvegarde sérialise uniquement la Module Configuration canonique, sans état de contrôle
-propre au shell.
+La sauvegarde sérialisait uniquement la Module Configuration canonique, sans état de contrôle
+propre au shell. Ce formulaire n'est plus un parcours de configuration du mode fixe ;
+les configurations legacy sont consultables/exportables pour migration, sans exécution.
 
 Le contrôle de binding d'une Module Instance propose de même les noms déclarés par
 `ModulePackage.requires[].binding` du Module Package sélectionné (ticket 48) — jamais une
@@ -209,8 +214,8 @@ Project Detail expose l'action destructive `Delete Project…`. Elle ouvre une c
 
 ## Graphe émergent — diagnostic avancé
 
-Cette section décrit l’inspection technique des compositions personnalisées.
-Elle reste distincte du schéma métier à quatre cartes du guide recommandé.
+Cette section décrit la projection technique et l'historique des prototypes.
+Le guide fixe utilise désormais les deux modules et leurs flèches aller/retour.
 
 Le graphe est dérivé des manifests et instances actives. Il n'est pas un éditeur de workflow impératif. La vue runtime livrée par #18 est l'onglet **Graph** de Project Detail : après activation, il lit `GET /v1/projects/{projectId}/graph` et affiche les Module Instances et contrats effectivement actifs. L'onglet **Timeline** expose les Executions et leur action d'annulation par la même Local API.
 
@@ -258,7 +263,7 @@ Les trois prototypes ont été comparés depuis le build empaqueté (`pnpm build
 
 ### Sélection et deuxième surface
 
-Pour ce diagnostic avancé, #52 termine l’outline retenue par #50. Cette décision concerne le graphe détaillé des contrats ; elle n’interdit pas les quatre cartes explicatives du guide métier. Sélectionner une ligne — Module Instance, contrat produit, contrat consommé, capability requise ou entrée de rail — révèle son détail : identifiants stables, version de contrat, statut de routage et findings applicables. Ce détail est une projection pure de `ProjectCompositionGraph`, indexée par l'id déjà qualifié par Module Instance, rôle et index ; il ne recalcule ni consumer, ni compatibilité, ni routage, et un id inconnu ou périmé ne révèle rien plutôt que de planter. La sélection est un `Button` natif : atteignable au clavier, annoncée par VoiceOver, distinguée par un glyphe de divulgation et par le mot « Selected » dans son libellé d'accessibilité — jamais par la seule couleur ni par le survol.
+Pour ce diagnostic avancé, #52 termine l’outline retenue par #50. Cette décision concerne le graphe détaillé des contrats, désormais replié derrière le canvas fixe. Sélectionner une ligne — Module Instance, contrat produit, contrat consommé, capability requise ou entrée de rail — révèle son détail : identifiants stables, version de contrat, statut de routage et findings applicables. Ce détail est une projection pure de `ProjectCompositionGraph`, indexée par l'id déjà qualifié par Module Instance, rôle et index ; il ne recalcule ni consumer, ni compatibilité, ni routage, et un id inconnu ou périmé ne révèle rien plutôt que de planter. La sélection est un `Button` natif : atteignable au clavier, annoncée par VoiceOver, distinguée par un glyphe de divulgation et par le mot « Selected » dans son libellé d'accessibilité — jamais par la seule couleur ni par le survol.
 
 La seconde surface que #28 demandait (Wizard preview et Project Overview) se réduit, tant que #18 et #6 ne livrent pas l'état runtime, à l'état lecture seule de Project Detail : un Project sauvegardé, sans Draft ouvert (`ProjectConfigurationState.isDraftSaved == true`). Cet état affiche la même Composition, construite par le même `ProjectCompositionOutline` à partir du même `ProjectCompositionGraph`, que l'état d'édition du Wizard ; aucune des deux surfaces ne reconstruit de règle métier Engine. La liste retenue par #51 reste disponible et équivalente pour la même composition.
 

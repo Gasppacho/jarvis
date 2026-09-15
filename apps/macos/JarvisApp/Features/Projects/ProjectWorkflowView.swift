@@ -19,122 +19,91 @@ struct ProjectWorkflowView: View {
         state.draft.map { !$0.modules.isEmpty || !$0.slotRequirements.isEmpty } ?? false
     }
     private var development: [ProjectModuleDraft] {
-        state.draft?.modules.filter { $0.enabled && $0.moduleId == "jarvis.module.development" } ?? []
+        state.draft?.modules.filter { $0.moduleId == "jarvis.module.development" } ?? []
     }
     private var flowConfirmed: Bool { state.compositionReview?.githubDevelopmentFlow == true }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
+            startingPoint
             if hasComposition {
-                Label(flowConfirmed ? "Workflow du projet" : "Parcours de référence",
+                Label("Modules du projet",
                       systemImage: "arrow.triangle.branch").font(.headline)
                 Text("Cliquez une carte pour comprendre et régler cette partie du workflow.")
                     .foregroundStyle(.secondary)
                 if flowConfirmed {
                     Label("Une issue à la fois ; relecture et merge manuels.", systemImage: "person")
                         .font(.callout)
-                } else {
-                    Label("Les liens de ce parcours ne sont pas confirmés pour votre brouillon. Vérifiez les réglages avancés ou choisissez le modèle GitHub.",
-                          systemImage: "exclamationmark.triangle")
-                        .font(.callout).foregroundStyle(.orange)
                 }
                 if let graph = state.compositionGraph {
                     WorkflowCanvasView(
                         presentation: WorkflowCanvasPresentation(graph: graph),
                         onSelectModule: { instanceId in
-                            onSelectModule?(instanceId)
-                            if onSelectModule == nil { openAdvanced?() }
+                            stage = state.draft?.modules.first(where: { $0.instanceId == instanceId })?.moduleId == "jarvis.module.github" ? .issue : .development
                         })
                 }
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) {
-                        ForEach(WorkflowStage.allCases) { item in
-                            stageCard(item, arrow: "arrow.right").frame(width: 170)
-                        }
-                    }
-                    VStack(spacing: 10) {
-                        ForEach(WorkflowStage.allCases) { item in stageCard(item, arrow: "arrow.down") }
-                    }
-                }
-                GroupBox(stage.title) {
+                GroupBox(stage == .issue ? "GitHub" : "Développement") {
                     VStack(alignment: .leading, spacing: 14) {
-                        if !flowConfirmed { Text("Dans le modèle proposé :").font(.headline) }
-                        Text(stage.explanation)
+                        if let module = state.draft?.modules.first(where: {
+                            $0.moduleId == (stage == .issue ? "jarvis.module.github" : "jarvis.module.development")
+                        }) {
+                            HStack {
+                                Toggle("Module activé", isOn: Binding(
+                                    get: { module.enabled },
+                                    set: { model.apply(.setModuleEnabled(module.id, $0), projectId: project.id, packages: packages) }))
+                                Spacer()
+                                Button("Retirer du brouillon", role: .destructive) {
+                                    model.removeModule(projectId: project.id, moduleId: module.id)
+                                    stage = state.draft?.modules.contains(where: { $0.moduleId == "jarvis.module.github" }) == true ? .issue : .development
+                                }
+                            }
+                        }
                         stageSettings
+                        if stage == .development {
+                            Button("Choisir les vérifications") { stage = .validation }
+                        } else if stage == .validation {
+                            Button("Revenir aux réglages de Développement") { stage = .development }
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(6)
                 }
-                Label(state.draft?.workflowCommandsConfigured == true
+                if !development.isEmpty { Label(state.draft?.workflowCommandsConfigured == true
                       ? "Préparation et vérifications choisies — commandes encore à exécuter"
                       : "Préparer et vérifier le projet : confirmez les commandes dans les cartes Développement et Vérifications.",
                       systemImage: "checklist")
-                    .font(.callout).foregroundStyle(.secondary)
-                DisclosureGroup("Changer de modèle") { startingPoint }
-            } else {
-                GroupBox("Développer une issue GitHub") { startingPoint.padding(6) }
+                    .font(.callout).foregroundStyle(.secondary) }
             }
             if let openAdvanced {
                 Button("Réglages avancés", action: openAdvanced)
                     .accessibilityIdentifier("workflow.advanced")
             }
         }
-        .confirmationDialog("Remplacer le workflow actuel ?", isPresented: Binding(
-            get: { state.pendingStartingPointID != nil },
-            set: { if !$0 { model.cancelStartingPointReplacement(projectId: project.id) } }
-        )) {
-            Button("Remplacer le workflow", role: .destructive) {
-                if let id = state.pendingStartingPointID {
-                    model.chooseStartingPoint(projectId: project.id, startingPointId: id, confirmedReplacement: true)
-                }
-            }
-            Button("Conserver mon brouillon", role: .cancel) {
-                model.cancelStartingPointReplacement(projectId: project.id)
-            }
-        } message: {
-            Text("Les modules, paramètres et associations internes seront remplacés. Le label revient à ready-to-dev ; préparation et validations seront à confirmer. Une seule exécution sera autorisée ; les branches et remotes manquants seront complétés. Le nom, les commandes saisies et les références locales de comptes et d’agent sont conservés. Les accès seront à revérifier.")
+        .onAppear {
+            if state.draft?.modules.contains(where: { $0.moduleId == "jarvis.module.github" }) != true,
+               !development.isEmpty { stage = .development }
         }
-    }
-
-    private func stageCard(_ item: WorkflowStage, arrow: String) -> some View {
-        Button { stage = item } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Image(systemName: item.icon)
-                    Spacer()
-                    if item != .pullRequest { Image(systemName: arrow) }
-                }
-                Text(item.title).font(.headline)
-                Text(stageStatus(item)).font(.caption).foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, minHeight: 74, alignment: .leading)
-            .padding(12)
-            .background(stage == item ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.06),
-                        in: RoundedRectangle(cornerRadius: 12))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(item.title), \(stageStatus(item))")
-        .accessibilityHint("Afficher l’explication et les réglages")
-        .accessibilityAddTraits(stage == item ? .isSelected : [])
-        .accessibilityIdentifier("workflow.stage.\(item.rawValue)")
     }
 
     private var startingPoint: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Une issue ouverte, portant le label choisi et sans bloqueur GitHub ouvert, est développée puis proposée dans une Pull Request. Une issue à la fois ; vous gardez la relecture et le merge.")
+            Text("Ajoutez GitHub pour observer les issues, puis Développement pour les traiter et proposer une Pull Request. Chaque ajout reste un brouillon.")
             HStack {
-                Button(hasComposition ? "Utiliser le modèle GitHub" : "Ajouter GitHub") {
-                    model.chooseStartingPoint(projectId: project.id, startingPointId: "github-development")
+                Button("Ajouter GitHub") {
+                    guard let package = packages.first(where: { $0.moduleId == "jarvis.module.github" }) else { return }
+                    model.addModule(projectId: project.id, package: package)
+                    stage = .issue
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(state.draft == nil || state.compositionGuide?.startingPoints.contains { $0.id == "github-development" } != true)
+                .disabled(state.draft == nil || state.draft?.modules.contains(where: { $0.moduleId == "jarvis.module.github" }) == true)
                 .accessibilityIdentifier("workflow.choose-github")
-                Button("Ajouter Development") {
+                Button("Ajouter Développement") {
                     guard let package = packages.first(where: { $0.moduleId == "jarvis.module.development" }) else { return }
                     model.addModule(projectId: project.id, package: package)
+                    stage = .development
                 }
                 .buttonStyle(.bordered)
-                .disabled(state.draft == nil || !development.isEmpty)
+                .disabled(state.draft == nil || state.draft?.modules.contains(where: { $0.moduleId == "jarvis.module.development" }) == true)
                 .accessibilityIdentifier("workflow.add-development")
             }
             Text("Vous pourrez enregistrer et reprendre un brouillon incomplet.")
@@ -301,14 +270,8 @@ struct ProjectWorkflowView: View {
             set: { model.apply(.setModuleConfiguration(module.id, key, $0), projectId: project.id, packages: packages) })
     }
 
-    private func stageStatus(_ item: WorkflowStage) -> String {
-        if item == .validation { return state.draft?.workflowCommandsConfigured == true ? "Choix confirmés" : "À confirmer" }
-        guard flowConfirmed else { return "Liens à vérifier" }
-        return item == .issue ? "Contrôle des bloqueurs configuré" : "Destination définie"
-    }
-
     private var githubCard: some View {
-        let github = state.draft?.modules.first { $0.enabled && $0.moduleId == "jarvis.module.github" }
+        let github = state.draft?.modules.first { $0.moduleId == "jarvis.module.github" }
         return GroupBox {
             if let github {
                 VStack(alignment: .leading, spacing: 12) {

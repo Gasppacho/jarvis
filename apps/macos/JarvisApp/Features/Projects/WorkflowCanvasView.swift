@@ -11,7 +11,7 @@ struct WorkflowCanvasView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Composition fixe").font(.headline)
-            Text("Les flèches et contrats viennent de la réponse Engine. Les liens sont informatifs.")
+            Text("Les modules échangent automatiquement ces événements. Sélectionnez un module pour le régler.")
                 .font(.callout).foregroundStyle(.secondary)
             GeometryReader { proxy in
                 ZStack {
@@ -19,10 +19,13 @@ struct WorkflowCanvasView: View {
                         let points = Dictionary(uniqueKeysWithValues: presentation.nodes.map {
                             ($0.id, CGPoint(x: CGFloat($0.x) * size.width, y: CGFloat($0.y) * size.height))
                         })
-                        for (index, edge) in presentation.edges.enumerated() {
-                            guard let start = points[edge.from], let target = edge.to.flatMap({ points[$0] }) else { continue }
+                        for edge in presentation.connections {
+                            guard let source = points[edge.from], let destination = edge.to.flatMap({ points[$0] }) else { continue }
+                            let direction: CGFloat = destination.x >= source.x ? 1 : -1
+                            let start = CGPoint(x: source.x + direction * 66, y: source.y)
+                            let target = CGPoint(x: destination.x - direction * 66, y: destination.y)
                             var path = Path()
-                            let bend = CGFloat(index.isMultiple(of: 2) ? 18 : -18)
+                            let bend = -direction * 48
                             let middle = CGPoint(x: (start.x + target.x) / 2, y: (start.y + target.y) / 2 + bend)
                             path.move(to: start)
                             path.addQuadCurve(to: target, control: middle)
@@ -41,7 +44,7 @@ struct WorkflowCanvasView: View {
                             VStack(spacing: 4) {
                                 Image(systemName: node.enabled ? "shippingbox.fill" : "shippingbox")
                                 Text(node.title).font(.caption.weight(.medium)).multilineTextAlignment(.center)
-                                Text(node.enabled ? "Enabled" : "Disabled").font(.caption2)
+                                Text(node.enabled ? "Activé" : "Désactivé").font(.caption2)
                             }
                             .frame(width: 130, height: 68)
                             .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
@@ -50,17 +53,16 @@ struct WorkflowCanvasView: View {
                         .buttonStyle(.plain)
                         .position(x: CGFloat(node.x) * proxy.size.width, y: CGFloat(node.y) * proxy.size.height)
                         .accessibilityLabel(node.accessibilityLabel)
-                        .accessibilityHint("Open module settings")
+                        .accessibilityHint("Ouvrir les réglages du module")
                     }
                 }
             }
             .frame(minHeight: 190, maxHeight: 280)
-            Text("Solid arrow: request. Dashed arrow: fact broadcast. An absent arrow target is an orphaned or ambiguous request.")
+            Text("Trait plein : demande. Pointillés : fait observé. Le sens de la flèche indique le destinataire.")
                 .font(.caption).foregroundStyle(.secondary)
-                .accessibilityLabel("Legend: solid arrow is a request; dashed arrow is a fact broadcast; an absent target is an orphaned or ambiguous request.")
             VStack(alignment: .leading, spacing: 6) {
-                Text("Links").font(.subheadline.weight(.semibold))
-                ForEach(presentation.edges) { edge in
+                Text("Échanges — liste équivalente").font(.subheadline.weight(.semibold))
+                ForEach(presentation.connections) { edge in
                     Button {
                         selectedEdgeID = selectedEdgeID == edge.id ? nil : edge.id
                     } label: {
@@ -69,14 +71,26 @@ struct WorkflowCanvasView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(edge.accessibilityLabel)
-                    .accessibilityHint("Show contract compatibility and trigger information")
+                    .accessibilityHint("Afficher le contrat et les conditions de déclenchement")
                     if selectedEdgeID == edge.id {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Compatibility: \(edge.compatibilityLabel)")
-                            Text("Trigger: \(edge.triggerLabel)")
+                            Text("Contrat : \(edge.compatibilityLabel)")
+                            Text(edge.triggerLabel)
                         }
                         .font(.caption)
                         .padding(.leading, 24)
+                    }
+                }
+                DisclosureGroup("Sorties sans destinataire (\(presentation.unconnectedOutputs.count))") {
+                    ForEach(presentation.unconnectedOutputs) { edge in
+                        Label(edge.label, systemImage: edge.kind == .request ? "exclamationmark.triangle" : "circle.dotted")
+                            .accessibilityLabel(edge.accessibilityLabel)
+                    }
+                }
+                DisclosureGroup("Détails techniques") {
+                    ForEach(presentation.edges) { edge in
+                        Text("\(edge.compatibilityLabel) · \(edge.triggerLabel)")
+                            .font(.caption).textSelection(.enabled)
                     }
                 }
             }

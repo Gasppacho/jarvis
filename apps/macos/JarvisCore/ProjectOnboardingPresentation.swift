@@ -90,6 +90,7 @@ public struct ProjectOnboardingPresentation: Sendable, Equatable {
             reviewStatus = report.valid && report.configurationReady ? .complete : .failed
         }
         let hasWorkflow = configuration?.draft?.modules.contains(where: \.enabled) == true
+        let hasDevelopment = configuration?.draft?.modules.contains { $0.enabled && $0.moduleId == "jarvis.module.development" } == true
         let resources = configuration?.resourceChoices ?? []
         let resourcesReady = !resources.isEmpty && resources.allSatisfy { $0.status == .bound }
             && configuration?.runtimeAllowsActivation == true
@@ -105,7 +106,7 @@ public struct ProjectOnboardingPresentation: Sendable, Equatable {
         }
         steps = [
             Self.step(.repository, repositoryStatus),
-            Self.step(.workflow, hasWorkflow && configuration?.draft?.workflowCommandsConfigured == true ? .readyForReview : .needsAction),
+            Self.step(.workflow, hasWorkflow && (!hasDevelopment || configuration?.draft?.workflowCommandsConfigured == true) ? .readyForReview : .needsAction),
             Self.step(.connections, resourcesReady ? .complete : .needsAction),
             Self.step(.review, reviewStatus),
         ]

@@ -117,6 +117,157 @@ console.log(JSON.stringify({type: "turn.completed", usage: {input_tokens: 1, out
   return { f, path, config };
 }
 
+it("checks a slow backlog within the read budget and still rejects incomplete observations", async () => {
+  const { f, path } = await setup();
+  const numbers = Array.from({ length: 24 }, (_, index) => 200 + index);
+  for (const number of numbers) {
+    seed(f, number, number === 204);
+    f.fakeGitHub.scriptRoute("GET", `/repos/Gasppacho/jarvis/issues/${number}`, {
+      status: 200,
+      delayMs: 600,
+      body: {
+        number,
+        title: `Issue ${number}`,
+        state: "open",
+        labels: [{ name: "ready-to-dev" }],
+      },
+    });
+  }
+  const complete = await report(f, path);
+  expect(complete.candidateEligibility.status).toBe("available");
+  expect(complete.candidateEligibility.items).toHaveLength(24);
+  expect(
+    complete.candidateEligibility.items.filter((item) => item.status === "eligible"),
+  ).toHaveLength(23);
+  expect(
+    complete.candidateEligibility.items.find((item) => item.workItemRef.endsWith("/204"))
+      ?.openDependencyCount,
+  ).toBe(1);
+
+  f.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis/issues/223", {
+    status: 503,
+    body: {},
+  });
+  const incomplete = await report(f, path);
+  expect(incomplete.candidateEligibility.status).toBe("unavailable");
+  expect(
+    incomplete.candidateEligibility.items.find((item) => item.workItemRef.endsWith("/223"))?.status,
+  ).toBe("unavailable");
+  expect(
+    incomplete.checks.find((item) => item.id === "dependencies:Gasppacho/jarvis")?.status,
+  ).toBe("failed");
+  expect(f.fakeGitHub.pullRequests).toHaveLength(0);
+}, 30_000);
+
+it("preflights and activates GitHub observation without Development or a ready label", async () => {
+  const { f, path, config } = await setup();
+  f.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis", {
+    status: 200,
+    body: { permissions: { pull: true, push: false } },
+  });
+  await save(f, path, {
+    ...config,
+    modules: config.modules.filter((module) => module.moduleId === "jarvis.module.github"),
+  });
+  const bindings = (await (await f.engine.call(`${path}/bindings`)).json()) as {
+    slots: Record<string, unknown>;
+  };
+  expect(bindings.slots).not.toHaveProperty("agentRuntime");
+  expect(bindings.slots).toHaveProperty("sourceControl");
+  const detail = (await (await f.engine.call(path)).json()) as {
+    portableConfig: PortableProjectConfiguration;
+  };
+  expect(detail.portableConfig.slots).not.toHaveProperty("agentRuntime");
+  const ready = await report(f, path);
+  expect(ready.valid, JSON.stringify(ready.checks)).toBe(true);
+  expect(ready.runtime.required).toBe(false);
+  expect(ready.trigger).toBeUndefined();
+  expect(
+    ready.checks.some((item) => item.id === "development" || item.id.startsWith("label:")),
+  ).toBe(false);
+  expect(
+    (
+      await post(f, `${path}/preflight-activate`, {
+        compositionFingerprint: ready.compositionFingerprint,
+      })
+    ).status,
+  ).toBe(200);
+  expect(readFileSync(f.runtimeCounterPath, "utf8")).toBe("");
+});
+
+it("keeps a project-bound Codex graph contract-valid without exposing its environment", async () => {
+  const { f, path } = await setup();
+  const response = await post(f, `${path}/composition-graph`, {});
+  const graph = await response.json();
+  const validate = localApiValidator("ProjectCompositionGraphV1");
+  expect(response.status).toBe(200);
+  expect(validate(graph), explain(validate)).toBe(true);
+  expect(JSON.stringify(graph)).not.toContain('"environment"');
+  expect(graph).toMatchObject({
+    rail: expect.arrayContaining([
+      expect.objectContaining({
+        kind: "slot",
+        slot: "agentRuntime",
+        binding: { kind: "runtime", ref: "runtime/codex-preflight" },
+      }),
+    ]),
+  });
+});
+
+it("cannot bypass a failed preflight through direct activation or either resume route", async () => {
+  const { f, path } = await setup();
+  const ready = await report(f, path);
+  expect(ready.valid).toBe(true);
+  expect(
+    (
+      await post(f, `${path}/preflight-activate`, {
+        compositionFingerprint: ready.compositionFingerprint,
+      })
+    ).status,
+  ).toBe(200);
+  expect((await post(f, `${path}/pause`, {})).status).toBe(200);
+  f.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis", { status: 403, body: {} });
+  expect((await report(f, path)).valid).toBe(false);
+  for (const route of ["activate", "resume", "development-admission/resume"]) {
+    expect(
+      (
+        await post(f, `${path}/${route}`, {
+          compositionFingerprint: ready.compositionFingerprint,
+        })
+      ).status,
+      route,
+    ).toBe(409);
+  }
+  expect(((await (await f.engine.call(path)).json()) as { status: string }).status).toBe("paused");
+  expect(readFileSync(f.runtimeCounterPath, "utf8")).toBe("");
+});
+
+it("a pause wins over an in-flight resume preflight", async () => {
+  const { f, path } = await setup();
+  const ready = await report(f, path);
+  expect(
+    (
+      await post(f, `${path}/preflight-activate`, {
+        compositionFingerprint: ready.compositionFingerprint,
+      })
+    ).status,
+  ).toBe(200);
+  await post(f, `${path}/pause`, {});
+  const repositoryReads = () =>
+    f.fakeGitHub.requests.filter((request) => request.path === "/repos/Gasppacho/jarvis").length;
+  const before = repositoryReads();
+  f.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis", {
+    status: 200,
+    delayMs: 1500,
+    body: { permissions: { pull: true, push: true } },
+  });
+  const resuming = post(f, `${path}/resume`, {});
+  await expect.poll(repositoryReads).toBeGreaterThan(before);
+  expect((await post(f, `${path}/pause`, {})).status).toBe(200);
+  expect((await resuming).status).toBe(409);
+  expect(await (await f.engine.call(path)).json()).toMatchObject({ status: "paused" });
+});
+
 it("preflights fixed-modules from Development and scopes without an Automation Rule", async () => {
   const { f, path } = await setup({}, true);
   const ready = await report(f, path);
@@ -204,6 +355,9 @@ it("runs fixed-modules A, preserves it across restart, then admits B after scope
   expect(readFileSync(f.runtimeCounterPath, "utf8").trim().split("\n")).toHaveLength(1);
 
   const current = await report(f, path);
+  expect((await post(f, `${path}/pause`, {})).status).toBe(200);
+  expect((await post(f, `${path}/resume`, {})).status).toBe(200);
+  expect(f.fakeGitHub.pullRequests).toHaveLength(1);
   const monitoring = await post(f, `${path}/preflight-scope`, {
     compositionFingerprint: current.compositionFingerprint,
     scope: "all",
@@ -365,7 +519,7 @@ async function save(
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ portableConfig: config, writeToRepository: false }),
   });
-  expect(response.status).toBe(200);
+  expect(response.status, await response.text()).toBe(200);
 }
 
 it("separates native eligibility, scoped GET failures, label repair and resource findings", async () => {

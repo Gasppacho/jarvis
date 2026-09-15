@@ -46,7 +46,7 @@ export interface ProjectRegistry<Summary, Detail, Bindings, ValidationReport> {
   listProjects(): Summary[];
   getProject(id: unknown): Detail;
   validateProject(id: unknown): ValidationReport;
-  activateProject(request: ActivateProjectRequest): Summary;
+  activateProject(request: ActivateProjectRequest): Summary | Promise<Summary>;
   deleteProject(id: unknown): void;
   updateRepositoryBinding(request: UpdateRepositoryBindingRequest): Detail;
   replaceProjectConfiguration(request: ReplaceProjectConfigurationRequest): Detail;

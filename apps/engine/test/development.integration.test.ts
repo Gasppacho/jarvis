@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { seedActivatedConsumerProject } from "./activated-project-fixture.js";
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
@@ -416,6 +417,46 @@ describe("Development Module tracer bullet", () => {
       }
     },
   );
+
+  it("refuses module removal while a paused project retains a pending request", async () => {
+    const projectId = "paused-module-removal";
+    const { engine } = await admissionFixture(projectId, "await-signal");
+    expect((await engine.call(`/v1/projects/${projectId}/pause`, { method: "POST" })).status).toBe(
+      200,
+    );
+    await publishTag(engine, projectId, "pending", 1, "github://Gasppacho/jarvis/issues/1");
+    const database = new Database(join(engine.dataRoot, "jarvis.sqlite"));
+    try {
+      await expect
+        .poll(() =>
+          database
+            .prepare(
+              "SELECT COUNT(*) AS n FROM deliveries WHERE project_id = ? AND consumed_at IS NULL",
+            )
+            .get(projectId),
+        )
+        .toEqual({ n: 1 });
+      const detail = (await (await engine.call(`/v1/projects/${projectId}`)).json()) as {
+        portableConfig: PortableProjectConfiguration;
+      };
+      const removal = await engine.call(`/v1/projects/${projectId}/configuration`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          portableConfig: {
+            ...detail.portableConfig,
+            modules: detail.portableConfig.modules.filter(
+              (module) => module.moduleId !== "jarvis.module.development",
+            ),
+          },
+          writeToRepository: false,
+        }),
+      });
+      expect(removal.status, await removal.text()).toBe(409);
+    } finally {
+      database.close();
+    }
+  });
 
   it("reawakens a fixed dormant candidate only after a newer eligible observation", async () => {
     const { engine } = await admissionFixture("fixed-reopen", "await-signal");
@@ -2558,6 +2599,10 @@ async function activateProject(
   };
   expect(reportResponse.status).toBe(200);
   expect(report.valid, JSON.stringify(report)).toBe(true);
+  if (!admission.github) {
+    await seedActivatedConsumerProject(engine, projectId);
+    return;
+  }
   const activated = await engine.call(`/v1/projects/${projectId}/activate`, {
     method: "POST",
     headers: { "content-type": "application/json" },

@@ -321,6 +321,7 @@ export function fixedProjectConfiguration(projectId: string): PortableProjectCon
   return {
     ...configuration,
     compositionMode: "fixed-modules",
+    workspace: { ...configuration.workspace, maxConcurrentExecutions: 1 },
     slots: {
       agentRuntime: { requires: "agent.execute" },
       sourceControl: { requires: "scm.change-request.manage" },
@@ -431,7 +432,7 @@ async function bindAndActivate(
 
 async function activate(engine: Harness, projectId: string): Promise<void> {
   const reportResponse = await engine.call(
-    `/v1/projects/${encodeURIComponent(projectId)}/validation-report`,
+    `/v1/projects/${encodeURIComponent(projectId)}/preflight`,
     { method: "POST" },
   );
   const report = (await reportResponse.json()) as {

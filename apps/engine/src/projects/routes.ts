@@ -41,7 +41,7 @@ export type LocalProjectRegistry = ProjectRegistry<
   ProjectResourceCandidateRegistry & {
     preflightProject(id: unknown): Promise<ProjectPreflight>;
     scopePreflightProject(id: unknown, request: unknown): PortableProjectConfiguration;
-    activatePreflightProject(request: ActivateProjectRequest): ProjectSummary;
+    activatePreflightProject(request: ActivateProjectRequest): Promise<ProjectSummary>;
     bindProjectRuntime(id: unknown, request: unknown): ProjectAgentRuntimeChoices;
     checkProjectRuntime(id: unknown): Promise<ProjectAgentRuntimeChoices>;
     previewCompositionChoices(
@@ -61,7 +61,7 @@ export type LocalProjectRegistry = ProjectRegistry<
     getProjectOverview(id: unknown): ProjectOverview;
     getExecutionDetail(id: unknown, executionId: unknown): ProjectExecutionDetail;
     pauseProject(id: unknown): ProjectSummary;
-    resumeProject(id: unknown): ProjectSummary;
+    resumeProject(id: unknown): Promise<ProjectSummary>;
     previewGuidedMigration(id: unknown): unknown;
     applyGuidedMigration(request: {
       projectId: unknown;
@@ -163,7 +163,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
     const service = requireDatabaseReady(deps);
     const params = request.params as { projectId?: string };
     const body = request.body as { compositionFingerprint?: unknown } | undefined;
-    const summary = service.activatePreflightProject({
+    const summary = await service.activatePreflightProject({
       projectId: params.projectId,
       compositionFingerprint: body?.compositionFingerprint,
     });
@@ -181,7 +181,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
     const service = requireDatabaseReady(deps);
     const params = request.params as { projectId?: unknown } | undefined;
     const body = request.body as { compositionFingerprint?: unknown } | undefined;
-    const summary = service.activateProject({
+    const summary = await service.activateProject({
       projectId: params?.projectId,
       compositionFingerprint: body?.compositionFingerprint,
     });

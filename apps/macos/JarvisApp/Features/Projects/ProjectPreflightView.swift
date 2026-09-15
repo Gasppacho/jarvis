@@ -9,6 +9,9 @@ struct ProjectPreflightView: View {
     var showsActivation = true
     let repair: (ProjectOnboardingStep) -> Void
     private var state: ProjectConfigurationState { model.state(for: project.id) }
+    private var observesOnly: Bool {
+        state.draft?.modules.contains { $0.enabled && $0.moduleId == "jarvis.module.development" } == false
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -33,7 +36,7 @@ struct ProjectPreflightView: View {
                             Text("Dernier contrôle reçu : \(date.formatted(date: .abbreviated, time: .standard))").font(.caption)
                         }
                         if case .current = state.preflight {
-                            ForEach(report.checks.filter { $0.status == .passed && ($0.id.hasPrefix("repository:") || $0.id == "runtime") }, id: \.id) { check in
+                            ForEach(report.checks.filter { $0.status == .passed && ($0.id.hasPrefix("repository:") || ($0.id == "runtime" && report.runtime.required)) }, id: \.id) { check in
                                 Label("\(check.title) : vérifié", systemImage: "checkmark.circle")
                             }
                         }
@@ -80,8 +83,11 @@ struct ProjectPreflightView: View {
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
-            GroupBox("Première exécution") {
+            GroupBox(observesOnly ? "Observation des issues" : "Première exécution") {
                 VStack(alignment: .leading, spacing: 12) {
+                    if observesOnly {
+                        Text("GitHub observe les issues du dépôt. Aucun agent ne démarre et aucune branche ou Pull Request n’est créée sans Développement.")
+                    } else {
                     if let scope = state.pendingScopeDescription { Text(scope) }
                     if let report = state.preflight.report {
                         if let ref = report.configuredWorkItemRef {
@@ -124,6 +130,7 @@ struct ProjectPreflightView: View {
                         Text("Vérifiez la configuration pour voir les issues et choisir la portée du démarrage.")
                     }
                     Text("Une issue prête peut démarrer dès l’activation. La relecture et la fusion restent humaines.").font(.callout)
+                    }
                     switch state.activation {
                     case .activating: ProgressView("Activation en cours…")
                     case .rejected(_, let message): Label("Activation refusée : \(message)", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)

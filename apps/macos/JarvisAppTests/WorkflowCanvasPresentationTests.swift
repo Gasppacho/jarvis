@@ -18,7 +18,8 @@ final class WorkflowCanvasPresentationTests: XCTestCase {
             "edge:1:fact:development:scm.work-item.ready:1"])
         XCTAssertEqual(canvas.edges.compactMap(\.to), ["development", "github"])
         XCTAssertTrue(canvas.edges[0].compatibilityLabel.contains("request"))
-        XCTAssertTrue(canvas.edges[0].triggerLabel.contains("resolved"))
+        XCTAssertTrue(canvas.edges[0].triggerLabel.contains("vers development"))
+        XCTAssertEqual(canvas.connections.count, 2)
     }
 
     func testKeepsDisabledNodeAndLeavesOrphanTargetEmpty() throws {
@@ -30,7 +31,9 @@ final class WorkflowCanvasPresentationTests: XCTestCase {
         let canvas = WorkflowCanvasPresentation(graph: graph)
         XCTAssertEqual(canvas.nodes.map(\.enabled), [false])
         XCTAssertNil(canvas.edges.first?.to)
-        XCTAssertTrue(canvas.edges.first?.accessibilityLabel.contains("orphaned") == true)
+        XCTAssertTrue(canvas.edges.first?.accessibilityLabel.contains("sans destinataire") == true)
+        XCTAssertEqual(canvas.unconnectedOutputs.count, 1)
+        XCTAssertTrue(canvas.connections.isEmpty)
     }
 
     private func decode(_ json: String) throws -> ProjectCompositionGraph {
