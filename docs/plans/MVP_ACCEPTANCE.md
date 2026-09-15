@@ -27,7 +27,7 @@ of older issue criteria from these observations.
   created by the GitHub module, followed by pause without merge (L10).
 - [x] Final clean-worktree `rtk pnpm verify` on `f53a234` (366 unit, 389 integration,
   196 Swift) and identified packaged build, reopened paused at 1100×800 (L10).
-- [ ] L15 final receipt: [rapport exécuté](./issue-235-verification.md) ; le
+- [x] L15 final receipt: [rapport exécuté](./issue-235-verification.md) ; le
   `rtk pnpm verify` exact est vérifié sur `fd753dc` (**372/372 unit, 400/400
   integration, build app release, 202/202 Swift**, génération/contrats/lint/
   typecheck/architecture passés). Le parcours local natif, les captures sombre/
@@ -39,8 +39,9 @@ of older issue criteria from these observations.
   La réception native est terminée : deux tailles, clair/sombre, VoiceOver,
   import, retrait/réenregistrement et reprise ; huit captures sont versionnées.
   Préflight réel : 23 observations disponibles en 6,1 secondes, configuration
-  incomplète toujours bloquée. Seules la relecture et la fusion manuelles des
-  PR #238 et #237 restent attendues ; #220/#235 ne sont pas fermées.
+  incomplète toujours bloquée. PR #238 et #237 fusionnées sur autorisation
+  explicite du propriétaire. Gate exact post-merge sur `bd2aa91` réussi le
+  2026-09-15 à 07:50:08 CEST : 372/406/202 tests et app release.
 
 ## Reference workflow acceptance
 
