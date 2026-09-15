@@ -72,7 +72,7 @@ public struct ProjectOnboardingPresentation: Sendable, Equatable {
             emptyState = EmptyState(
                 title: "Bienvenue dans Jarvis",
                 description: "Choisissez un dépôt, configurez votre workflow et suivez une issue GitHub jusqu’à sa Pull Request. Vous gardez la relecture et le merge.",
-                primaryAction: "Ajouter un projet")
+                primaryAction: "Choisir un dépôt Git")
             steps = []
             reviewIsAccessible = false
             canActivate = false
