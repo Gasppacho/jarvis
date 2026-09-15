@@ -113,7 +113,7 @@ Une observation vérifiée contient l'état, les tags uniques et la lecture comp
 Ce seam doit prouver :
 
 1. import et activation d'un projet ;
-2. réception d'un fait `scm.work-item.tag-added` ;
+2. réception d'un fait `scm.work-item.observed` et évaluation de l'admission fixe ;
 3. production de `development.implementation.requested` ;
 4. création du worktree et de la branche ;
 5. modification déterministe du fixture ;

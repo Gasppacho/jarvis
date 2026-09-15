@@ -36,7 +36,7 @@ public struct ProjectDetailView: View {
     let executionDetail: ProjectExecutionDetailModel
     let projectGraph: ProjectGraphModel
     let deadLetters: ProjectDeadLettersModel
-    let connections: ConnectionsModel?
+    let connections: ConnectionsModel
     let project: Project
 
     @State private var isDeleteConfirmationPresented = false
@@ -60,7 +60,7 @@ public struct ProjectDetailView: View {
         executionDetail: ProjectExecutionDetailModel,
         projectGraph: ProjectGraphModel,
         deadLetters: ProjectDeadLettersModel,
-        connections: ConnectionsModel? = nil,
+        connections: ConnectionsModel,
         project: Project
     ) {
         self.projects = projects
@@ -131,6 +131,7 @@ public struct ProjectDetailView: View {
             }
         }
         .task(id: refreshID) {
+            await connections.refresh()
             await projectConfiguration.refresh(
                 projectId: project.id, packages: moduleCatalog.packages)
         }
@@ -187,11 +188,19 @@ public struct ProjectDetailView: View {
                         repositorySection(detail).id("repository")
                         if state.draft != nil {
                             portableConfigurationEditor(detail, proxy: proxy).id("portable-configuration")
-                            localBindingsEditor.id("local-bindings")
-                            compositionReview(proxy)
-                            compositionOutline
+                            if state.draft?.isFixedComposition == true {
+                                DisclosureGroup("Détails techniques de la composition") {
+                                    localBindingsEditor
+                                    compositionReview(proxy)
+                                    compositionOutline
+                                }
+                            } else {
+                                localBindingsEditor.id("local-bindings")
+                                compositionReview(proxy)
+                                compositionOutline
+                            }
                             ProjectPreflightView(model: projectConfiguration, project: project, packages: moduleCatalog.packages) { destination in
-                                let target = destination == .repository ? "repository" : destination == .connections ? "local-bindings" : "portable-configuration"
+                                let target = destination == .repository ? "repository" : destination == .connections && state.draft?.isFixedComposition != true ? "local-bindings" : "portable-configuration"
                                 withAnimation { proxy.scrollTo(target, anchor: .top) }
                             }
                             DisclosureGroup("Advanced validation") {
@@ -1040,7 +1049,9 @@ public struct ProjectDetailView: View {
                     }
                     if let target = finding.navigationTarget {
                         Button("Edit the affected Draft field") {
-                            withAnimation { proxy.scrollTo(target, anchor: .center) }
+                            let visibleTarget = state.draft?.isFixedComposition == true
+                                ? "portable-configuration" : target
+                            withAnimation { proxy.scrollTo(visibleTarget, anchor: .center) }
                         }
                         .buttonStyle(.link)
                     }

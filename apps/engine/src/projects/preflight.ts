@@ -262,61 +262,76 @@ export async function preflightGitHub(input: {
         ),
       );
       const candidates = await readCurrentIssues(api, slug);
-      for (const candidate of candidates) {
-        const workItemRef = `github://${slug}/issues/${candidate.number}`;
-        if (typeof ref === "string" && ref !== workItemRef) continue;
-        const observation = await observeGitHubWorkItemState({
-          api,
-          owner: repository.owner,
-          repository: repository.name,
-          number: candidate.number,
-        });
-        const alreadyAdmitted = input.wasAdmitted(repository.repositoryId, workItemRef);
-        const decision = assessDevelopmentEligibility({
-          repositoryId: repository.repositoryId,
-          authorizedRepositoryId:
-            development?.bindings?.["repository"] === repository.repositoryId
-              ? repository.repositoryId
-              : undefined,
-          workItemRef,
-          observation,
-          readyLabel: tag,
-          scope: trigger?.scope ?? { kind: "all" },
-          alreadyStarted: alreadyAdmitted,
-        });
-        const unavailable = observation.verification === "unavailable";
-        const blockerRefs = decision.blockerRefs;
-        const reasonCode = decision.reason;
-        items.push({
-          workItemRef,
-          title: candidate.title,
-          status: unavailable
-            ? "unavailable"
-            : decision.eligible && !alreadyAdmitted
-              ? "eligible"
-              : "ineligible",
-          openDependencyCount: blockerRefs.length,
-          blockerRefs: [...blockerRefs],
-          reason: unavailable
-            ? "Impossible de vérifier l’issue ou ses dépendances. Réessayez avant de démarrer."
-            : alreadyAdmitted
-              ? "Cette issue a déjà été admise ; elle ne redémarrera pas automatiquement."
-              : reasonCode === "dependencies-unavailable" ||
-                  reasonCode === "dependency-state-unavailable"
-                ? "Impossible de lire les dépendances natives. Development attendra."
-                : blockerRefs.length > 0
-                  ? "Dépendance ouverte : Development attendra."
-                  : reasonCode === "work-item-closed"
-                    ? "L’issue est fermée. Development ne démarrera pas ; choisissez une issue ouverte."
-                    : reasonCode === "ready-label-missing"
-                      ? "Le label de readiness a été retiré. Corrigez le label ou choisissez une autre issue."
-                      : reasonCode === "work-item-is-pull-request"
-                        ? "Cet objet est une Pull Request, pas une issue."
-                        : reasonCode === "repository-unlinked"
-                          ? "Le dépôt n’est pas autorisé par la configuration Development."
-                          : "Aucune dépendance ouverte.",
-          repositoryId: repository.repositoryId,
-        });
+      const scopedCandidates = candidates.filter(
+        (candidate) => ref === undefined || ref === `github://${slug}/issues/${candidate.number}`,
+      );
+      // ponytail: four reads at a time fit ordinary backlogs in the shared deadline;
+      // use paged/background preflight if substantially larger backlogs need support.
+      for (let offset = 0; offset < scopedCandidates.length; offset += 4) {
+        const batch = await Promise.all(
+          scopedCandidates
+            .slice(offset, offset + 4)
+            .map(
+              async (
+                candidate,
+              ): Promise<ProjectPreflight["candidateEligibility"]["items"][number]> => {
+                const workItemRef = `github://${slug}/issues/${candidate.number}`;
+                const observation = await observeGitHubWorkItemState({
+                  api,
+                  owner: repository.owner,
+                  repository: repository.name,
+                  number: candidate.number,
+                });
+                const alreadyAdmitted = input.wasAdmitted(repository.repositoryId, workItemRef);
+                const decision = assessDevelopmentEligibility({
+                  repositoryId: repository.repositoryId,
+                  authorizedRepositoryId:
+                    development?.bindings?.["repository"] === repository.repositoryId
+                      ? repository.repositoryId
+                      : undefined,
+                  workItemRef,
+                  observation,
+                  readyLabel: tag,
+                  scope: trigger?.scope ?? { kind: "all" },
+                  alreadyStarted: alreadyAdmitted,
+                });
+                const unavailable = observation.verification === "unavailable";
+                const blockerRefs = decision.blockerRefs;
+                const reasonCode = decision.reason;
+                return {
+                  workItemRef,
+                  title: candidate.title,
+                  status: unavailable
+                    ? "unavailable"
+                    : decision.eligible && !alreadyAdmitted
+                      ? "eligible"
+                      : "ineligible",
+                  openDependencyCount: blockerRefs.length,
+                  blockerRefs: [...blockerRefs],
+                  reason: unavailable
+                    ? "Impossible de vérifier l’issue ou ses dépendances. Réessayez avant de démarrer."
+                    : alreadyAdmitted
+                      ? "Cette issue a déjà été admise ; elle ne redémarrera pas automatiquement."
+                      : reasonCode === "dependencies-unavailable" ||
+                          reasonCode === "dependency-state-unavailable"
+                        ? "Impossible de lire les dépendances natives. Development attendra."
+                        : blockerRefs.length > 0
+                          ? "Dépendance ouverte : Development attendra."
+                          : reasonCode === "work-item-closed"
+                            ? "L’issue est fermée. Development ne démarrera pas ; choisissez une issue ouverte."
+                            : reasonCode === "ready-label-missing"
+                              ? "Le label de readiness a été retiré. Corrigez le label ou choisissez une autre issue."
+                              : reasonCode === "work-item-is-pull-request"
+                                ? "Cet objet est une Pull Request, pas une issue."
+                                : reasonCode === "repository-unlinked"
+                                  ? "Le dépôt n’est pas autorisé par la configuration Development."
+                                  : "Aucune dépendance ouverte.",
+                  repositoryId: repository.repositoryId,
+                };
+              },
+            ),
+        );
+        items.push(...batch);
       }
       checks.push(
         check(

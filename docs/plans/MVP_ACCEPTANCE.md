@@ -19,8 +19,9 @@ of older issue criteria from these observations.
 - [x] Failed work remains linked after label removal and restart (L08 Harness);
   packaged app shows the retained failure at 1100×800 (Harness data).
 - [x] Complete keyboard configuration and activation observed on the real L10 run.
-- [ ] Complete VoiceOver error reading: names, values and card activation observed;
-  full error reading remains unproven (L09–L10).
+- [x] Complete VoiceOver error reading: full preparation error announced by
+  native VoiceOver and its repair action activated on 2026-09-15
+  ([receipt](./issue-220-audit-2026-09-14.md)).
 - [x] One real bounded issue [#205](https://github.com/Gasppacho/jarvis/issues/205),
   real Codex, successful second validation and one [PR #206](https://github.com/Gasppacho/jarvis/pull/206)
   created by the GitHub module, followed by pause without merge (L10).
@@ -33,9 +34,13 @@ of older issue criteria from these observations.
   clair, l’AX et le clavier sont observés sur l’app empaquetée au commit
   `3dbd0e3`. Le [nouvel audit #220](./issue-220-audit-2026-09-14.md) apporte
   l'essai GitHub/Codex autorisé : #236 → commit `45d580d` → PR #237 ouverte,
-  vérification réussie et pause. Réception finale toujours ouverte : correctifs
-  non fusionnés et dernier parcours graphique/VoiceOver bloqué par la session
-  macOS verrouillée. Les preuves historiques ne remplacent pas ce dernier contrôle.
+  vérification réussie et pause. Le 2026-09-15, le gate final exact passe avec
+  **372 unitaires, 406 intégration et 202 Swift**, contrats et build release.
+  La réception native est terminée : deux tailles, clair/sombre, VoiceOver,
+  import, retrait/réenregistrement et reprise ; huit captures sont versionnées.
+  Préflight réel : 23 observations disponibles en 6,1 secondes, configuration
+  incomplète toujours bloquée. Seules la relecture et la fusion manuelles des
+  PR #238 et #237 restent attendues ; #220/#235 ne sont pas fermées.
 
 ## Reference workflow acceptance
 

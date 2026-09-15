@@ -117,6 +117,48 @@ console.log(JSON.stringify({type: "turn.completed", usage: {input_tokens: 1, out
   return { f, path, config };
 }
 
+it("checks a slow backlog within the read budget and still rejects incomplete observations", async () => {
+  const { f, path } = await setup();
+  const numbers = Array.from({ length: 24 }, (_, index) => 200 + index);
+  for (const number of numbers) {
+    seed(f, number, number === 204);
+    f.fakeGitHub.scriptRoute("GET", `/repos/Gasppacho/jarvis/issues/${number}`, {
+      status: 200,
+      delayMs: 600,
+      body: {
+        number,
+        title: `Issue ${number}`,
+        state: "open",
+        labels: [{ name: "ready-to-dev" }],
+      },
+    });
+  }
+  const complete = await report(f, path);
+  expect(complete.candidateEligibility.status).toBe("available");
+  expect(complete.candidateEligibility.items).toHaveLength(24);
+  expect(
+    complete.candidateEligibility.items.filter((item) => item.status === "eligible"),
+  ).toHaveLength(23);
+  expect(
+    complete.candidateEligibility.items.find((item) => item.workItemRef.endsWith("/204"))
+      ?.openDependencyCount,
+  ).toBe(1);
+
+  f.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis/issues/223", {
+    status: 503,
+    body: {},
+  });
+  const incomplete = await report(f, path);
+  expect(incomplete.candidateEligibility.status).toBe("unavailable");
+  expect(
+    incomplete.candidateEligibility.items.find((item) => item.workItemRef.endsWith("/223"))?.status,
+  ).toBe("unavailable");
+  expect(
+    incomplete.checks.find((item) => item.id === "dependencies:Gasppacho/jarvis")?.status,
+  ).toBe("failed");
+  expect(f.fakeGitHub.pullRequests).toHaveLength(0);
+}, 30_000);
+
 it("preflights and activates GitHub observation without Development or a ready label", async () => {
   const { f, path, config } = await setup();
   f.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis", {
