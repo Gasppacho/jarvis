@@ -23,7 +23,7 @@ public final class ConnectionsModel {
     public private(set) var validatingConnectionIDs: Set<String> = []
     public private(set) var errorMessage: String?
 
-    public static let emptyDiscoveryMessage = "Aucun compte GitHub authentifié n'a été découvert. Jarvis utilise l'authentification locale `gh`; exécutez `gh auth login`, puis revenez ici et cliquez sur `Réessayer`."
+    public static let emptyDiscoveryMessage = "Aucun compte GitHub authentifié n'a été découvert. Jarvis utilise l'authentification locale `gh`; exécutez `gh auth login`, puis revenez ici et cliquez sur « Actualiser les comptes »."
 
     private let session: EngineSessionModel?
     private let injectedAPI: (any ConnectionsAPI)?

@@ -150,7 +150,7 @@ function githubDevelopmentTemplate(
           bootstrapLabelPolicy: "ignore-existing",
           pollIntervalSeconds: 60,
           repositories: [repository?.id ?? "main"],
-          readyLabel: "ready-for-agent",
+          readyLabel: "ready-to-dev",
         },
       },
       {

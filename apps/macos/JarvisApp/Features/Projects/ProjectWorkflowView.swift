@@ -6,58 +6,85 @@ struct ProjectWorkflowView: View {
     let model: ProjectConfigurationModel
     let project: Project
     let packages: [ModulePackage]
+    let moduleCatalog: ModuleCatalogModel
     var connections: ConnectionsModel? = nil
     var overview: ProjectOverviewModel? = nil
+    var openConnections: (() -> Void)? = nil
+    var repairTarget: ProjectPreflightRepairTarget? = nil
     var openAdvanced: (() -> Void)? = nil
     var onSelectModule: ((String) -> Void)? = nil
     @State private var stage = WorkflowStage.issue
-    @State private var editingGitHub = false
+    @State private var showingRecommendedReplacement = false
+    @State private var branchInputs: [String: String] = [:]
+    @State private var branchErrors: [String: String] = [:]
+    @State private var intervalInputs: [UUID: String] = [:]
     @State private var intervalError: String?
+    @FocusState private var focusedInput: WorkflowInputFocus?
 
     private var state: ProjectConfigurationState { model.state(for: project.id) }
     private var hasComposition: Bool {
         state.draft.map { !$0.modules.isEmpty || !$0.slotRequirements.isEmpty } ?? false
     }
     private var development: [ProjectModuleDraft] {
-        state.draft?.modules.filter { $0.moduleId == "jarvis.module.development" } ?? []
+        state.draft?.modules.filter { $0.enabled && $0.moduleId == "jarvis.module.development" } ?? []
     }
-    private var flowConfirmed: Bool { state.compositionReview?.githubDevelopmentFlow == true }
+    private var hasGitHub: Bool {
+        state.draft?.modules.contains { $0.enabled && $0.moduleId == "jarvis.module.github" } == true
+    }
+    private var hasDevelopment: Bool { !development.isEmpty }
+    private var hasRecommendedFlow: Bool { hasGitHub && hasDevelopment }
+    private var canChooseRecommendedFlow: Bool {
+        packageIsAvailable("jarvis.module.github")
+            && packageIsAvailable("jarvis.module.development")
+            && state.draft != nil
+            && state.compositionGuide?.startingPoints.contains { $0.id == "github-development" } == true
+    }
+    private var flowConfirmed: Bool {
+        hasRecommendedFlow && state.compositionReview?.githubDevelopmentFlow == true
+    }
+    private var catalogIsAvailable: Bool {
+        if case .loaded = moduleCatalog.state { return true }
+        return false
+    }
+    private func packageIsAvailable(_ moduleID: String) -> Bool {
+        catalogIsAvailable && packages.contains { $0.moduleId == moduleID }
+    }
+    private var missingPackagesMessage: String? {
+        guard catalogIsAvailable else { return nil }
+        let missing = ["jarvis.module.github", "jarvis.module.development"]
+            .filter { moduleID in !packages.contains { package in package.moduleId == moduleID } }
+        return missing.isEmpty ? nil : "Le catalogue ne contient pas les modules requis pour ce workflow. Actualisez-le puis réessayez."
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            startingPoint
+            catalogAvailability
+            if !hasRecommendedFlow {
+                startingPoint
+            } else if hasComposition {
+                DisclosureGroup("Ajouter un module") { startingPoint }
+            }
             if hasComposition {
-                Label("Modules du projet",
-                      systemImage: "arrow.triangle.branch").font(.headline)
-                Text("Cliquez une carte pour comprendre et régler cette partie du workflow.")
+                Text(workflowTitle).font(.title2.bold())
+                Text(workflowDescription)
                     .foregroundStyle(.secondary)
+            } else {
+                Text("Aperçu du parcours recommandé").font(.title2.bold())
+                Text("Ajoutez GitHub et Développement pour configurer ce parcours.")
+                    .foregroundStyle(.secondary)
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) { stageButtons(horizontal: true) }
+                    .fixedSize(horizontal: true, vertical: false)
+                VStack(alignment: .leading, spacing: 8) { stageButtons(horizontal: false) }
+            }
+            if hasComposition {
                 if flowConfirmed {
                     Label("Une issue à la fois ; relecture et merge manuels.", systemImage: "person")
                         .font(.callout)
                 }
-                if let graph = state.compositionGraph {
-                    WorkflowCanvasView(
-                        presentation: WorkflowCanvasPresentation(graph: graph),
-                        onSelectModule: { instanceId in
-                            stage = state.draft?.modules.first(where: { $0.instanceId == instanceId })?.moduleId == "jarvis.module.github" ? .issue : .development
-                        })
-                }
-                GroupBox(stage == .issue ? "GitHub" : "Développement") {
+                GroupBox(stage.title) {
                     VStack(alignment: .leading, spacing: 14) {
-                        if let module = state.draft?.modules.first(where: {
-                            $0.moduleId == (stage == .issue ? "jarvis.module.github" : "jarvis.module.development")
-                        }) {
-                            HStack {
-                                Toggle("Module activé", isOn: Binding(
-                                    get: { module.enabled },
-                                    set: { model.apply(.setModuleEnabled(module.id, $0), projectId: project.id, packages: packages) }))
-                                Spacer()
-                                Button("Retirer du brouillon", role: .destructive) {
-                                    model.removeModule(projectId: project.id, moduleId: module.id)
-                                    stage = state.draft?.modules.contains(where: { $0.moduleId == "jarvis.module.github" }) == true ? .issue : .development
-                                }
-                            }
-                        }
                         stageSettings
                         if stage == .development {
                             Button("Choisir les vérifications") { stage = .validation }
@@ -73,29 +100,166 @@ struct ProjectWorkflowView: View {
                       : "Préparer et vérifier le projet : confirmez les commandes dans les cartes Développement et Vérifications.",
                       systemImage: "checklist")
                     .font(.callout).foregroundStyle(.secondary) }
+                accessSummary
             }
-            if let openAdvanced {
-                Button("Réglages avancés", action: openAdvanced)
-                    .accessibilityIdentifier("workflow.advanced")
+            DisclosureGroup("Réglages avancés et composition des modules") {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let graph = state.compositionGraph {
+                        WorkflowCanvasView(
+                            presentation: WorkflowCanvasPresentation(graph: graph),
+                            onSelectModule: { instanceId in
+                                stage = state.draft?.modules.first(where: { $0.instanceId == instanceId })?.moduleId == "jarvis.module.github" ? .issue : .development
+                            })
+                    }
+                    if let module = state.draft?.modules.first(where: {
+                        $0.moduleId == (stage == .issue ? "jarvis.module.github" : "jarvis.module.development")
+                    }) {
+                        HStack {
+                            Toggle("Module activé", isOn: Binding(
+                                get: { module.enabled },
+                                set: { model.apply(.setModuleEnabled(module.id, $0), projectId: project.id, packages: packages) }))
+                            Spacer()
+                            Button("Retirer du brouillon", role: .destructive) {
+                                model.removeModule(projectId: project.id, moduleId: module.id)
+                                stage = state.draft?.modules.contains(where: { $0.moduleId == "jarvis.module.github" }) == true ? .issue : .development
+                            }
+                        }
+                    }
+                    if let openAdvanced {
+                        Button("Ouvrir les réglages avancés", action: openAdvanced)
+                            .accessibilityIdentifier("workflow.advanced")
+                    }
+                }
             }
         }
         .onAppear {
             if state.draft?.modules.contains(where: { $0.moduleId == "jarvis.module.github" }) != true,
                !development.isEmpty { stage = .development }
         }
+        .onChange(of: focusedInput) { previous, _ in
+            switch previous {
+            case .branch(let repositoryID): commitBranch(repositoryID: repositoryID)
+            case .interval(let moduleID):
+                guard let module = state.draft?.modules.first(where: { $0.id == moduleID }) else { return }
+                commitInterval(module)
+            case .readyLabel, .preparation, .validation:
+                break
+            case nil: break
+            }
+        }
+        .task(id: repairTarget?.controlID) {
+            await Task.yield()
+            switch repairTarget?.controlID {
+            case "workflow.development.ready-label":
+                stage = .issue
+                if let module = development.first { focusedInput = .readyLabel(module.id) }
+            case "workflow.preparation":
+                stage = .development
+                if let module = development.first { focusedInput = .preparation(module.id) }
+            case let id? where id.hasPrefix("workflow.validation."):
+                stage = .validation
+                if let module = development.first {
+                    focusedInput = .validation(module.id, String(id.dropFirst("workflow.validation.".count)))
+                }
+            case "workflow.choose-recommended": stage = .issue
+            default: break
+            }
+        }
+        .confirmationDialog(
+            "Remplacer le brouillon actuel ?",
+            isPresented: $showingRecommendedReplacement
+        ) {
+            Button("Préparer le parcours recommandé", role: .destructive) {
+                model.chooseStartingPoint(
+                    projectId: project.id,
+                    startingPointId: "github-development",
+                    confirmedReplacement: true)
+                stage = .issue
+            }
+            Button("Conserver le brouillon", role: .cancel) {
+                model.cancelStartingPointReplacement(projectId: project.id)
+            }
+        } message: {
+            Text("GitHub et Développement remplaceront la composition actuelle. Le nom et les commandes du projet sont conservés.")
+        }
+    }
+
+    private func stageButtons(horizontal: Bool) -> some View {
+        ForEach(WorkflowStage.allCases) { item in
+            if horizontal && item != .issue {
+                Image(systemName: "arrow.right").foregroundStyle(.secondary).accessibilityHidden(true)
+            }
+            Button { stage = item } label: {
+                VStack(alignment: .leading, spacing: 8) {
+                    Image(systemName: item.icon).font(.title2)
+                    Text(item.title).font(.headline)
+                    Text(item.subtitle).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Label(stageStatus(item), systemImage: stageIcon(item))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(width: 130, alignment: .leading)
+                .padding(16)
+                .background(stage == item ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.06),
+                            in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(stage == item ? Color.accentColor : Color.secondary.opacity(0.2)))
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(stage == item ? .isSelected : [])
+            .accessibilityHint(item.explanation)
+            .accessibilityIdentifier("workflow.stage.\(item.rawValue)")
+        }
+    }
+
+    private func stageStatus(_ item: WorkflowStage) -> String {
+        guard hasComposition else {
+            switch item {
+            case .issue, .development: return "Absent"
+            case .validation: return "Sans développement"
+            case .pullRequest: return "Non prévu"
+            }
+        }
+        switch item {
+        case .issue:
+            guard state.draft?.modules.contains(where: {
+                $0.enabled && $0.moduleId == "jarvis.module.github"
+            }) == true else { return "Absent" }
+            if !hasDevelopment { return "Observation seule" }
+            return guidedReadyLabelValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "À configurer" : "Configuré"
+        case .development:
+            return hasDevelopment ? (state.draft?.workflowCommandsConfigured == true ? "Configuré" : "À configurer") : "Absent"
+        case .validation:
+            guard let module = development.first else { return "Sans développement" }
+            return module.validationOrder.isEmpty ? "À configurer" : "Configuré"
+        case .pullRequest: return flowConfirmed ? "Prévu" : "Non prévu"
+        }
+    }
+
+    private func stageIcon(_ item: WorkflowStage) -> String {
+        stageStatus(item) == "Configuré" || stageStatus(item) == "Prévu" ? "checkmark.circle" : "circle"
     }
 
     private var startingPoint: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Ajoutez GitHub pour observer les issues, puis Développement pour les traiter et proposer une Pull Request. Chaque ajout reste un brouillon.")
+            Text("Choisissez le parcours qui correspond à votre besoin. Chaque ajout reste un brouillon.")
+            Button("Préparer le parcours recommandé GitHub → Développement → PR") {
+                chooseRecommendedFlow()
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!canChooseRecommendedFlow)
+            .accessibilityIdentifier("workflow.choose-recommended")
+            Text("Ajoute GitHub et Développement. Vous confirmerez ensuite les commandes et les accès avant toute exécution.")
+                .font(.callout).foregroundStyle(.secondary)
             HStack {
-                Button("Ajouter GitHub") {
+                Button("Observer uniquement les issues") {
                     guard let package = packages.first(where: { $0.moduleId == "jarvis.module.github" }) else { return }
                     model.addModule(projectId: project.id, package: package)
                     stage = .issue
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(state.draft == nil || state.draft?.modules.contains(where: { $0.moduleId == "jarvis.module.github" }) == true)
+                .buttonStyle(.bordered)
+                .disabled(!packageIsAvailable("jarvis.module.github") || state.draft == nil || state.draft?.modules.contains(where: { $0.moduleId == "jarvis.module.github" }) == true)
                 .accessibilityIdentifier("workflow.choose-github")
                 Button("Ajouter Développement") {
                     guard let package = packages.first(where: { $0.moduleId == "jarvis.module.development" }) else { return }
@@ -103,7 +267,7 @@ struct ProjectWorkflowView: View {
                     stage = .development
                 }
                 .buttonStyle(.bordered)
-                .disabled(state.draft == nil || state.draft?.modules.contains(where: { $0.moduleId == "jarvis.module.development" }) == true)
+                .disabled(!packageIsAvailable("jarvis.module.development") || state.draft == nil || state.draft?.modules.contains(where: { $0.moduleId == "jarvis.module.development" }) == true)
                 .accessibilityIdentifier("workflow.add-development")
             }
             Text("Vous pourrez enregistrer et reprendre un brouillon incomplet.")
@@ -112,23 +276,67 @@ struct ProjectWorkflowView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private var workflowTitle: String {
+        hasRecommendedFlow ? "Développer une issue GitHub" : "Observer les issues GitHub"
+    }
+
+    private var workflowDescription: String {
+        hasRecommendedFlow
+            ? "Confiez une issue prête à votre agent. Jarvis prépare une Pull Request que vous pourrez relire."
+            : "Jarvis observe les issues prêtes. Ajoutez Développement pour préparer un parcours de modification et de Pull Request."
+    }
+
+    private func chooseRecommendedFlow() {
+        model.chooseStartingPoint(projectId: project.id, startingPointId: "github-development")
+        showingRecommendedReplacement = state.pendingStartingPointID == "github-development"
+        if !showingRecommendedReplacement { stage = .issue }
+    }
+
+    @ViewBuilder
+    private var catalogAvailability: some View {
+        switch moduleCatalog.state {
+        case .idle, .loading:
+            ProgressView("Chargement du catalogue de modules…")
+        case .failed(let message):
+            catalogFailure(message)
+        case .loaded:
+            if let missingPackagesMessage { catalogFailure(missingPackagesMessage) }
+        }
+    }
+
+    private func catalogFailure(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Catalogue de modules indisponible : ajout impossible.", systemImage: "exclamationmark.triangle.fill")
+                .font(.callout)
+                .foregroundStyle(.red)
+            DisclosureGroup("Détails") {
+                Text(message).font(.caption).textSelection(.enabled)
+            }
+            Button("Réessayer") { Task { await moduleCatalog.refresh() } }
+                .disabled(moduleCatalog.state == .loading)
+                .accessibilityIdentifier("workflow.catalogue.retry")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     @ViewBuilder
     private var stageSettings: some View {
         switch stage {
         case .issue:
+            ForEach(development) { module in
+                Text("Quand une issue porte le label").font(.callout.weight(.medium))
+                TextField("Label de départ", text: guidedReadyLabel)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($focusedInput, equals: .readyLabel(module.id))
+                    .accessibilityLabel("Label de départ des issues")
+                    .accessibilityIdentifier("workflow.development.ready-label")
+            }
+            Text("Les issues fermées ou bloquées ne démarrent pas. Les autres attendent leur tour.")
+                .font(.callout).foregroundStyle(.secondary)
             githubCard
         case .development:
             Text("Préparer une copie de travail isolée").font(.headline)
-            developmentRuntimeCard
             repositoryBranchControl
-            ForEach(development) { module in
-                TextField("Label de départ", text: configuration(module, "readyLabel"))
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Label de départ des issues")
-                    .accessibilityIdentifier("workflow.development.ready-label")
-                Text("Le label est propre à ce projet. Les nouveaux projets utilisent ready-to-dev.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
             commandField("install", title: "Commande d’installation")
             ForEach(development) { module in
                 Picker("Confirmer la préparation", selection: configuration(module, "preparation")) {
@@ -137,9 +345,10 @@ struct ProjectWorkflowView: View {
                         .disabled(state.draft?.commands["install"]?.isEmpty != false)
                     Text("Aucune préparation nécessaire").tag("none")
                 }
+                .focused($focusedInput, equals: .preparation(module.id))
                 .accessibilityIdentifier("workflow.preparation")
             }
-            if development.isEmpty { Text("Ajoutez Development au workflow ou choisissez le modèle proposé.") }
+            if development.isEmpty { Text("Ajoutez Développement au workflow.") }
             Text("Vérifiez la commande proposée avant de la confirmer. Avec un lockfile, conservez l’installation gelée. L’agent sera choisi à l’étape Accès et agent.")
                 .font(.callout).foregroundStyle(.secondary)
         case .validation:
@@ -156,13 +365,15 @@ struct ProjectWorkflowView: View {
                     }
                 }
             }
-            if development.isEmpty { Text("Ajoutez Development au workflow ou choisissez le modèle proposé.") }
+            if development.isEmpty { Text("Ajoutez Développement au workflow.") }
             Text("Modifier une commande demande de la confirmer à nouveau. Les autres choix sont conservés.")
                 .font(.callout).foregroundStyle(.secondary)
         case .pullRequest:
             Text(flowConfirmed
                  ? "Après des validations réussies, Development crée le commit et pousse la branche. GitHub crée ensuite la PR à partir de sa demande. Vous relisez et fusionnez vous-même."
-                 : "Le modèle proposé crée un commit et pousse une branche après validation, puis demande à GitHub de créer une PR. Les destinations et l’absence de merge automatique restent à confirmer pour votre composition.")
+                 : hasDevelopment
+                    ? "Confirmez les réglages du parcours pour vérifier la demande de Pull Request."
+                    : "Ajoutez Développement pour préparer une Pull Request après les validations.")
             if flowConfirmed {
                 Label("Aucune demande de merge dans ce workflow", systemImage: "person.crop.circle.badge.checkmark")
             }
@@ -174,68 +385,23 @@ struct ProjectWorkflowView: View {
         }
     }
 
-    private var developmentRuntimeCard: some View {
-        let runtime = state.runtimePresentation
-        return GroupBox("Agent Codex") {
-            VStack(alignment: .leading, spacing: 8) {
-                Label(runtime.status, systemImage: runtime.icon)
-                if runtime.requiresWorkflow {
-                    Text("Choisissez d’abord le workflow GitHub Development.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(runtime.candidates) { candidate in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(candidate.name)
-                                Text(candidate.subtitle).font(.caption).foregroundStyle(.secondary)
-                                if candidate.bound { Text(runtime.modelLabel).font(.caption) }
-                            }
-                            Spacer()
-                            if candidate.bound {
-                                Label("Utilisé par ce projet", systemImage: "checkmark.circle")
-                                    .font(.caption)
-                            } else {
-                                Button("Utiliser pour ce projet") {
-                                    Task { await model.chooseRuntime(projectId: project.id, ref: candidate.id) }
-                                }
-                                .disabled(!candidate.selectable || state.isSaving)
-                            }
-                        }
-                        if candidate.needsAttention {
-                            Text(candidate.detail).font(.caption).foregroundStyle(.orange)
-                        }
-                    }
-                    if runtime.candidates.isEmpty { Text(runtime.detail).foregroundStyle(.secondary) }
-                    HStack {
-                        Button("Rechercher Codex") {
-                            Task { await model.refreshRuntimeCandidates(projectId: project.id, discover: true) }
-                        }
-                        .disabled(runtime.isBusy || state.isSaving)
-                        Button("Vérifier l’agent") {
-                            Task { await model.checkRuntime(projectId: project.id) }
-                        }
-                        .disabled(!runtime.canCheck || state.isSaving)
-                    }
-                }
-                Text(runtime.approval).font(.caption).foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .accessibilityElement(children: .contain)
-    }
-
     private var repositoryBranchControl: some View {
         ForEach(state.draft?.repositories ?? [], id: \.id) { repository in
             VStack(alignment: .leading, spacing: 4) {
                 Text("Branche cible").font(.callout.weight(.medium))
                 TextField("Branche cible", text: Binding(
-                    get: { state.draft?.repositories.first(where: { $0.id == repository.id })?.defaultBranch ?? "" },
-                    set: { model.setRepositoryDefaultBranch(projectId: project.id, repositoryID: repository.id, branch: $0) }))
+                    get: { branchInputs[repository.id] ?? state.draft?.repositories.first(where: { $0.id == repository.id })?.defaultBranch ?? "" },
+                    set: { branchInputs[repository.id] = $0; branchErrors[repository.id] = nil }))
                     .textFieldStyle(.roundedBorder)
+                    .focused($focusedInput, equals: .branch(repository.id))
+                    .onSubmit { commitBranch(repositoryID: repository.id) }
                     .accessibilityLabel("Branche cible pour \(repository.id)")
                     .accessibilityIdentifier("workflow.development.branch.\(repository.id)")
                 Text("Détectée pour \(repository.id); modifiable avant l’enregistrement.")
                     .font(.caption).foregroundStyle(.secondary)
+                if let error = branchErrors[repository.id] {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                }
             }
         }
     }
@@ -246,6 +412,7 @@ struct ProjectWorkflowView: View {
             Toggle("Confirmer cette vérification", isOn: Binding(
                 get: { state.draft?.modules.first { $0.id == module.id }?.validationOrder.contains(name) ?? false },
                 set: { model.selectValidationCommand(projectId: project.id, moduleID: module.id, name: name, selected: $0) }))
+                .focused($focusedInput, equals: .validation(module.id, name))
                 .disabled(state.draft?.commands[name]?.isEmpty != false)
                 .accessibilityLabel("Exécuter \(name)")
                 .accessibilityIdentifier("workflow.validation.\(name)")
@@ -270,6 +437,18 @@ struct ProjectWorkflowView: View {
             set: { model.apply(.setModuleConfiguration(module.id, key, $0), projectId: project.id, packages: packages) })
     }
 
+    private var guidedReadyLabel: Binding<String> {
+        Binding(
+            get: { guidedReadyLabelValue },
+            set: { model.setGuidedReadyLabel(projectId: project.id, label: $0) })
+    }
+
+    private var guidedReadyLabelValue: String {
+        development.first?.configurationValue(for: "readyLabel")
+            ?? state.draft?.modules.first { $0.enabled && $0.moduleId == "jarvis.module.github" }?.configurationValue(for: "readyLabel")
+            ?? ""
+    }
+
     private var githubCard: some View {
         let github = state.draft?.modules.first { $0.moduleId == "jarvis.module.github" }
         return GroupBox {
@@ -277,7 +456,6 @@ struct ProjectWorkflowView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     repositorySummary
                     intervalControl(github)
-                    accountControl
                     if let polling = overview?.state(for: project.id).overview?.polling,
                        let date = polling.lastPollAt {
                         Label("Dernier contrôle : \(date.formatted(date: .abbreviated, time: .shortened)), \(pollingLabel(polling.state))",
@@ -289,7 +467,7 @@ struct ProjectWorkflowView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                Text("Ajoutez GitHub au workflow pour choisir le dépôt, le compte et la fréquence.")
+                Text("Ajoutez GitHub au workflow pour choisir le dépôt et la fréquence.")
             }
         } label: {
             Label("GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
@@ -314,20 +492,28 @@ struct ProjectWorkflowView: View {
         let historical = Int(value) == GitHubPollingFrequency.historicalSeconds
         return VStack(alignment: .leading, spacing: 4) {
             Text("Fréquence de vérification").font(.callout.weight(.medium))
-            TextField("Minutes (1 à 60)", text: Binding(
-                get: { GitHubPollingFrequency.display(seconds: Int(value)) },
-                set: { text in
-                    guard let seconds = GitHubPollingFrequency.seconds(fromMinutes: text) else {
-                        intervalError = "La fréquence doit être comprise entre 1 et 60 minutes."
-                        return
-                    }
-                    intervalError = nil
-                    model.apply(.setModuleConfiguration(module.id, "pollIntervalSeconds", String(seconds)),
-                                projectId: project.id, packages: packages)
-                }))
-                .textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier("workflow.github.interval")
-                .accessibilityLabel("Fréquence de vérification en minutes")
+            HStack {
+                TextField("Minutes (1 à 60)", text: Binding(
+                    get: { intervalInputs[module.id] ?? GitHubPollingFrequency.display(seconds: Int(value)) },
+                    set: { intervalInputs[module.id] = $0; intervalError = nil }))
+                    .textFieldStyle(.roundedBorder)
+                    .focused($focusedInput, equals: .interval(module.id))
+                    .onSubmit { commitInterval(module) }
+                    .accessibilityIdentifier("workflow.github.interval")
+                    .accessibilityLabel("Fréquence de vérification en minutes")
+                Stepper(value: Binding(
+                    get: { min(60, max(1, (Int(value) ?? 60) / 60)) },
+                    set: { minutes in
+                        intervalInputs[module.id] = String(minutes)
+                        intervalError = nil
+                        model.apply(.setModuleConfiguration(module.id, "pollIntervalSeconds", String(minutes * 60)),
+                                    projectId: project.id, packages: packages)
+                    }), in: 1...60) {
+                    Text("Ajuster la fréquence")
+                }
+                .accessibilityIdentifier("workflow.github.interval.stepper")
+                .accessibilityLabel("Ajuster la fréquence de vérification en minutes")
+            }
             if historical {
                 Text("Historique conservé : 15 secondes. Saisissez 1 à 60 pour choisir une nouvelle fréquence.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -336,61 +522,44 @@ struct ProjectWorkflowView: View {
         }
     }
 
-    @ViewBuilder
-    private var accountControl: some View {
-        if let connections {
-            let selected = connections.connections.filter {
-                model.hasLocalBinding(projectId: project.id, connectionID: $0.id)
+    private func commitBranch(repositoryID: String) {
+        let defaultBranch = state.draft?.repositories.first(where: { $0.id == repositoryID })?.defaultBranch ?? ""
+        let branch = (branchInputs[repositoryID] ?? defaultBranch)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !branch.isEmpty else {
+            branchErrors[repositoryID] = "La branche cible est requise."
+            return
+        }
+        branchInputs[repositoryID] = branch
+        branchErrors[repositoryID] = nil
+        model.setRepositoryDefaultBranch(projectId: project.id, repositoryID: repositoryID, branch: branch)
+    }
+
+    private func commitInterval(_ module: ProjectModuleDraft) {
+        let text = intervalInputs[module.id] ?? GitHubPollingFrequency.display(
+            seconds: Int(module.configurationValues["pollIntervalSeconds"] ?? "60"))
+        guard let seconds = GitHubPollingFrequency.seconds(fromMinutes: text) else {
+            intervalError = "La fréquence doit être comprise entre 1 et 60 minutes."
+            return
+        }
+        intervalInputs[module.id] = String(seconds / 60)
+        intervalError = nil
+        model.apply(.setModuleConfiguration(module.id, "pollIntervalSeconds", String(seconds)),
+                    projectId: project.id, packages: packages)
+    }
+
+    private var accessSummary: some View {
+        let ready = !state.resourceChoices.isEmpty && state.resourceChoices.allSatisfy { $0.status == .bound }
+        return GroupBox("Accès et agent") {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(ready ? "Accès configurés" : "Accès à choisir", systemImage: ready ? "checkmark.circle" : "person.crop.circle.badge.questionmark")
+                Text("Choisissez le compte GitHub et l’agent Codex dans l’étape Accès et agent.")
+                    .font(.callout).foregroundStyle(.secondary)
+                Button("Ouvrir Accès et agent") { openConnections?() }
+                    .disabled(openConnections == nil)
+                    .accessibilityIdentifier("workflow.open-connections")
             }
-            if selected.count != 1 || editingGitHub {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Compte GitHub").font(.callout.weight(.medium))
-                    ForEach(connections.connections) { connection in
-                        let presentation = connections.presentation(for: connection,
-                                                                     isBound: selected.contains(connection))
-                        HStack {
-                            Label(connection.accountLabel, systemImage: presentation.isSelectable ? "person.crop.circle" : "exclamationmark.circle")
-                            Spacer()
-                            if presentation.isSelectable {
-                                Button("Vérifier et utiliser") {
-                                    Task {
-                                        await connections.validate(connectionID: connection.id)
-                                        guard let refreshed = connections.connections.first(where: { $0.id == connection.id }),
-                                              connections.presentation(for: refreshed).isSelectable
-                                        else { return }
-                                        if await model.bindGitHubConnection(projectId: project.id, connectionID: connection.id) != nil {
-                                            editingGitHub = false
-                                        }
-                                    }
-                                }
-                                .disabled(!state.resourceChoices.contains { $0.candidates.contains { $0.ref == connection.id } }
-                                          || state.isSaving || connections.isValidating(connectionID: connection.id))
-                                .accessibilityIdentifier("workflow.github.account.\(connection.id)")
-                            } else {
-                                Text(presentation.status).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    if connections.connections.isEmpty {
-                        Text(connections.errorMessage ?? ConnectionsModel.emptyDiscoveryMessage)
-                            .font(.callout).foregroundStyle(.secondary)
-                    }
-                }
-            } else if let connection = selected.first {
-                let presentation = connections.presentation(for: connection, isBound: true)
-                VStack(alignment: .leading, spacing: 6) {
-                    LabeledContent("Compte GitHub", value: connection.accountLabel)
-                    Label(presentation.status, systemImage: presentation.isSelectable ? "checkmark.circle" : "exclamationmark.circle")
-                    Text(presentation.diagnostic).font(.caption).foregroundStyle(.secondary)
-                    HStack {
-                        Button("Vérifier l’accès") { Task { await connections.validate(connectionID: connection.id) } }
-                            .disabled(connections.isValidating(connectionID: connection.id))
-                            .accessibilityIdentifier("workflow.github.verify")
-                        Button("Modifier") { editingGitHub = true }
-                            .accessibilityIdentifier("workflow.github.modify")
-                    }
-                }
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -403,6 +572,14 @@ struct ProjectWorkflowView: View {
         case .unavailable: "indisponible"
         }
     }
+}
+
+private enum WorkflowInputFocus: Hashable {
+    case branch(String)
+    case interval(UUID)
+    case readyLabel(UUID)
+    case preparation(UUID)
+    case validation(UUID, String)
 }
 
 private enum WorkflowStage: String, CaseIterable, Identifiable {
@@ -422,6 +599,14 @@ private enum WorkflowStage: String, CaseIterable, Identifiable {
         case .development: "hammer"
         case .validation: "checklist"
         case .pullRequest: "arrow.triangle.pull"
+        }
+    }
+    var subtitle: String {
+        switch self {
+        case .issue: "Label et aucun bloqueur"
+        case .development: "Copie de travail isolée"
+        case .validation: "Commandes du projet"
+        case .pullRequest: "À relire par vous"
         }
     }
     var explanation: String {

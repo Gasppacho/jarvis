@@ -213,6 +213,7 @@ function legacyGuidedTemplate(
       {
         ...github,
         bindings: { ...github.bindings, tickets: "tickets" },
+        configuration: { ...github.configuration, readyLabel: "ready-for-agent" },
       },
       {
         instanceId: "automation-rules",

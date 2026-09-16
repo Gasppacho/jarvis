@@ -14,39 +14,42 @@ struct ProjectOverviewView: View {
 
     var body: some View {
         let presentation = ProjectOverviewPresentation(model.state(for: projectId))
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                switch presentation.state {
-                case .loading:
-                    ProgressView("Chargement de la supervision…")
-                        .frame(maxWidth: .infinity, minHeight: 240)
-                case .failed(let message):
-                    unavailable(message)
-                case .loaded(let overview):
-                    overviewContent(overview)
-                case .stale(let overview, let message):
-                    warning(message)
-                    overviewContent(overview)
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    switch presentation.state {
+                    case .loading:
+                        ProgressView("Chargement de la supervision…")
+                            .frame(maxWidth: .infinity, minHeight: 240)
+                    case .failed(let message):
+                        unavailable(message)
+                    case .loaded(let overview):
+                        overviewContent(overview, wide: geometry.size.width >= 800)
+                    case .stale(let overview, let message):
+                        warning(message)
+                        overviewContent(overview, wide: geometry.size.width >= 800)
+                    }
                 }
+                .frame(maxWidth: 1000, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(24)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(24)
         }
         .task(id: projectId) {
             await model.watch(projectId: projectId)
         }
     }
 
-    private func overviewContent(_ overview: ProjectOverview) -> some View {
+    private func overviewContent(_ overview: ProjectOverview, wide: Bool) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             header(overview)
+            workflowCard(overview)
             if let issue = ProjectOverviewPresentation.focusedIssue(overview) {
                 focusedWork(issue)
             }
-            issuesCard(overview)
-            DisclosureGroup("Surveillance et workflow") {
+            issuesCard(overview, wide: wide)
+            DisclosureGroup("Diagnostic technique du projet") {
                 pollingCard(overview)
-                workflowCard(overview)
             }
         }
     }
@@ -83,7 +86,7 @@ struct ProjectOverviewView: View {
             HStack(spacing: 8) {
                 switch overview.primaryAction {
                 case .pause:
-                    Button("Mettre les nouveaux départs en pause") {
+                    Button("Suspendre les nouvelles issues") {
                         Task {
                             await model.pause(projectId: projectId)
                             await projects.refresh()
@@ -92,7 +95,7 @@ struct ProjectOverviewView: View {
                     .accessibilityIdentifier("project.overview.pause")
                     .help("Empêche les nouveaux départs. Le travail actif continue ; ouvrez-le pour l’annuler.")
                 case .resume:
-                    Button("Reprendre les nouveaux départs") {
+                    Button("Reprendre la surveillance") {
                         Task {
                             await model.resume(projectId: projectId)
                             await projects.refresh()
@@ -131,8 +134,12 @@ struct ProjectOverviewView: View {
                         VStack(spacing: 4) {
                             Image(systemName: stageSymbol(stage))
                                 .foregroundStyle(stageColor(stage))
-                            Text(stage.label)
+                            Text(stage.id == .development ? "Développement" : stage.label)
                                 .font(.caption.weight(.medium))
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(stage.id == .development ? "Une issue à la fois" : stage.id == .pullRequest ? "Après le développement" : stage.detail)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                             Text(stageStatus(stage))
                                 .font(.caption2)
@@ -140,6 +147,8 @@ struct ProjectOverviewView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         .frame(maxWidth: .infinity)
+                        .padding(14)
+                        .background(stageColor(stage).opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel("\(stage.label): \(stageStatus(stage)). \(stage.detail)")
                     }
@@ -148,7 +157,7 @@ struct ProjectOverviewView: View {
                     .font(.callout)
                     .fixedSize(horizontal: false, vertical: true)
                 if let onOpenComposition {
-                    Button("Ouvrir la composition") { onOpenComposition() }
+                    Button("Configurer") { onOpenComposition() }
                         .accessibilityIdentifier("project.overview.open-composition")
                 }
             }
@@ -234,72 +243,79 @@ struct ProjectOverviewView: View {
         }
     }
 
-    private func issuesCard(_ overview: ProjectOverview) -> some View {
-        let focused = ProjectOverviewPresentation.focusedIssue(overview)?.id
-        let ready = overview.issues.filter { $0.id != focused && $0.status == .eligible }
-        let attention = overview.issues.filter { $0.id != focused && $0.status == .unavailable }
-        let others = overview.issues.filter { $0.id != focused && $0.status != .eligible && $0.status != .unavailable }
+    private func issuesCard(_ overview: ProjectOverview, wide: Bool) -> some View {
+        let issues = overview.issues.filter {
+            issueFilter.isEmpty || "\($0.issueNumber) \($0.title)".localizedCaseInsensitiveContains(issueFilter)
+        }
         return VStack(alignment: .leading, spacing: 12) {
-            if !attention.isEmpty {
-                GroupBox("Actions requises") {
-                    ForEach(attention) { issueRow($0) }
+            HStack {
+                Text("Issues suivies").font(.title2.bold())
+                Spacer()
+                if let onOpenComposition {
+                    Button("Configurer", action: onOpenComposition)
                 }
             }
-            GroupBox("Issues prêtes (\(ready.count))") {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(overview.readinessHelp).font(.callout).foregroundStyle(.secondary)
-                    if ready.isEmpty { Text("Aucune autre issue prête dans le dernier contrôle GitHub.") }
-                    ForEach(ready) { issueRow($0) }
-                }.frame(maxWidth: .infinity, alignment: .leading)
+            Text(overview.readinessHelp).font(.callout).foregroundStyle(.secondary)
+            TextField("Filtrer par titre ou numéro", text: $issueFilter)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("project.overview.issue-filter")
+            if issues.isEmpty {
+                Text(overview.issues.isEmpty ? "Aucune issue dans le dernier contrôle GitHub." : "Aucune issue ne correspond au filtre.")
+                    .foregroundStyle(.secondary)
             }
-            DisclosureGroup("Autres issues (\(others.count))") {
-                TextField("Filtrer par titre ou numéro", text: $issueFilter)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityIdentifier("project.overview.issue-filter")
-                ForEach(others.filter { issueFilter.isEmpty || "\($0.issueNumber) \($0.title)".localizedCaseInsensitiveContains(issueFilter) }) { issueRow($0) }
+            ForEach(issues) { issue in
+                issueRow(issue, wide: wide)
+                Divider()
             }
         }
     }
 
-    private func issueRow(_ issue: ProjectOverview.Issue) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 8) {
-                Label(
-                    ProjectOverviewPresentation.issueStatusLabel(issue.status),
-                    systemImage: issueSymbol(issue.status))
-                    .foregroundStyle(issueColor(issue.status))
-                    .font(.callout.weight(.medium))
-                Spacer()
-                Text("#\(issue.issueNumber)")
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
+    private func issueRow(_ issue: ProjectOverview.Issue, wide: Bool) -> some View {
+        let layout = wide
+            ? AnyLayout(HStackLayout(alignment: .top, spacing: 20))
+            : AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+        return layout {
+            issueTitle(issue).frame(maxWidth: .infinity, alignment: .leading)
+            issueSituation(issue).frame(width: wide ? 150 : nil, alignment: .leading)
+            issueNextStep(issue).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func issueTitle(_ issue: ProjectOverview.Issue) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let executionId = issue.executionId, let onOpenExecution {
+                Button(issue.title) { onOpenExecution(executionId) }
+                    .buttonStyle(.link)
+                    .accessibilityLabel("Ouvrir le travail de l’issue \(issue.issueNumber) : \(issue.title)")
+            } else {
+                Text(issue.title).fontWeight(.medium)
             }
-            Text(issue.title)
-                .font(.body.weight(.medium))
-                .fixedSize(horizontal: false, vertical: true)
+            Text("#\(issue.issueNumber)").font(.caption).foregroundStyle(.secondary)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func issueSituation(_ issue: ProjectOverview.Issue) -> some View {
+        Label(ProjectOverviewPresentation.workStatusLabel(issue), systemImage: issueSymbol(issue.status))
+            .font(.callout.weight(.medium))
+            .foregroundStyle(issueColor(issue.status))
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func issueNextStep(_ issue: ProjectOverview.Issue) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
             Text(issue.explanation)
-                .font(.callout)
-                .fixedSize(horizontal: false, vertical: true)
             if issue.openDependencyCount > 0 {
-                Text("Bloqueurs ouverts : \(issue.openDependencyCount)")
-                    .font(.caption.weight(.medium))
+                Text("Bloqueurs ouverts : \(issue.openDependencyCount)").fontWeight(.medium)
                 ForEach(issue.blockerRefs, id: \.self) { blocker in
-                    Text(ProjectPreflightState.issueLabel(blocker))
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(ProjectPreflightState.issueLabel(blocker)).foregroundStyle(.secondary)
                 }
             }
-            if let executionId = issue.executionId, let onOpenExecution {
-                Button("Ouvrir le travail") { onOpenExecution(executionId) }
-                    .accessibilityLabel("Ouvrir le travail de l’issue \(issue.issueNumber)")
-            }
         }
-        .padding(10)
-        .background(.quaternary.opacity(0.28), in: RoundedRectangle(cornerRadius: 8))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(
-            "Issue \(issue.issueNumber), \(ProjectOverviewPresentation.issueStatusLabel(issue.status)). \(issue.title). \(issue.explanation)")
+        .font(.callout)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func unavailable(_ message: String) -> some View {
@@ -349,11 +365,11 @@ struct ProjectOverviewView: View {
 
     private func stageStatus(_ stage: ProjectOverview.Stage) -> String {
         switch stage.status {
-        case "ready": "Ready"
-        case "active": "Active"
-        case "waiting": "Waiting"
-        case "complete": "Complete"
-        default: "Unavailable"
+        case "ready": "Prêt"
+        case "active": "En cours"
+        case "waiting": "En attente"
+        case "complete": "Terminé"
+        default: "Indisponible"
         }
     }
 

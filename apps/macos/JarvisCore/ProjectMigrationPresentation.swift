@@ -47,6 +47,10 @@ public struct ProjectMigrationPreview: Sendable, Equatable {
         }
         return "GitHub et Development · \(plan.scope) · label \(plan.readyLabel) · règle \(plan.removedModule) retirée"
     }
+
+    public var requiresPauseBeforeMigration: Bool {
+        reasons.contains { $0.code == "project-active" || $0.code == "work-pending" }
+    }
 }
 
 public struct ProjectMigrationResult: Sendable, Equatable {

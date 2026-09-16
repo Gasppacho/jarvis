@@ -555,6 +555,13 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(githubOnly.modules[0].configurationValues["repositories"], "[\"main\"]")
         XCTAssertEqual(githubOnly.modules[0].bindings["sourceControl"], "sourceControl")
         XCTAssertNil(githubOnly.slotRequirements["agentRuntime"])
+        XCTAssertEqual(
+            ProjectOnboardingPresentation(
+                project: imported,
+                configuration: configuration.state(for: imported.id)
+            ).steps.first(where: { $0.id == .workflow })?.status,
+            .needsAction,
+            "GitHub seul ne doit pas annoncer le parcours Development/PR")
         configuration.editDraft(projectId: imported.id) { $0.modules[0].enabled = false }
         configuration.addModule(projectId: imported.id, package: githubPackage)
         XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.count, 1)
@@ -655,6 +662,27 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(reopenedDevelopment.configurationValues["preparation"], "install")
         XCTAssertEqual(reopenedDevelopment.configurationValues["validationOrder"], #"["verify"]"#)
         XCTAssertTrue(configuration.state(for: imported.id).draft?.workflowCommandsConfigured == true)
+        XCTAssertEqual(
+            ProjectOnboardingPresentation(
+                project: imported,
+                configuration: configuration.state(for: imported.id)
+            ).steps.first(where: { $0.id == .workflow })?.status,
+            .readyForReview)
+        configuration.editDraft(projectId: imported.id) { draft in
+            guard let index = draft.modules.firstIndex(where: { $0.id == reopenedDevelopment.id }) else { return }
+            draft.modules[index].enabled = false
+        }
+        XCTAssertEqual(
+            ProjectOnboardingPresentation(
+                project: imported,
+                configuration: configuration.state(for: imported.id)
+            ).steps.first(where: { $0.id == .workflow })?.status,
+            .needsAction,
+            "un module Development désactivé casse le parcours recommandé")
+        configuration.editDraft(projectId: imported.id) { draft in
+            guard let index = draft.modules.firstIndex(where: { $0.id == reopenedDevelopment.id }) else { return }
+            draft.modules[index].enabled = true
+        }
         configuration.setCommand(projectId: imported.id, name: "install", command: "pnpm install --frozen-lockfile --offline")
         XCTAssertFalse(configuration.state(for: imported.id).draft?.workflowCommandsConfigured ?? true)
         XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.first { $0.id == reopenedDevelopment.id }?.validationOrder, ["verify"])
@@ -662,6 +690,13 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(
             configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "github" }?.configurationValues["readyLabel"],
             "approved-work")
+        configuration.setGuidedReadyLabel(projectId: imported.id, label: "ready-for-review")
+        XCTAssertEqual(
+            configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "github" }?.configurationValues["readyLabel"],
+            "ready-for-review")
+        XCTAssertEqual(
+            configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "development" }?.configurationValues["readyLabel"],
+            "ready-for-review")
         let labelModule = try XCTUnwrap(configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "github" })
         configuration.apply(.setModuleConfiguration(labelModule.id, "readyLabel", "reviewed-work"), projectId: imported.id, packages: catalog.packages)
         XCTAssertEqual(

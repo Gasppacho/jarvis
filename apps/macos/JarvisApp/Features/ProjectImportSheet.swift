@@ -164,8 +164,10 @@ struct ProjectImportSheet: View {
         GridRow {
             Text(label).foregroundStyle(.secondary)
             Text(value)
-                .lineLimit(1)
-                .truncationMode(.middle)
+                .lineLimit(label == "Dépôt distant" ? nil : 1)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 280, alignment: .leading)
+                .textSelection(.enabled)
         }
     }
 }

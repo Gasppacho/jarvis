@@ -42,7 +42,7 @@ final class ConnectionsModelTests: XCTestCase {
         XCTAssertEqual(model.discoveryState, .none)
         XCTAssertEqual(
             ConnectionsModel.emptyDiscoveryMessage,
-            "Aucun compte GitHub authentifié n'a été découvert. Jarvis utilise l'authentification locale `gh`; exécutez `gh auth login`, puis revenez ici et cliquez sur `Réessayer`.")
+            "Aucun compte GitHub authentifié n'a été découvert. Jarvis utilise l'authentification locale `gh`; exécutez `gh auth login`, puis revenez ici et cliquez sur « Actualiser les comptes ».")
     }
 
     @MainActor

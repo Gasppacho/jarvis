@@ -5,9 +5,9 @@ import SwiftUI
 /// Project composition editor. All repeated controls are driven by the module
 /// catalogue, configuration schemas, Project slots and eligible candidate arrays.
 public struct ProjectDetailView: View {
-    /// Ticket #199 puts the operational Overview first; Composition remains
-    /// the editable advanced surface beside the read-only graph and Timeline.
+    /// Three user journeys; technical tools stay available from Diagnostics.
     private enum Tab: Hashable {
+        case configuration
         case overview
         case composition
         case graph
@@ -44,9 +44,7 @@ public struct ProjectDetailView: View {
     @State private var newSlotName = ""
     @State private var newSlotRequirement = ""
     @State private var selectedCompositionID: String?
-    // Not reset per Project: RootView constructs this view in the same
-    // switch-case slot for every Project, so SwiftUI preserves this state
-    // across a Project switch rather than losing the selected tab.
+    // Execution selection and navigation are reset when changing project.
     @State private var selectedTab: Tab = .overview
     @State private var selectedExecutionID: String?
     @State private var executionOrigin: Tab = .overview
@@ -61,7 +59,8 @@ public struct ProjectDetailView: View {
         projectGraph: ProjectGraphModel,
         deadLetters: ProjectDeadLettersModel,
         connections: ConnectionsModel,
-        project: Project
+        project: Project,
+        opensAdvanced: Bool = false
     ) {
         self.projects = projects
         self.projectConfiguration = projectConfiguration
@@ -73,24 +72,66 @@ public struct ProjectDetailView: View {
         self.deadLetters = deadLetters
         self.connections = connections
         self.project = project
+        _selectedTab = State(initialValue: opensAdvanced ? .composition : .overview)
     }
 
     public var body: some View {
         VStack(spacing: 0) {
-            Picker("Vue", selection: $selectedTab) {
-                Text("Supervision").tag(Tab.overview)
-                Text("Composition").tag(Tab.composition)
-                Text("Schéma").tag(Tab.graph)
-                Text("Historique").tag(Tab.timeline)
-                Text("Exécution").tag(Tab.execution)
-                Text("Livraisons en échec").tag(Tab.deadLetters)
+            HStack(spacing: 16) {
+                Picker("Parcours du projet", selection: Binding<Tab>(
+                    get: {
+                        switch selectedTab {
+                        case .composition: .configuration
+                        case .graph, .deadLetters: .overview
+                        case .timeline: .execution
+                        default: selectedTab
+                        }
+                    },
+                    set: { destination in
+                        if destination == .execution, selectedExecutionID == nil,
+                           let snapshot = overview.state(for: project.id).overview,
+                           let id = ProjectOverviewPresentation.focusedIssue(snapshot)?.executionId {
+                            selectedExecutionID = id
+                            executionOrigin = .overview
+                        }
+                        selectedTab = destination
+                    }
+                )) {
+                    Text("Configurer").tag(Tab.configuration)
+                    Text("Superviser").tag(Tab.overview)
+                    Text("Suivre").tag(Tab.execution)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 480)
+                .accessibilityIdentifier("project.journeys")
+                Spacer(minLength: 0)
+                Menu {
+                    Button("Composition et réglages avancés") { selectedTab = .composition }
+                    Button("Schéma des événements") { selectedTab = .graph }
+                    Button("Historique des événements") { selectedTab = .timeline }
+                    Button("Livraisons en échec") { selectedTab = .deadLetters }
+                } label: {
+                    Label("Diagnostics", systemImage: "ellipsis.circle")
+                }
+                .fixedSize()
+                .accessibilityIdentifier("project.diagnostics")
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
             .padding([.horizontal, .top], 24)
             .padding(.bottom, 12)
 
             switch selectedTab {
+            case .configuration:
+                ProjectOnboardingView(
+                    projects: projects,
+                    projectConfiguration: projectConfiguration,
+                    moduleCatalog: moduleCatalog,
+                    connections: connections,
+                    overview: overview,
+                    project: project,
+                    openAdvanced: { selectedTab = .composition },
+                    openSupervision: { selectedTab = .overview })
+                    .id(project.id)
             case .overview:
                 ProjectOverviewView(
                     model: overview,
@@ -98,10 +139,15 @@ public struct ProjectDetailView: View {
                     executionDetail: executionDetail,
                     projectId: project.id,
                     onOpenExecution: { openExecution($0) },
-                    onOpenComposition: { selectedTab = .composition })
+                    onOpenComposition: { selectedTab = .configuration })
             case .composition:
+                Button("Revenir à la configuration guidée") { selectedTab = .configuration }
+                    .accessibilityIdentifier("project.advanced.return")
+                    .padding(.bottom, 8)
                 compositionTab
             case .graph:
+                Button("Retour à la supervision") { selectedTab = .overview }
+                    .padding(.bottom, 8)
                 ProjectGraphView(model: projectGraph, projectId: project.id)
             case .timeline:
                 // Timeline's own project-scoped state means switching to a
@@ -121,12 +167,15 @@ public struct ProjectDetailView: View {
                         backLabel: executionOrigin == .overview ? "Retour à la supervision" : "Retour à l’historique",
                         close: { selectedTab = executionOrigin })
                 } else {
-                    ContentUnavailableView(
-                        "Aucune exécution sélectionnée",
-                        systemImage: "gearshape",
-                        description: Text("Ouvrez une exécution depuis la supervision ou l’historique."))
+                    Text("Choisissez un travail à suivre").font(.title2.bold()).padding()
+                    ProjectTimelineView(timeline: timeline, projectId: project.id) { id in
+                        executionOrigin = .timeline
+                        selectedExecutionID = id
+                    }
                 }
             case .deadLetters:
+                Button("Retour à la supervision") { selectedTab = .overview }
+                    .padding(.bottom, 8)
                 ProjectDeadLettersView(model: deadLetters, projectId: project.id)
             }
         }
@@ -137,7 +186,8 @@ public struct ProjectDetailView: View {
         }
         .onChange(of: project.id) { _, _ in
             selectedExecutionID = nil
-            if selectedTab == .execution { selectedTab = .overview }
+            selectedTab = .overview
+            executionOrigin = .overview
         }
         .alert(
             presentation.deletionConfirmation.title,
@@ -183,7 +233,8 @@ public struct ProjectDetailView: View {
                     ProjectMigrationView(
                         model: projectConfiguration,
                         project: project,
-                        packages: moduleCatalog.packages)
+                        packages: moduleCatalog.packages,
+                        onOpenSupervision: { selectedTab = .overview })
                     if let detail = state.detail {
                         repositorySection(detail).id("repository")
                         if state.draft != nil {
@@ -199,8 +250,8 @@ public struct ProjectDetailView: View {
                                 compositionReview(proxy)
                                 compositionOutline
                             }
-                            ProjectPreflightView(model: projectConfiguration, project: project, packages: moduleCatalog.packages) { destination in
-                                let target = destination == .repository ? "repository" : destination == .connections && state.draft?.isFixedComposition != true ? "local-bindings" : "portable-configuration"
+                            ProjectPreflightView(model: projectConfiguration, project: project, packages: moduleCatalog.packages) { repairTarget in
+                                let target = repairTarget.step == .repository ? "repository" : repairTarget.step == .connections && state.draft?.isFixedComposition != true ? "local-bindings" : "portable-configuration"
                                 withAnimation { proxy.scrollTo(target, anchor: .top) }
                             }
                             DisclosureGroup("Advanced validation") {
@@ -326,8 +377,13 @@ public struct ProjectDetailView: View {
                 model: projectConfiguration,
                 project: project,
                 packages: moduleCatalog.packages,
+                moduleCatalog: moduleCatalog,
                 connections: connections,
                 overview: overview,
+                openConnections: {
+                    projects.onboardingNavigation.set(.connections, for: project.id)
+                    selectedTab = .configuration
+                },
                 onSelectModule: { instanceId in
                     selectedCompositionID = "instance:\(instanceId)"
                     withAnimation { proxy.scrollTo("module-instance-\(instanceId)", anchor: .top) }

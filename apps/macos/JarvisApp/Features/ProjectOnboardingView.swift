@@ -10,11 +10,14 @@ struct ProjectOnboardingView: View {
     let overview: ProjectOverviewModel?
     let project: Project
     let openAdvanced: () -> Void
+    var openSupervision: (() -> Void)? = nil
 
     private var navigation: ProjectOnboardingNavigationStore { projects.onboardingNavigation }
     @State private var step: ProjectOnboardingStep
     @State private var editingGitHub = false
     @State private var editingRuntime = false
+    @State private var repairTarget: ProjectPreflightRepairTarget?
+    @FocusState private var focusedControl: OnboardingFocus?
 
     init(
         projects: ProjectsModel,
@@ -23,7 +26,8 @@ struct ProjectOnboardingView: View {
         connections: ConnectionsModel,
         overview: ProjectOverviewModel? = nil,
         project: Project,
-        openAdvanced: @escaping () -> Void
+        openAdvanced: @escaping () -> Void,
+        openSupervision: (() -> Void)? = nil
     ) {
         self.projects = projects
         self.projectConfiguration = projectConfiguration
@@ -32,6 +36,7 @@ struct ProjectOnboardingView: View {
         self.overview = overview
         self.project = project
         self.openAdvanced = openAdvanced
+        self.openSupervision = openSupervision
         _step = State(initialValue: projects.onboardingNavigation.currentStep(for: project.id))
     }
 
@@ -77,7 +82,8 @@ struct ProjectOnboardingView: View {
                     ProjectMigrationView(
                         model: projectConfiguration,
                         project: project,
-                        packages: moduleCatalog.packages)
+                        packages: moduleCatalog.packages,
+                        onOpenSupervision: openSupervision)
                     activeStep
                 }
                 .frame(maxWidth: 900, alignment: .leading)
@@ -105,7 +111,7 @@ struct ProjectOnboardingView: View {
                     .accessibilityIdentifier("project.save")
                 }
                 if let nextStep {
-                    Button("Continuer vers \(nextStep.title)") {
+                    Button(state.isDraftSaved ? "Continuer vers \(nextStep.title)" : "Enregistrer et continuer vers \(nextStep.title)") {
                         Task {
                             if !state.isDraftSaved {
                                 guard await projectConfiguration.saveDraft(projectId: project.id, writeToRepository: false) != nil else { return }
@@ -178,8 +184,11 @@ struct ProjectOnboardingView: View {
             repositoryStep
         case .workflow:
             ProjectWorkflowView(model: projectConfiguration, project: project,
-                                packages: moduleCatalog.packages, connections: connections,
+                                packages: moduleCatalog.packages, moduleCatalog: moduleCatalog,
+                                connections: connections,
                                 overview: overview,
+                                openConnections: { step = .connections },
+                                repairTarget: repairTarget,
                                 openAdvanced: openAdvanced)
         case .connections:
             connectionsStep
@@ -216,6 +225,7 @@ struct ProjectOnboardingView: View {
                         presentRepositoryPicker(binding: binding, project: project, projects: projects,
                                                 configuration: projectConfiguration, packages: moduleCatalog.packages)
                     }
+                    .focused($focusedControl, equals: .repositoryAccess)
                     .accessibilityIdentifier("project.repository-access")
                     DisclosureGroup("Détails du dossier") {
                         Text(binding.path).textSelection(.enabled)
@@ -229,6 +239,7 @@ struct ProjectOnboardingView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .onAppear { focus(.repositoryAccess, for: "project.repository-access") }
     }
 
     private var connectionsStep: some View {
@@ -295,10 +306,12 @@ struct ProjectOnboardingView: View {
                 }
                 Button("Actualiser les comptes") { Task { await refreshConnections() } }
                     .disabled(connections.isRefreshing || state.isSaving)
+                    .focused($focusedControl, equals: .githubRefresh)
                     .accessibilityIdentifier("project.github.refresh")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .onAppear { focus(.githubRefresh, for: "project.github.refresh") }
     }
 
     @ViewBuilder
@@ -402,17 +415,28 @@ struct ProjectOnboardingView: View {
                         Task { await projectConfiguration.refreshRuntimeCandidates(projectId: project.id, discover: true) }
                     }
                     .disabled(runtime.isBusy || state.isSaving)
+                    .focused($focusedControl, equals: .runtimeRefresh)
                     .accessibilityIdentifier("project.runtime.refresh")
                     Link("Aide Codex", destination: URL(string: "https://developers.openai.com/codex/cli")!)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .onAppear { focus(.runtimeRefresh, for: "project.runtime.refresh") }
     }
 
     private var review: some View {
-        ProjectPreflightView(model: projectConfiguration, project: project, packages: moduleCatalog.packages, showsActivation: false) { destination in
-            step = destination
+        ProjectPreflightView(model: projectConfiguration, project: project, packages: moduleCatalog.packages, showsActivation: false) { target in
+            repairTarget = target
+            step = target.step
+        }
+    }
+
+    private func focus(_ control: OnboardingFocus, for controlID: String) {
+        guard repairTarget?.controlID == controlID else { return }
+        Task { @MainActor in
+            await Task.yield()
+            focusedControl = control
         }
     }
 
@@ -426,6 +450,12 @@ struct ProjectOnboardingView: View {
         case .stale: "arrow.clockwise.circle"
         }
     }
+}
+
+private enum OnboardingFocus: Hashable {
+    case repositoryAccess
+    case githubRefresh
+    case runtimeRefresh
 }
 
 struct FirstLaunchView: View {

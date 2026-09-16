@@ -149,7 +149,7 @@ describe("project composition choices", () => {
       bootstrapLabelPolicy: "ignore-existing",
       pollIntervalSeconds: 60,
       repositories: ["main"],
-      readyLabel: "ready-for-agent",
+      readyLabel: "ready-to-dev",
     });
     expect(template.modules[0]?.["bindings"]).toEqual({ sourceControl: "sourceControl" });
     expect(template.modules[1]?.["bindings"]).toEqual({ repository: "main" });

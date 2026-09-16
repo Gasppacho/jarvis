@@ -7,6 +7,7 @@ struct ProjectMigrationView: View {
     let model: ProjectConfigurationModel
     let project: Project
     let packages: [ModulePackage]
+    var onOpenSupervision: (() -> Void)? = nil
 
     @State private var writeToRepository = true
     @State private var showingConversionConfirmation = false
@@ -22,8 +23,10 @@ struct ProjectMigrationView: View {
         return !configuration.modules.isEmpty || !configuration.slots.additionalProperties.isEmpty
     }
     private var canReconfigure: Bool {
-        guard let preview = state.migration.preview, project.status == .paused else { return false }
-        return !preview.reasons.contains { $0.code == "project-active" || $0.code == "work-pending" }
+        guard let preview = state.migration.preview,
+            (state.detail?.project.status ?? project.status) == .paused
+        else { return false }
+        return !preview.requiresPauseBeforeMigration
     }
 
     var body: some View {
@@ -121,10 +124,29 @@ struct ProjectMigrationView: View {
                 Text("Aperçu de reconstruction : \(preview.destinationSummary). Les règles, instances et valeurs incompatibles indiquées ci-dessus seront abandonnées ; les choix restants seront à confirmer dans le brouillon D04.")
                     .font(.callout)
                 if preview.reasons.contains(where: { $0.code == "work-pending" }) {
-                    Text("Terminez ou annulez les travaux depuis Historique ou Exécution avec la version compatible, puis relancez l’analyse.")
+                    Label(
+                        "Des travaux actifs bloquent encore la migration. Après la pause, terminez-les ou annulez-les depuis la supervision, puis relancez l’analyse.",
+                        systemImage: "pause.circle")
+                        .font(.callout).foregroundStyle(.orange)
+                } else if preview.reasons.contains(where: { $0.code == "project-active" }) {
+                    Label(
+                        "Le projet est actif. Mettez-le en pause avant de continuer.",
+                        systemImage: "pause.circle")
                         .font(.callout).foregroundStyle(.orange)
                 }
                 HStack {
+                    if preview.requiresPauseBeforeMigration && (state.detail?.project.status ?? project.status) != .paused {
+                        Button("Mettre le projet en pause") {
+                            Task {
+                                await model.pauseForMigration(projectId: project.id, packages: packages)
+                            }
+                        }
+                        .accessibilityIdentifier("project.migration.pause")
+                    }
+                    if let onOpenSupervision {
+                        Button("Ouvrir la supervision") { onOpenSupervision() }
+                            .accessibilityIdentifier("project.migration.open-supervision")
+                    }
                     Button("Reconfigurer avec les modules fixes") {
                         showingReconfigurationConfirmation = true
                     }

@@ -6,8 +6,8 @@ Décision du 13 septembre 2026 : **Dépôt → Workflow → Accès et agent → 
 est l'unique parcours recommandé. Il remplace les anciens assistants à cinq étapes
 et le second panneau de navigation. Les modules fixes se règlent dans leurs cartes ;
 les diagnostics restent accessibles dans **Réglages avancés**, avec un retour
-explicite au guide du même projet. Après activation, l'onglet **Composition**
-réutilise ces cartes et replie les bindings et contrats techniques.
+explicite au guide du même projet. Après activation, **Configurer** réutilise le même guide. Les diagnostics donnent
+accès à la composition complète, aux bindings et aux contrats techniques.
 Le plan et les preuves de livraison sont suivis dans
 [`PROGRESS.md`](../../PROGRESS.md) ; les captures de la maquette d'audit représentent
 des données fictives, pas des résultats exécutés.
@@ -25,6 +25,25 @@ La sauvegarde reste visible en bas, avec **Modifications à enregistrer**,
 **Enregistrement…**, **Enregistré** ou **Échec — Réessayer**. Sauvegarder ne démarre
 aucun travail. Changer d'étape ou ouvrir les réglages avancés conserve le brouillon.
 Une réouverture retrouve les valeurs enregistrées et l'étape du projet.
+
+Le détail opérationnel présente trois parcours : **Configurer**, **Superviser** et
+**Suivre**. Configurer ouvre les quatre étapes du guide, y compris pour un projet
+déjà activé. Superviser affiche le workflow, le travail courant et toutes les
+**Issues suivies**, filtrables, avec leur situation et l’explication fournie par
+l’Engine. Suivre ouvre le travail sélectionné, sinon le dernier travail connu, ou
+l’historique pour en choisir un.
+Le menu **Diagnostics** conserve le schéma, les événements, les livraisons en
+échec et la composition avancée. Changer de projet efface la sélection d’exécution.
+
+Dans le workflow guidé, quatre cartes donnent accès à **Issue prête**,
+**Développement**, **Vérifications** et **Pull Request**. Elles décrivent le parcours
+recommandé et indiquent ce qui est absent, à configurer ou prévu dans le brouillon.
+GitHub seul est présenté comme une observation des issues, sans promesse de PR ;
+seul le schéma avancé représente les abonnements calculés par l’Engine.
+Le label reste éditable, les commandes exigent toujours leur confirmation, et les
+contrôles d’ajout, de retrait et d’activation des modules restent accessibles.
+Le suivi présente l’avancement et les vérifications à côté du contexte et du
+dernier message réel de l’agent ; les colonnes s’empilent dans une petite fenêtre.
 
 Les raccourcis **⌘N** (ajouter un projet) et **⌘S** (enregistrer le brouillon)
 complètent les contrôles natifs. L’activation reste une action explicite, sans
@@ -52,6 +71,8 @@ dossier reste local à ce Mac et peut être réautorisé depuis cette étape.
 
 ## Workflow
 
+**Préparer le parcours recommandé GitHub → Développement → PR** ajoute les deux
+modules au brouillon. **Observer uniquement les issues** est un choix explicite.
 **Ajouter GitHub** et **Ajouter Développement** ajoutent chacun un seul module,
 sans activation ni accord de ressource. GitHub seul permet l'observation ;
 Développement seul reste un brouillon non activable. Le schéma présente les
@@ -69,6 +90,17 @@ pour les demandes, pointillés pour les faits, flèches et liste équivalente in
 les destinataires. Les sorties sans destinataire sont consultables séparément ;
 l'auto-demande interne reste technique. Les configurations historiques restent
 inertes jusqu'à leur migration ou reconstruction explicite.
+
+Une configuration historique active propose **Mettre le projet en pause** avant
+la migration et garde le guide ouvert après l’action. Si des travaux restent
+actifs, l’écran explique ce blocage et ouvre **Superviser** pour les suivre.
+
+Le Workflow règle le comportement et les commandes. **Accès et agent** est le
+seul lieu où choisir le compte GitHub et le runtime ; le résumé du Workflow y
+conduit directement. Si le catalogue est indisponible ou incomplet, l’ajout est
+désactivé et un bouton **Réessayer** accompagne l’explication. La saisie d’une
+branche ou d’une fréquence reste visible pendant l’édition et se valide avant
+l’enregistrement. **Enregistrer et continuer** nomme la sauvegarde implicite.
 
 Le parcours recommandé utilise une issue ouverte portant **ready-to-dev**, sans
 bloqueur GitHub natif ouvert. GitHub produit `scm.work-item.observed`, puis
@@ -113,8 +145,13 @@ constitue pas à lui seul une preuve de disponibilité actuelle.
 
 **Vérifier la configuration** résume accès, commandes confirmées, déclencheur et
 sortie attendue. Les contrôles proviennent du preflight Engine. Un échec présente
-son impact et **Corriger**, qui ouvre la bonne étape. Le fingerprint, les références
-de contrats et les routes restent dans les détails techniques.
+son impact en français et **Corriger**, qui ouvre l'étape et place le focus sur
+le contrôle concerné lorsque sa destination est connue. Les contrôles
+de même cause sont regroupés ; compte GitHub et runtime restent deux corrections
+distinctes même lorsqu’ils relèvent tous deux d’**Accès et agent**. Les messages
+bruts, identifiants, fingerprint, références de contrats et routes restent dans
+les détails techniques. Les commandes prévues sont repliées et explicitement
+annoncées comme non encore exécutées.
 
 **Configuration prête** ne signifie ni tests réussis ni issue disponible. Une liste
 vide d'issues est normale ; une erreur GitHub ou des dépendances inconnues bloque

@@ -51,6 +51,28 @@ final class ProjectMigrationTests: XCTestCase {
         XCTAssertFalse(ProjectMigrationState.current(preview).requiresMigration)
     }
 
+    func testMigrationPreviewIdentifiesPauseBlockers() throws {
+        let json = """
+        {
+          "apiVersion":"jarvis.dev/project-guided-migration/v1",
+          "kind":"ProjectGuidedMigrationPreview",
+          "projectId":"project",
+          "classification":"engine-only",
+          "canApply":false,
+          "compositionFingerprint":"fingerprint",
+          "reasons":[
+            {"code":"project-active","message":"Project is active"},
+            {"code":"work-pending","message":"Work is pending"}
+          ]
+        }
+        """
+        let preview = ProjectMigrationPreview(try JSONDecoder().decode(
+            Components.Schemas.ProjectGuidedMigrationPreview.self,
+            from: Data(json.utf8)))
+
+        XCTAssertTrue(preview.requiresPauseBeforeMigration)
+    }
+
     func testTypedEngineClientDecodesMigrationApplyBackup() async throws {
         let client = EngineClient(
             serverURL: URL(string: "http://127.0.0.1:1")!,

@@ -352,6 +352,23 @@ public final class ProjectConfigurationModel {
         }
     }
 
+    public func pauseForMigration(
+        projectId: String,
+        packages: [ModulePackage] = []
+    ) async {
+        guard let client else {
+            update(projectId) { $0.errorMessage = Self.engineUnavailable }
+            return
+        }
+        do {
+            _ = try await client.pauseProject(projectId: projectId)
+            await projects.refresh()
+            await refresh(projectId: projectId, packages: packages)
+        } catch {
+            update(projectId) { $0.errorMessage = ProjectsModel.describe(error) }
+        }
+    }
+
     public func prepareFixedReconfiguration(projectId: String) {
         guard state(for: projectId).draft?.isFixedComposition != true,
             projectIsQuiescentForMigration(projectId: projectId)
@@ -373,6 +390,14 @@ public final class ProjectConfigurationModel {
             guard let github = draft.modules.firstIndex(where: { $0.moduleId == "jarvis.module.github" && (moduleID == nil || $0.id == moduleID) })
             else { return }
             draft.modules[github].configurationValues["readyLabel"] = label
+        }
+    }
+
+    public func setGuidedReadyLabel(projectId: String, label: String) {
+        editDraft(projectId: projectId) { draft in
+            for index in draft.modules.indices where ["jarvis.module.github", "jarvis.module.development"].contains(draft.modules[index].moduleId) {
+                draft.modules[index].configurationValues["readyLabel"] = label
+            }
         }
     }
 
@@ -434,7 +459,7 @@ public final class ProjectConfigurationModel {
             guard revision == compositionRevisions[projectId, default: 0] else { return }
             update(projectId) {
                 $0.errorMessage =
-                    "Composition choices could not be refreshed. Your Draft was preserved. Try the edit again or reload this Project."
+                    "Impossible d’actualiser les choix du parcours. Votre brouillon est conservé. Réessayez cette modification ou rouvrez le projet."
             }
         }
     }

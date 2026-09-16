@@ -45,7 +45,7 @@ public struct ConnectionsView: View {
             } description: {
                 Text(ConnectionsModel.emptyDiscoveryMessage)
             } actions: {
-                Button("Réessayer") { Task { await model.refresh() } }
+                Button("Actualiser les comptes") { Task { await model.refresh() } }
                 Link("Aide de connexion", destination: URL(string: "https://cli.github.com/manual/gh_auth_login")!)
             }
         case .unavailable:

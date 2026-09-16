@@ -7,7 +7,7 @@ struct ProjectPreflightView: View {
     let project: Project
     let packages: [ModulePackage]
     var showsActivation = true
-    let repair: (ProjectOnboardingStep) -> Void
+    let repair: (ProjectPreflightRepairTarget) -> Void
     private var state: ProjectConfigurationState { model.state(for: project.id) }
     private var observesOnly: Bool {
         state.draft?.modules.contains { $0.enabled && $0.moduleId == "jarvis.module.development" } == false
@@ -15,6 +15,27 @@ struct ProjectPreflightView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            GroupBox("Avant de démarrer") {
+                VStack(alignment: .leading, spacing: 4) {
+                    if case .current(let report) = state.preflight {
+                        Label(
+                            "Accès : \(report.checks.contains { $0.status == .failed && [.connections, .repository].contains(ProjectPreflightState.repairStep($0)) } ? "à corriger" : "vérifiés")",
+                            systemImage: "person.crop.circle")
+                        Label(
+                            report.candidateEligibility.status == .unavailable
+                                ? "Déclenchement et portée : accès GitHub non vérifiable"
+                                : report.configuredWorkItemRef.map { "Déclenchement et portée : essai limité à \(ProjectPreflightState.issueLabel($0))" } ?? "Déclenchement et portée : surveillance des issues prêtes",
+                            systemImage: "scope")
+                    } else {
+                        Label("Accès : à vérifier", systemImage: "person.crop.circle")
+                        Label("Déclenchement et portée : à vérifier", systemImage: "scope")
+                    }
+                    Label(
+                        "Préparation et commandes : \(observesOnly ? "aucune en observation seule" : state.draft?.workflowCommandsConfigured == true ? "choisies, non exécutées" : "à choisir")",
+                        systemImage: "terminal")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
             GroupBox("Vérifier la configuration") {
                 VStack(alignment: .leading, spacing: 12) {
                     Label(state.preflight.title, systemImage: state.preflight.canActivate ? "checkmark.seal.fill" : "checklist")
@@ -35,47 +56,57 @@ struct ProjectPreflightView: View {
                         if let date = state.preflightReceivedAt {
                             Text("Dernier contrôle reçu : \(date.formatted(date: .abbreviated, time: .standard))").font(.caption)
                         }
-                        if case .current = state.preflight {
-                            ForEach(report.checks.filter { $0.status == .passed && ($0.id.hasPrefix("repository:") || ($0.id == "runtime" && report.runtime.required)) }, id: \.id) { check in
-                                Label("\(check.title) : vérifié", systemImage: "checkmark.circle")
-                            }
+                        if case .current = state.preflight, report.valid && report.configurationReady {
+                            Label("Configuration vérifiée", systemImage: "checkmark.circle")
+                            Text("Les commandes choisies restent à exécuter lors du premier démarrage.")
+                                .font(.callout).foregroundStyle(.secondary)
                         }
                         if let draft = state.draft {
                             ForEach(draft.modules.filter { $0.enabled && $0.moduleId == "jarvis.module.development" }) { module in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Commandes choisies — à exécuter").font(.headline)
-                                    switch module.configurationValues["preparation"] {
-                                    case "none": Text("Installation : aucune")
-                                    case "install": Text("Installation : \(draft.commands["install"] ?? "à renseigner")").textSelection(.enabled)
-                                    default: Text("Installation : choix à confirmer")
+                                DisclosureGroup("Détails des commandes") {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        switch module.configurationValues["preparation"] {
+                                        case "none": Text("Installation : aucune")
+                                        case "install": Text("Installation : \(draft.commands["install"] ?? "à renseigner")").textSelection(.enabled)
+                                        default: Text("Installation : choix à confirmer")
+                                        }
+                                        ForEach(module.validationOrder, id: \.self) { name in
+                                            Text("\(name) : \(draft.commands[name] ?? "à renseigner")").textSelection(.enabled)
+                                        }
+                                        if module.validationOrder.isEmpty { Text("Vérifications : choix à confirmer") }
                                     }
-                                    ForEach(module.validationOrder, id: \.self) { name in
-                                        Text("\(name) : \(draft.commands[name] ?? "à renseigner")").textSelection(.enabled)
-                                    }
-                                    if module.validationOrder.isEmpty { Text("Vérifications : choix à confirmer") }
                                 }
                             }
                         }
-                        ForEach(report.checks.filter { $0.status == .failed }, id: \.id) { check in
-                            VStack(alignment: .leading, spacing: 5) {
-                                Label(check.title, systemImage: "exclamationmark.triangle").font(.headline)
-                                Text(check.impact).fixedSize(horizontal: false, vertical: true)
-                                Button("Corriger — \(ProjectPreflightState.repairStep(check).title)") {
-                                    repair(ProjectPreflightState.repairStep(check))
+                        ForEach(ProjectPreflightState.repairGroups(report)) { group in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(group.step.title).font(.headline)
+                                if let check = group.checks.first {
+                                    Label(ProjectPreflightState.userFacingTitle(check), systemImage: "exclamationmark.triangle")
+                                    Text(ProjectPreflightState.userFacingImpact(check))
+                                        .font(.callout)
+                                    if group.checks.count > 1 {
+                                        Text("Même correction pour plusieurs contrôles concernés.")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
                                 }
-                                .accessibilityHint("Ouvrir l’étape permettant de corriger \(check.title)")
-                                .accessibilityIdentifier("project.preflight.repair.\(check.id)")
-                            }.accessibilityElement(children: .contain)
+                                Button("Corriger") { repair(ProjectPreflightState.repairTarget(group.checks[0])) }
+                                    .accessibilityHint("Ouvrir l’étape permettant de corriger ce contrôle")
+                                    .accessibilityIdentifier("project.preflight.repair.\(group.id)")
+                            }
+                            .accessibilityElement(children: .contain)
                         }
                         if let trigger = report.trigger {
                             Label("Issue ouverte · label \(trigger.readyLabel) · aucun bloqueur ouvert", systemImage: "tag")
                             Text("Une issue à la fois. Résultat attendu : une PR à relire et fusionner manuellement.")
                         }
-                        DisclosureGroup("Détails des contrôles (\(report.checks.count))") {
+                        DisclosureGroup("Détails techniques des contrôles (\(report.checks.count))") {
                             ForEach(report.checks, id: \.id) { check in
                                 VStack(alignment: .leading, spacing: 4) {
                                     Label(check.title, systemImage: check.status == .passed ? "checkmark.circle" : "exclamationmark.triangle")
                                     Text(check.impact).font(.caption).foregroundStyle(.secondary)
+                                    Text("Identifiant : \(check.id)").font(.caption2.monospaced()).textSelection(.enabled)
+                                    Text("Étape : \(ProjectPreflightState.repairStep(check).title)").font(.caption2).foregroundStyle(.secondary)
                                 }.padding(.vertical, 4)
                             }
                             Text("Empreinte : \(report.compositionFingerprint)").font(.caption.monospaced()).textSelection(.enabled)
@@ -104,9 +135,9 @@ struct ProjectPreflightView: View {
                             Text("Choisissez une issue pour un essai limité, ou activez la surveillance avec le bouton final.")
                         }
                         switch report.candidateEligibility.status {
-                        case .empty: Text("Aucune issue correspondante pour le moment. Vous pouvez surveiller les prochaines issues prêtes.")
-                        case .unavailable: Label("La liste des issues n’a pas pu être vérifiée. Corrigez les contrôles ci-dessus, puis réessayez.", systemImage: "exclamationmark.triangle")
-                        case .available: Text("\(report.candidateEligibility.items.filter { $0.status == .eligible }.count) issue(s) prête(s) sur \(report.candidateEligibility.items.count) examinée(s).")
+                        case .empty: Label(report.candidateStatusLabel, systemImage: "tray")
+                        case .unavailable: Label("\(report.candidateStatusLabel). Corrigez les contrôles d’accès puis réessayez.", systemImage: "exclamationmark.triangle")
+                        case .available: Label(report.candidateStatusLabel, systemImage: "checkmark.circle")
                         }
                         ForEach(report.candidateEligibility.items, id: \.workItemRef) { item in
                             VStack(alignment: .leading, spacing: 6) {

@@ -203,7 +203,8 @@ struct RootView: View {
                         projectGraph: projectGraph,
                         deadLetters: deadLetters,
                         connections: connections,
-                        project: project)
+                        project: project,
+                        opensAdvanced: true)
                 }
                 .id(project.id)
             } else {

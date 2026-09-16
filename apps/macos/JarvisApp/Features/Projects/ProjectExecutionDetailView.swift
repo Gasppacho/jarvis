@@ -97,44 +97,84 @@ struct ProjectExecutionDetailView: View {
         _ detail: ProjectExecutionDetail,
         staleMessage: String?
     ) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if let staleMessage {
-                    HStack {
-                        Label(staleMessage, systemImage: "exclamationmark.triangle.fill")
-                            .font(.callout)
-                            .foregroundStyle(.orange)
-                        Spacer()
-                        Button("Réessayer") {
-                            Task {
-                                await model.refresh(projectId: projectId, executionId: executionId)
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if let staleMessage {
+                        HStack {
+                            Label(staleMessage, systemImage: "exclamationmark.triangle.fill")
+                                .font(.callout)
+                                .foregroundStyle(.orange)
+                            Spacer()
+                            Button("Réessayer") {
+                                Task {
+                                    await model.refresh(projectId: projectId, executionId: executionId)
+                                }
                             }
+                            .accessibilityLabel("Recharger le détail de l’exécution")
                         }
-                        .accessibilityLabel("Recharger le détail de l’exécution")
+                    }
+                    header(detail)
+                    if let failure = detail.failure {
+                        failureCard(failure)
+                    }
+                    if detail.pullRequest != nil { pullRequestCard(detail.pullRequest) }
+                    let layout = geometry.size.width >= 800
+                        ? AnyLayout(HStackLayout(alignment: .top, spacing: 24))
+                        : AnyLayout(VStackLayout(alignment: .leading, spacing: 16))
+                    layout {
+                        progressContent(detail).frame(maxWidth: .infinity, alignment: .leading)
+                        contextContent(detail).frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    DisclosureGroup("Détails des exécutions et fichiers") {
+                        executionsCard(detail.executions)
+                        workspaceCard(detail)
+                        artifactsCard(detail.artifacts)
+                    }
+                    technicalDetails(
+                        detail.technical,
+                        workspace: detail.workspace,
+                        retryDeliveryId: detail.retryDeliveryId)
+                }
+                .frame(maxWidth: 1100, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(24)
+            }
+        }
+    }
+
+    private func progressContent(_ detail: ProjectExecutionDetail) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            stepper(detail.steps)
+            checksCard(detail.checks)
+        }
+    }
+
+    private func contextContent(_ detail: ProjectExecutionDetail) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            GroupBox("Contexte") {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let workspace = detail.workspace {
+                        LabeledContent("Branche de travail", value: workspace.branch)
+                        Label("Travail dans une copie isolée", systemImage: "folder")
+                    } else {
+                        Text("Aucune copie de travail renseignée pour cette exécution.")
+                    }
+                    Label("Relecture et fusion manuelles", systemImage: "person.crop.circle")
+                }
+                .font(.callout)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if let latest = detail.agentExcerpts.last {
+                excerptsCard([latest])
+                if detail.agentExcerpts.count > 1 {
+                    DisclosureGroup("Messages précédents de l’agent") {
+                        excerptsCard(Array(detail.agentExcerpts.dropLast()))
                     }
                 }
-                header(detail)
-                if let failure = detail.failure {
-                    failureCard(failure)
-                }
-                if detail.pullRequest != nil { pullRequestCard(detail.pullRequest) }
-                stepper(detail.steps)
-                checksCard(detail.checks)
-                if !detail.agentExcerpts.isEmpty {
-                    DisclosureGroup("Messages récents de l’agent") { excerptsCard(detail.agentExcerpts) }
-                }
-                DisclosureGroup("Détails des exécutions et fichiers") {
-                    executionsCard(detail.executions)
-                    workspaceCard(detail)
-                    artifactsCard(detail.artifacts)
-                }
-                technicalDetails(
-                    detail.technical,
-                    workspace: detail.workspace,
-                    retryDeliveryId: detail.retryDeliveryId)
+            } else {
+                Text("Aucun message de l’agent disponible.").foregroundStyle(.secondary)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(24)
         }
     }
 
@@ -209,7 +249,7 @@ struct ProjectExecutionDetailView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(execution.moduleInstanceId)
                                     .font(.body.monospaced())
-                                Text("Attempt \(execution.attempt) · \(execution.id)")
+                                Text("Tentative \(execution.attempt) · \(execution.id)")
                                     .font(.caption.monospaced())
                                     .foregroundStyle(.secondary)
                             }
@@ -234,22 +274,36 @@ struct ProjectExecutionDetailView: View {
     }
 
     private func stepper(_ steps: [ProjectExecutionDetail.Step]) -> some View {
-        GroupBox("Étapes") {
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(steps) { step in
-                    DisclosureGroup {
-                        Text(step.detail).font(.callout).foregroundStyle(.secondary)
-                        if let date = step.occurredAt { Text(date, format: .dateTime).font(.caption) }
-                    } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: stepSymbol(step.status)).foregroundStyle(stepColor(step.status))
-                            Text(step.label).fontWeight(.medium)
-                            Spacer()
-                            Text(ProjectExecutionDetailPresentation.stepStatusLabel(step.status)).font(.caption).foregroundStyle(stepColor(step.status))
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Avancement").font(.title2.bold())
+            ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(spacing: 6) {
+                        Image(systemName: stepSymbol(step.status))
+                            .font(.title3).foregroundStyle(stepColor(step.status))
+                        if index < steps.count - 1 {
+                            Rectangle().fill(Color.secondary.opacity(0.25)).frame(width: 1)
                         }
-                        .accessibilityElement(children: .combine)
                     }
+                    .frame(width: 24)
+                    .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(step.label).font(.headline)
+                            Spacer()
+                            Text(ProjectExecutionDetailPresentation.stepStatusLabel(step.status))
+                                .font(.caption).foregroundStyle(stepColor(step.status))
+                        }
+                        Text(step.detail).font(.callout).foregroundStyle(.secondary)
+                        if let date = step.occurredAt {
+                            Text(date, format: .dateTime).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.bottom, 12)
+                    .accessibilityElement(children: .combine)
                 }
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -274,7 +328,7 @@ struct ProjectExecutionDetailView: View {
                 }
             }
         } label: {
-            Label("Messages récents", systemImage: "text.bubble")
+            Label("Message de l’agent", systemImage: "text.bubble")
         }
     }
 
@@ -317,9 +371,9 @@ struct ProjectExecutionDetailView: View {
         GroupBox {
             if let workspace = detail.workspace {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("Status: \(workspace.status)")
-                    Text("Branch: \(workspace.branch)").font(.caption.monospaced())
-                    Text("Information détaillée dans Technical details.")
+                    Text("État : \(workspace.status)")
+                    Text("Branche : \(workspace.branch)").font(.caption.monospaced())
+                    Text("Informations dans les détails techniques.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -348,7 +402,7 @@ struct ProjectExecutionDetailView: View {
                     .foregroundStyle(.secondary)
             }
         } label: {
-            Label("Artifacts", systemImage: "doc.on.doc")
+            Label("Fichiers produits", systemImage: "doc.on.doc")
         }
     }
 

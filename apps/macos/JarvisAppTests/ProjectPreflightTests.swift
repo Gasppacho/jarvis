@@ -40,6 +40,42 @@ final class ProjectPreflightTests: XCTestCase {
         XCTAssertTrue(ProjectPreflightState.current(report).canStartWorkflow, "No candidate does not prevent explicit monitoring")
     }
 
+    func testPreflightPresentsOneRepairPerStepAndClearCandidateStatus() throws {
+        let report = try fixture(valid: false)
+        var failedReport = report
+        failedReport.checks = report.checks.map { check in
+            var check = check
+            check.status = .failed
+            return check
+        }
+        let groups = ProjectPreflightState.repairGroups(failedReport)
+        XCTAssertEqual(groups.map(\.id), ["repository:repository", "workflow:workflow", "connections:runtime"])
+        XCTAssertTrue(ProjectPreflightState.userFacingImpact(groups[1].checks[0]).contains("configuration"))
+        XCTAssertEqual(
+            ProjectPreflightState.repairTarget(failedReport.checks[0]),
+            .init(step: .repository, controlID: "project.repository-access"))
+        XCTAssertEqual(
+            ProjectPreflightState.repairTarget(failedReport.checks[2]),
+            .init(step: .connections, controlID: "project.runtime.refresh"))
+        var validation = failedReport.checks[1]
+        validation.id = "validation:verify"
+        XCTAssertEqual(
+            ProjectPreflightState.repairTarget(validation),
+            .init(step: .workflow, controlID: "workflow.validation.verify"))
+
+        var sameStep = failedReport
+        sameStep.checks[0].repairStep = .Connections
+        sameStep.checks.append(sameStep.checks[0])
+        let connectionGroups = ProjectPreflightState.repairGroups(sameStep).filter { $0.step == .connections }
+        XCTAssertEqual(connectionGroups.count, 2, "distinct causes on one step stay separately actionable")
+        XCTAssertEqual(connectionGroups[0].checks.count, 2, "duplicate checks share one repair group")
+        XCTAssertEqual(report.candidateStatusLabel, "1 issue(s) prête(s) sur 1 examinée(s)")
+
+        var unavailable = report
+        unavailable.candidateEligibility.status = .unavailable
+        XCTAssertEqual(unavailable.candidateStatusLabel, "Accès GitHub non vérifiable")
+    }
+
     @MainActor
     func testTransportRetryKeepsErrorsSeparateAndForwardsOnlyCurrentFingerprint() async throws {
         let api = PreflightStub(report: try fixture())
