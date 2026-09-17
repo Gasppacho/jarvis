@@ -113,7 +113,9 @@ struct ProjectMigrationView: View {
     }
 
     private func requiredPreview(_ preview: ProjectMigrationPreview) -> some View {
-        GroupBox("Migration requise") {
+        let needsPause = preview.requiresPauseBeforeMigration
+            && (state.detail?.project.status ?? project.status) != .paused
+        return GroupBox("Migration requise") {
             VStack(alignment: .leading, spacing: 10) {
                 Label("Cette composition ne peut pas être convertie automatiquement.", systemImage: "exclamationmark.triangle")
                     .font(.headline).foregroundStyle(.orange)
@@ -135,7 +137,7 @@ struct ProjectMigrationView: View {
                         .font(.callout).foregroundStyle(.orange)
                 }
                 HStack {
-                    if preview.requiresPauseBeforeMigration && (state.detail?.project.status ?? project.status) != .paused {
+                    if needsPause {
                         Button("Mettre le projet en pause") {
                             Task {
                                 await model.pauseForMigration(projectId: project.id, packages: packages)
@@ -144,7 +146,9 @@ struct ProjectMigrationView: View {
                         .accessibilityIdentifier("project.migration.pause")
                     }
                     if let onOpenSupervision {
-                        Button("Ouvrir la supervision") { onOpenSupervision() }
+                        Button(needsPause
+                               ? "Ouvrir la supervision pour le mettre en pause"
+                               : "Ouvrir la supervision") { onOpenSupervision() }
                             .accessibilityIdentifier("project.migration.open-supervision")
                     }
                     Button("Reconfigurer avec les modules fixes") {
