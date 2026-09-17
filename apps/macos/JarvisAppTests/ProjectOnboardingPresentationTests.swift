@@ -4,21 +4,6 @@ import XCTest
 @testable import JarvisCore
 
 final class ProjectOnboardingPresentationTests: XCTestCase {
-    func testGitHubPollingFrequencyUsesMinutesAndPreservesHistoricalSeconds() {
-        XCTAssertEqual(GitHubPollingFrequency.display(seconds: nil), "1")
-        XCTAssertEqual(GitHubPollingFrequency.display(seconds: 60), "1")
-        XCTAssertEqual(GitHubPollingFrequency.display(seconds: 3600), "60")
-        XCTAssertEqual(
-            GitHubPollingFrequency.display(seconds: GitHubPollingFrequency.historicalSeconds),
-            "15 secondes (historique)")
-        XCTAssertEqual(GitHubPollingFrequency.seconds(fromMinutes: "1"), 60)
-        XCTAssertEqual(GitHubPollingFrequency.seconds(fromMinutes: "60"), 3600)
-        XCTAssertNil(GitHubPollingFrequency.seconds(fromMinutes: "0"))
-        XCTAssertNil(GitHubPollingFrequency.seconds(fromMinutes: "-1"))
-        XCTAssertNil(GitHubPollingFrequency.seconds(fromMinutes: "61"))
-        XCTAssertNil(GitHubPollingFrequency.seconds(fromMinutes: ""))
-    }
-
     func testEmptyStateAndDraftInventoryAreExplicitAndAccessible() {
         let empty = ProjectOnboardingPresentation(project: nil)
         XCTAssertEqual(empty.emptyState?.title, "Bienvenue dans Jarvis")

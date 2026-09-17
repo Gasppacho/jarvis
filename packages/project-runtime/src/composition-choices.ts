@@ -150,7 +150,6 @@ function githubDevelopmentTemplate(
           bootstrapLabelPolicy: "ignore-existing",
           pollIntervalSeconds: 60,
           repositories: [repository?.id ?? "main"],
-          readyLabel: "ready-to-dev",
         },
       },
       {
@@ -162,6 +161,7 @@ function githubDevelopmentTemplate(
           repository: repository?.id ?? "main",
         },
         configuration: {
+          readyLabel: "ready-to-dev",
           validationOrder: [],
           maxRepairCycles: 2,
           retainWorkspaceOnSuccess: false,

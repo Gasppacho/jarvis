@@ -210,11 +210,12 @@ export function migratedConfiguration(
   const development = configuration.modules.find(
     (module) => module.moduleId === "jarvis.module.development",
   )!;
+  const { readyLabel: _legacyReadyLabel, ...githubConfiguration } = github.configuration ?? {};
   return {
     ...configuration,
     compositionMode: "fixed-modules",
     modules: [
-      github,
+      { ...github, configuration: githubConfiguration },
       {
         ...development,
         configuration: {

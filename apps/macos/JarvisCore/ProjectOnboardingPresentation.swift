@@ -27,24 +27,6 @@ public enum ProjectOnboardingStepStatus: String, Sendable, Equatable {
     case stale = "À revérifier"
 }
 
-/// Human workflow input for GitHub's seconds-based module configuration.
-/// Displaying the legacy 15-second value never changes the stored value.
-public enum GitHubPollingFrequency {
-    public static let defaultMinutes = 1
-    public static let historicalSeconds = 15
-
-    public static func display(seconds: Int?) -> String {
-        guard let seconds else { return String(defaultMinutes) }
-        if seconds == historicalSeconds { return "15 secondes (historique)" }
-        return String(max(defaultMinutes, seconds / 60))
-    }
-
-    public static func seconds(fromMinutes text: String) -> Int? {
-        guard let minutes = Int(text), (1...60).contains(minutes) else { return nil }
-        return minutes * 60
-    }
-}
-
 /// Stable content inventory for the native first-opened shell.
 public struct ProjectOnboardingPresentation: Sendable, Equatable {
     public struct EmptyState: Sendable, Equatable {

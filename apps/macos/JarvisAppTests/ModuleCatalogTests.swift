@@ -177,6 +177,8 @@ final class ModuleCatalogTests: XCTestCase {
             github.configurationSchemaRef,
             "contracts/module-config/github.v1.schema.json")
         XCTAssertTrue(github.configurationSchema?.contains("GitHub Module Config v1") == true)
+        XCTAssertFalse(github.configurationSchema?.contains("readyLabel") == true)
+        XCTAssertTrue(development.configurationSchema?.contains("readyLabel") == true)
 
         // Ticket 48: the served, versioned capability meaning matches the
         // documented catalog (docs/contracts/CAPABILITY_CATALOG_V1.md).

@@ -352,7 +352,7 @@ grant anything; readiness starts `unchecked` on reopening, even for a saved bind
 
 `POST /v1/projects/{projectId}/runtime-binding` accepts only
 `{ "ref": "runtime/codex-default", "approveEnvironment": true }`. It requires an
-eligible candidate and explicit approval, resolves the workflow runtime slots
+eligible candidate and approval, resolves the workflow runtime slots
 in the Engine, and replaces only their local bindings. The detected profile
 contains only `PATH`, `HOME` and `CODEX_HOME` when present. These machine values
 stay local and pass the existing credential filter; neither the portable

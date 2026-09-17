@@ -31,11 +31,11 @@ Rule.
 
 ### Readiness Observation
 The durable complete assessment of one open GitHub Issue and all its native
-`blocked_by` dependencies, including whether its configured readiness label is
-present and whether the active Rule scope matches. It is `ready`, `blocked`, or
-`impossible` to verify; an observation excluded by the active Rule scope remains
-available for later display or admission; a previously admitted Work Item never
-starts again automatically.
+`blocked_by` dependencies. GitHub publishes the observation; Development owns
+the configured readiness label and scope used for admission. It is `ready`,
+`blocked`, or `impossible` to verify; an observation excluded by the active
+scope remains available for later display or admission; a previously admitted
+Work Item never starts again automatically.
 
 ### Provider Action
 An idempotent GitHub mutation performed only in response to a targeted Request.

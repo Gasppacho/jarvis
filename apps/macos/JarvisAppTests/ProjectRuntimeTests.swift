@@ -31,18 +31,27 @@ final class ProjectRuntimeTests: XCTestCase {
     }
 
     @MainActor
-    func testZeroOneAndSeveralCandidatesNeverChooseImplicitly() async {
+    func testUniqueCandidateIsSelectedButSeveralCandidatesRequireChoice() async {
         for names in [[], ["Codex personnel"], ["Codex personnel", "Codex travail"]] {
             let api = RuntimeAPIStub(choices: choices(names: names))
             let model = model(api: api)
             await model.refreshRuntimeCandidates(projectId: "a")
             let state = model.state(for: "a")
             XCTAssertEqual(state.runtimePresentation.candidates.map(\.name), names)
-            XCTAssertTrue(state.runtimePresentation.candidates.allSatisfy { !$0.bound })
+            XCTAssertEqual(
+                state.runtimePresentation.candidates.map(\.bound),
+                names.map { _ in names.count == 1 })
             XCTAssertFalse(state.runtimeAllowsActivation)
             XCTAssertTrue(state.runtimePresentation.reviewEnabled)
             let bindings = await api.bindingCount()
-            XCTAssertEqual(bindings, 0)
+            XCTAssertEqual(bindings, names.count == 1 ? 1 : 0)
+            if names.count == 1 {
+                let reopenedModel = self.model(api: api)
+                await reopenedModel.refreshRuntimeCandidates(projectId: "a")
+                let reopenedBindings = await api.bindingCount()
+                XCTAssertEqual(reopenedBindings, 1)
+                XCTAssertTrue(reopenedModel.state(for: "a").runtimePresentation.candidates[0].bound)
+            }
         }
     }
 
@@ -69,7 +78,10 @@ final class ProjectRuntimeTests: XCTestCase {
 
     @MainActor
     func testExplicitChoiceChecksAndReopeningPreservesBindingButRequiresANewCheck() async {
-        let api = RuntimeAPIStub(choices: choices(), result: choices(status: .ready, bound: true))
+        let names = ["Codex personnel", "Codex travail"]
+        let api = RuntimeAPIStub(
+            choices: choices(names: names),
+            result: choices(names: names, status: .ready, bound: true))
         let model = model(api: api)
         await model.refreshRuntimeCandidates(projectId: "a")
         await model.chooseRuntime(projectId: "a", ref: "runtime/0")
@@ -122,7 +134,11 @@ final class ProjectRuntimeTests: XCTestCase {
 
     @MainActor
     func testRuntimeChoiceExcludesOtherBindingWritesUntilItsSnapshotIsReloaded() async {
-        let api = RuntimeAPIStub(choices: choices(), result: choices(status: .ready, bound: true), deferBindings: true)
+        let names = ["Codex personnel", "Codex travail"]
+        let api = RuntimeAPIStub(
+            choices: choices(names: names),
+            result: choices(names: names, status: .ready, bound: true),
+            deferBindings: true)
         let model = model(api: api)
         await model.refreshRuntimeCandidates(projectId: "a")
         let choose = Task { await model.chooseRuntime(projectId: "a", ref: "runtime/0") }
@@ -139,7 +155,10 @@ final class ProjectRuntimeTests: XCTestCase {
 
     @MainActor
     func testFailedBindingReloadDiscardsTheStaleSnapshotBeforeOtherWrites() async {
-        let api = RuntimeAPIStub(choices: choices(), result: choices(status: .ready, bound: true))
+        let names = ["Codex personnel", "Codex travail"]
+        let api = RuntimeAPIStub(
+            choices: choices(names: names),
+            result: choices(names: names, status: .ready, bound: true))
         let model = model(api: api)
         await model.refreshRuntimeCandidates(projectId: "a")
         await model.chooseRuntime(projectId: "a", ref: "runtime/0")

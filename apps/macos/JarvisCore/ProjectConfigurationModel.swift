@@ -231,6 +231,8 @@ public final class ProjectConfigurationModel {
                 if preservedDraft == nil { $0.saveFailed = false }
                 $0.errorMessage = nil
             }
+            await autoSelectUniqueConnection(projectId: projectId)
+            await autoSelectUniqueRuntime(projectId: projectId)
         } catch {
             guard refreshRevisions[projectId, default: 0] == refreshRevision else { return }
             update(projectId) {
@@ -387,15 +389,15 @@ public final class ProjectConfigurationModel {
 
     public func setReadyLabel(projectId: String, label: String, moduleID: UUID? = nil) {
         editDraft(projectId: projectId) { draft in
-            guard let github = draft.modules.firstIndex(where: { $0.moduleId == "jarvis.module.github" && (moduleID == nil || $0.id == moduleID) })
+            guard let development = draft.modules.firstIndex(where: { $0.moduleId == "jarvis.module.development" && (moduleID == nil || $0.id == moduleID) })
             else { return }
-            draft.modules[github].configurationValues["readyLabel"] = label
+            draft.modules[development].configurationValues["readyLabel"] = label
         }
     }
 
     public func setGuidedReadyLabel(projectId: String, label: String) {
         editDraft(projectId: projectId) { draft in
-            for index in draft.modules.indices where ["jarvis.module.github", "jarvis.module.development"].contains(draft.modules[index].moduleId) {
+            for index in draft.modules.indices where draft.modules[index].moduleId == "jarvis.module.development" {
                 draft.modules[index].configurationValues["readyLabel"] = label
             }
         }
@@ -612,10 +614,11 @@ public final class ProjectConfigurationModel {
         case .setModuleBinding(let moduleId, let key, let value):
             editModule(projectId: projectId, moduleId: moduleId) { $0.bindings[key] = value }
         case .setModuleConfiguration(let moduleId, let key, let value):
-            if key == "readyLabel", state(for: projectId).draft?.modules.first(where: { $0.id == moduleId })?.moduleId == "jarvis.module.github" {
+            if key == "readyLabel", state(for: projectId).draft?.modules.first(where: { $0.id == moduleId })?.moduleId == "jarvis.module.development" {
                 setReadyLabel(projectId: projectId, label: value, moduleID: moduleId)
                 return
             }
+            if key == "readyLabel" { return }
             editModule(projectId: projectId, moduleId: moduleId) {
                 $0.configurationValues[key] = value
             }
@@ -920,6 +923,9 @@ public final class ProjectConfigurationModel {
                 $0.isDraftSaved = true
                 $0.errorMessage = reviewError
             }
+            update(projectId) { $0.isSaving = false }
+            await autoSelectUniqueConnection(projectId: projectId)
+            await autoSelectUniqueRuntime(projectId: projectId)
             await projects.refresh()
             return detail
         } catch {
@@ -936,6 +942,35 @@ public final class ProjectConfigurationModel {
             }
             return choices
         }
+        let choices = state(for: projectId).agentRuntimes
+        await autoSelectUniqueRuntime(
+            projectId: projectId,
+            choices: choices,
+            requiresSavedDraft: false)
+    }
+
+    private func autoSelectUniqueConnection(projectId: String) async {
+        guard state(for: projectId).isDraftSaved, !state(for: projectId).isSaving else { return }
+        guard let choice = state(for: projectId).resourceChoices.first(where: {
+            $0.status == .available && $0.candidates.count == 1 && $0.candidates[0].kind == .connection
+        }), let candidate = choice.candidates.first else { return }
+        _ = await bindGitHubConnection(projectId: projectId, connectionID: candidate.ref)
+    }
+
+    private func autoSelectUniqueRuntime(
+        projectId: String,
+        choices: Components.Schemas.ProjectAgentRuntimeChoices? = nil,
+        requiresSavedDraft: Bool = true
+    ) async {
+        guard (!requiresSavedDraft || state(for: projectId).isDraftSaved), !state(for: projectId).isSaving else { return }
+        let choices = choices ?? state(for: projectId).agentRuntimes
+        let selectable = choices?.items.filter(\.selectable) ?? []
+        guard choices?.required == true,
+            choices?.readiness.status == .unchecked,
+            selectable.count == 1,
+            selectable[0].bound == false
+        else { return }
+        await chooseRuntime(projectId: projectId, ref: selectable[0].ref)
     }
 
     public func chooseRuntime(projectId: String, ref: String) async {

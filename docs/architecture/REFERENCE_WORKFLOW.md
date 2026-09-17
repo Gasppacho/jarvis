@@ -15,7 +15,8 @@ repository, while `git.pushRemote` is the explicitly configured Git push destina
 The poller receives a portable repository ID, never an example owner/name. Different
 identity and push remotes are supported (and exercised with a bare remote by the harness).
 Concurrency is fixed to one in the template. Global connections and runtimes remain
-candidates until bound explicitly to this project.
+candidates until the guide binds the only eligible candidate; when several candidates
+exist, the user chooses explicitly.
 
 Commands remain proposals. `commands.verify` is offered when the repository declares
 that script (`pnpm verify` for Jarvis). The new template has `validationOrder: []` and

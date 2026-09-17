@@ -219,6 +219,16 @@ describe("guided historical project migration", () => {
           "scope"
         ],
       ).toEqual({ kind: "issue", workItemRef: "github://Gasppacho/jarvis/issues/231" });
+      const migratedModules = (appliedBody["configuration"] as Record<string, unknown>)[
+        "modules"
+      ] as { moduleId: string; configuration?: Record<string, unknown> }[];
+      expect(
+        migratedModules.find(({ moduleId }) => moduleId === "jarvis.module.github")?.configuration,
+      ).not.toHaveProperty("readyLabel");
+      expect(
+        migratedModules.find(({ moduleId }) => moduleId === "jarvis.module.development")
+          ?.configuration?.["readyLabel"],
+      ).toBe("ready-for-agent");
 
       await fixture.restart();
       const retry = await fixture.engine.call(`/v1/projects/${fixture.projectId}/migration/apply`, {

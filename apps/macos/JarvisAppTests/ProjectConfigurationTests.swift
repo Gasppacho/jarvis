@@ -688,19 +688,20 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.first { $0.id == reopenedDevelopment.id }?.validationOrder, ["verify"])
         configuration.setReadyLabel(projectId: imported.id, label: "approved-work")
         XCTAssertEqual(
-            configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "github" }?.configurationValues["readyLabel"],
+            configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "development" }?.configurationValues["readyLabel"],
             "approved-work")
+        XCTAssertNil(
+            configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "github" }?.configurationValues["readyLabel"])
         configuration.setGuidedReadyLabel(projectId: imported.id, label: "ready-for-review")
-        XCTAssertEqual(
-            configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "github" }?.configurationValues["readyLabel"],
-            "ready-for-review")
         XCTAssertEqual(
             configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "development" }?.configurationValues["readyLabel"],
             "ready-for-review")
-        let labelModule = try XCTUnwrap(configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "github" })
+        XCTAssertNil(
+            configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "github" }?.configurationValues["readyLabel"])
+        let labelModule = try XCTUnwrap(configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "development" })
         configuration.apply(.setModuleConfiguration(labelModule.id, "readyLabel", "reviewed-work"), projectId: imported.id, packages: catalog.packages)
         XCTAssertEqual(
-            configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "github" }?.configurationValues["readyLabel"],
+            configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "development" }?.configurationValues["readyLabel"],
             "reviewed-work")
         XCTAssertTrue(ProjectDetailPresentation.activationNotice.contains("carrying"))
         XCTAssertTrue(ProjectDetailPresentation.activationNotice.contains("Historical compositions"))
@@ -1060,7 +1061,7 @@ final class ProjectConfigurationTests: XCTestCase {
         var editor = try XCTUnwrap(configuration.state(for: imported.id).draft)
         XCTAssertEqual(
             editor.modules.first?.configurationFields.map(\.key),
-            ["bootstrapLabelPolicy", "pollIntervalSeconds", "readyLabel", "repositories"])
+            ["bootstrapLabelPolicy", "pollIntervalSeconds", "repositories"])
         let bundledFields = Dictionary(
             uniqueKeysWithValues: try XCTUnwrap(editor.modules.first).configurationFields.map {
                 ($0.key, $0)

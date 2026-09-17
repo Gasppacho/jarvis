@@ -112,6 +112,51 @@ it("omits the Rules stage for the fixed composition", async () => {
   ]);
 });
 
+it("keeps GitHub-only projects observational", async () => {
+  const fixture = await startReferenceWorkflowFixture("overview-github-only");
+  fixtures.push(fixture);
+  seedIssue(fixture, 245, true);
+  await fixture.engine.call(`/v1/projects/${fixture.projectId}/overview/refresh`, {
+    method: "POST",
+  });
+  await expect
+    .poll(async () => (await overview(fixture)).issues.length, { timeout: 15_000 })
+    .toBe(1);
+
+  const paused = await fixture.engine.call(`/v1/projects/${fixture.projectId}/pause`, {
+    method: "POST",
+  });
+  expect(paused.status).toBe(200);
+  const detail = (await (
+    await fixture.engine.call(`/v1/projects/${fixture.projectId}`)
+  ).json()) as { portableConfig: PortableProjectConfiguration };
+  const saved = await fixture.engine.call(`/v1/projects/${fixture.projectId}/configuration`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      portableConfig: {
+        ...detail.portableConfig,
+        modules: detail.portableConfig.modules.filter(
+          ({ moduleId }) => moduleId === "jarvis.module.github",
+        ),
+      },
+      writeToRepository: false,
+    }),
+  });
+  expect(saved.status, await saved.clone().text()).toBe(200);
+
+  const body = await overview(fixture);
+  expect(body.workflow.nextStep).toContain("configuration");
+  expect(body.workflow.nextStep).not.toContain("prendra en charge");
+  expect(body.readinessHelp).toContain("sans les admettre");
+  expect(body.workflow.stages.find(({ id }) => id === "development")).toMatchObject({
+    status: "waiting",
+  });
+  expect(body.issues).toEqual([
+    expect.objectContaining({ status: "ineligible", reason: "development-not-selected" }),
+  ]);
+});
+
 it("pauses new admissions durably while keeping Resume explicit", async () => {
   const fixture = await startReferenceWorkflowFixture("overview-pause");
   fixtures.push(fixture);

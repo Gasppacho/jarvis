@@ -17,8 +17,6 @@ struct ProjectWorkflowView: View {
     @State private var showingRecommendedReplacement = false
     @State private var branchInputs: [String: String] = [:]
     @State private var branchErrors: [String: String] = [:]
-    @State private var intervalInputs: [UUID: String] = [:]
-    @State private var intervalError: String?
     @FocusState private var focusedInput: WorkflowInputFocus?
 
     private var state: ProjectConfigurationState { model.state(for: project.id) }
@@ -141,9 +139,6 @@ struct ProjectWorkflowView: View {
         .onChange(of: focusedInput) { previous, _ in
             switch previous {
             case .branch(let repositoryID): commitBranch(repositoryID: repositoryID)
-            case .interval(let moduleID):
-                guard let module = state.draft?.modules.first(where: { $0.id == moduleID }) else { return }
-                commitInterval(module)
             case .readyLabel, .preparation, .validation:
                 break
             case nil: break
@@ -226,7 +221,7 @@ struct ProjectWorkflowView: View {
         case .issue:
             guard state.draft?.modules.contains(where: {
                 $0.enabled && $0.moduleId == "jarvis.module.github"
-            }) == true else { return "Absent" }
+            }) == true else { return hasDevelopment ? "Aucune source" : "Absent" }
             if !hasDevelopment { return "Observation seule" }
             return guidedReadyLabelValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? "À configurer" : "Configuré"
@@ -282,11 +277,15 @@ struct ProjectWorkflowView: View {
     }
 
     private var workflowTitle: String {
-        hasRecommendedFlow ? "Développer une issue GitHub" : "Observer les issues GitHub"
+        if hasDevelopment && !hasGitHub { return "Développement sans source" }
+        return hasRecommendedFlow ? "Développer une issue GitHub" : "Observer les issues GitHub"
     }
 
     private var workflowDescription: String {
-        hasRecommendedFlow
+        if hasDevelopment && !hasGitHub {
+            return "Development est configuré, mais aucune source de Work Item ne peut le déclencher automatiquement."
+        }
+        return hasRecommendedFlow
             ? "Confiez une issue prête à votre agent. Jarvis prépare une Pull Request que vous pourrez relire."
             : "Jarvis observe les issues prêtes. Ajoutez Développement pour préparer un parcours de modification et de Pull Request."
     }
@@ -463,18 +462,14 @@ struct ProjectWorkflowView: View {
     }
 
     private var guidedReadyLabelValue: String {
-        development.first?.configurationValue(for: "readyLabel")
-            ?? state.draft?.modules.first { $0.enabled && $0.moduleId == "jarvis.module.github" }?.configurationValue(for: "readyLabel")
-            ?? ""
+        development.first?.configurationValue(for: "readyLabel") ?? ""
     }
 
     private var githubCard: some View {
-        let github = state.draft?.modules.first { $0.moduleId == "jarvis.module.github" }
         return GroupBox {
-            if let github {
+            if state.draft?.modules.contains(where: { $0.moduleId == "jarvis.module.github" }) == true {
                 VStack(alignment: .leading, spacing: 12) {
                     repositorySummary
-                    intervalControl(github)
                     if let polling = overview?.state(for: project.id).overview?.polling,
                        let date = polling.lastPollAt {
                         Label("Dernier contrôle : \(date.formatted(date: .abbreviated, time: .shortened)), \(pollingLabel(polling.state))",
@@ -486,7 +481,7 @@ struct ProjectWorkflowView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                Text("Ajoutez GitHub au workflow pour choisir le dépôt et la fréquence.")
+                Text("Ajoutez GitHub au workflow pour observer les issues du dépôt.")
             }
         } label: {
             Label("GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
@@ -506,41 +501,6 @@ struct ProjectWorkflowView: View {
         }
     }
 
-    private func intervalControl(_ module: ProjectModuleDraft) -> some View {
-        let value = module.configurationValues["pollIntervalSeconds"] ?? "60"
-        let historical = Int(value) == GitHubPollingFrequency.historicalSeconds
-        return VStack(alignment: .leading, spacing: 4) {
-            Text("Fréquence de vérification").font(.callout.weight(.medium))
-            HStack {
-                TextField("Minutes (1 à 60)", text: Binding(
-                    get: { intervalInputs[module.id] ?? GitHubPollingFrequency.display(seconds: Int(value)) },
-                    set: { intervalInputs[module.id] = $0; intervalError = nil }))
-                    .textFieldStyle(.roundedBorder)
-                    .focused($focusedInput, equals: .interval(module.id))
-                    .onSubmit { commitInterval(module) }
-                    .accessibilityIdentifier("workflow.github.interval")
-                    .accessibilityLabel("Fréquence de vérification en minutes")
-                Stepper(value: Binding(
-                    get: { min(60, max(1, (Int(value) ?? 60) / 60)) },
-                    set: { minutes in
-                        intervalInputs[module.id] = String(minutes)
-                        intervalError = nil
-                        model.apply(.setModuleConfiguration(module.id, "pollIntervalSeconds", String(minutes * 60)),
-                                    projectId: project.id, packages: packages)
-                    }), in: 1...60) {
-                    Text("Ajuster la fréquence")
-                }
-                .accessibilityIdentifier("workflow.github.interval.stepper")
-                .accessibilityLabel("Ajuster la fréquence de vérification en minutes")
-            }
-            if historical {
-                Text("Historique conservé : 15 secondes. Saisissez 1 à 60 pour choisir une nouvelle fréquence.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            if let intervalError { Text(intervalError).font(.caption).foregroundStyle(.red) }
-        }
-    }
-
     private func commitBranch(repositoryID: String) {
         let defaultBranch = state.draft?.repositories.first(where: { $0.id == repositoryID })?.defaultBranch ?? ""
         let branch = (branchInputs[repositoryID] ?? defaultBranch)
@@ -552,19 +512,6 @@ struct ProjectWorkflowView: View {
         branchInputs[repositoryID] = branch
         branchErrors[repositoryID] = nil
         model.setRepositoryDefaultBranch(projectId: project.id, repositoryID: repositoryID, branch: branch)
-    }
-
-    private func commitInterval(_ module: ProjectModuleDraft) {
-        let text = intervalInputs[module.id] ?? GitHubPollingFrequency.display(
-            seconds: Int(module.configurationValues["pollIntervalSeconds"] ?? "60"))
-        guard let seconds = GitHubPollingFrequency.seconds(fromMinutes: text) else {
-            intervalError = "La fréquence doit être comprise entre 1 et 60 minutes."
-            return
-        }
-        intervalInputs[module.id] = String(seconds / 60)
-        intervalError = nil
-        model.apply(.setModuleConfiguration(module.id, "pollIntervalSeconds", String(seconds)),
-                    projectId: project.id, packages: packages)
     }
 
     private var accessSummary: some View {
@@ -595,7 +542,6 @@ struct ProjectWorkflowView: View {
 
 private enum WorkflowInputFocus: Hashable {
     case branch(String)
-    case interval(UUID)
     case readyLabel(UUID)
     case preparation(UUID)
     case validation(UUID, String)

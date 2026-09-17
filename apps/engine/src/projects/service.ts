@@ -266,13 +266,16 @@ export class ProjectService implements ProjectRegistry<
     const project = this.requireProject(id);
     const legacy = project.portableConfig.compositionMode !== "fixed-modules";
     const readiness = this.readiness?.list?.(project.id) ?? [];
+    const hasDevelopment = project.portableConfig.modules.some(
+      (module) => module.enabled && module.moduleId === "jarvis.module.development",
+    );
     const admission = this.developmentAdmissions?.read(project.id) ?? {
       suspended: false,
       items: [],
     };
     const paused = project.status === "paused" || admission.suspended;
     const fallbackReadinessLabel = project.portableConfig.modules.find(
-      (module) => module.moduleId === "jarvis.module.github",
+      (module) => module.moduleId === "jarvis.module.development",
     )?.configuration?.["readyLabel"];
     const activeExecutions = this.executionLedger.listActive(project.id);
     const hasActiveExecution = activeExecutions.length > 0;
@@ -322,6 +325,7 @@ export class ProjectService implements ProjectRegistry<
           admission: admissionByRef.get(snapshot.workItemRef),
           paused,
           hasActiveExecution,
+          hasDevelopment,
           legacy,
           fallbackReadinessLabel:
             typeof fallbackReadinessLabel === "string" && fallbackReadinessLabel.trim() !== ""
@@ -361,8 +365,8 @@ export class ProjectService implements ProjectRegistry<
       )
         selectedWorkItemRef = (scope as Record<string, string>)["workItemRef"]!;
     }
-    const eligible = issues.some((issue) => issue.status === "eligible");
-    const stages = overviewStages(polling.state, hasActiveExecution, eligible);
+    const eligible = hasDevelopment && issues.some((issue) => issue.status === "eligible");
+    const stages = overviewStages(polling.state, hasActiveExecution, eligible, hasDevelopment);
     return {
       apiVersion: "jarvis.dev/project-overview/v1",
       kind: "ProjectOverview",
@@ -392,6 +396,7 @@ export class ProjectService implements ProjectRegistry<
           polling.state,
           lastWorkFailed,
           legacy,
+          hasDevelopment,
         ),
       },
       issues,
@@ -1641,6 +1646,7 @@ function overviewIssue(
     readonly admission: OverviewAdmission | undefined;
     readonly paused: boolean;
     readonly hasActiveExecution: boolean;
+    readonly hasDevelopment: boolean;
     readonly legacy: boolean;
     readonly fallbackReadinessLabel: string;
   },
@@ -1697,6 +1703,14 @@ function overviewIssue(
       reason: "legacy-automation-rules-removed",
       explanation:
         "Cette configuration historique est conservée en lecture et export, mais son exécution est bloquée. Lancez la migration guidée.",
+    };
+  }
+  if (!input.hasDevelopment) {
+    return {
+      ...base,
+      status: "ineligible",
+      reason: "development-not-selected",
+      explanation: "GitHub observation is active; add Development to enable automatic admission.",
     };
   }
   if (snapshot.admittedAt !== null && input.admission === undefined) {
@@ -1905,6 +1919,7 @@ function overviewStages(
   pollingState: ProjectOverview["polling"]["state"],
   active: boolean,
   eligible: boolean,
+  hasDevelopment: boolean,
 ): ProjectOverviewStage[] {
   return [
     {
@@ -1922,8 +1937,12 @@ function overviewStages(
     {
       id: "development",
       label: "Development",
-      status: active ? "active" : eligible ? "ready" : "waiting",
-      detail: active ? "Active execution" : "One issue at a time",
+      status: !hasDevelopment ? "waiting" : active ? "active" : eligible ? "ready" : "waiting",
+      detail: !hasDevelopment
+        ? "Add Development to enable admission"
+        : active
+          ? "Active execution"
+          : "One issue at a time",
     },
     {
       id: "pull-request",
@@ -1941,9 +1960,11 @@ function nextOverviewStep(
   pollingState: ProjectOverview["polling"]["state"],
   lastWorkFailed: boolean,
   legacy: boolean,
+  hasDevelopment: boolean,
 ): string {
   if (status === "draft") return "Vérifiez la configuration avant d’activer ce projet.";
   if (legacy) return "Exportez cette configuration puis lancez la migration guidée.";
+  if (!hasDevelopment) return "Ajoutez Development pour activer l’admission automatique.";
   if (status === "paused") return "Reprenez le projet pour autoriser de nouveaux départs.";
   if (!active && lastWorkFailed)
     return "Ouvrez le dernier travail pour examiner l’échec et le résultat conservé.";
@@ -1961,9 +1982,15 @@ function readinessHelp(
 ): string {
   if (legacy)
     return "Cette configuration historique reste consultable et exportable, mais Automation Rules est retiré : lancez la migration guidée avant toute activation.";
+  if (
+    !project.portableConfig.modules.some(
+      (module) => module.enabled && module.moduleId === "jarvis.module.development",
+    )
+  )
+    return "GitHub observe les issues sans les admettre automatiquement. Ajoutez Development pour activer l’admission.";
   const labels = new Set(
     project.portableConfig.modules
-      .filter((module) => module.moduleId === "jarvis.module.github")
+      .filter((module) => module.moduleId === "jarvis.module.development")
       .map((module) => module.configuration?.["readyLabel"])
       .filter((label): label is string => typeof label === "string" && label.trim() !== ""),
   );

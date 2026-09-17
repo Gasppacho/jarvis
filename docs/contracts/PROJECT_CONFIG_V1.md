@@ -62,7 +62,7 @@ un chemin vers un fichier de credentials. Les noms secrets, tokens et chemins
 de fichiers d'authentification sont refusés. Le fichier est un exemple de
 forme ; l'implémentation stocke ces valeurs localement et ne les commit pas.
 
-Un import ou draft non résolu reste explicitement valide avec `slots: {}`. Un ancien import peut aussi porter `bookmarkRef: null` jusqu'à ce que le macOS Shell fournisse un Repository Grant. Un `ref` de slot n'est accepté que s'il désigne un candidat explicitement dans l'autorité du projet, du bon `kind`, et fournissant **toutes** les capabilities demandées par le Slot et par les Module Instances qui le référencent. Les descripteurs Connection et Runtime persistés alimentent les candidats globaux, mais aucun grant implicite n'est synthétisé : seule la liaison locale du Project autorise leur résolution. Les Module Instances déjà sélectionnées sont des candidats project-scoped uniquement pour les capabilities déclarées dans `provides` par leur Manifest.
+Un import ou draft non résolu reste explicitement valide avec `slots: {}`. Un ancien import peut aussi porter `bookmarkRef: null` jusqu'à ce que le macOS Shell fournisse un Repository Grant. Un `ref` de slot n'est accepté que s'il désigne un candidat explicitement dans l'autorité du projet, du bon `kind`, et fournissant **toutes** les capabilities demandées par le Slot et par les Module Instances qui le référencent. Les descripteurs Connection et Runtime persistés alimentent les candidats globaux ; le guide lie automatiquement l'unique candidat éligible et demande un choix explicite lorsqu'il y en a plusieurs. En dehors de cette aide locale, aucun grant implicite n'est synthétisé. Les Module Instances déjà sélectionnées sont des candidats project-scoped uniquement pour les capabilities déclarées dans `provides` par leur Manifest.
 
 `GET /v1/projects/{projectId}/binding-candidates` renvoie cette intersection pour la configuration sauvegardée; `POST` la prévisualise pour un Draft proposé, sans mutation. Les lignes sont ordonnées par Slot. Chaque ligne porte un statut `bound`, `available`, `missing`, `inaccessible` ou `incompatible`, l'impact sur les Module Instances et une action de réparation. Sa liste `candidates` n'expose jamais une ressource globale non accordée à ce Project — ADR 0014 ne change rien à cette moitié de la règle.
 
@@ -101,9 +101,9 @@ Certaines règles sont sémantiques :
 
 Le champ optionnel `agentRuntimes` du contrat de ressources est une surface de
 **découverte**, distincte des ressources résolues transmises aux modules. Il
-nomme les candidats Codex globaux sûrs afin de permettre un choix explicite,
+nomme les candidats Codex globaux sûrs afin de permettre une sélection guidée,
 y compris leurs incompatibilités; leur visibilité ne constitue aucun grant.
 La règle de non-divulgation ci-dessus s’applique aux ressources résolues et
-aux agents, pas à cet inventaire du shell. Seul le choix local explicite
-accorde le profil détecté au Project. Un slot runtime optionnel sans consumer
+aux agents, pas à cet inventaire du shell. Une sélection locale unique accorde
+le profil détecté au Project ; plusieurs candidats exigent un choix explicite. Un slot runtime optionnel sans consumer
 actif ne rend pas le contrôle runtime obligatoire pour l’activation.

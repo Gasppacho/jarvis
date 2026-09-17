@@ -149,10 +149,18 @@ describe("project composition choices", () => {
       bootstrapLabelPolicy: "ignore-existing",
       pollIntervalSeconds: 60,
       repositories: ["main"],
-      readyLabel: "ready-to-dev",
     });
     expect(template.modules[0]?.["bindings"]).toEqual({ sourceControl: "sourceControl" });
     expect(template.modules[1]?.["bindings"]).toEqual({ repository: "main" });
+    expect(template.modules[1]?.["configuration"]).toEqual({
+      environmentAllowlist: ["PATH", "HOME", "CODEX_HOME"],
+      maxRepairCycles: 2,
+      outputLimitBytes: 1048576,
+      readyLabel: "ready-to-dev",
+      retainWorkspaceOnSuccess: false,
+      timeoutMs: 300000,
+      validationOrder: [],
+    });
 
     const guidedResponse = await preview(engine, project.id, template);
     expect(guidedResponse.status, await guidedResponse.clone().text()).toBe(200);
