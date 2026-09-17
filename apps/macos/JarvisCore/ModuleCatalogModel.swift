@@ -27,7 +27,9 @@ public final class ModuleCatalogModel {
 
     public func refresh() async {
         guard let client = session.client else {
-            state = .failed("The engine is not running. Restart Jarvis.")
+            packages = []
+            capabilityGuidance = []
+            state = .failed("Le moteur Jarvis n’est pas disponible. Relancez Jarvis.")
             return
         }
         state = .loading
@@ -36,23 +38,25 @@ public final class ModuleCatalogModel {
             capabilityGuidance = try await client.getCapabilityCatalog()
             state = .loaded
         } catch {
+            packages = []
+            capabilityGuidance = []
             state = .failed(Self.describe(error))
         }
     }
 
     private static func describe(_ error: Error) -> String {
         guard let error = error as? EngineClientError else {
-            return "The Module Package catalogue could not be loaded. No packages were changed. Try again; if it repeats, restart Jarvis."
+            return "Le catalogue n’a pas pu être chargé. Réessayez ; si le problème persiste, relancez Jarvis."
         }
         return switch error {
         case .unauthorized(let operation):
-            "The engine rejected the session token (\(operation)). The catalogue cannot be loaded. Restart Jarvis."
+            "La session avec le moteur a expiré (\(operation)). Relancez Jarvis."
         case .hostNotAllowed(let operation):
-            "The engine refused a non-loopback request (\(operation)). The catalogue cannot be loaded. Restart Jarvis."
+            "Le moteur a refusé la connexion locale (\(operation)). Relancez Jarvis."
         case .engineError(_, let code, let message):
-            "\(message) (\(code)) The catalogue cannot be loaded. Restart Jarvis; if it repeats, inspect the engine log."
+            "Le moteur a refusé le catalogue : \(message) (\(code)). Réessayez ; si le problème persiste, relancez Jarvis."
         case .unexpectedResponse(let message):
-            "\(message). The catalogue cannot be loaded. Try again; if it repeats, restart Jarvis."
+            "Réponse inattendue du moteur : \(message). Réessayez ; si le problème persiste, relancez Jarvis."
         }
     }
 }

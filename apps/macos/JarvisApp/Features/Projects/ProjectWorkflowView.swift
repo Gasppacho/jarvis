@@ -53,7 +53,9 @@ struct ProjectWorkflowView: View {
         guard catalogIsAvailable else { return nil }
         let missing = ["jarvis.module.github", "jarvis.module.development"]
             .filter { moduleID in !packages.contains { package in package.moduleId == moduleID } }
-        return missing.isEmpty ? nil : "Le catalogue ne contient pas les modules requis pour ce workflow. Actualisez-le puis réessayez."
+        guard !missing.isEmpty else { return nil }
+        let names = missing.map { $0 == "jarvis.module.github" ? "GitHub" : "Développement" }
+        return "Catalogue disponible, mais modules manquants : \(names.joined(separator: " et "))."
     }
 
     var body: some View {
@@ -249,6 +251,7 @@ struct ProjectWorkflowView: View {
             }
             .buttonStyle(.borderedProminent)
             .disabled(!canChooseRecommendedFlow)
+            .accessibilityHint(catalogActionHint(requires: ["jarvis.module.github", "jarvis.module.development"]))
             .accessibilityIdentifier("workflow.choose-recommended")
             Text("Ajoute GitHub et Développement. Vous confirmerez ensuite les commandes et les accès avant toute exécution.")
                 .font(.callout).foregroundStyle(.secondary)
@@ -260,6 +263,7 @@ struct ProjectWorkflowView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(!packageIsAvailable("jarvis.module.github") || state.draft == nil || state.draft?.modules.contains(where: { $0.moduleId == "jarvis.module.github" }) == true)
+                .accessibilityHint(catalogActionHint(requires: ["jarvis.module.github"]))
                 .accessibilityIdentifier("workflow.choose-github")
                 Button("Ajouter Développement") {
                     guard let package = packages.first(where: { $0.moduleId == "jarvis.module.development" }) else { return }
@@ -268,6 +272,7 @@ struct ProjectWorkflowView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(!packageIsAvailable("jarvis.module.development") || state.draft == nil || state.draft?.modules.contains(where: { $0.moduleId == "jarvis.module.development" }) == true)
+                .accessibilityHint(catalogActionHint(requires: ["jarvis.module.development"]))
                 .accessibilityIdentifier("workflow.add-development")
             }
             Text("Vous pourrez enregistrer et reprendre un brouillon incomplet.")
@@ -300,7 +305,7 @@ struct ProjectWorkflowView: View {
         case .failed(let message):
             catalogFailure(message)
         case .loaded:
-            if let missingPackagesMessage { catalogFailure(missingPackagesMessage) }
+            if let missingPackagesMessage { catalogIncomplete(missingPackagesMessage) }
         }
     }
 
@@ -309,14 +314,28 @@ struct ProjectWorkflowView: View {
             Label("Catalogue de modules indisponible : ajout impossible.", systemImage: "exclamationmark.triangle.fill")
                 .font(.callout)
                 .foregroundStyle(.red)
-            DisclosureGroup("Détails") {
-                Text(message).font(.caption).textSelection(.enabled)
-            }
+            Text(message).font(.callout)
             Button("Réessayer") { Task { await moduleCatalog.refresh() } }
                 .disabled(moduleCatalog.state == .loading)
                 .accessibilityIdentifier("workflow.catalogue.retry")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func catalogIncomplete(_ message: String) -> some View {
+        Label(message, systemImage: "shippingbox")
+            .font(.callout)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func catalogActionHint(requires moduleIDs: [String]) -> String {
+        guard catalogIsAvailable else {
+            return "Le catalogue est indisponible. Réessayez son chargement."
+        }
+        let missing = moduleIDs.filter { !packageIsAvailable($0) }
+        guard !missing.isEmpty else { return "" }
+        let names = missing.map { $0 == "jarvis.module.github" ? "GitHub" : "Développement" }
+        return "Module manquant : \(names.joined(separator: " et "))."
     }
 
     @ViewBuilder

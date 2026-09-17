@@ -7,6 +7,41 @@ import XCTest
 /// engine through the generated Local API client.
 final class ModuleCatalogTests: XCTestCase {
     @MainActor
+    func testRefreshRecoversAfterTheEngineBecomesTemporarilyUnavailable() async throws {
+        let dataRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jarvis-module-catalog-retry-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dataRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dataRoot) }
+
+        let session = EngineSessionModel(
+            supervisor: EngineSupervisor(resources: .developmentBuild(), dataRoot: dataRoot))
+        let moduleCatalog = ModuleCatalogModel(session: session)
+        await session.start()
+        await moduleCatalog.refresh()
+        guard case .loaded = moduleCatalog.state else {
+            await session.shutdown()
+            return XCTFail("the catalogue did not load before the simulated outage")
+        }
+        await session.shutdown()
+
+        await moduleCatalog.refresh()
+        guard case .failed = moduleCatalog.state else {
+            return XCTFail("an unavailable engine must make the catalogue unavailable")
+        }
+        XCTAssertTrue(moduleCatalog.packages.isEmpty, "stale packages must not remain usable after a failure")
+        XCTAssertTrue(moduleCatalog.capabilityGuidance.isEmpty)
+
+        await session.start()
+        await moduleCatalog.refresh()
+        guard case .loaded = moduleCatalog.state else {
+            await session.shutdown()
+            return XCTFail("retry did not reload the catalogue: \(moduleCatalog.state)")
+        }
+        XCTAssertFalse(moduleCatalog.packages.isEmpty)
+        await session.shutdown()
+    }
+
+    @MainActor
     func testLoadsEveryOfficialPackageForPresentation() async throws {
         let dataRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("jarvis-module-catalog-\(UUID().uuidString)", isDirectory: true)
