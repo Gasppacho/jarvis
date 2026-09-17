@@ -35,6 +35,10 @@ const CODEX_EXEC_ARGS = [
   "--sandbox",
   "workspace-write",
   "--skip-git-repo-check",
+  "--model",
+  "gpt-5.6-terra",
+  "-c",
+  'model_reasoning_effort="medium"',
 ] as const;
 const LOGGED_IN_OUTPUT = /^\s*Logged in using ChatGPT\s*$/m;
 const NOT_LOGGED_IN_OUTPUT = /^\s*Not logged in\s*$/m;
