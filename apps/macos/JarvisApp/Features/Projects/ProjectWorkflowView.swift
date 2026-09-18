@@ -15,6 +15,7 @@ struct ProjectWorkflowView: View {
     var onSelectModule: ((String) -> Void)? = nil
     @State private var stage = WorkflowStage.issue
     @State private var showingRecommendedReplacement = false
+    @State private var advancedExpanded = false
     @State private var branchInputs: [String: String] = [:]
     @State private var branchErrors: [String: String] = [:]
     @FocusState private var focusedInput: WorkflowInputFocus?
@@ -95,7 +96,7 @@ struct ProjectWorkflowView: View {
                     .font(.callout).foregroundStyle(.secondary) }
                 accessSummary
             }
-            DisclosureGroup("Réglages avancés et composition des modules") {
+            DisclosureGroup("Réglages avancés et composition des modules", isExpanded: $advancedExpanded) {
                 VStack(alignment: .leading, spacing: 12) {
                     if let graph = state.compositionGraph {
                         WorkflowCanvasView(
@@ -118,6 +119,7 @@ struct ProjectWorkflowView: View {
                             }
                         }
                     }
+                    if hasDevelopment { advancedDevelopmentSettings }
                     if let openAdvanced {
                         Button("Ouvrir les réglages avancés", action: openAdvanced)
                             .accessibilityIdentifier("workflow.advanced")
@@ -133,6 +135,7 @@ struct ProjectWorkflowView: View {
             switch previous {
             case .branch(let repositoryID): commitBranch(repositoryID: repositoryID)
             case .readyLabel: break
+            case .preparation, .validation: break
             case nil: break
             }
         }
@@ -143,9 +146,15 @@ struct ProjectWorkflowView: View {
                 stage = .issue
                 if let module = development.first { focusedInput = .readyLabel(module.id) }
             case "workflow.preparation":
-                if let openAdvanced { openAdvanced() } else { stage = .development }
+                advancedExpanded = true
+                stage = .development
+                if let module = development.first { focusedInput = .preparation(module.id) }
             case let id? where id.hasPrefix("workflow.validation."):
-                if let openAdvanced { openAdvanced() } else { stage = .validation }
+                advancedExpanded = true
+                stage = .validation
+                if let module = development.first {
+                    focusedInput = .validation(module.id, String(id.dropFirst("workflow.validation.".count)))
+                }
             case "workflow.choose-recommended": stage = .issue
             default: break
             }
@@ -216,7 +225,8 @@ struct ProjectWorkflowView: View {
         case .development:
             return hasDevelopment ? "Configuré" : "Absent"
         case .validation:
-            return hasDevelopment ? "Prévu" : "Sans développement"
+            guard hasDevelopment else { return "Sans développement" }
+            return development.allSatisfy { !$0.validationOrder.isEmpty } ? "Prévu" : "À compléter dans Avancé"
         case .pullRequest: return flowConfirmed ? "Prévu" : "Non prévu"
         }
     }
@@ -390,6 +400,64 @@ struct ProjectWorkflowView: View {
             set: { model.setGuidedReadyLabel(projectId: project.id, label: $0) })
     }
 
+    private var advancedDevelopmentSettings: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Réglages techniques de Development").font(.headline)
+            Text("Réservés aux projets non standards ou aux corrections avancées ; le parcours guidé choisit automatiquement les valeurs détectées.")
+                .font(.callout).foregroundStyle(.secondary)
+            commandField("install", title: "Commande d’installation")
+            ForEach(development) { module in
+                Picker("Préparation", selection: configuration(module, "preparation")) {
+                    Text("Choisir une préparation").tag("")
+                    Text("Exécuter la commande d’installation").tag("install")
+                        .disabled(state.draft?.commands["install"]?.isEmpty != false)
+                    Text("Aucune préparation nécessaire").tag("none")
+                }
+                .focused($focusedInput, equals: .preparation(module.id))
+                .accessibilityIdentifier("workflow.preparation")
+                Text("Vérifications sélectionnées : \(module.validationOrder.isEmpty ? "aucune" : module.validationOrder.joined(separator: " → "))")
+                    .font(.callout)
+                validationRow(module, "verify")
+                DisclosureGroup("Autres vérifications") {
+                    ForEach(["lint", "typecheck", "test", "build"], id: \.self) { name in
+                        validationRow(module, name)
+                    }
+                }
+            }
+        }
+    }
+
+    private func validationRow(_ module: ProjectModuleDraft, _ name: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            commandField(name, title: name)
+            Toggle("Exécuter \(name)", isOn: Binding(
+                get: { state.draft?.modules.first { $0.id == module.id }?.validationOrder.contains(name) ?? false },
+                set: { model.selectValidationCommand(projectId: project.id, moduleID: module.id, name: name, selected: $0) }))
+                .focused($focusedInput, equals: .validation(module.id, name))
+                .disabled(state.draft?.commands[name]?.isEmpty != false)
+                .accessibilityLabel("Exécuter \(name)")
+                .accessibilityIdentifier("workflow.validation.\(name)")
+        }
+    }
+
+    private func commandField(_ name: String, title: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.callout.weight(.medium))
+            TextField(title, text: Binding(
+                get: { state.draft?.commands[name] ?? "" },
+                set: { model.setCommand(projectId: project.id, name: name, command: $0) }))
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("workflow.command.\(name)")
+                .accessibilityLabel(title)
+        }
+    }
+
+    private func configuration(_ module: ProjectModuleDraft, _ key: String) -> Binding<String> {
+        Binding(
+            get: { state.draft?.modules.first { $0.id == module.id }?.configurationValue(for: key) ?? "" },
+            set: { model.apply(.setModuleConfiguration(module.id, key, $0), projectId: project.id, packages: packages) })
+    }
+
     private var guidedReadyLabelValue: String {
         development.first?.configurationValue(for: "readyLabel") ?? ""
     }
@@ -472,6 +540,8 @@ struct ProjectWorkflowView: View {
 private enum WorkflowInputFocus: Hashable {
     case branch(String)
     case readyLabel(UUID)
+    case preparation(UUID)
+    case validation(UUID, String)
 }
 
 private enum WorkflowStage: String, CaseIterable, Identifiable {

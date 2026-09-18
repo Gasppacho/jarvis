@@ -182,6 +182,21 @@ describe("discoverRepository", () => {
     });
   });
 
+  it("uses valid npm commands for detected scripts", () => {
+    const root = fixture({
+      lockfile: "package-lock.json",
+      packageJson: { name: "x", scripts: { test: "node --test", lint: "eslint ." } },
+    });
+    const suggested = discoverRepository(root).suggested as {
+      commands: Record<string, string>;
+    };
+    expect(suggested.commands).toEqual({
+      install: "npm ci",
+      lint: "npm run lint",
+      test: "npm run test",
+    });
+  });
+
   it("proposes the repository verify script without approving it", () => {
     const root = fixture({
       lockfile: "pnpm-lock.yaml",

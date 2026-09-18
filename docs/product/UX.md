@@ -107,7 +107,7 @@ branche reste visible pendant l'édition et se valide avant l'enregistrement.
 Le parcours recommandé utilise une issue ouverte portant **ready-to-dev**, sans
 bloqueur GitHub natif ouvert. GitHub produit `scm.work-item.observed`, puis
 Development vérifie l'admission et produit `development.implementation.requested` avant de préparer le
-worktree, exécute l'agent et les validations confirmées, commit et pousse. GitHub
+worktree, exécute l'agent et les validations détectées automatiquement, commit et pousse. GitHub
 crée la PR après `scm.change-request.creation-requested`. **Une issue à la fois** ;
 **relecture et merge humains**. Les projets historiques restent consultables et
 exportables jusqu'à leur migration explicite.
@@ -152,8 +152,8 @@ le contrôle concerné lorsque sa destination est connue. Les contrôles
 de même cause sont regroupés ; compte GitHub et runtime restent deux corrections
 distinctes même lorsqu’ils relèvent tous deux d’**Accès et agent**. Les messages
 bruts, identifiants, fingerprint, références de contrats et routes restent dans
-les détails techniques. Les commandes prévues sont repliées et explicitement
-annoncées comme non encore exécutées.
+les détails techniques. Les réglages de commandes restent réservés aux réglages
+avancés ; le parcours guidé ne demande aucune saisie ni confirmation technique.
 
 **Configuration prête** ne signifie ni tests réussis ni issue disponible. Une liste
 vide d'issues est normale ; une erreur GitHub ou des dépendances inconnues bloque

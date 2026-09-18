@@ -18,14 +18,16 @@ Concurrency is fixed to one in the template. Global connections and runtimes rem
 candidates until the guide binds the only eligible candidate; when several candidates
 exist, the user chooses explicitly.
 
-Commands remain proposals. `commands.verify` is offered when the repository declares
-that script (`pnpm verify` for Jarvis). The new template has `validationOrder: []` and
-no preparation decision. Selecting a validation command confirms it; editing command
-text clears that selection, and editing `install` clears preparation. An empty list,
-a missing selected command, or absent worktree preparation blocks Engine readiness
-and activation, while the incomplete draft remains saveable. Confirm `install`, or
-explicitly choose no preparation. Install runs in each fresh worktree before the
-agent; selected validations run there after implementation and must pass before push.
+Commands remain proposals during discovery. The guided starting point selects the
+detected `verify` script alone when present, otherwise the detected standard scripts
+in order; a lockfile selects frozen installation and a repository without one uses
+no preparation. The guide never asks for command text or confirmation. Advanced
+settings retain command editing and validation selection for non-standard or
+historical projects; editing command text clears its selection, and editing `install`
+clears preparation. An empty validation plan, a missing selected command, or absent
+worktree preparation blocks Engine readiness and activation, while the incomplete
+draft remains saveable. Install runs in each fresh worktree before the agent;
+selected validations run there after implementation and must pass before push.
 Jarvis requires macOS/Xcode command line tools and Swift, Node 24, and the pnpm version
 in `packageManager`, with tool paths approved in the project runtime binding.
 

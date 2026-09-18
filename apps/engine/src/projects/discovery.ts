@@ -372,7 +372,8 @@ function buildSuggested(
       }
     });
     if (hasLockfile) {
-      commands["install"] = `${packageManager} install --frozen-lockfile`;
+      commands["install"] =
+        packageManager === "npm" ? "npm ci" : `${packageManager} install --frozen-lockfile`;
     }
   }
   // Standard commands are invoked by script *name* through the package manager,
@@ -380,7 +381,10 @@ function buildSuggested(
   // declared script, and the suggestion stays stable even for a complex one.
   for (const standard of ["lint", "typecheck", "test", "build", "verify"]) {
     if (manifest?.scripts[standard] !== undefined && packageManager !== null) {
-      commands[standard] = `${packageManager} ${standard}`;
+      commands[standard] =
+        packageManager === "npm"
+          ? `${packageManager} run ${standard}`
+          : `${packageManager} ${standard}`;
     }
   }
 
