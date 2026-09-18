@@ -82,7 +82,7 @@ Un module référence un slot, jamais le catalogue global. Les Module Instances 
 1. Le shell obtient l'accès au dossier.
 2. Le moteur inspecte le repository sans modification.
 3. Si `.jarvis/project.yaml` existe, il le valide ; sinon il propose un draft.
-4. L'utilisateur confirme les commandes et conventions.
+4. L'utilisateur confirme les informations détectées et les conventions ; les commandes restent gérées par le module Development.
 5. Jarvis présente le diff de `.jarvis/project.yaml`; après confirmation, il écrit ce fichier dans le repository sans créer automatiquement de commit.
 6. L'utilisateur sélectionne les bindings locaux.
 7. Le Project Runtime résout manifests, contrats et capabilities.

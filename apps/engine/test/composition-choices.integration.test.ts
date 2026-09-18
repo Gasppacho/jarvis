@@ -156,10 +156,11 @@ describe("project composition choices", () => {
       environmentAllowlist: ["PATH", "HOME", "CODEX_HOME"],
       maxRepairCycles: 2,
       outputLimitBytes: 1048576,
+      preparation: "install",
       readyLabel: "ready-to-dev",
       retainWorkspaceOnSuccess: false,
       timeoutMs: 300000,
-      validationOrder: [],
+      validationOrder: ["lint", "typecheck", "test", "build"],
     });
 
     const guidedResponse = await preview(engine, project.id, template);
@@ -253,6 +254,35 @@ describe("project composition choices", () => {
     expect(await (await engine.call(`/v1/projects/${project.id}`)).json()).toMatchObject({
       portableConfig: project.portableConfig,
     });
+  });
+
+  it("prefers a detected verify command for the guided validation plan", async () => {
+    const engine = await startEngine();
+    engines.push(engine);
+    const repositoryPath = makeNodeRepositoryFixture({
+      packageJson: {
+        name: "verify-first",
+        scripts: { verify: "pnpm test", lint: "eslint .", test: "vitest run" },
+      },
+    });
+    repositories.push(repositoryPath);
+    const imported = await engine.call("/v1/projects", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ repositoryPath }),
+    });
+    expect(imported.status).toBe(201);
+    const project = (await imported.json()) as { id: string };
+
+    const response = await preview(engine, project.id);
+    expect(response.status).toBe(200);
+    const choices = (await response.json()) as {
+      startingPoints: Array<{ id: string; template: { modules: Array<Record<string, unknown>> } }>;
+    };
+    const template = choices.startingPoints.find(({ id }) => id === "github-development")!.template;
+    expect(template.modules[1]?.["configuration"]).toEqual(
+      expect.objectContaining({ preparation: "install", validationOrder: ["verify"] }),
+    );
   });
 
   it("previews deterministic contract-owned choices for the canonical composition without mutation", async () => {

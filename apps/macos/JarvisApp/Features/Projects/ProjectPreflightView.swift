@@ -31,7 +31,9 @@ struct ProjectPreflightView: View {
                         Label("Déclenchement et portée : à vérifier", systemImage: "scope")
                     }
                     Label(
-                        "Préparation et commandes : \(observesOnly ? "aucune en observation seule" : state.draft?.workflowCommandsConfigured == true ? "choisies, non exécutées" : "à choisir")",
+                        observesOnly
+                            ? "Préparation et vérifications : aucune en observation seule"
+                            : "Préparation et vérifications : gérées automatiquement par Development",
                         systemImage: "terminal")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -58,25 +60,8 @@ struct ProjectPreflightView: View {
                         }
                         if case .current = state.preflight, report.valid && report.configurationReady {
                             Label("Configuration vérifiée", systemImage: "checkmark.circle")
-                            Text("Les commandes choisies restent à exécuter lors du premier démarrage.")
+                            Text("Les vérifications automatiques seront exécutées lors du premier démarrage.")
                                 .font(.callout).foregroundStyle(.secondary)
-                        }
-                        if let draft = state.draft {
-                            ForEach(draft.modules.filter { $0.enabled && $0.moduleId == "jarvis.module.development" }) { module in
-                                DisclosureGroup("Détails des commandes") {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        switch module.configurationValues["preparation"] {
-                                        case "none": Text("Installation : aucune")
-                                        case "install": Text("Installation : \(draft.commands["install"] ?? "à renseigner")").textSelection(.enabled)
-                                        default: Text("Installation : choix à confirmer")
-                                        }
-                                        ForEach(module.validationOrder, id: \.self) { name in
-                                            Text("\(name) : \(draft.commands[name] ?? "à renseigner")").textSelection(.enabled)
-                                        }
-                                        if module.validationOrder.isEmpty { Text("Vérifications : choix à confirmer") }
-                                    }
-                                }
-                            }
                         }
                         ForEach(ProjectPreflightState.repairGroups(report)) { group in
                             VStack(alignment: .leading, spacing: 6) {

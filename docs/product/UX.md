@@ -40,8 +40,10 @@ Dans le workflow guidé, quatre cartes donnent accès à **Issue prête**,
 recommandé et indiquent ce qui est absent, à configurer ou prévu dans le brouillon.
 GitHub seul est présenté comme une observation des issues, sans promesse de PR ;
 seul le schéma avancé représente les abonnements calculés par l’Engine.
-Le label reste éditable, les commandes exigent toujours leur confirmation, et les
-contrôles d’ajout, de retrait et d’activation des modules restent accessibles.
+Le label reste éditable. Les commandes de préparation et de validation sont
+choisies automatiquement par Development ; le guide ne demande pas leur saisie
+ou leur confirmation. Les contrôles d'ajout, de retrait et d'activation des
+modules restent accessibles.
 Le suivi présente l’avancement et les vérifications à côté du contexte et du
 dernier message réel de l’agent ; les colonnes s’empilent dans une petite fenêtre.
 
@@ -95,12 +97,12 @@ Une configuration historique active propose **Mettre le projet en pause** avant
 la migration et garde le guide ouvert après l’action. Si des travaux restent
 actifs, l’écran explique ce blocage et ouvre **Superviser** pour les suivre.
 
-Le Workflow règle le comportement et les commandes. **Accès et agent** est le
+Le Workflow règle le comportement et le label. **Accès et agent** est le
 seul lieu où choisir le compte GitHub et le runtime ; le résumé du Workflow y
-conduit directement. Si le catalogue est indisponible ou incomplet, l’ajout est
-désactivé et un bouton **Réessayer** accompagne l’explication. La saisie d’une
-branche ou d’une fréquence reste visible pendant l’édition et se valide avant
-l’enregistrement. **Enregistrer et continuer** nomme la sauvegarde implicite.
+conduit directement. Si le catalogue est indisponible ou incomplet, l'ajout est
+désactivé et un bouton **Réessayer** accompagne l'explication. La saisie d'une
+branche reste visible pendant l'édition et se valide avant l'enregistrement.
+**Enregistrer et continuer** nomme la sauvegarde implicite.
 
 Le parcours recommandé utilise une issue ouverte portant **ready-to-dev**, sans
 bloqueur GitHub natif ouvert. GitHub produit `scm.work-item.observed`, puis
@@ -110,13 +112,12 @@ crée la PR après `scm.change-request.creation-requested`. **Une issue à la fo
 **relecture et merge humains**. Les projets historiques restent consultables et
 exportables jusqu'à leur migration explicite.
 
-**Préparer et vérifier le projet** présente les commandes détectées comme des
-propositions non encore exécutées. L'utilisateur confirme la préparation, y compris
-l'absence de préparation, puis choisit explicitement les validations. Pour Jarvis,
-proposer l'installation avec lockfile gelé et `pnpm verify` une fois, sans sélectionner
-aussi les commandes qu'il contient. Modifier une commande révoque sa confirmation.
+**Préparer et vérifier le projet** n'est pas une étape de saisie. Development choisit
+les commandes détectées pour préparer le worktree et vérifier le changement ; le
+guide ne lance aucune commande et ne demande aucune confirmation technique. Le
+contrôle de configuration porte sur les accès, le label et les liens du workflow.
 Un brouillon incomplet reste enregistrable. **Workflow configuré** décrit uniquement
-la configuration ; ce libellé ne prouve jamais la réussite des commandes.
+la composition ; ce libellé ne prouve jamais la réussite des commandes.
 
 ## Accès et agent
 
@@ -143,8 +144,9 @@ constitue pas à lui seul une preuve de disponibilité actuelle.
 
 ## Vérification
 
-**Vérifier la configuration** résume accès, commandes confirmées, déclencheur et
-sortie attendue. Les contrôles proviennent du preflight Engine. Un échec présente
+**Vérifier la configuration** résume accès, déclencheur et sortie attendue. Les
+contrôles proviennent du preflight Engine ; aucun agent ni aucune commande de projet
+n'est lancé. Un échec présente
 son impact en français et **Corriger**, qui ouvre l'étape et place le focus sur
 le contrôle concerné lorsque sa destination est connue. Les contrôles
 de même cause sont regroupés ; compte GitHub et runtime restent deux corrections

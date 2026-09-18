@@ -586,8 +586,15 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(state.agentRuntimes?.required, true)
         let proposedDevelopment = try XCTUnwrap(state.draft?.modules.first { $0.instanceId == "development" })
         XCTAssertEqual(proposedDevelopment.configurationValues["validationOrder"], "[]")
-        XCTAssertTrue(proposedDevelopment.configurationValues["preparation", default: ""].isEmpty)
+        XCTAssertEqual(proposedDevelopment.configurationValues["preparation"], "none")
         XCTAssertFalse(state.draft?.workflowCommandsConfigured ?? true)
+        XCTAssertEqual(
+            ProjectOnboardingPresentation(
+                project: imported,
+                configuration: state
+            ).steps.first(where: { $0.id == .workflow })?.status,
+            .readyForReview,
+            "le parcours guidé ne doit pas exiger la configuration manuelle des commandes")
         XCTAssertEqual(state.compositionReview?.githubDevelopmentFlow, true)
         let canvas = WorkflowCanvasPresentation(graph: try XCTUnwrap(state.compositionGraph))
         XCTAssertEqual(Set(canvas.connections.map(\.contractType)), ["scm.work-item.observed", "scm.change-request.creation-requested"])

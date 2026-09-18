@@ -86,18 +86,11 @@ struct ProjectWorkflowView: View {
                 GroupBox(stage.title) {
                     VStack(alignment: .leading, spacing: 14) {
                         stageSettings
-                        if stage == .development {
-                            Button("Choisir les vérifications") { stage = .validation }
-                        } else if stage == .validation {
-                            Button("Revenir aux réglages de Développement") { stage = .development }
-                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(6)
                 }
-                if !development.isEmpty { Label(state.draft?.workflowCommandsConfigured == true
-                      ? "Préparation et vérifications choisies — commandes encore à exécuter"
-                      : "Préparer et vérifier le projet : confirmez les commandes dans les cartes Développement et Vérifications.",
+                if !development.isEmpty { Label("Le parcours est prêt : Development préparera et vérifiera le travail après activation.",
                       systemImage: "checklist")
                     .font(.callout).foregroundStyle(.secondary) }
                 accessSummary
@@ -139,8 +132,7 @@ struct ProjectWorkflowView: View {
         .onChange(of: focusedInput) { previous, _ in
             switch previous {
             case .branch(let repositoryID): commitBranch(repositoryID: repositoryID)
-            case .readyLabel, .preparation, .validation:
-                break
+            case .readyLabel: break
             case nil: break
             }
         }
@@ -151,13 +143,9 @@ struct ProjectWorkflowView: View {
                 stage = .issue
                 if let module = development.first { focusedInput = .readyLabel(module.id) }
             case "workflow.preparation":
-                stage = .development
-                if let module = development.first { focusedInput = .preparation(module.id) }
+                if let openAdvanced { openAdvanced() } else { stage = .development }
             case let id? where id.hasPrefix("workflow.validation."):
-                stage = .validation
-                if let module = development.first {
-                    focusedInput = .validation(module.id, String(id.dropFirst("workflow.validation.".count)))
-                }
+                if let openAdvanced { openAdvanced() } else { stage = .validation }
             case "workflow.choose-recommended": stage = .issue
             default: break
             }
@@ -177,7 +165,7 @@ struct ProjectWorkflowView: View {
                 model.cancelStartingPointReplacement(projectId: project.id)
             }
         } message: {
-            Text("GitHub et Développement remplaceront la composition actuelle. Le nom et les commandes du projet sont conservés.")
+            Text("GitHub et Développement remplaceront la composition actuelle. Le nom et les réglages du projet sont conservés.")
         }
     }
 
@@ -226,10 +214,9 @@ struct ProjectWorkflowView: View {
             return guidedReadyLabelValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? "À configurer" : "Configuré"
         case .development:
-            return hasDevelopment ? (state.draft?.workflowCommandsConfigured == true ? "Configuré" : "À configurer") : "Absent"
+            return hasDevelopment ? "Configuré" : "Absent"
         case .validation:
-            guard let module = development.first else { return "Sans développement" }
-            return module.validationOrder.isEmpty ? "À configurer" : "Configuré"
+            return hasDevelopment ? "Prévu" : "Sans développement"
         case .pullRequest: return flowConfirmed ? "Prévu" : "Non prévu"
         }
     }
@@ -248,7 +235,7 @@ struct ProjectWorkflowView: View {
             .disabled(!canChooseRecommendedFlow)
             .accessibilityHint(catalogActionHint(requires: ["jarvis.module.github", "jarvis.module.development"]))
             .accessibilityIdentifier("workflow.choose-recommended")
-            Text("Ajoute GitHub et Développement. Vous confirmerez ensuite les commandes et les accès avant toute exécution.")
+            Text("Ajoute GitHub et Développement. Vous confirmerez ensuite les accès et l’agent avant toute exécution.")
                 .font(.callout).foregroundStyle(.secondary)
             HStack {
                 Button("Observer uniquement les issues") {
@@ -355,37 +342,13 @@ struct ProjectWorkflowView: View {
         case .development:
             Text("Préparer une copie de travail isolée").font(.headline)
             repositoryBranchControl
-            commandField("install", title: "Commande d’installation")
-            ForEach(development) { module in
-                Picker("Confirmer la préparation", selection: configuration(module, "preparation")) {
-                    Text("Choisir une préparation").tag("")
-                    Text("Exécuter la commande d’installation").tag("install")
-                        .disabled(state.draft?.commands["install"]?.isEmpty != false)
-                    Text("Aucune préparation nécessaire").tag("none")
-                }
-                .focused($focusedInput, equals: .preparation(module.id))
-                .accessibilityIdentifier("workflow.preparation")
-            }
             if development.isEmpty { Text("Ajoutez Développement au workflow.") }
-            Text("Vérifiez la commande proposée avant de la confirmer. Avec un lockfile, conservez l’installation gelée. L’agent sera choisi à l’étape Accès et agent.")
+            Text("La préparation du worktree et les vérifications du projet sont choisies automatiquement par Development. L’agent sera choisi à l’étape Accès et agent.")
                 .font(.callout).foregroundStyle(.secondary)
         case .validation:
-            Text("Préparer et vérifier le projet").font(.headline)
-            Text("Cochez explicitement chaque vérification à exécuter. Si verify couvre déjà lint, typecheck et test, choisissez uniquement verify.")
+            Text("Vérifications automatiques").font(.headline)
+            Text("Development vérifie le travail après le passage de l’agent. Aucune commande n’est à saisir ou à confirmer dans ce parcours.")
                 .font(.callout)
-            ForEach(development) { module in
-                Text("Sélection : \(module.validationOrder.isEmpty ? "aucune" : module.validationOrder.joined(separator: " → "))")
-                    .font(.callout)
-                validationRow(module, "verify")
-                DisclosureGroup("Autres vérifications") {
-                    ForEach(["lint", "typecheck", "test", "build"], id: \.self) { name in
-                        validationRow(module, name)
-                    }
-                }
-            }
-            if development.isEmpty { Text("Ajoutez Développement au workflow.") }
-            Text("Modifier une commande demande de la confirmer à nouveau. Les autres choix sont conservés.")
-                .font(.callout).foregroundStyle(.secondary)
         case .pullRequest:
             Text(flowConfirmed
                  ? "Après des validations réussies, Development crée le commit et pousse la branche. GitHub crée ensuite la PR à partir de sa demande. Vous relisez et fusionnez vous-même."
@@ -395,10 +358,7 @@ struct ProjectWorkflowView: View {
             if flowConfirmed {
                 Label("Aucune demande de merge dans ce workflow", systemImage: "person.crop.circle.badge.checkmark")
             }
-            ForEach(development) { module in
-                Text("Vérifications choisies : \(module.validationOrder.isEmpty ? "aucune" : module.validationOrder.joined(separator: " → "))")
-            }
-            Text("L’étape Vérification contrôle les accès et les liens entre ces événements avant d’autoriser le démarrage.")
+            Text("Les vérifications automatiques doivent réussir avant le commit et la Pull Request. Le contrôle de configuration porte ici sur les accès, le label et les liens du workflow.")
                 .font(.callout).foregroundStyle(.secondary)
         }
     }
@@ -422,37 +382,6 @@ struct ProjectWorkflowView: View {
                 }
             }
         }
-    }
-
-    private func validationRow(_ module: ProjectModuleDraft, _ name: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            commandField(name, title: name)
-            Toggle("Confirmer cette vérification", isOn: Binding(
-                get: { state.draft?.modules.first { $0.id == module.id }?.validationOrder.contains(name) ?? false },
-                set: { model.selectValidationCommand(projectId: project.id, moduleID: module.id, name: name, selected: $0) }))
-                .focused($focusedInput, equals: .validation(module.id, name))
-                .disabled(state.draft?.commands[name]?.isEmpty != false)
-                .accessibilityLabel("Exécuter \(name)")
-                .accessibilityIdentifier("workflow.validation.\(name)")
-        }
-    }
-
-    private func commandField(_ name: String, title: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.callout.weight(.medium))
-            TextField(title, text: Binding(
-                get: { state.draft?.commands[name] ?? "" },
-                set: { model.setCommand(projectId: project.id, name: name, command: $0) }))
-                .textFieldStyle(.roundedBorder)
-                .accessibilityIdentifier("workflow.command.\(name)")
-                .accessibilityLabel(title)
-        }
-    }
-
-    private func configuration(_ module: ProjectModuleDraft, _ key: String) -> Binding<String> {
-        Binding(
-            get: { state.draft?.modules.first { $0.id == module.id }?.configurationValue(for: key) ?? "" },
-            set: { model.apply(.setModuleConfiguration(module.id, key, $0), projectId: project.id, packages: packages) })
     }
 
     private var guidedReadyLabel: Binding<String> {
@@ -543,8 +472,6 @@ struct ProjectWorkflowView: View {
 private enum WorkflowInputFocus: Hashable {
     case branch(String)
     case readyLabel(UUID)
-    case preparation(UUID)
-    case validation(UUID, String)
 }
 
 private enum WorkflowStage: String, CaseIterable, Identifiable {
@@ -570,7 +497,7 @@ private enum WorkflowStage: String, CaseIterable, Identifiable {
         switch self {
         case .issue: "Label et aucun bloqueur"
         case .development: "Copie de travail isolée"
-        case .validation: "Commandes du projet"
+        case .validation: "Contrôle automatique"
         case .pullRequest: "À relire par vous"
         }
     }
@@ -578,7 +505,7 @@ private enum WorkflowStage: String, CaseIterable, Identifiable {
         switch self {
         case .issue: "GitHub transmet les observations vérifiées ; Development reçoit ensuite une demande pour l’issue éligible."
         case .development: "Development prépare un worktree isolé, puis confie l’issue à votre agent."
-        case .validation: "Development exécute les commandes choisies avant tout commit et push."
+        case .validation: "Development vérifie le travail avant tout commit et push."
         case .pullRequest: "Une PR vous permet de relire le résultat avant de le fusionner."
         }
     }

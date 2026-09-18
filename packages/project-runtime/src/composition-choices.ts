@@ -39,6 +39,7 @@ interface Declaration {
 }
 
 const FIXED_MODULE_IDS = new Set(["jarvis.module.github", "jarvis.module.development"]);
+const GUIDED_VALIDATION_ORDER = ["verify", "lint", "typecheck", "test", "build"] as const;
 
 export function previewProjectCompositionChoices(
   modules: ProjectCompositionChoicePackagePort,
@@ -127,6 +128,13 @@ function githubDevelopmentTemplate(
   base: StoredPortableProjectConfiguration,
 ): PortableProjectConfiguration {
   const repository = base.repositories[0];
+  const hasCommand = (name: "install" | (typeof GUIDED_VALIDATION_ORDER)[number]) => {
+    const command = base.commands[name];
+    return typeof command === "string" && command.trim() !== "";
+  };
+  const validationOrder = hasCommand("verify")
+    ? ["verify"]
+    : GUIDED_VALIDATION_ORDER.filter((name) => name !== "verify" && hasCommand(name));
   return {
     ...base,
     compositionMode: "fixed-modules",
@@ -162,7 +170,8 @@ function githubDevelopmentTemplate(
         },
         configuration: {
           readyLabel: "ready-to-dev",
-          validationOrder: [],
+          preparation: hasCommand("install") ? "install" : "none",
+          validationOrder: [...validationOrder],
           maxRepairCycles: 2,
           retainWorkspaceOnSuccess: false,
           timeoutMs: 300000,

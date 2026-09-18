@@ -15,7 +15,7 @@ afterEach(async () => {
 });
 
 describe("reference workflow pull request", () => {
-  it("runs the imported guided draft only after explicit command choices and activation, stops at one PR", async () => {
+  it("runs the imported guided draft after automatic command defaults and activation, stops at one PR", async () => {
     const fixture = await startReferenceWorkflowFixture("guided-pull-request", {}, true);
     fixtures.push(fixture);
     const endpoint = `/v1/projects/${fixture.projectId}`;
@@ -36,8 +36,8 @@ describe("reference workflow pull request", () => {
     ]);
     expect(draft.git.pushRemote).toBe("origin");
     expect(draft.modules[0]?.configuration?.["repositories"]).toEqual(["main"]);
-    expect(draft.modules[1]?.configuration?.["validationOrder"]).toEqual([]);
-    expect(draft.modules[1]?.configuration?.["preparation"]).toBeUndefined();
+    expect(draft.modules[1]?.configuration?.["validationOrder"]).toEqual(["test"]);
+    expect(draft.modules[1]?.configuration?.["preparation"]).toBe("none");
     expect(JSON.stringify(draft)).not.toMatch(
       /agent:ready|merge-requested|Gasppacho|QServices|\/Users\//,
     );
@@ -48,16 +48,8 @@ describe("reference workflow pull request", () => {
       compositionFingerprint: string;
       findings: { message: string }[];
     };
-    expect(report.valid).toBe(false);
-    expect(report.findings.map((f) => f.message).join(" ")).toContain("confirm at least one");
-    expect(report.findings.map((f) => f.message).join(" ")).toContain("preparation");
-    const refused = await fixture.engine.call(`${endpoint}/activate`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ compositionFingerprint: report.compositionFingerprint }),
-    });
-    expect(refused.status).toBe(409);
-
+    expect(report.valid).toBe(true);
+    expect(report.findings).toEqual([]);
     const seed = (number: number, label: string, blocked = false) =>
       fixture.fakeGitHub.seedIssue({
         owner: "Gasppacho",
