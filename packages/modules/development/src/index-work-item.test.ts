@@ -168,12 +168,14 @@ describe("Development Work Item context", () => {
       slug: "add-a-health-endpoint-exec-named",
     });
     expect(result.commitSubject).toBe("feat: implement add-a-health-endpoint");
-    expect(
-      result.published.find(({ type }) => type === "scm.change-request.creation-requested"),
-    ).toMatchObject({
+    expect(result.published.map(({ type }) => type)).toEqual([
+      "development.implementation.completed",
+    ]);
+    expect(result.published[0]).toMatchObject({
       payload: {
-        title: "Implement Add a Health Endpoint",
-        description: `Implements Work Item ${WORK_ITEM_REF}.`,
+        workItemRef: WORK_ITEM_REF,
+        headBranch: expect.any(String),
+        headCommit: expect.any(String),
       },
     });
   });

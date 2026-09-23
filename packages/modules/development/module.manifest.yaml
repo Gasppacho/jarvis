@@ -39,10 +39,6 @@ contracts:
       version: 1
       kind: fact
       schemaRef: contracts/events/development.implementation.failed.v1.schema.json
-    - type: scm.change-request.creation-requested
-      version: 1
-      kind: request
-      schemaRef: contracts/events/scm.change-request.creation-requested.v1.schema.json
 capabilities:
   requires:
     - id: repository.write
@@ -79,7 +75,6 @@ permissions:
     - development.implementation.requested
     - development.implementation.completed
     - development.implementation.failed
-    - scm.change-request.creation-requested
   filesystem:
     - workspace-read
     - workspace-write

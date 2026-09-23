@@ -33,11 +33,6 @@ export const DEVELOPMENT_IMPLEMENTATION_COMPLETED = {
   version: 1,
   kind: "fact",
 } as const;
-export const CHANGE_REQUEST_CREATION_REQUESTED = {
-  type: "scm.change-request.creation-requested",
-  version: 1,
-  kind: "request",
-} as const;
 export const DEVELOPMENT_IMPLEMENTATION_FAILED = {
   type: "development.implementation.failed",
   version: 1,
@@ -674,7 +669,7 @@ async function runImplementationRequested(
     if (typeof __JARVIS_TEST_HOOKS__ !== "undefined" && __JARVIS_TEST_HOOKS__) {
       testFailpoint?.("after-development-checkpoint-before-terminal");
     }
-    publishDevelopmentOutputs(ctx, request, result, commit, workItem?.title);
+    publishDevelopmentOutputs(ctx, request, result, commit);
     releaseOutcome = "success";
     return {
       status: result.status,
@@ -835,13 +830,7 @@ async function recoverPushedChange(
     headBranch: branch,
     headCommit: sha,
   };
-  publishDevelopmentOutputs(
-    ctx,
-    request,
-    result,
-    { branch, sha },
-    typeof payload["title"] === "string" ? payload["title"] : undefined,
-  );
+  publishDevelopmentOutputs(ctx, request, result, { branch, sha });
   await workspace.release({
     executionId: checkpoint.executionId,
     outcome: "success",
@@ -1015,7 +1004,6 @@ function publishDevelopmentOutputs(
   request: ImplementationRequest,
   result: { readonly summary: string },
   commit: { readonly branch: string; readonly sha: string },
-  workItemTitle?: string,
 ): void {
   const subject = {
     type: "pushed-branch",
@@ -1036,37 +1024,6 @@ function publishDevelopmentOutputs(
     repositoryId: request.repositoryId,
     payload: completedPayload,
   });
-  ctx.publish({
-    ...CHANGE_REQUEST_CREATION_REQUESTED,
-    subject,
-    repositoryId: request.repositoryId,
-    target: { binding: "sourceControl" },
-    idempotencyKey: buildChangeRequestIdempotencyKey(
-      ctx.projectId,
-      request.repositoryId,
-      request.workItemRef,
-      commit.sha,
-    ),
-    payload: {
-      repositoryId: request.repositoryId,
-      workItemRef: request.workItemRef,
-      baseBranch: request.baseBranch,
-      headBranch: commit.branch,
-      headCommit: commit.sha,
-      title: `Implement ${workItemTitle ?? branchValue(request.workItemRef)}`.slice(0, 256),
-      description: `Implements Work Item ${request.workItemRef}.`,
-    },
-  });
-}
-
-export function buildChangeRequestIdempotencyKey(
-  projectId: string,
-  repositoryId: string,
-  workItemRef: string,
-  headCommit: string,
-): string {
-  const material = [projectId, repositoryId, workItemRef, headCommit].join("\0");
-  return `change-request:${createHash("sha256").update(material).digest("hex")}`;
 }
 
 async function installationCommand(cwd: string): Promise<string | undefined> {

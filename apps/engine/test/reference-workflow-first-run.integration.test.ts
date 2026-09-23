@@ -38,6 +38,7 @@ it("proves the first guided workflow from native blocker to one PR", async () =>
   expect(draft.portableConfig.modules.map((module) => module.instanceId)).toEqual([
     "github",
     "development",
+    "pull-request",
   ]);
   expect(
     draft.portableConfig.modules.find((module) => module.instanceId === "development")
@@ -135,19 +136,20 @@ it("proves the first guided workflow from native blocker to one PR", async () =>
   ] as const;
   await waitForEventTypes(fixture, expectedEvents);
   const executions = await waitForCompletedExecutions(fixture);
-  expect(executions).toHaveLength(5);
+  expect(executions).toHaveLength(6);
   expect(executions.map((execution) => execution.moduleInstanceId).sort()).toEqual([
     "development",
     "development",
     "development",
     "development",
     "github",
+    "pull-request",
   ]);
   expect(
     executions.filter((execution) => execution.moduleInstanceId === "development"),
   ).toHaveLength(4);
   expect(fixture.fakeGitHub.pullRequests).toHaveLength(1);
-  expect(runtimeCalls(fixture)).toHaveLength(1);
+  expect(runtimeCalls(fixture)).toHaveLength(2);
 
   const events = await readEvents(fixture);
   for (const type of expectedEvents) {
@@ -217,6 +219,7 @@ it("proves the first guided workflow from native blocker to one PR", async () =>
     ["workspace-prepared", "proved"],
     ["agent-running", "proved"],
     ["commit-push", "proved"],
+    ["pull-request-preparation", "proved"],
     ["pull-request", "proved"],
   ]);
   expect(detail.checks).toEqual([]);
@@ -242,7 +245,7 @@ it("proves the first guided workflow from native blocker to one PR", async () =>
   );
   await delay(250);
   expect(fixture.fakeGitHub.pullRequests).toHaveLength(1);
-  expect(runtimeCalls(fixture)).toHaveLength(1);
+  expect(runtimeCalls(fixture)).toHaveLength(2);
   expect(agentBranches(fixture.bareRemoteRoot)).toEqual([headBranch]);
   const afterRestartEvents = await readEvents(fixture);
   expect(
@@ -252,11 +255,13 @@ it("proves the first guided workflow from native blocker to one PR", async () =>
   expect(afterRestartExecutions.every((execution) => execution.status === "completed")).toBe(true);
   expect(
     afterRestartExecutions.filter((execution) =>
-      [implementation.id, oneEvent(events, "scm.change-request.creation-requested").id].includes(
-        execution.inputEventId,
-      ),
+      [
+        implementation.id,
+        oneEvent(events, "development.implementation.completed").id,
+        oneEvent(events, "scm.change-request.creation-requested").id,
+      ].includes(execution.inputEventId),
     ),
-  ).toHaveLength(2);
+  ).toHaveLength(3);
   const afterRestart = readDurability(fixture);
   expect(afterRestart.eventCounts).toMatchObject({
     "development.implementation.requested":
@@ -293,7 +298,7 @@ function seedIssue(fixture: ReferenceWorkflowFixture, blockerState: "open" | "cl
 function scriptPreflightRoutes(fixture: ReferenceWorkflowFixture): void {
   fixture.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis", {
     status: 200,
-    body: { permissions: { pull: true, push: true } },
+    body: { default_branch: "main", permissions: { pull: true, push: true } },
   });
   fixture.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis/labels/ready-to-dev", {
     status: 200,
@@ -355,7 +360,7 @@ async function waitForCompletedExecutions(
   const deadline = Date.now() + 15_000;
   for (;;) {
     const executions = await readExecutions(fixture);
-    if (executions.length >= 5 && executions.every((execution) => execution.status === "completed"))
+    if (executions.length >= 6 && executions.every((execution) => execution.status === "completed"))
       return executions;
     if (Date.now() >= deadline)
       throw new Error(`Q01 executions timed out\n${fixture.engine.stderr()}`);

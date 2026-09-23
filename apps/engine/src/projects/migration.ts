@@ -18,7 +18,11 @@ export interface GuidedMigrationPlan {
   };
   readonly removedModule: "jarvis.module.automation-rules";
   readonly destination: {
-    readonly modules: readonly ["jarvis.module.github", "jarvis.module.development"];
+    readonly modules: readonly [
+      "jarvis.module.github",
+      "jarvis.module.development",
+      "jarvis.module.pull-request",
+    ];
     readonly compositionMode: "fixed-modules";
     readonly readyLabel: string;
   };
@@ -162,7 +166,11 @@ export function classifyGuidedMigration(
       },
       removedModule: "jarvis.module.automation-rules",
       destination: {
-        modules: ["jarvis.module.github", "jarvis.module.development"],
+        modules: [
+          "jarvis.module.github",
+          "jarvis.module.development",
+          "jarvis.module.pull-request",
+        ],
         compositionMode: "fixed-modules",
         readyLabel: label,
       },
@@ -181,6 +189,8 @@ export function migratedConfiguration(
     (module) => module.moduleId === "jarvis.module.development",
   )!;
   const { readyLabel: _legacyReadyLabel, ...githubConfiguration } = github.configuration ?? {};
+  const developmentBindings = { ...development.bindings };
+  delete developmentBindings["sourceControl"];
   return {
     apiVersion: configuration.apiVersion,
     kind: configuration.kind,
@@ -192,9 +202,20 @@ export function migratedConfiguration(
       { ...github, configuration: githubConfiguration },
       {
         ...development,
+        bindings: developmentBindings,
         configuration: {
           ...development.configuration,
           readyLabel: plan.destination.readyLabel,
+        },
+      },
+      {
+        instanceId: "pull-request",
+        moduleId: "jarvis.module.pull-request",
+        enabled: true,
+        runtimeSlot: development.runtimeSlot,
+        bindings: {
+          repository: development.bindings?.["repository"] ?? "main",
+          sourceControl: "sourceControl",
         },
       },
     ],

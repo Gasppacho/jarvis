@@ -1078,8 +1078,8 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
            ORDER BY rowid`,
         )
         .all(projectId) as { envelope: string }[];
-      expect(outputRows).toHaveLength(2);
-      const [completed, creationRequested] = outputRows.map(
+      expect(outputRows).toHaveLength(1);
+      const [completed] = outputRows.map(
         ({ envelope }) => JSON.parse(envelope) as Record<string, unknown>,
       );
       expect(completed).toMatchObject({
@@ -1097,27 +1097,15 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
           summary: "Fake Runtime applied deterministic change.",
         },
       });
-      expect(creationRequested).toMatchObject({
-        type: "scm.change-request.creation-requested",
-        version: 1,
-        kind: "request",
-        repositoryId: "main",
-        subject: { type: "pushed-branch", ref: `git://main/${recordedResult.headBranch}` },
-        target: { binding: "sourceControl" },
-        idempotencyKey: expect.stringMatching(/^change-request:[0-9a-f]{64}$/),
-        payload: {
-          repositoryId: "main",
-          workItemRef: `fixture://${projectId}/first`,
-          baseBranch: "main",
-          headBranch: recordedResult.headBranch,
-          headCommit: recordedResult.headCommit,
-          title: `Implement fixture-${projectId}-first`,
-          description: `Implements Work Item fixture://${projectId}/first.`,
-        },
-      });
-      expect((completed?.["payload"] as { headCommit: string }).headCommit).toBe(
-        (creationRequested?.["payload"] as { headCommit: string }).headCommit,
-      );
+      expect(completed).not.toHaveProperty("target");
+      expect(
+        database
+          .prepare(
+            `SELECT COUNT(*) AS count FROM outbox
+             WHERE project_id = ? AND json_extract(envelope, '$.type') = 'scm.change-request.creation-requested'`,
+          )
+          .get(projectId),
+      ).toEqual({ count: 0 });
       expect(
         git(fixture.root, ["rev-list", "--count", `${before.head}..${recordedResult.headCommit}`]),
       ).toBe("1");
@@ -1202,17 +1190,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
                AND json_extract(envelope, '$.type') IN ('development.implementation.completed', 'scm.change-request.creation-requested')`,
           )
           .get(projectId),
-      ).toEqual({ count: 2 });
-      const replayedCreationRequest = database
-        .prepare(
-          `SELECT envelope FROM outbox
-           WHERE project_id = ?
-             AND json_extract(envelope, '$.type') = 'scm.change-request.creation-requested'`,
-        )
-        .get(projectId) as { envelope: string };
-      expect(
-        (JSON.parse(replayedCreationRequest.envelope) as { idempotencyKey: string }).idempotencyKey,
-      ).toBe(creationRequested?.["idempotencyKey"]);
+      ).toEqual({ count: 1 });
       expect(database.prepare("SELECT COUNT(*) AS count FROM executions").get()).toEqual({
         count: 1,
       });
@@ -1504,17 +1482,6 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
           }),
           from: expect.objectContaining({ instanceId: "development" }),
           to: expect.objectContaining({ instanceId: "development" }),
-          routing: expect.objectContaining({ status: "resolved" }),
-        }),
-        expect.objectContaining({
-          kind: "request",
-          contract: expect.objectContaining({
-            type: "scm.change-request.creation-requested",
-            version: 1,
-            kind: "request",
-          }),
-          from: expect.objectContaining({ instanceId: "development" }),
-          to: expect.objectContaining({ instanceId: "request-worker" }),
           routing: expect.objectContaining({ status: "resolved" }),
         }),
       ]),
@@ -1898,6 +1865,17 @@ async function activateProject(
                 repositories: ["main"],
                 bootstrapLabelPolicy: "ignore-existing",
                 pollIntervalSeconds: 60,
+              },
+            },
+            {
+              instanceId: "pull-request",
+              moduleId: "jarvis.module.pull-request",
+              enabled: true,
+              runtimeSlot: "agentRuntime",
+              bindings: {
+                repository: "main",
+                tickets: "tickets",
+                sourceControl: "sourceControl",
               },
             },
           ]

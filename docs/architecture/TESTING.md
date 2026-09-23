@@ -58,10 +58,10 @@ retry classification, branch naming, cycle limits, project validation.
 
 1. Créer fixture repo avec API minimale et tests.
 2. Créer remote Git bare local.
-3. Importer project config GitHub Development avec adapters fake.
+3. Importer la composition GitHub, Development et Pull Request avec adapters fake.
 4. Activer projet.
 5. Injecter `scm.work-item.observed` pour une issue portant `ready-to-dev`.
-6. Attendre `scm.change-request.created` par API.
+6. Attendre `development.implementation.completed`, puis `scm.change-request.created` par API.
 7. Vérifier branche distante, commit, tests, idempotency et timeline.
 8. Redémarrer moteur et vérifier persistance.
 9. Réinjecter la request PR et vérifier qu'une seule Change Request existe.

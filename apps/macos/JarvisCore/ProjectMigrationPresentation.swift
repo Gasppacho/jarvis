@@ -43,9 +43,9 @@ public struct ProjectMigrationPreview: Sendable, Equatable {
 
     public var destinationSummary: String {
         guard let plan else {
-            return "GitHub et Development · composition fixe · règles remplacées par l’admission Development"
+            return "GitHub, Development et Pull Request · composition fixe · règles remplacées par l’admission Development"
         }
-        return "GitHub et Development · \(plan.scope) · label \(plan.readyLabel) · règle \(plan.removedModule) retirée"
+        return "GitHub, Development et Pull Request · \(plan.scope) · label \(plan.readyLabel) · règle \(plan.removedModule) retirée"
     }
 
     public var requiresPauseBeforeMigration: Bool {

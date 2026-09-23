@@ -148,7 +148,11 @@ describe("project composition choices", () => {
     };
     expect(template.compositionMode).toBe("fixed-modules");
     expect(Object.keys(template.slots)).toEqual(["agentRuntime", "sourceControl"]);
-    expect(template.modules.map(({ instanceId }) => instanceId)).toEqual(["github", "development"]);
+    expect(template.modules.map(({ instanceId }) => instanceId)).toEqual([
+      "github",
+      "development",
+      "pull-request",
+    ]);
     expect(template.modules[0]?.["configuration"]).toEqual({
       bootstrapLabelPolicy: "ignore-existing",
       pollIntervalSeconds: 60,
@@ -157,6 +161,10 @@ describe("project composition choices", () => {
     expect(template.modules[0]?.["bindings"]).toEqual({ sourceControl: "sourceControl" });
     expect(template.modules[1]?.["bindings"]).toEqual({ repository: "main" });
     expect(template.modules[1]?.["configuration"]).toEqual({ readyLabel: "ready-to-dev" });
+    expect(template.modules[2]?.["bindings"]).toEqual({
+      repository: "main",
+      sourceControl: "sourceControl",
+    });
 
     const guidedResponse = await preview(engine, project.id, template);
     expect(guidedResponse.status, await guidedResponse.clone().text()).toBe(200);
@@ -187,6 +195,12 @@ describe("project composition choices", () => {
         displayName: "GitHub",
         compatibility: "compatible",
         missingResources: ["github.api"],
+      }),
+      expect.objectContaining({
+        instanceId: "pull-request",
+        displayName: "Pull Request",
+        compatibility: "compatible",
+        missingResources: ["agent.execute", "github.api", "repository.write"],
       }),
     ]);
     expect(
@@ -394,7 +408,6 @@ describe("project composition choices", () => {
       "development.implementation.failed",
       "development.implementation.requested",
       "scm.change-request.created",
-      "scm.change-request.creation-requested",
       "scm.work-item.observed",
     ]);
     expect(await (await engine.call(`/v1/projects/${project.id}`)).json()).toEqual(before);

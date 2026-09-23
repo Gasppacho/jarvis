@@ -37,16 +37,16 @@ final class WorkflowCanvasPresentationTests: XCTestCase {
         XCTAssertTrue(canvas.connections.isEmpty)
     }
 
-    func testCatalogueContainsOnlyTheTwoFixedModules() {
+    func testCatalogueContainsOnlyTheThreeFixedModules() {
         let catalogue = WorkflowCatalogPresentation(
-            availableModuleIDs: ["jarvis.module.github", "jarvis.module.development", "jarvis.module.other"],
-            selectedModuleIDs: ["jarvis.module.github"])
+            availableModuleIDs: ["jarvis.module.github", "jarvis.module.development", "jarvis.module.pull-request", "jarvis.module.other"],
+            selectedModuleIDs: ["jarvis.module.github", "jarvis.module.pull-request"])
 
         XCTAssertEqual(catalogue.items.map(\.id), [
-            "jarvis.module.github", "jarvis.module.development",
+            "jarvis.module.github", "jarvis.module.development", "jarvis.module.pull-request",
         ])
-        XCTAssertEqual(catalogue.items.map(\.title), ["GitHub", "Développeur"])
-        XCTAssertEqual(catalogue.items.map(\.isSelected), [true, false])
+        XCTAssertEqual(catalogue.items.map(\.title), ["GitHub", "Développeur", "Pull Request"])
+        XCTAssertEqual(catalogue.items.map(\.isSelected), [true, false, true])
         XCTAssertTrue(catalogue.items.allSatisfy(\.isAvailable))
     }
 

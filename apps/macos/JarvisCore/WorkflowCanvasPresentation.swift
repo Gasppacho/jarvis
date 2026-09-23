@@ -30,6 +30,13 @@ public struct WorkflowCatalogPresentation: Sendable, Equatable {
                 systemImage: "hammer",
                 isAvailable: available.contains("jarvis.module.development"),
                 isSelected: selected.contains("jarvis.module.development")),
+            Item(
+                id: "jarvis.module.pull-request",
+                title: "Pull Request",
+                description: "Prépare le titre et la description de la PR après le développement.",
+                systemImage: "arrow.triangle.pull",
+                isAvailable: available.contains("jarvis.module.pull-request"),
+                isSelected: selected.contains("jarvis.module.pull-request")),
         ]
     }
 }
@@ -67,7 +74,7 @@ public struct WorkflowCanvasPresentation: Sendable, Equatable {
 
     public init(graph: ProjectCompositionGraph) {
         let ordered = graph.nodes.sorted { $0.instanceId < $1.instanceId }
-        let fixedOrder = ["github", "development"]
+        let fixedOrder = ["github", "development", "pull-request"]
         let order = ordered.sorted {
             let left = fixedOrder.firstIndex(of: $0.moduleId.replacingOccurrences(of: "jarvis.module.", with: "")) ?? fixedOrder.count
             let right = fixedOrder.firstIndex(of: $1.moduleId.replacingOccurrences(of: "jarvis.module.", with: "")) ?? fixedOrder.count

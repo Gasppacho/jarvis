@@ -39,6 +39,7 @@ describe("reference workflow Application Harness", () => {
     expect(configuration.portableConfig.modules.map(({ instanceId }) => instanceId)).toEqual([
       "github",
       "development",
+      "pull-request",
     ]);
 
     expect(

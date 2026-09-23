@@ -69,7 +69,7 @@ describe("GitHub change-request translation", () => {
       head: REQUEST.headBranch,
       base: REQUEST.baseBranch,
       draft: false,
-      body: `${description}\n\nImplements Work Item ${REQUEST.workItemRef}.`,
+      body: description,
     });
     expect(body.body).toContain(description);
     expect(body.body).not.toContain("provider token value");

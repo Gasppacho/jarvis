@@ -35,6 +35,7 @@ export function isGitHubDevelopmentFlow(
     const enabled = configuration.modules.filter((module) => module.enabled);
     const github = enabled.find((module) => module.moduleId === "jarvis.module.github");
     const development = enabled.find((module) => module.moduleId === "jarvis.module.development");
+    const pullRequest = enabled.find((module) => module.moduleId === "jarvis.module.pull-request");
     const route = (type: string, producer: string, consumer: string) =>
       validation.requestRoutes.some(
         (item) =>
@@ -44,15 +45,16 @@ export function isGitHubDevelopmentFlow(
           item.consumer.instanceId === consumer,
       );
     return (
-      enabled.length === 2 &&
+      enabled.length === 3 &&
       github !== undefined &&
       development !== undefined &&
+      pullRequest !== undefined &&
       route(
         "development.implementation.requested",
         development.instanceId,
         development.instanceId,
       ) &&
-      route("scm.change-request.creation-requested", development.instanceId, github.instanceId) &&
+      route("scm.change-request.creation-requested", pullRequest.instanceId, github.instanceId) &&
       validation.requestAttempts !== undefined &&
       !validation.requestAttempts.some(
         (item) => item.contract.type === "scm.change-request.merge-requested",

@@ -121,7 +121,12 @@ describe("guided historical project migration", () => {
             ],
           },
         },
-        { instanceId: "development", moduleId: "jarvis.module.development", enabled: true },
+        {
+          instanceId: "development",
+          moduleId: "jarvis.module.development",
+          enabled: true,
+          bindings: { repository: "main", sourceControl: "sourceControl" },
+        },
       ],
     } as unknown as PortableProjectConfiguration;
     const bindings = {
@@ -134,6 +139,9 @@ describe("guided historical project migration", () => {
     const classified = classifyGuidedMigration(configuration, bindings);
     expect(classified.reasons).toEqual([]);
     const migrated = migratedConfiguration(configuration, classified.plan!);
+    expect(
+      migrated.modules.find(({ moduleId }) => moduleId === "jarvis.module.development")?.bindings,
+    ).toEqual({ repository: "main" });
     expect(
       migrated.modules.find(({ moduleId }) => moduleId === "jarvis.module.development")
         ?.configuration?.["scope"],

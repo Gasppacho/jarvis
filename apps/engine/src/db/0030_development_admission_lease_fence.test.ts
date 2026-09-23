@@ -9,7 +9,7 @@ describe("0030_development_admission_lease_fence", () => {
   it("atomically rejects a workspace lease after the Project is suspended", () => {
     db = new Database(":memory:");
     db.pragma("foreign_keys = ON");
-    applyMigrations(db);
+    applyMigrations(db, "0030");
     db.exec(`
       INSERT INTO projects (id, name, status, portable_config, created_at, updated_at)
       VALUES ('project-a', 'Project A', 'active', '{}', '2026-09-12T00:00:00.000Z', '2026-09-12T00:00:00.000Z');

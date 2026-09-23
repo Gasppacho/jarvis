@@ -4,36 +4,9 @@ import type {
   ModuleHandlerContext,
   ModuleHandlerPublishInput,
 } from "../../../module-sdk/src/index.js";
-import { buildChangeRequestIdempotencyKey, handleImplementationRequested } from "./index.js";
+import { handleImplementationRequested } from "./index.js";
 
 describe("Development outputs", () => {
-  it("derives a stable bounded Change Request idempotency key", () => {
-    const first = buildChangeRequestIdempotencyKey(
-      "project",
-      "main",
-      "github://owner/repository/issues/42",
-      "a".repeat(40),
-    );
-
-    expect(first).toBe(
-      buildChangeRequestIdempotencyKey(
-        "project",
-        "main",
-        "github://owner/repository/issues/42",
-        "a".repeat(40),
-      ),
-    );
-    expect(first).not.toBe(
-      buildChangeRequestIdempotencyKey(
-        "project",
-        "main",
-        "github://owner/repository/issues/42",
-        "b".repeat(40),
-      ),
-    );
-    expect(first).toMatch(/^change-request:[0-9a-f]{64}$/);
-  });
-
   it("publishes a safe failure fact for an invalid input request", async () => {
     const published: ModuleHandlerPublishInput[] = [];
     const event = {

@@ -1303,7 +1303,7 @@ async function sendCreationRequest(
       kind: "request",
       projectId,
       repositoryId: "main",
-      producer: { moduleId: "jarvis.module.development", moduleInstanceId: "development" },
+      producer: { moduleId: "jarvis.module.pull-request", moduleInstanceId: "pull-request" },
       subject: {
         type: "pushed-branch",
         ref: `git://repository/${projectId}/agent/issue-42`,
@@ -1375,7 +1375,23 @@ async function waitForExecution(
     };
     if (body.items.some((item) => item.inputEventId === eventId && item.status === status)) return;
     if (Date.now() - startedAt > timeoutMs) {
-      throw new Error(`event ${eventId} did not reach ${status}: ${JSON.stringify(body.items)}`);
+      const [eventsResponse, subscriptionsResponse] = await Promise.all([
+        engine.call(`/v1/projects/${projectId}/events`),
+        engine.call(`/v1/projects/${projectId}/subscriptions`),
+      ]);
+      const events = (await eventsResponse.json()) as {
+        readonly items: readonly Record<string, unknown>[];
+      };
+      const subscriptions = (await subscriptionsResponse.json()) as {
+        readonly items: readonly Record<string, unknown>[];
+      };
+      throw new Error(
+        `event ${eventId} did not reach ${status}: ${JSON.stringify({
+          executions: body.items,
+          events: events.items,
+          subscriptions: subscriptions.items,
+        })}`,
+      );
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
@@ -1426,6 +1442,17 @@ function githubProjectConfiguration(
       bindings: { repository: "main", sourceControl: "sourceControl", tickets: "tickets" },
       configuration: {
         readyLabel: "ready-to-dev",
+      },
+    },
+    {
+      instanceId: "pull-request",
+      moduleId: "jarvis.module.pull-request",
+      enabled: true,
+      runtimeSlot: "agentRuntime",
+      bindings: {
+        repository: "main",
+        sourceControl: "sourceControl",
+        tickets: "tickets",
       },
     },
   ];

@@ -57,13 +57,14 @@ describe("buildExecutionDetail", () => {
       retryDeliveryId: "delivery-retry",
     });
 
-    expect(detail.steps).toHaveLength(6);
+    expect(detail.steps).toHaveLength(7);
     expect(detail.steps.map((step) => step.label)).toEqual([
       "Issue reçue",
       "Éligibilité confirmée",
       "Préparation du projet",
       "Développement",
       "Commit et push",
+      "Préparation de la Pull Request",
       "Création de la Pull Request",
     ]);
     expect(detail.steps.find((step) => step.id === "agent-running")?.status).toBe("cancelled");
@@ -134,7 +135,7 @@ describe("buildExecutionDetail", () => {
     expect(detail.technical.events[0]?.payloadExcerpt).not.toContain("ghp_should-not-leak");
     expect(detail.technical.events[0]?.payloadExcerpt).not.toContain("ghp_secret_key");
     expect(detail.technical.events[0]?.payloadExcerpt).not.toContain("field-999");
-    expect(detail.steps).toHaveLength(6);
+    expect(detail.steps).toHaveLength(7);
   });
 
   it("shows the final correlated result instead of an earlier failed attempt", () => {
@@ -235,6 +236,50 @@ describe("buildExecutionDetail", () => {
 
     expect(detail.failure?.stepId).toBe("pull-request");
     expect(detail.steps.at(-1)).toMatchObject({ id: "pull-request", status: "failed" });
+  });
+
+  it("attributes a Pull Request preparation failure to its own step", () => {
+    const pullRequestExecution = execution({
+      id: "execution-pull-request",
+      moduleInstanceId: "pull-request",
+      inputEventId: "event-completed",
+      status: "failed",
+      error: "The Agent Runtime returned invalid content",
+    });
+    const detail = buildExecutionDetail({
+      projectId,
+      correlationId: "corr-pr-preparation-failed",
+      anchor: pullRequestExecution,
+      executions: [],
+      events: [
+        event({
+          id: "event-completed",
+          type: "development.implementation.completed",
+          kind: "fact",
+          correlationId: "corr-pr-preparation-failed",
+        }),
+      ],
+      checkpoints: new Map([
+        [
+          pullRequestExecution.id,
+          [
+            checkpoint({
+              executionId: pullRequestExecution.id,
+              type: "agent.started",
+              payload: {},
+            }),
+          ],
+        ],
+      ]),
+      leases: new Map(),
+      readiness: [],
+      retryDeliveryId: null,
+    });
+
+    expect(detail.failure?.stepId).toBe("pull-request-preparation");
+    expect(detail.steps.find((step) => step.id === "pull-request-preparation")).toMatchObject({
+      status: "failed",
+    });
   });
 
   it("bounds correlated executions while retaining the requested anchor", () => {

@@ -69,9 +69,9 @@ fin de ce travail ; il peut ensuite être supprimé puis réimporté pour repart
 
 ## Workflow
 
-Le Catalogue contient exactement les deux Modules embarqués **GitHub** et
-**Développeur**. Chaque card sélectionne ou retire une unique instance. Un workflow
-vide, GitHub seul, Développeur seul ou les deux Modules sont tous enregistrables,
+Le Catalogue contient les trois Modules du workflow guidé : **GitHub**,
+**Développeur** et **Pull Request**. Chaque card sélectionne ou retire une unique instance. Un workflow
+vide, GitHub seul, Développeur seul ou une composition partielle sont tous enregistrables,
 vérifiables et activables, même lorsque la composition ne produira aucun travail.
 
 Le canvas read-only se reconstruit à chaque sélection depuis les événements déclarés
@@ -79,7 +79,7 @@ par les Modules :
 
 ```text
 GitHub → observation des issues → Développement
-GitHub ← demande de Pull Request ← Développement
+Développement → fin du travail → Pull Request → demande de création → GitHub
 ```
 
 Swift ne recalcule aucun routage. Les libellés sont métier, sans identifiants de
@@ -246,7 +246,7 @@ Liste filtrable par projet, module, statut et corrélation. Une fiche affiche :
 Depuis une issue active de l'Overview ou une ligne d'exécution de la Timeline, l'utilisateur
 ouvre la fiche corrélée. Elle regroupe les exécutions finies et en cours autour de
 l’événement d’entrée : réception de l’issue, éligibilité, préparation du worktree,
-agent, commit et push, création de la Pull Request. Les étapes suivent
+agent, commit et push, préparation du contenu, puis création de la Pull Request. Les étapes suivent
 les résultats et tentatives réellement enregistrés par l’Engine.
 
 Chaque étape distingue **Pas encore commencé**, **En cours**, **Réussi**, **Échoué** et

@@ -50,7 +50,7 @@ async function setup() {
   expect((await put(fixture, `${path}/bindings`, bindings)).status).toBe(200);
   fixture.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis", {
     status: 200,
-    body: { permissions: { pull: true, push: true } },
+    body: { default_branch: "main", permissions: { pull: true, push: true } },
   });
   return { fixture, path, config: detail.portableConfig, executable };
 }
@@ -247,7 +247,17 @@ it("keeps verification for a label edit and never resurrects it after workflow, 
   await report(fixture, path);
   const withoutGitHub = {
     ...config,
-    modules: config.modules.filter((module) => module.moduleId !== "jarvis.module.github"),
+    modules: config.modules
+      .filter(
+        (module) =>
+          module.moduleId !== "jarvis.module.github" &&
+          module.moduleId !== "jarvis.module.pull-request",
+      )
+      .map((module) =>
+        module.moduleId === "jarvis.module.development"
+          ? { ...module, bindings: { repository: "main" } }
+          : module,
+      ),
     slots: { agentRuntime: config.slots["agentRuntime"]! },
   };
   await save(fixture, path, withoutGitHub);
@@ -277,7 +287,16 @@ it("keeps an active snapshot operational until the verified configuration is app
   const updated = {
     ...config,
     modules: config.modules
-      .filter((module) => module.moduleId !== "jarvis.module.github")
+      .filter(
+        (module) =>
+          module.moduleId !== "jarvis.module.github" &&
+          module.moduleId !== "jarvis.module.pull-request",
+      )
+      .map((module) =>
+        module.moduleId === "jarvis.module.development"
+          ? { ...module, bindings: { repository: "main" } }
+          : module,
+      )
       .map((module) =>
         module.moduleId === "jarvis.module.development"
           ? { ...module, configuration: { ...module.configuration, readyLabel: "new-label" } }

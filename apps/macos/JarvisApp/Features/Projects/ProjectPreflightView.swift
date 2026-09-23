@@ -10,8 +10,7 @@ struct ProjectPreflightView: View {
     let repair: (ProjectPreflightRepairTarget) -> Void
     private var state: ProjectConfigurationState { model.state(for: project.id) }
     private var observesOnly: Bool {
-        state.draft?.modules.contains { $0.enabled && $0.moduleId == "jarvis.module.development" }
-            == false
+            state.draft?.modules.contains { $0.enabled && !$0.runtimeSlot.isEmpty } == false
     }
 
     var body: some View {
@@ -35,8 +34,8 @@ struct ProjectPreflightView: View {
                     }
                     Label(
                         observesOnly
-                            ? "Préparation : aucune en observation seule"
-                            : "Préparation du worktree : gérée par Development",
+                            ? "Exécution : aucune en observation seule"
+                            : "Espaces de travail : gérés par les modules sélectionnés",
                         systemImage: "terminal")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -78,7 +77,7 @@ struct ProjectPreflightView: View {
                         {
                             Label("Configuration vérifiée", systemImage: "checkmark.circle")
                             Text(
-                                "Development pourra démarrer l’agent puis publier sa modification."
+                                "Les modules sélectionnés pourront travailler. Pull Request préparera la demande, puis GitHub créera la PR."
                             )
                             .font(.callout).foregroundStyle(.secondary)
                         }

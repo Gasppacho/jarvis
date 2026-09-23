@@ -1440,7 +1440,7 @@ components:
           properties:
             modules:
               type: array
-              const: [jarvis.module.github, jarvis.module.development]
+              const: [jarvis.module.github, jarvis.module.development, jarvis.module.pull-request]
             compositionMode: { type: string, const: fixed-modules }
             readyLabel: { type: string, minLength: 1 }
             scope: { $ref: "#/components/schemas/ProjectGuidedMigrationScope" }
@@ -1472,7 +1472,7 @@ components:
               properties:
                 modules:
                   type: array
-                  const: [jarvis.module.github, jarvis.module.development]
+                  const: [jarvis.module.github, jarvis.module.development, jarvis.module.pull-request]
                 compositionMode: { type: string, const: fixed-modules }
                 readyLabel: { type: string, minLength: 1 }
                 scope: { $ref: "#/components/schemas/ProjectGuidedMigrationScope" }
@@ -2461,8 +2461,8 @@ components:
             $ref: "#/components/schemas/ExecutionDetailExecution"
         steps:
           type: array
-          minItems: 6
-          maxItems: 7
+          minItems: 7
+          maxItems: 8
           items:
             $ref: "#/components/schemas/ExecutionDetailStep"
         checks:
@@ -2533,7 +2533,7 @@ components:
             nextAction: { type: string, minLength: 1, maxLength: 512 }
             stepId:
               type: [string, "null"]
-              enum: [issue-received, eligibility-confirmed, workspace-prepared, agent-running, checks, commit-push, pull-request, null]
+              enum: [issue-received, eligibility-confirmed, workspace-prepared, agent-running, checks, commit-push, pull-request-preparation, pull-request, null]
         retryDeliveryId: { type: [string, "null"] }
         cancellableExecutionId: { type: [string, "null"] }
     ExecutionDetailExecution:
@@ -2558,7 +2558,7 @@ components:
       additionalProperties: false
       required: [id, label, status, occurredAt, completedAt, executionId, detail]
       properties:
-        id: { type: string, enum: [issue-received, eligibility-confirmed, workspace-prepared, agent-running, checks, commit-push, pull-request] }
+        id: { type: string, enum: [issue-received, eligibility-confirmed, workspace-prepared, agent-running, checks, commit-push, pull-request-preparation, pull-request] }
         label: { type: string, minLength: 1 }
         status: { type: string, enum: [proved, active, repairing, failed, cancelled, not-started, unavailable] }
         occurredAt: { type: [string, "null"], format: date-time }

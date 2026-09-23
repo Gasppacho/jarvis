@@ -135,7 +135,7 @@ describe("Development push crash recovery", () => {
           expect(fixture.fakeGitHub.pullRequests).toHaveLength(0);
         } else {
           await assertSuccess(fixture, database, commit);
-          expect(runtimeCalls(fixture)).toBe(1);
+          expect(runtimeCalls(fixture)).toBe(2);
         }
       } finally {
         if (unavailable === "remote")
@@ -273,7 +273,7 @@ async function assertSuccess(
         .get(),
     )
     .toEqual({ n: 1 });
-  expect(runtimeCalls(fixture)).toBe(1);
+  expect(runtimeCalls(fixture)).toBe(2);
   expect(remoteHead(fixture, commit.branch)).toBe(commit.sha);
   expect(
     remoteGit(fixture, ["rev-list", "--count", `${fixture.initialCommitSha}..${commit.sha}`]),
@@ -314,8 +314,8 @@ async function assertSuccess(
     (event) => event.type === "scm.change-request.creation-requested",
   )!;
   expect(completed.causationId).toBe(implementation.id);
-  expect(creation.causationId).toBe(implementation.id);
-  expect(creation.payload["title"]).toBe("Implement Recover pushed change");
+  expect(creation.causationId).toBe(completed.id);
+  expect(creation.payload["title"]).toBe("Recover pushed change");
   expect(completed.payload).toMatchObject({ headCommit: commit.sha });
   expect(completed.payload).not.toHaveProperty("validation");
   expect(
