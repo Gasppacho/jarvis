@@ -129,9 +129,14 @@ describe("Development push crash recovery", () => {
       else remoteGit(fixture, ["update-ref", "-d", `refs/heads/${commit.branch}`]);
       try {
         await fixture.restart();
-        await assertFailureVisible(fixture, "git.recovery-unavailable");
-        expect(runtimeCalls(fixture)).toBe(1);
-        expect(fixture.fakeGitHub.pullRequests).toHaveLength(0);
+        if (unavailable === "remote") {
+          await assertFailureVisible(fixture, "git.recovery-unavailable");
+          expect(runtimeCalls(fixture)).toBe(1);
+          expect(fixture.fakeGitHub.pullRequests).toHaveLength(0);
+        } else {
+          await assertSuccess(fixture, database, commit);
+          expect(runtimeCalls(fixture)).toBe(1);
+        }
       } finally {
         if (unavailable === "remote")
           renameSync(`${fixture.bareRemoteRoot}-offline`, fixture.bareRemoteRoot);
@@ -146,24 +151,29 @@ describe("Development push crash recovery", () => {
             )
             .get() as { n: number }
         ).n,
-      ).toBeGreaterThan(0);
+      ).toBe(unavailable === "remote" ? 1 : 0);
     },
   );
 
-  it("bounds missing-branch retries and replays the same intention after repair", async () => {
+  it("replays the same intention after the remote recovers, without rerunning the agent", async () => {
     const { fixture, database, commit, workspacePath } = await crash();
-    remoteGit(fixture, ["update-ref", "-d", `refs/heads/${commit.branch}`]);
-    await fixture.restart();
-    await expect
-      .poll(async () => (await deadLetters(fixture))[0], { timeout: 30000 })
-      .toMatchObject({ code: "delivery.retry-exhausted", attempts: 5 });
-    const dead = (await deadLetters(fixture))[0]!;
-    expect(runtimeCalls(fixture)).toBe(1);
-    expect(fixture.fakeGitHub.pullRequests).toHaveLength(0);
-    expect(existsSync(workspacePath)).toBe(true);
-    remoteGit(fixture, ["update-ref", `refs/heads/${commit.branch}`, commit.sha]);
+    const offlineRemote = `${fixture.bareRemoteRoot}-offline`;
+    renameSync(fixture.bareRemoteRoot, offlineRemote);
+    let deliveryId = "";
+    try {
+      await fixture.restart();
+      await expect
+        .poll(async () => (await deadLetters(fixture))[0], { timeout: 30000 })
+        .toMatchObject({ code: "delivery.retry-exhausted", attempts: 5 });
+      deliveryId = (await deadLetters(fixture))[0]!.deliveryId;
+      expect(runtimeCalls(fixture)).toBe(1);
+      expect(fixture.fakeGitHub.pullRequests).toHaveLength(0);
+      expect(existsSync(workspacePath)).toBe(true);
+    } finally {
+      if (existsSync(offlineRemote)) renameSync(offlineRemote, fixture.bareRemoteRoot);
+    }
     const response = await fixture.engine.call(
-      `/v1/dead-letters/${encodeURIComponent(dead.deliveryId)}/replay`,
+      `/v1/dead-letters/${encodeURIComponent(deliveryId)}/replay`,
       { method: "POST" },
     );
     expect(response.status, await response.clone().text()).toBe(202);

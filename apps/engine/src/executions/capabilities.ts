@@ -4,6 +4,7 @@ import type {
   ExternalMappingCapability,
   AgentRuntimeGrant,
   DevelopmentAdmissionCapability,
+  GitPushCredential,
   ModuleHandlerCapabilities,
   PollCursorCapability,
   WorkItemReadinessCapability,
@@ -197,6 +198,20 @@ export class ProjectModuleCapabilityResolver {
       ...(this.developmentAdmissions === undefined || moduleId !== "jarvis.module.development"
         ? {}
         : { developmentAdmission: this.developmentAdmissions.bind(projectId) }),
+      ...(moduleId !== "jarvis.module.development"
+        ? {}
+        : {
+            gitPushCredentials: {
+              resolve: (repositoryId: string, remoteUrl: string) =>
+                this.resolveGitPushCredential(
+                  projectId,
+                  moduleInstanceId,
+                  snapshot,
+                  repositoryId,
+                  remoteUrl,
+                ),
+            },
+          }),
     };
     let resolved: ModuleHandlerCapabilities = capabilities;
     if (agentRequirement !== undefined) {
@@ -495,6 +510,62 @@ export class ProjectModuleCapabilityResolver {
       credentialResolver: this.githubCredentials,
       ...(this.githubApiBaseUrl === undefined ? {} : { apiBaseUrl: this.githubApiBaseUrl }),
     });
+  }
+
+  private async resolveGitPushCredential(
+    projectId: string,
+    moduleInstanceId: string,
+    snapshot: ResolvedProjectSnapshot,
+    repositoryId: string,
+    remoteUrl: string,
+  ): Promise<GitPushCredential | undefined> {
+    const repository = snapshot.repositoryIdentities?.find(
+      (identity) => identity.repositoryId === repositoryId && identity.provider === "github",
+    );
+    if (repository === undefined || this.githubCredentials === undefined) return undefined;
+
+    let remote: URL;
+    try {
+      remote = new URL(remoteUrl);
+    } catch {
+      return undefined;
+    }
+    const remotePath = remote.pathname.replace(/\.git\/?$/, "").replace(/\/$/, "");
+    const expectedPath = `/${repository.owner}/${repository.name}`;
+    if (
+      remote.protocol !== "https:" ||
+      remote.hostname !== "github.com" ||
+      remote.port !== "" ||
+      remote.username !== "" ||
+      remote.password !== "" ||
+      remote.search !== "" ||
+      remote.hash !== "" ||
+      remotePath.toLowerCase() !== expectedPath.toLowerCase()
+    ) {
+      return undefined;
+    }
+
+    const github = snapshot.moduleInstances.find(
+      (candidate) => candidate.enabled && candidate.moduleId === "jarvis.module.github",
+    );
+    const slot = github?.bindings?.["sourceControl"];
+    const binding = slot === undefined ? undefined : snapshot.bindings.slots[slot];
+    if (binding?.kind !== "connection") return undefined;
+    const connection = this.connections?.find(binding.ref);
+    if (
+      connection?.provider !== "github" ||
+      connection.status !== "available" ||
+      !connection.capabilities.includes("scm.change-request.manage")
+    ) {
+      return undefined;
+    }
+    const resolved = await this.githubCredentials.resolve(connection.secretRef);
+    if (resolved.status !== "available") return undefined;
+    return {
+      username: "x-access-token",
+      password: resolved.credential,
+      remoteUrl: remoteUrl.trim(),
+    };
   }
 }
 

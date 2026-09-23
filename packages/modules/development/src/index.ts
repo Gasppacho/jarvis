@@ -10,6 +10,7 @@ import { GitRunner, type GitCommandResult } from "../../../workspace/src/git-run
 import { ModuleDeliveryDeferredError } from "../../../module-sdk/src/index.js";
 import type {
   ModuleHandlerContext,
+  GitPushCredential,
   ModuleShell,
   ModuleShellCommandResult,
   WorkItem,
@@ -643,11 +644,19 @@ async function runImplementationRequested(
         ? {}
         : { title: safeFailureReference(workItem.title, undefined, "Work Item", 256) }),
     });
+    const pushRemote = await resolvePushRemote(allocation.path, ctx.signal);
+    const credential = await resolveGitPushCredential(
+      ctx,
+      allocation.path,
+      pushRemote,
+      "git.push-failed",
+    );
     await pushBranch({
       workspacePath: allocation.path,
       branch: commit.branch,
       sha: commit.sha,
-      pushRemote: await resolvePushRemote(allocation.path, ctx.signal),
+      pushRemote,
+      ...(credential === undefined ? {} : { credential }),
       signal: ctx.signal,
       timeoutMs,
       outputLimitBytes,
@@ -751,18 +760,47 @@ async function recoverPushedChange(
     }
   }
   const remote = await resolvePushRemote(allocation.path, ctx.signal, "git.recovery-required");
-  const remoteHead = await git.run(
-    ["ls-remote", "--heads", remote, `refs/heads/${branch}`],
-    options,
+  const credential = await resolveGitPushCredential(
+    ctx,
+    allocation.path,
+    remote,
+    "git.recovery-unavailable",
   );
-  if (!remoteHead.ok || remoteHead.stdout.trim() === "") {
+  const remoteHead = await git.run(["ls-remote", "--heads", remote, `refs/heads/${branch}`], {
+    ...options,
+    ...(credential === undefined ? {} : { credential }),
+  });
+  if (!remoteHead.ok) {
     throw new DevelopmentExecutionError(
       "git.recovery-unavailable",
       "The pushed branch cannot currently be read from the remote; recovery will retry within the Delivery budget.",
       true,
     );
   }
-  const [remoteSha, remoteRef, extra] = remoteHead.stdout.trim().split(/\s+/);
+  if (remoteHead.stdout.trim() === "") {
+    await pushBranch({
+      workspacePath: allocation.path,
+      branch,
+      sha,
+      pushRemote: remote,
+      ...(credential === undefined ? {} : { credential }),
+      signal: ctx.signal,
+      timeoutMs: DEFAULT_TIMEOUT_MS,
+      outputLimitBytes: DEFAULT_OUTPUT_LIMIT_BYTES,
+    });
+  }
+  const verifiedRemoteHead = await git.run(
+    ["ls-remote", "--heads", remote, `refs/heads/${branch}`],
+    { ...options, ...(credential === undefined ? {} : { credential }) },
+  );
+  if (!verifiedRemoteHead.ok) {
+    throw new DevelopmentExecutionError(
+      "git.recovery-unavailable",
+      "The pushed branch cannot currently be read from the remote; recovery will retry within the Delivery budget.",
+      true,
+    );
+  }
+  const [remoteSha, remoteRef, extra] = verifiedRemoteHead.stdout.trim().split(/\s+/);
   if (remoteSha !== sha || remoteRef !== `refs/heads/${branch}` || extra !== undefined) {
     throw new DevelopmentExecutionError(
       "git.recovery-required",
@@ -1075,6 +1113,81 @@ async function resolvePushRemote(
   return remote;
 }
 
+async function resolveGitPushCredential(
+  ctx: ModuleHandlerContext,
+  workspacePath: string,
+  remote: string,
+  failureCode: "git.push-failed" | "git.recovery-unavailable",
+): Promise<GitPushCredential | undefined> {
+  if (ctx.repository?.provider !== "github") return undefined;
+  const git = new GitRunner({
+    cwd: workspacePath,
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+    outputLimitBytes: DEFAULT_OUTPUT_LIMIT_BYTES,
+  });
+  const result = await git.run(["remote", "get-url", "--push", remote], {
+    signal: ctx.signal,
+  });
+  if (!result.ok) {
+    throw new DevelopmentExecutionError(
+      failureCode,
+      "Development could not inspect the Project push remote.",
+      true,
+    );
+  }
+  const remoteUrl = result.stdout.trim();
+  if (remoteUrl.startsWith("git@github.com:")) {
+    throw new DevelopmentExecutionError(
+      failureCode,
+      "Use the Project's HTTPS GitHub push remote so Jarvis can authenticate with its selected account.",
+    );
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(remoteUrl);
+  } catch {
+    return undefined;
+  }
+  if (parsed.hostname !== "github.com") return undefined;
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.port !== "" ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.search !== "" ||
+    parsed.hash !== "" ||
+    !remoteMatchesProject(parsed, ctx.repository)
+  ) {
+    throw new DevelopmentExecutionError(
+      failureCode,
+      "The GitHub push remote does not match this Project repository; correct the remote before replay.",
+    );
+  }
+  const credential = await ctx.capabilities.gitPushCredentials?.resolve(
+    ctx.repository.repositoryId,
+    remoteUrl,
+  );
+  if (credential === undefined) {
+    throw new DevelopmentExecutionError(
+      failureCode,
+      "The Project GitHub account could not authenticate the push. Revalidate its GitHub binding, then replay the retained change.",
+      true,
+    );
+  }
+  return credential;
+}
+
+function remoteMatchesProject(
+  remote: URL,
+  repository: NonNullable<ModuleHandlerContext["repository"]>,
+): boolean {
+  const path = remote.pathname
+    .replace(/\.git\/?$/, "")
+    .replace(/\/$/, "")
+    .toLowerCase();
+  return path === `/${repository.owner}/${repository.name}`.toLowerCase();
+}
+
 async function runWorktreePreparation(input: {
   readonly command: string | undefined;
   readonly shell: ModuleShell;
@@ -1281,6 +1394,7 @@ async function pushBranch(input: {
   readonly branch: string;
   readonly sha: string;
   readonly pushRemote: string;
+  readonly credential?: GitPushCredential;
   readonly signal: AbortSignal;
   readonly timeoutMs: number;
   readonly outputLimitBytes: number;
@@ -1290,7 +1404,10 @@ async function pushBranch(input: {
     timeoutMs: input.timeoutMs,
     outputLimitBytes: input.outputLimitBytes,
   });
-  const options = { signal: input.signal };
+  const options = {
+    signal: input.signal,
+    ...(input.credential === undefined ? {} : { credential: input.credential }),
+  };
   const pushed = await git.run(["push", "--set-upstream", input.pushRemote, input.branch], options);
   if (!pushed.ok) throwPushFailure(pushed, "push the working branch");
 

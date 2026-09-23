@@ -42,7 +42,11 @@ async function setup() {
   database.close();
   const currentBindings = await readBindings(fixture, path);
   const bindings = { ...currentBindings, slots: { ...currentBindings.slots } };
-  bindings.slots["agentRuntime"] = { kind: "runtime", ref: "runtime/codex-verified" };
+  bindings.slots["agentRuntime"] = {
+    kind: "runtime",
+    ref: "runtime/codex-verified",
+    environment: { PATH: "/usr/bin:/bin" },
+  };
   expect((await put(fixture, `${path}/bindings`, bindings)).status).toBe(200);
   fixture.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis", {
     status: 200,
@@ -102,6 +106,46 @@ it("fails when the remote is not GitHub or the selected account cannot access it
   expect(inaccessible.checks).toContainEqual(
     expect.objectContaining({ id: "github-account", status: "failed" }),
   );
+});
+
+it("invalidates verification when the same CLI loses its local environment", async () => {
+  const { fixture, path } = await setup();
+  const verified = await report(fixture, path);
+  expect(verified.valid).toBe(true);
+  const currentBindings = await readBindings(fixture, path);
+  const bindings = { ...currentBindings, slots: { ...currentBindings.slots } };
+  bindings.slots["agentRuntime"] = { kind: "runtime", ref: "runtime/codex-verified" };
+  expect((await put(fixture, `${path}/bindings`, bindings)).status).toBe(200);
+  expect((await fixture.engine.call(`${path}/preflight`)).status).toBe(404);
+  expect(
+    (
+      await post(fixture, `${path}/preflight-activate`, {
+        compositionFingerprint: verified.compositionFingerprint,
+      })
+    ).status,
+  ).toBe(409);
+});
+
+it("rejects a selected Codex CLI without a tool profile before activation", async () => {
+  const { fixture, path } = await setup();
+  const currentBindings = await readBindings(fixture, path);
+  const bindings = { ...currentBindings, slots: { ...currentBindings.slots } };
+  bindings.slots["agentRuntime"] = { kind: "runtime", ref: "runtime/codex-verified" };
+  expect((await put(fixture, `${path}/bindings`, bindings)).status).toBe(200);
+  const result = await report(fixture, path);
+  expect(result.valid).toBe(false);
+  expect(result.runtime.readiness.status).toBe("access-denied");
+  expect(result.checks).toContainEqual(
+    expect.objectContaining({ id: "agent-cli", status: "failed" }),
+  );
+  expect(
+    (
+      await post(fixture, `${path}/preflight-activate`, {
+        compositionFingerprint: result.compositionFingerprint,
+      })
+    ).status,
+  ).toBe(409);
+  expect(readFileSync(fixture.runtimeCounterPath, "utf8")).toBe("");
 });
 
 it("fails when the selected agent CLI is no longer executable", async () => {
@@ -193,7 +237,11 @@ it("keeps verification for a label edit and never resurrects it after workflow, 
   expect((await put(fixture, `${path}/bindings`, bindings)).status).toBe(200);
   expect((await fixture.engine.call(`${path}/preflight`)).status).toBe(404);
 
-  bindings.slots["agentRuntime"] = { kind: "runtime", ref: "runtime/codex-verified" };
+  bindings.slots["agentRuntime"] = {
+    kind: "runtime",
+    ref: "runtime/codex-verified",
+    environment: { PATH: "/usr/bin:/bin" },
+  };
   expect((await put(fixture, `${path}/bindings`, bindings)).status).toBe(200);
   expect((await fixture.engine.call(`${path}/preflight`)).status).toBe(404);
   await report(fixture, path);

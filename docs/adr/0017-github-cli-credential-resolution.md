@@ -17,6 +17,13 @@ Project-bound GitHub API client retains the opaque reference and repeats this
 resolution for each provider request; the token is never part of a descriptor,
 binding, event, prompt, artifact or log.
 
+Development resolves the same Project-bound account immediately before a Git
+push. Git receives the credential only in that child process through an
+HTTPS-repository-scoped `http.extraHeader`; Git's persistent configuration is
+unchanged. Push recovery verifies the retained commit against its checkpoint,
+checks the remote branch, and pushes that same branch and commit only when the
+branch is confirmed absent. It then verifies the remote SHA before continuing.
+
 ## Consequences
 
 Users authenticate with `gh` outside Jarvis. A future Keychain-backed adapter

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { GitRunner } from "../../../packages/workspace/src/git-runner.js";
@@ -32,6 +32,47 @@ describe("real Git workspace seam", () => {
     expect(failed.stderr).not.toHaveLength(0);
     expect(failed.stderr).not.toContain(fixture.root);
     expect(failed.message).not.toContain(fixture.root);
+  });
+
+  it("limits an ephemeral GitHub credential to its HTTPS repository", async () => {
+    const fixture = makeRealGitRepositoryFixture();
+    roots.push(fixture.root, fixture.remoteRoot);
+    const capture = join(fixture.root, "git-environment");
+    const executable = join(fixture.root, "git-wrapper");
+    writeFileSync(
+      executable,
+      `#!/bin/sh\nprintf '%s\\n' "$GIT_CONFIG_COUNT" "$GIT_CONFIG_KEY_0" "$GIT_CONFIG_VALUE_0" > '${capture}'\n`,
+      "utf8",
+    );
+    chmodSync(executable, 0o755);
+    const secret = "fixture-token-never-log";
+    const result = await new GitRunner({ cwd: fixture.root, executablePath: executable }).run(
+      ["push"],
+      {
+        credential: {
+          username: "x-access-token",
+          password: secret,
+          remoteUrl: "https://github.com/Gasppacho/jarvis-test.git",
+        },
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    const environment = readFileSync(capture, "utf8");
+    expect(environment).toContain("http.https://github.com/Gasppacho/jarvis-test.git.extraheader");
+    expect(environment).toContain(
+      `Authorization: Basic ${Buffer.from(`x-access-token:${secret}`).toString("base64")}`,
+    );
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(
+      await new GitRunner({ cwd: fixture.root, executablePath: executable }).run(["push"], {
+        credential: {
+          username: "x-access-token",
+          password: secret,
+          remoteUrl: "http://github.com/Gasppacho/jarvis-test.git",
+        },
+      }),
+    ).toMatchObject({ ok: false, code: "git.invalid-arguments" });
   });
 
   it("bounds output and reports timeout and cancellation", async () => {

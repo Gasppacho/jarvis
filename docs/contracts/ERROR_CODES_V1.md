@@ -99,7 +99,7 @@ this public v1 catalog.
 | `git.commit-failed` | Maybe | Commit command failed |
 | `git.push-failed` | Maybe | Push failed without confirmed remote state |
 | `git.recovery-required` | No | Original workspace/local branch or remote differs from the push intent; preserve and inspect before replay |
-| `git.recovery-unavailable` | Yes | Remote branch cannot be read; bounded recovery retries never push or run the agent |
+| `git.recovery-unavailable` | Yes | Remote branch cannot be read or the retained commit could not be republished; recovery reuses the same commit and never reruns the agent |
 | `git.recovery-validation-missing` | No | Successful validation snapshot is missing, incomplete or differs from current configuration; no validated PR is requested |
 
 ## Agent Runtime

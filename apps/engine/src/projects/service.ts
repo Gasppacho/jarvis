@@ -2385,7 +2385,12 @@ function verificationFingerprint(project: ProjectRow): string {
       cli:
         module.moduleId === "jarvis.module.development" && module.runtimeSlot !== undefined
           ? project.slotBindings[module.runtimeSlot]?.kind === "runtime"
-            ? project.slotBindings[module.runtimeSlot]?.ref
+            ? {
+                ref: project.slotBindings[module.runtimeSlot]?.ref,
+                environment: Object.entries(
+                  project.slotBindings[module.runtimeSlot]?.environment ?? {},
+                ).sort(([left], [right]) => left.localeCompare(right)),
+              }
             : undefined
           : undefined,
     }))

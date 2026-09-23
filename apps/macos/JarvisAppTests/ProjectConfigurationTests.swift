@@ -964,10 +964,27 @@ final class ProjectConfigurationTests: XCTestCase {
         let saved = await configuration.saveDraft(
             projectId: imported.id, writeToRepository: false)
         XCTAssertNotNil(saved)
+        let savedEnvironment = configuration.state(for: imported.id).localBindings?
+            .wirePayload.slots.additionalProperties["agentRuntime"]?.environment?.additionalProperties
+        XCTAssertFalse(savedEnvironment?["PATH"]?.isEmpty ?? true,
+            "Saving a selected CLI must approve its local tool profile")
+
+        configuration.stageRuntime(projectId: imported.id, ref: runtime.ref)
+        XCTAssertEqual(
+            configuration.state(for: imported.id).localBindings?.wirePayload
+                .slots.additionalProperties["agentRuntime"]?.environment?.additionalProperties,
+            savedEnvironment,
+            "Reselecting the same CLI must preserve its approved profile")
+        let resaved = await configuration.saveDraft(
+            projectId: imported.id, writeToRepository: false)
+        XCTAssertNotNil(resaved)
 
         let reloaded = ProjectConfigurationModel(session: session, projects: projects)
         await reloaded.refresh(projectId: imported.id, packages: catalog.packages)
         let reloadedState = reloaded.state(for: imported.id)
+        XCTAssertEqual(
+            reloadedState.localBindings?.wirePayload.slots.additionalProperties["agentRuntime"]?
+                .environment?.additionalProperties, savedEnvironment)
         XCTAssertEqual(
             reloadedState.draft?.modules.first {
                 $0.moduleId == "jarvis.module.development"

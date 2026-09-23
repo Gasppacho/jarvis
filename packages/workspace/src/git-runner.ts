@@ -47,6 +47,11 @@ export interface GitRunOptions {
   readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
   readonly outputLimitBytes?: number;
+  readonly credential?: {
+    readonly username: string;
+    readonly password: string;
+    readonly remoteUrl: string;
+  };
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -59,8 +64,8 @@ function bounded(value: number | undefined, fallback: number, maximum: number): 
   return Math.min(maximum, Math.max(1, Math.floor(value)));
 }
 
-function gitEnvironment(): NodeJS.ProcessEnv {
-  return {
+function gitEnvironment(credential?: GitRunOptions["credential"]): NodeJS.ProcessEnv | undefined {
+  const environment: NodeJS.ProcessEnv = {
     PATH: process.env["PATH"] ?? "",
     LANG: "C",
     LC_ALL: "C",
@@ -70,6 +75,36 @@ function gitEnvironment(): NodeJS.ProcessEnv {
     GIT_PAGER: "cat",
     GIT_OPTIONAL_LOCKS: "0",
   };
+  if (credential !== undefined) {
+    let remote: URL;
+    try {
+      remote = new URL(credential.remoteUrl);
+    } catch {
+      return undefined;
+    }
+    if (
+      remote.protocol !== "https:" ||
+      remote.hostname !== "github.com" ||
+      remote.port !== "" ||
+      remote.username !== "" ||
+      remote.password !== "" ||
+      remote.search !== "" ||
+      remote.hash !== "" ||
+      credential.username.trim() === "" ||
+      credential.password === "" ||
+      !/^\/[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+(?:\.git)?\/?$/.test(remote.pathname)
+    ) {
+      return undefined;
+    }
+    const url = `${remote.origin}${remote.pathname.replace(/\/$/, "")}`;
+    const header = Buffer.from(`${credential.username}:${credential.password}`).toString("base64");
+    Object.assign(environment, {
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: `http.${url}.extraheader`,
+      GIT_CONFIG_VALUE_0: `Authorization: Basic ${header}`,
+    });
+  }
+  return environment;
 }
 
 function resolveGitExecutable(requestedPath?: string): string | undefined {
@@ -169,11 +204,18 @@ export class GitRunner {
       MAX_OUTPUT_LIMIT_BYTES,
     );
 
+    const environment = gitEnvironment(options.credential);
+    if (environment === undefined) {
+      return Promise.resolve(
+        failure("git.invalid-arguments", "Git authentication target is invalid.", null),
+      );
+    }
+
     return runBoundedProcess({
       executable,
       args,
       cwd: this.cwd,
-      env: gitEnvironment(),
+      env: environment,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       timeoutMs,
       outputLimitBytes,

@@ -353,6 +353,15 @@ private struct ProjectSettingsView: View {
                                 }
                             }
                             .accessibilityIdentifier("project.settings.development.runtime")
+                            if let selected = development.runtimes.first(where: \.isSelected),
+                                selected.isSelectable
+                            {
+                                Button("Confirmer la CLI sélectionnée") {
+                                    model.stageRuntime(projectId: projectId, ref: selected.id)
+                                }
+                                .disabled(state.isRuntimeBusy || state.isSaving)
+                                .accessibilityIdentifier("project.settings.development.confirm-runtime")
+                            }
                         }
                         Button("Actualiser les CLI") {
                             Task {

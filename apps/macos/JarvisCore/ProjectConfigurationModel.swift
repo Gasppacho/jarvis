@@ -493,7 +493,10 @@ public final class ProjectConfigurationModel {
             var payload = state(for: projectId).localBindings?.wirePayload
         else { return }
         for slot in slots {
-            payload.slots.additionalProperties[slot] = .init(kind: kind.payload, ref: ref)
+            let existing = payload.slots.additionalProperties[slot]
+            if existing?.kind != kind.payload || existing?.ref != ref {
+                payload.slots.additionalProperties[slot] = .init(kind: kind.payload, ref: ref)
+            }
         }
         update(projectId) {
             $0.localBindings = LocalProjectBindings(payload: payload)
@@ -1061,6 +1064,16 @@ public final class ProjectConfigurationModel {
                 portableConfig: portableConfig,
                 writeToRepository: writeToRepository,
                 bindings: stagedBindings)
+            // The settings picker stages a CLI choice; the Engine owns its local profile.
+            for module in portableConfig.modules where module.enabled {
+                guard let slot = module.runtimeSlot,
+                    let binding = stagedBindings?.slots.additionalProperties[slot],
+                    binding.kind == .runtime,
+                    binding.environment?.additionalProperties["PATH"]?
+                        .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+                else { continue }
+                _ = try await client.bindProjectRuntime(projectId: projectId, ref: binding.ref)
+            }
             var reloadErrors: [String] = []
             let persistedPreflight: Components.Schemas.ProjectPreflightV1?
             if let preflightAPI {
@@ -1076,16 +1089,12 @@ public final class ProjectConfigurationModel {
                 persistedPreflight = nil
             }
             let bindings: LocalProjectBindings?
-            if let stagedBindings {
-                bindings = LocalProjectBindings(payload: stagedBindings)
-            } else {
-                do {
-                    bindings = try await client.getProjectBindings(projectId: projectId)
-                } catch {
-                    bindings = state(for: projectId).localBindings
-                    reloadErrors.append(
-                        "Le brouillon est enregistré, mais ses autorisations locales n’ont pas pu être rechargées. Rechargez ce projet avant de continuer.")
-                }
+            do {
+                bindings = try await client.getProjectBindings(projectId: projectId)
+            } catch {
+                bindings = nil
+                reloadErrors.append(
+                    "Le brouillon est enregistré, mais ses autorisations locales n’ont pas pu être rechargées. Rechargez ce projet avant de continuer.")
             }
             let review: ProjectCompositionReview?
             let reviewError: String?

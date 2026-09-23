@@ -63,6 +63,11 @@ export function checkSelectedAgentCli(
       return result("absent", "La CLI d’agent sélectionnée est introuvable.");
     if (status === "denied")
       return result("access-denied", "La CLI d’agent sélectionnée n’est pas exécutable.");
+    if (!binding.environment?.["PATH"]?.trim())
+      return result(
+        "access-denied",
+        "Le profil local de Codex est incomplet. Confirmez la CLI sélectionnée dans Paramétrage, enregistrez puis relancez la vérification.",
+      );
   }
   return result("ready", "La CLI d’agent sélectionnée est disponible.");
 }

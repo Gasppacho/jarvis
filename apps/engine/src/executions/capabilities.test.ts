@@ -25,7 +25,9 @@ const moduleComposition = {
           }
         : moduleId === "github-module"
           ? { requires: [{ id: "github.api", binding: "sourceControl" as const }] }
-          : { requires: [] };
+          : moduleId === "jarvis.module.development"
+            ? { requires: [{ id: "github.api", binding: "sourceControl" as const }] }
+            : { requires: [] };
   },
 };
 
@@ -56,6 +58,67 @@ function snapshot(runtimeRef?: string): ResolvedProjectSnapshot {
 }
 
 describe("ProjectModuleCapabilityResolver", () => {
+  it("resolves push credentials only for the bound Project GitHub repository", async () => {
+    const base = snapshot();
+    const projectSnapshot: ResolvedProjectSnapshot = {
+      ...base,
+      repositoryIdentities: [
+        { repositoryId: "main", provider: "github", owner: "Gasppacho", name: "jarvis-test" },
+      ],
+      moduleInstances: [
+        {
+          instanceId: "development",
+          moduleId: "jarvis.module.development",
+          enabled: true,
+          bindings: { sourceControl: "sourceControl" },
+        },
+        {
+          instanceId: "github",
+          moduleId: "jarvis.module.github",
+          enabled: true,
+          bindings: { sourceControl: "sourceControl" },
+        },
+      ],
+      bindings: {
+        ...base.bindings,
+        slots: { sourceControl: { kind: "connection", ref: "connection/github" } },
+      },
+    };
+    const resolver = new ProjectModuleCapabilityResolver(
+      { getResolvedProject: () => projectSnapshot },
+      moduleComposition,
+      new LocalAgentRuntimeRegistry(),
+      undefined,
+      {
+        find: () => ({
+          id: "connection/github",
+          provider: "github",
+          accountLabel: "Gasppacho",
+          capabilities: ["github.api", "scm.change-request.manage", "work-items.read"],
+          status: "available",
+          secretRef: "gh://Gasppacho",
+        }),
+      },
+      { resolve: async () => ({ status: "available", credential: "fixture-token" }) },
+    );
+
+    const capability = resolver.resolve("project", "development", "jarvis.module.development");
+
+    await expect(
+      capability.gitPushCredentials?.resolve(
+        "main",
+        "https://github.com/Gasppacho/jarvis-test.git",
+      ),
+    ).resolves.toEqual({
+      username: "x-access-token",
+      password: "fixture-token",
+      remoteUrl: "https://github.com/Gasppacho/jarvis-test.git",
+    });
+    await expect(
+      capability.gitPushCredentials?.resolve("main", "https://github.com/Gasppacho/other.git"),
+    ).resolves.toBeUndefined();
+  });
+
   it("resolves the engine shell without exposing project execution policy", () => {
     const snapshots = new Map([["project-a", snapshot("runtime/fake-test")]]);
     const resolver = new ProjectModuleCapabilityResolver(

@@ -195,10 +195,23 @@ export interface ModuleHandlerCapabilities {
   readonly workItemReadiness?: WorkItemReadinessCapability;
   readonly developmentAdmission?: DevelopmentAdmissionCapability;
   readonly githubApi?: GitHubApi;
+  readonly gitPushCredentials?: ProjectGitPushCredentialResolver;
   readonly workItems?: WorkItemsCapability;
   readonly projectBindings?: AgentProjectBindings;
   readonly shell?: ModuleShell;
   readonly workspace?: ModuleWorkspace;
+}
+
+/** Resolves credentials for a Git push to one repository bound to the Project. */
+export interface ProjectGitPushCredentialResolver {
+  resolve(repositoryId: string, remoteUrl: string): Promise<GitPushCredential | undefined>;
+}
+
+/** Ephemeral credentials passed only to a single Git child process. */
+export interface GitPushCredential {
+  readonly username: string;
+  readonly password: string;
+  readonly remoteUrl: string;
 }
 
 export interface AgentRuntimeGrant {
