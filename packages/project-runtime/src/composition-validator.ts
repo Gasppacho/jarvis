@@ -139,49 +139,6 @@ export class SavedProjectCompositionValidator implements ProjectCompositionValid
       });
     }
 
-    for (const instance of instances) {
-      if (instance.moduleId !== "jarvis.module.development") continue;
-      const order = instance.configuration?.["validationOrder"];
-      const preparation = instance.configuration?.["preparation"];
-      const commandExists = (name: string) => {
-        const command = configuration.commands[name as keyof typeof configuration.commands];
-        return typeof command === "string" && command.trim().length > 0;
-      };
-      if (
-        !Array.isArray(order) ||
-        order.length === 0 ||
-        order.some((name: unknown) => typeof name !== "string" || !commandExists(name))
-      ) {
-        findings.push({
-          code: "project.instance-config-invalid",
-          severity: "error",
-          message:
-            "Select and confirm at least one declared validation command. These commands run in the allocated worktree after implementation and must pass before push and PR creation.",
-          target: {
-            kind: "module-instance",
-            instanceId: instance.instanceId,
-            field: "/configuration/validationOrder",
-          },
-        });
-      }
-      if (
-        (preparation !== "none" && preparation !== "install") ||
-        (preparation === "install" && !commandExists("install"))
-      ) {
-        findings.push({
-          code: "project.instance-config-invalid",
-          severity: "error",
-          message:
-            "Worktree preparation is not configured. Confirm the install command or explicitly choose no preparation before the agent starts.",
-          target: {
-            kind: "module-instance",
-            instanceId: instance.instanceId,
-            field: "/configuration/preparation",
-          },
-        });
-      }
-    }
-
     const consumers = instances.flatMap((instance) =>
       (modules.composition(instance.moduleId)?.consumes ?? []).map((contract) => ({
         instance,

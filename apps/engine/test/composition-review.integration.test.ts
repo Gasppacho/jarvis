@@ -29,15 +29,22 @@ describe("project composition review", () => {
     const imported = await engine.call("/v1/projects", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ repositoryPath, portableConfig }),
+      body: JSON.stringify({ repositoryPath }),
     });
     expect(imported.status).toBe(201);
+    const draft = (await imported.json()) as {
+      id: string;
+      portableConfig: Record<string, unknown>;
+    };
+    const saved = await engine.call(`/v1/projects/${draft.id}/configuration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ portableConfig, writeToRepository: false }),
+    });
+    expect(saved.status, await saved.clone().text()).toBe(200);
     return {
       engine,
-      project: (await imported.json()) as {
-        id: string;
-        portableConfig: Record<string, unknown>;
-      },
+      project: { ...draft, portableConfig },
     };
   }
 
@@ -158,13 +165,13 @@ describe("project composition review", () => {
       }>;
     };
     const initial = await preview();
-    expect(initial.githubDevelopmentFlow).toBe(false); // The saved example uses the legacy tag fact.
+    expect(initial.githubDevelopmentFlow).toBe(true);
     const template = initial.composition.startingPoints.find(
       (point) => point.id === "github-development",
     )!.template;
     expect((await preview(template)).githubDevelopmentFlow).toBe(true);
 
-    for (const defect of ["remove-github", "disable-development", "concurrency", "extra-module"]) {
+    for (const defect of ["remove-github", "disable-development", "extra-module"]) {
       const proposed = structuredClone(template);
       const modules = proposed["modules"] as Array<{
         moduleId: string;
@@ -178,8 +185,6 @@ describe("project composition review", () => {
       )!;
       if (defect === "remove-github") modules.splice(modules.indexOf(github), 1);
       if (defect === "disable-development") development.enabled = false;
-      if (defect === "concurrency")
-        (proposed["workspace"] as Record<string, unknown>)["maxConcurrentExecutions"] = 2;
       if (defect === "extra-module")
         modules.push({ ...structuredClone(github), instanceId: "another-source" });
       expect((await preview(proposed)).githubDevelopmentFlow, defect).toBe(false);

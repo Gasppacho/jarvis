@@ -8,8 +8,6 @@ metadata:
 repositories:
   - id: main
     root: .
-    defaultBranch: main
-    remote: origin
 slots:
   sourceControl:
     requires: scm.change-request.manage
@@ -17,21 +15,6 @@ slots:
     requires: work-items.read
   agentRuntime:
     requires: agent.execute
-commands:
-  install: pnpm install --frozen-lockfile
-  lint: pnpm lint
-  typecheck: pnpm typecheck
-  test: pnpm test
-  build: pnpm build
-git:
-  branchPattern: agent/{workItemId}-{slug}
-  commitStrategy: conventional
-  pushRemote: origin
-  allowForcePush: false
-workspace:
-  strategy: git-worktree
-  maxConcurrentExecutions: 2
-  retainOnFailureDays: 7
 modules:
   - instanceId: github
     moduleId: jarvis.module.github
@@ -54,13 +37,3 @@ modules:
       sourceControl: sourceControl
     configuration:
       readyLabel: ready-to-dev
-      validationOrder:
-        - lint
-        - typecheck
-        - test
-        - build
-      maxRepairCycles: 2
-      retainWorkspaceOnSuccess: false
-      timeoutMs: 300000
-      outputLimitBytes: 1048576
-      environmentAllowlist: []

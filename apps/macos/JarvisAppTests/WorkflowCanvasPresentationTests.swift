@@ -31,9 +31,23 @@ final class WorkflowCanvasPresentationTests: XCTestCase {
         let canvas = WorkflowCanvasPresentation(graph: graph)
         XCTAssertEqual(canvas.nodes.map(\.enabled), [false])
         XCTAssertNil(canvas.edges.first?.to)
-        XCTAssertTrue(canvas.edges.first?.accessibilityLabel.contains("sans destinataire") == true)
+        XCTAssertEqual(canvas.edges.first?.triggerLabel, "Non connecté")
+        XCTAssertTrue(canvas.edges.first?.accessibilityLabel.contains("Non connecté") == true)
         XCTAssertEqual(canvas.unconnectedOutputs.count, 1)
         XCTAssertTrue(canvas.connections.isEmpty)
+    }
+
+    func testCatalogueContainsOnlyTheTwoFixedModules() {
+        let catalogue = WorkflowCatalogPresentation(
+            availableModuleIDs: ["jarvis.module.github", "jarvis.module.development", "jarvis.module.other"],
+            selectedModuleIDs: ["jarvis.module.github"])
+
+        XCTAssertEqual(catalogue.items.map(\.id), [
+            "jarvis.module.github", "jarvis.module.development",
+        ])
+        XCTAssertEqual(catalogue.items.map(\.title), ["GitHub", "Développeur"])
+        XCTAssertEqual(catalogue.items.map(\.isSelected), [true, false])
+        XCTAssertTrue(catalogue.items.allSatisfy(\.isAvailable))
     }
 
     private func decode(_ json: String) throws -> ProjectCompositionGraph {

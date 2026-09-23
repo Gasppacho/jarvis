@@ -49,15 +49,15 @@ public struct ModulePackage: Identifiable, Sendable, Equatable {
     init(payload: Components.Schemas.ModulePackage) {
         let configurationSchema: String? =
             if let schema = payload.configurationSchema,
-            let compactJSON = schema.additionalProperties.jsonData,
-            let object = try? JSONSerialization.jsonObject(with: compactJSON),
-            let prettyJSON = try? JSONSerialization.data(
-                withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
-        {
-            String(data: prettyJSON, encoding: .utf8)
-        } else {
-            nil
-        }
+                let compactJSON = schema.additionalProperties.jsonData,
+                let object = try? JSONSerialization.jsonObject(with: compactJSON),
+                let prettyJSON = try? JSONSerialization.data(
+                    withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+            {
+                String(data: prettyJSON, encoding: .utf8)
+            } else {
+                nil
+            }
         moduleId = payload.moduleId
         version = payload.version
         displayName = payload.displayName
@@ -152,7 +152,8 @@ public struct ModuleConfigurationField: Identifiable, Sendable, Equatable {
         if !examples.isEmpty { parts.append("Example: \(examples.joined(separator: ", ")).") }
         if minimum != nil || maximum != nil {
             parts.append(
-                "Range: \(minimum?.formatted() ?? "unbounded") to \(maximum?.formatted() ?? "unbounded").")
+                "Range: \(minimum?.formatted() ?? "unbounded") to \(maximum?.formatted() ?? "unbounded")."
+            )
         }
         return parts.joined(separator: " ")
     }
@@ -240,9 +241,12 @@ public struct ModuleConfigurationField: Identifiable, Sendable, Equatable {
             let properties = object["properties"] as? [String: [String: Any]]
         else { return [] }
         let required = Set(object["required"] as? [String] ?? [])
-        return properties.keys.sorted().map { key in
-            decodeField(key: key, schema: properties[key] ?? [:], required: required.contains(key))
-        }
+        return properties.keys.sorted().filter { properties[$0]?["deprecated"] as? Bool != true }
+            .map {
+                key in
+                decodeField(
+                    key: key, schema: properties[key] ?? [:], required: required.contains(key))
+            }
     }
 
     private static func decodeField(
@@ -250,10 +254,10 @@ public struct ModuleConfigurationField: Identifiable, Sendable, Equatable {
         schema: [String: Any],
         required: Bool
     ) -> ModuleConfigurationField {
-            let kind: ValueKind
+        let kind: ValueKind
         if let choices = schema["enum"] as? [String] {
-                kind = .choice(choices)
-            } else {
+            kind = .choice(choices)
+        } else {
             kind =
                 switch schema["type"] as? String {
                 case "string": .string
@@ -269,12 +273,12 @@ public struct ModuleConfigurationField: Identifiable, Sendable, Equatable {
                 default:
                     .object(decodeObjectFields(schema))
                 }
-            }
-            return .init(
-                key: key,
+        }
+        return .init(
+            key: key,
             label: schema["title"] as? String ?? key,
             required: required,
-                kind: kind,
+            kind: kind,
             defaultValue: encodeDefault(schema["default"]),
             minimum: (schema["minimum"] as? NSNumber)?.doubleValue,
             maximum: (schema["maximum"] as? NSNumber)?.doubleValue,
@@ -285,16 +289,19 @@ public struct ModuleConfigurationField: Identifiable, Sendable, Equatable {
             examples: (schema["examples"] as? [Any] ?? []).compactMap(encodeDefault),
             minimumItems: schema["minItems"] as? Int,
             maximumItems: schema["maxItems"] as? Int,
-                schemaJSON: try? JSONSerialization.data(
+            schemaJSON: try? JSONSerialization.data(
                 withJSONObject: schema, options: [.sortedKeys]))
     }
 
     private static func decodeObjectFields(_ schema: [String: Any]) -> [ModuleConfigurationField] {
         let properties = schema["properties"] as? [String: [String: Any]] ?? [:]
         let required = Set(schema["required"] as? [String] ?? [])
-        return properties.keys.sorted().map { key in
-            decodeField(key: key, schema: properties[key] ?? [:], required: required.contains(key))
-        }
+        return properties.keys.sorted().filter { properties[$0]?["deprecated"] as? Bool != true }
+            .map {
+                key in
+                decodeField(
+                    key: key, schema: properties[key] ?? [:], required: required.contains(key))
+            }
     }
 
     private static func satisfies(_ value: Any, schema: [String: Any]) -> Bool {
@@ -386,8 +393,10 @@ public struct ModuleConfigurationField: Identifiable, Sendable, Equatable {
     private static func jsonEqual(_ left: Any, _ right: Any) -> Bool {
         guard JSONSerialization.isValidJSONObject([left]),
             JSONSerialization.isValidJSONObject([right]),
-            let leftData = try? JSONSerialization.data(withJSONObject: [left], options: [.sortedKeys]),
-            let rightData = try? JSONSerialization.data(withJSONObject: [right], options: [.sortedKeys])
+            let leftData = try? JSONSerialization.data(
+                withJSONObject: [left], options: [.sortedKeys]),
+            let rightData = try? JSONSerialization.data(
+                withJSONObject: [right], options: [.sortedKeys])
         else { return false }
         return leftData == rightData
     }

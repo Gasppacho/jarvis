@@ -1,5 +1,8 @@
 # Exécution du plan UX — 16 septembre 2026
 
+> Archive de preuve historique. Le parcours décrit ici est remplacé par
+> **Workflow → Paramétrage → Vérification** depuis l'ADR 0020.
+
 ## Livré localement
 
 - Workflow guidé : parcours recommandé GitHub → Développement → PR, observation seule explicite, aperçu des quatre cartes dès le brouillon vide, cartes reflétant les modules activés, label de départ cohérent entre GitHub et Développement, ressources éditées dans Accès et agent, brouillon enregistrable.

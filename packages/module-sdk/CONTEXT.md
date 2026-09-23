@@ -28,4 +28,4 @@ A loop, agent, tool or prompt owned internally by a Module.
 _Avoid_: submodule unless it has an independent bounded context and event contract.
 
 ### Module Configuration
-Non-secret settings of one Module Instance stored in the Portable Configuration.
+Non-secret, user-facing settings of one Module Instance stored in local Project Configuration.

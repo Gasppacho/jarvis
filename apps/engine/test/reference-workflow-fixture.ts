@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { parse as parseYaml } from "yaml";
 import { startEngine, startFakeGitHubApi, type FakeGitHubApi, type Harness } from "./harness.js";
 import { makeRealGitRepositoryFixture } from "./repository-fixture.js";
 import type {
@@ -47,25 +47,6 @@ export async function startReferenceWorkflowFixture(
   let engine: Harness | undefined;
 
   try {
-    if (!guidedDraft) {
-      const configuration = fixedModules
-        ? fixedProjectConfiguration(projectId)
-        : legacyReferenceProjectConfiguration(projectId);
-      mkdirSync(join(repository.root, ".jarvis"), { recursive: true });
-      writeFileSync(
-        join(repository.root, ".jarvis", "project.yaml"),
-        stringifyYaml(configuration),
-        "utf8",
-      );
-      execFileSync("git", ["add", ".jarvis/project.yaml"], { cwd: repository.root });
-      execFileSync(
-        "git",
-        ["commit", "--quiet", "--no-gpg-sign", "-m", "Reference workflow configuration"],
-        {
-          cwd: repository.root,
-        },
-      );
-    }
     const initialCommitSha = git(repository.root, ["rev-parse", "HEAD"]);
     execFileSync("git", ["push", repository.remoteName, repository.branch], {
       cwd: repository.root,
@@ -92,19 +73,11 @@ export async function startReferenceWorkflowFixture(
     if (guidedDraft) {
       const fixedTemplate = await fixedStartingPointTemplate(engine, project.id);
       const template = fixedModules ? fixedTemplate : legacyGuidedTemplate(fixedTemplate);
-      // Explicit local choices: GitHub identity from the named GitHub remote;
-      // pushes still use the local bare origin. Never rewrite the poller's ID.
       const saved = await engine.call(`/v1/projects/${project.id}/configuration`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          portableConfig: {
-            ...template,
-            repositories: template.repositories.map((repository) => ({
-              ...repository,
-              remote: "github",
-            })),
-          },
+          portableConfig: template,
           writeToRepository: false,
         }),
       });
@@ -113,6 +86,16 @@ export async function startReferenceWorkflowFixture(
         await engine.call(`/v1/projects/${project.id}/bindings`)
       ).json()) as ProjectBindings;
       if (Object.keys(bindings.slots).length !== 0) throw new Error("template granted resources");
+    } else {
+      const configuration = fixedModules
+        ? fixedProjectConfiguration(projectId)
+        : legacyReferenceProjectConfiguration(projectId);
+      const saved = await engine.call(`/v1/projects/${project.id}/configuration`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ portableConfig: configuration, writeToRepository: false }),
+      });
+      await requireStatus(saved, 200, "save reference configuration");
     }
     await bindAndActivate(
       engine,
@@ -262,27 +245,11 @@ function referenceProjectConfiguration(projectId: string): PortableProjectConfig
         },
       };
     }
-    if (module.instanceId === "development") {
-      return {
-        ...module,
-        configuration: {
-          ...module.configuration,
-          validationOrder: ["test"],
-          maxRepairCycles: 0,
-          preparation: "none",
-          environmentAllowlist: ["JARVIS_FAKE_COUNTER_PATH"],
-        },
-      };
-    }
     return module;
   });
   return {
     ...configuration,
     metadata: { id: projectId, name: `Reference Workflow ${projectId}` },
-    repositories: configuration.repositories.map((repository) =>
-      repository.id === "main" ? { ...repository, remote: "github" } : repository,
-    ),
-    commands: { ...configuration.commands, test: "node --test" },
     modules,
   };
 }
@@ -322,7 +289,6 @@ export function fixedProjectConfiguration(projectId: string): PortableProjectCon
   return {
     ...configuration,
     compositionMode: "fixed-modules",
-    workspace: { ...configuration.workspace, maxConcurrentExecutions: 1 },
     slots: {
       agentRuntime: { requires: "agent.execute" },
       sourceControl: { requires: "scm.change-request.manage" },
@@ -340,7 +306,6 @@ export function fixedProjectConfiguration(projectId: string): PortableProjectCon
             configuration: {
               ...module.configuration,
               readyLabel: "ready-to-dev",
-              scope: { kind: "all" },
             },
           };
         }

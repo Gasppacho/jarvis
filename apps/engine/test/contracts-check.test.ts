@@ -220,7 +220,7 @@ describe("pnpm contracts:check", () => {
     const path = join(root, "examples/project/.jarvis/project.yaml");
     writeFileSync(
       path,
-      readFileSync(path, "utf8").replace("maxRepairCycles: 2", "maxRepairCycles: not-a-number"),
+      readFileSync(path, "utf8").replace("readyLabel: ready-to-dev", "readyLabel: 42"),
     );
 
     const { code, stderr } = await runChecker(root);
@@ -240,18 +240,12 @@ describe("pnpm contracts:check", () => {
   });
 
   it.each([
-    [
-      "apiVersion",
-      "      required: [kind, metadata, repositories, slots, commands, git, workspace, modules]\n",
-    ],
+    ["apiVersion", "      required: [kind, metadata, repositories, slots, modules]\n"],
     [
       "kind",
       "      required: [apiVersion, metadata, repositories, slots, commands, git, workspace, modules]\n",
     ],
-    [
-      "repositories",
-      "      required: [apiVersion, kind, metadata, slots, commands, git, workspace, modules]\n",
-    ],
+    ["repositories", "      required: [apiVersion, kind, metadata, slots, modules]\n"],
   ])("rejects Portable Project Configuration parity drift in %s", async (_field, replacement) => {
     const root = fixtureRoot();
     const path = join(root, "contracts/openapi/local-api.v1.yaml");
@@ -262,7 +256,7 @@ describe("pnpm contracts:check", () => {
       path,
       source.replace(
         componentPrefix +
-          "      required: [apiVersion, kind, metadata, repositories, slots, commands, git, workspace, modules]\n",
+          "      required: [apiVersion, kind, metadata, repositories, slots, modules]\n",
         componentPrefix + replacement,
       ),
     );

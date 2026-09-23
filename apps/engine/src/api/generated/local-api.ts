@@ -456,7 +456,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** @description Returns the persisted verification only while its workflow, GitHub account and agent CLI still match the saved Project. */
+        get: operations["getProjectPreflight"];
         put?: never;
         post: operations["preflightProject"];
         delete?: never;
@@ -868,6 +869,10 @@ export interface components {
                     accessible: boolean;
                     /** @description Opaque reference to bookmark bytes owned by the macOS Shell. */
                     bookmarkRef: string | null;
+                    /** @description Whether the current folder contains a readable Git worktree. */
+                    isGitRepository: boolean;
+                    /** @description Whether the configured Git remote currently identifies GitHub. */
+                    isGitHubRepository: boolean;
                     /** @description Current remote selected by the saved project configuration, with credentials and query metadata removed. Null when unavailable or ambiguous; no origin fallback. */
                     remoteUrl?: string | null;
                 };
@@ -1095,7 +1100,7 @@ export interface components {
             projectId: string;
             /** @description Engine-owned readiness for the supplied or saved Portable Configuration and current Local Bindings. */
             readyToValidate: boolean;
-            /** @description Additive configuration-only projection. True when the Engine recognizes one readiness admission rule, matching GitHub label, resolved Development and PR routes, concurrency one and no merge request. Does not certify access or commands. Absent means unconfirmed. */
+            /** @description Additive configuration-only projection. True when the Engine recognizes the fixed GitHub-to-Development route and no merge-request route. Does not certify access or execute commands. Absent means unconfirmed. */
             githubDevelopmentFlow?: boolean;
             composition: components["schemas"]["ProjectCompositionChoicesV1"];
             validation: components["schemas"]["ProjectValidationReportV1"];
@@ -1615,35 +1620,11 @@ export interface components {
             id: string;
             /** @constant */
             root: ".";
-            defaultBranch: string;
-            remote: string;
         };
         ProjectSlotRequirement: {
             requires: string;
             optional?: boolean;
             description?: string;
-        };
-        ProjectCommands: {
-            install?: string;
-            lint?: string;
-            typecheck?: string;
-            test?: string;
-            build?: string;
-            verify?: string;
-        };
-        ProjectGitConfiguration: {
-            branchPattern: string;
-            /** @enum {unknown} */
-            commitStrategy: "conventional" | "ticket-prefix" | "freeform";
-            pushRemote: string;
-            /** @constant */
-            allowForcePush?: false;
-        };
-        ProjectWorkspaceConfiguration: {
-            /** @constant */
-            strategy: "git-worktree";
-            maxConcurrentExecutions: number;
-            retainOnFailureDays: number;
         };
         ModuleInstanceConfiguration: {
             instanceId: string;
@@ -1668,9 +1649,6 @@ export interface components {
             metadata: components["schemas"]["ProjectMetadata"];
             repositories: components["schemas"]["ProjectRepositoryConfiguration"][];
             slots: Record<string, never>;
-            commands: components["schemas"]["ProjectCommands"];
-            git: components["schemas"]["ProjectGitConfiguration"];
-            workspace: components["schemas"]["ProjectWorkspaceConfiguration"];
             modules: components["schemas"]["ModuleInstanceConfiguration"][];
         };
         PortableProjectConfiguration: {
@@ -1685,9 +1663,6 @@ export interface components {
             slots: {
                 [key: string]: components["schemas"]["ProjectSlotRequirement"];
             };
-            commands: components["schemas"]["ProjectCommands"];
-            git: components["schemas"]["ProjectGitConfiguration"];
-            workspace: components["schemas"]["ProjectWorkspaceConfiguration"];
             modules: components["schemas"]["ModuleInstanceConfiguration"][];
         };
         ProjectRepositoryBinding: {
@@ -1937,6 +1912,10 @@ export interface operations {
                     repositoryPath: string;
                     /** @description Optional display name, limited to 120 characters before trimming. Leading and trailing whitespace is removed; a blank result is rejected. Applied atomically to the imported configuration, preserving other discovered or committed values. */
                     name?: string;
+                    /**
+                     * @deprecated
+                     * @description Deprecated compatibility field. Import ignores this value and always creates an empty local Draft.
+                     */
                     portableConfig?: components["schemas"]["PortableProjectConfiguration"];
                 };
             };
@@ -2614,6 +2593,31 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    getProjectPreflight: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                projectId: components["parameters"]["ProjectId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current persisted Project verification. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectPreflightV1"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            default: components["responses"]["Error"];
+        };
+    };
     preflightProject: {
         parameters: {
             query?: never;
@@ -2824,7 +2828,13 @@ export interface operations {
             content: {
                 "application/json": {
                     portableConfig: components["schemas"]["PortableProjectDraft"] | components["schemas"]["PortableProjectConfiguration"];
+                    /**
+                     * @deprecated
+                     * @description Deprecated compatibility field. Ignored; configuration is stored locally and no repository file is written.
+                     */
                     writeToRepository: boolean;
+                    /** @description Optional full replacement of Local Bindings, committed atomically with the configuration. */
+                    bindings?: components["schemas"]["ProjectBindings"];
                 };
             };
         };
@@ -2881,7 +2891,10 @@ export interface operations {
             content: {
                 "application/json": {
                     compositionFingerprint: string;
-                    /** @description Explicit confirmation to update .jarvis/project.yaml. */
+                    /**
+                     * @deprecated
+                     * @description Deprecated compatibility field. Ignored; migration updates local state only and never writes .jarvis/project.yaml.
+                     */
                     writeToRepository: boolean;
                 };
             };

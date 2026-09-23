@@ -250,7 +250,6 @@ final class ProjectValidationTests: XCTestCase {
                 switch asynchronous.operation {
                 case .setLocalBinding: return "set-local-binding"
                 case .saveLocal: return "save-local"
-                case .saveRepository: return "save-repository"
                 case .validate: return "validate"
                 case .activate: return "activate"
                 case .confirmProjectDeletion: return "confirm-project-deletion"
@@ -258,7 +257,7 @@ final class ProjectValidationTests: XCTestCase {
             })
         XCTAssertEqual(
             callableOperations,
-            ["activate", "save-local", "save-repository", "validate", "confirm-project-deletion"],
+            ["activate", "save-local", "validate", "confirm-project-deletion"],
             "step 5 (#55) exposes readiness through a real, callable Activate request")
     }
 

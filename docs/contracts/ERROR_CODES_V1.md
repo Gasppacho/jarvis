@@ -26,8 +26,6 @@ Errors crossing the Local API or stored as terminal Execution errors use stable 
 | `project.config-invalid` | No | Portable configuration fails schema/semantic validation |
 | `project.bindings-invalid` | No | Local Bindings fail schema, project identity or declared-slot validation |
 | `project.composition-incomplete` | No | Draft has no Module Instance or Project Slot yet |
-| `project.repository-write-failed` | Maybe | Atomic `.jarvis/project.yaml` replacement failed before SQLite was changed |
-| `project.repository-compensation-failed` | No | SQLite rejected a replacement and the previous repository file could not be restored; manual inspection is required |
 | `project.not-found` | No | No Project with the requested ID exists in this installation |
 | `project.active` | No | An active Project must be paused before deletion |
 | `project.activation-not-validated` | No | Activation found no successful validation report for the composition and Local Bindings saved right now |

@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { parse as parseYaml } from "yaml";
 import { afterEach, describe, expect, it } from "vitest";
 import { startEngine, startFakeGitHubApi, type FakeGitHubApi, type Harness } from "./harness.js";
 import { makeNodeRepositoryFixture } from "./repository-fixture.js";
@@ -591,15 +591,10 @@ esac
     const project = await createProject(engine);
     await bindAndActivate(engine, project.id, project.path);
     await waitForRequest(fakeGitHub, "/repos/Gasppacho/jarvis/issues/events");
-    await waitForRequest(fakeGitHub, "/repos/Other/repo/issues/events");
     expect(issueEventRequests(fakeGitHub)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           path: "/repos/Gasppacho/jarvis/issues/events",
-          credential,
-        }),
-        expect.objectContaining({
-          path: "/repos/Other/repo/issues/events",
           credential,
         }),
       ]),
@@ -682,10 +677,6 @@ esac
     const configuration = projectConfig(false, "ignore-existing", "polling-missing-remote", [
       "main",
     ]);
-    const repositories = configuration["repositories"] as Record<string, unknown>[];
-    const main = repositories.find((repository) => repository["id"] === "main");
-    if (main === undefined) throw new Error("main repository declaration is missing");
-    main["remote"] = "missing";
 
     const engine = await startEngine({
       enginePath: TEST_BUNDLE,
@@ -699,13 +690,14 @@ esac
     engines.push(engine);
     await registerConnection(engine);
     const project = await createProject(engine, false, "ignore-existing", configuration);
+    writeFileSync(join(project.path, ".git", "config"), "[core]\n\trepositoryformatversion = 0\n");
     const report = await bindProject(engine, project.id, project.path);
     expect(report.valid).toBe(false);
     expect(report.findings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           severity: "error",
-          message: expect.stringContaining("Configure the declared remote"),
+          message: expect.stringContaining("Configure a Git remote"),
         }),
       ]),
     );
@@ -733,10 +725,6 @@ esac
     const configuration = projectConfig(false, "ignore-existing", "polling-unsupported-provider", [
       "main",
     ]);
-    const repositories = configuration["repositories"] as Record<string, unknown>[];
-    const main = repositories.find((repository) => repository["id"] === "main");
-    if (main === undefined) throw new Error("main repository declaration is missing");
-    main["remote"] = "gitlab";
 
     const engine = await startEngine({
       enginePath: TEST_BUNDLE,
@@ -749,9 +737,11 @@ esac
     });
     engines.push(engine);
     await registerConnection(engine);
-    const project = await createProject(engine, false, "ignore-existing", configuration, [
-      { name: "gitlab", url: "git@gitlab.com:Other/repo.git" },
-    ]);
+    const project = await createProject(engine, false, "ignore-existing", configuration);
+    writeFileSync(
+      join(project.path, ".git", "config"),
+      '[core]\n\trepositoryformatversion = 0\n[remote "origin"]\n\turl = git@gitlab.com:Other/repo.git\n',
+    );
     const report = await bindProject(engine, project.id, project.path);
     expect(report.valid).toBe(false);
     expect(report.findings).toEqual(
@@ -805,12 +795,18 @@ esac
     );
     const report = await bindProject(engine, project.id, project.path);
     expect(report.valid).toBe(true);
-    const fingerprint = report.compositionFingerprint;
-    if (fingerprint === undefined) throw new Error("validation fingerprint is missing");
-    const activated = await engine.call(`/v1/projects/${project.id}/activate`, {
+    const preflightResponse = await engine.call(`/v1/projects/${project.id}/preflight`, {
+      method: "POST",
+    });
+    const preflight = (await preflightResponse.json()) as {
+      readonly valid: boolean;
+      readonly compositionFingerprint?: string;
+    };
+    expect(preflight.valid, JSON.stringify(preflight)).toBe(true);
+    const activated = await engine.call(`/v1/projects/${project.id}/preflight-activate`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ compositionFingerprint: fingerprint }),
+      body: JSON.stringify({ compositionFingerprint: preflight.compositionFingerprint }),
     });
     expect(activated.status, await activated.clone().text()).toBe(200);
 
@@ -848,10 +844,21 @@ esac
       ]),
     );
 
-    const refreshed = await restarted.call(`/v1/projects/${project.id}/activate`, {
+    const refreshedPreflightResponse = await restarted.call(
+      `/v1/projects/${project.id}/preflight`,
+      {
+        method: "POST",
+      },
+    );
+    const refreshedPreflight = (await refreshedPreflightResponse.json()) as {
+      readonly valid: boolean;
+      readonly compositionFingerprint?: string;
+    };
+    expect(refreshedPreflight.valid, JSON.stringify(refreshedPreflight)).toBe(true);
+    const refreshed = await restarted.call(`/v1/projects/${project.id}/preflight-activate`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ compositionFingerprint: migrationReport.compositionFingerprint }),
+      body: JSON.stringify({ compositionFingerprint: refreshedPreflight.compositionFingerprint }),
     });
     expect(refreshed.status, await refreshed.clone().text()).toBe(200);
     await restarted.dispose();
@@ -1110,6 +1117,7 @@ esac
         }),
       });
       expect(drafted.status, await drafted.clone().text()).toBe(200);
+
       await initial.dispose();
 
       const event = fakeGitHub.appendLabeledIssueEvent({
@@ -1156,7 +1164,7 @@ esac
           beforeRestart
             .prepare("SELECT COUNT(*) AS count FROM outbox WHERE project_id = ?")
             .get(project.id),
-        ).toEqual({ count: armedFailpoint === "after-github-poll-read" ? 0 : 1 });
+        ).toEqual({ count: 1 });
       } finally {
         beforeRestart.close();
       }
@@ -1174,7 +1182,7 @@ esac
                FROM events WHERE project_id = ? AND type = 'scm.work-item.observed'`,
             )
             .get(project.id),
-        ).toEqual({ count: armedFailpoint === "after-github-poll-read" ? 1 : 2 });
+        ).toEqual({ count: 2 });
         expect(
           afterRestart
             .prepare(
@@ -1334,7 +1342,7 @@ esac
     },
   );
 
-  it("keeps one cursor and one portable repository ID per configured remote", async () => {
+  it("keeps one cursor for the Project repository", async () => {
     const fakeGitHub = await startFakeGitHubApi();
     servers.push(fakeGitHub);
     const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-polling-multi-gh-"));
@@ -1358,13 +1366,11 @@ esac
       engine,
       false,
       "ignore-existing",
-      multiRepositoryConfig(["secondary", "main"]),
+      multiRepositoryConfig(["main"]),
     );
     await bindAndActivate(engine, project.id, project.path);
     await waitForRequest(fakeGitHub, "/repos/Gasppacho/jarvis/issues/events");
-    await waitForRequest(fakeGitHub, "/repos/Other/repo/issues/events");
     await waitForCursor(engine.dataRoot, "bootstrap-empty", project.id, "main");
-    await waitForCursor(engine.dataRoot, "bootstrap-empty", project.id, "secondary");
 
     fakeGitHub.appendLabeledIssueEvent({
       owner: "Gasppacho",
@@ -1394,7 +1400,7 @@ esac
       createdAt: "2026-09-11T10:03:00.000Z",
     });
 
-    await waitForFactCount(engine, project.id, 2);
+    await waitForFactCount(engine, project.id, 1);
     const database = new Database(`${engine.dataRoot}/jarvis.sqlite`);
     try {
       const rows = database
@@ -1415,10 +1421,7 @@ esac
           .sort((left, right) =>
             String(left.repositoryId).localeCompare(String(right.repositoryId)),
           ),
-      ).toEqual([
-        { repositoryId: "main", tag: "main-label" },
-        { repositoryId: "secondary", tag: "secondary-label" },
-      ]);
+      ).toEqual([{ repositoryId: "main", tag: "main-label" }]);
       expect(
         database
           .prepare(
@@ -1427,10 +1430,7 @@ esac
              WHERE project_id = ? ORDER BY repository_id`,
           )
           .all(project.id),
-      ).toEqual([
-        { repository_id: "main", external_event_id: "1" },
-        { repository_id: "secondary", external_event_id: "2" },
-      ]);
+      ).toEqual([{ repository_id: "main", external_event_id: "1" }]);
       expect(
         database
           .prepare(
@@ -1438,13 +1438,13 @@ esac
              FROM events WHERE project_id = ? AND type = 'scm.work-item.tag-added'`,
           )
           .get(project.id),
-      ).toEqual({ count: 2 });
+      ).toEqual({ count: 1 });
     } finally {
       database.close();
     }
   });
 
-  it("bootstraps a repository added later without disturbing its existing cursor", async () => {
+  it("reapplies repository configuration without disturbing its existing cursor", async () => {
     const fakeGitHub = await startFakeGitHubApi();
     servers.push(fakeGitHub);
     const executableRoot = mkdtempSync(join(tmpdir(), "jarvis-polling-added-gh-"));
@@ -1475,15 +1475,15 @@ esac
     await waitForCursor(engine.dataRoot, "bootstrap-empty", project.id, "main");
 
     fakeGitHub.appendLabeledIssueEvent({
-      owner: "Other",
-      repository: "repo",
+      owner: "Gasppacho",
+      repository: "jarvis",
       issueNumber: 20,
       issueTitle: "Existing secondary issue",
       label: "existing-secondary",
       actor: "octocat",
       createdAt: "2026-09-11T10:06:00.000Z",
     });
-    const addedConfig = multiRepositoryConfig(["main", "secondary"]);
+    const addedConfig = multiRepositoryConfig(["main"]);
     const drafted = await engine.call(`/v1/projects/${project.id}/configuration`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -1491,7 +1491,7 @@ esac
     });
     expect(drafted.status, await drafted.clone().text()).toBe(200);
     await bindAndActivate(engine, project.id, project.path);
-    await waitForCursor(engine.dataRoot, "1", project.id, "secondary");
+    await waitForCursor(engine.dataRoot, "1", project.id, "main");
 
     const beforeNewLabel = await engine.call(`/v1/projects/${project.id}/events`);
     const initialEvents = (await beforeNewLabel.json()) as {
@@ -1499,18 +1499,16 @@ esac
     };
     // Bootstrap ignores historical label events, not the current issue snapshot.
     expect(initialEvents.items.filter(({ type }) => type !== "scm.work-item.observed")).toEqual([]);
-    await waitForCursor(engine.dataRoot, "bootstrap-empty", project.id, "main");
-
     const newEvent = fakeGitHub.appendLabeledIssueEvent({
-      owner: "Other",
-      repository: "repo",
+      owner: "Gasppacho",
+      repository: "jarvis",
       issueNumber: 20,
       issueTitle: "Existing secondary issue",
       label: "new-secondary",
       actor: "octocat",
       createdAt: "2026-09-11T10:07:00.000Z",
     });
-    await waitForCursor(engine.dataRoot, String(newEvent.id), project.id, "secondary");
+    await waitForCursor(engine.dataRoot, String(newEvent.id), project.id, "main");
     const database = new Database(`${engine.dataRoot}/jarvis.sqlite`);
     try {
       expect(
@@ -1518,11 +1516,11 @@ esac
           .prepare(
             `SELECT repository_id, external_event_id, event_timestamp
              FROM github_cursors
-             WHERE project_id = ? AND repository_id = 'secondary'`,
+             WHERE project_id = ? AND repository_id = 'main'`,
           )
           .get(project.id),
       ).toEqual({
-        repository_id: "secondary",
+        repository_id: "main",
         external_event_id: String(newEvent.id),
         event_timestamp: newEvent.created_at,
       });
@@ -1572,14 +1570,16 @@ esac
       engine,
       false,
       "ignore-existing",
-      projectConfig(false, "ignore-existing", "project-b", ["secondary"]),
+      projectConfig(false, "ignore-existing", "project-b", ["main"]),
+      [],
+      "git@github.com:Other/repo.git",
     );
     await bindAndActivate(engine, projectA.id, projectA.path, "connection/github-a");
     await bindAndActivate(engine, projectB.id, projectB.path, "connection/github-b");
     await waitForRequest(fakeGitHub, "/repos/Gasppacho/jarvis/issues/events");
     await waitForRequest(fakeGitHub, "/repos/Other/repo/issues/events");
     await waitForCursor(engine.dataRoot, "bootstrap-empty", projectA.id);
-    await waitForCursor(engine.dataRoot, "bootstrap-empty", projectB.id, "secondary");
+    await waitForCursor(engine.dataRoot, "bootstrap-empty", projectB.id, "main");
 
     fakeGitHub.appendLabeledIssueEvent({
       owner: "Gasppacho",
@@ -1857,14 +1857,16 @@ async function createProject(
   bootstrapLabelPolicy: "ignore-existing" | "emit-existing" = "ignore-existing",
   configuration = projectConfig(withSubscriber, bootstrapLabelPolicy),
   additionalRemotes: readonly { readonly name: string; readonly url: string }[] = [],
+  remoteUrl = "git@github.com:Gasppacho/jarvis.git",
 ): Promise<{ readonly id: string; readonly path: string }> {
+  const metadata = configuration["metadata"] as { readonly id: string };
   const projectPath = makeNodeRepositoryFixture({
-    remoteUrl: "git@github.com:Gasppacho/jarvis.git",
+    remoteUrl,
     additionalRemotes: [
       { name: "upstream", url: "git@github.com:Other/repo.git" },
       ...additionalRemotes,
     ],
-    projectYaml: stringifyYaml(configuration),
+    packageJson: { name: metadata.id },
   });
   roots.push(projectPath);
   const response = await engine.call("/v1/projects", {
@@ -1873,9 +1875,14 @@ async function createProject(
     body: JSON.stringify({ repositoryPath: projectPath }),
   });
   const body = (await response.json()) as { readonly id?: string };
-  const metadata = configuration["metadata"] as { readonly id: string };
   expect(response.status, JSON.stringify(body)).toBe(201);
   expect(body.id).toBe(metadata.id);
+  const saved = await engine.call(`/v1/projects/${body.id}/configuration`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ portableConfig: configuration, writeToRepository: false }),
+  });
+  expect(saved.status, await saved.clone().text()).toBe(200);
   return { id: body.id!, path: projectPath };
 }
 
@@ -1887,10 +1894,19 @@ async function bindAndActivate(
 ): Promise<void> {
   const report = await bindProject(engine, projectId, repositoryPath, connectionRef);
   expect(report.valid, JSON.stringify(report)).toBe(true);
-  const activated = await engine.call(`/v1/projects/${projectId}/activate`, {
+  const preflightResponse = await engine.call(`/v1/projects/${projectId}/preflight`, {
+    method: "POST",
+  });
+  const preflight = (await preflightResponse.json()) as {
+    readonly valid: boolean;
+    readonly compositionFingerprint?: string;
+  };
+  expect(preflightResponse.status).toBe(200);
+  expect(preflight.valid, JSON.stringify(preflight)).toBe(true);
+  const activated = await engine.call(`/v1/projects/${projectId}/preflight-activate`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ compositionFingerprint: report.compositionFingerprint }),
+    body: JSON.stringify({ compositionFingerprint: preflight.compositionFingerprint }),
   });
   expect(activated.status, await activated.clone().text()).toBe(200);
 }
@@ -1950,25 +1966,18 @@ function projectConfig(
   _withSubscriber = false,
   bootstrapLabelPolicy: "ignore-existing" | "emit-existing" = "ignore-existing",
   projectId = "polling-project",
-  githubRepositories: readonly string[] = ["main", "secondary"],
+  githubRepositories: readonly string[] = ["main"],
 ): Record<string, unknown> {
   const configuration = parseYaml(
     readFileSync(join(ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
   ) as Record<string, unknown>;
   configuration["metadata"] = { id: projectId, name: `Polling Project ${projectId}` };
   configuration["compositionMode"] = "fixed-modules";
-  configuration["workspace"] = {
-    ...(configuration["workspace"] as Record<string, unknown>),
-    maxConcurrentExecutions: 1,
-  };
   configuration["slots"] = {
     sourceControl: { requires: "scm.change-request.manage" },
     agentRuntime: { requires: "agent.execute" },
   };
-  configuration["repositories"] = [
-    { id: "main", root: ".", defaultBranch: "main", remote: "origin" },
-    { id: "secondary", root: ".", defaultBranch: "main", remote: "upstream" },
-  ];
+  configuration["repositories"] = [{ id: "main", root: "." }];
   configuration["modules"] = [
     {
       instanceId: "github",
@@ -1988,15 +1997,7 @@ function projectConfig(
       runtimeSlot: "agentRuntime",
       bindings: { repository: "main" },
       configuration: {
-        preparation: "none",
         readyLabel: "ready-to-dev",
-        scope: { kind: "all" },
-        validationOrder: ["lint", "typecheck", "test", "build"],
-        maxRepairCycles: 2,
-        retainWorkspaceOnSuccess: false,
-        timeoutMs: 300000,
-        outputLimitBytes: 1048576,
-        environmentAllowlist: [],
       },
     },
   ];
@@ -2010,10 +2011,6 @@ function multiRepositoryConfig(githubRepositories: readonly string[]): Record<st
     "polling-project",
     githubRepositories,
   );
-  configuration["repositories"] = [
-    { id: "main", root: ".", defaultBranch: "main", remote: "origin" },
-    { id: "secondary", root: ".", defaultBranch: "main", remote: "upstream" },
-  ];
   return configuration;
 }
 

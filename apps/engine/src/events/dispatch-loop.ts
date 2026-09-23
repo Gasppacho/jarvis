@@ -238,15 +238,7 @@ export function claimDueDeliveries(
                    AND (earlier.lease_expires_at IS NULL OR earlier.lease_expires_at <= @now)
                    AND (earlier.created_at < deliveries.created_at
                      OR (earlier.created_at = deliveries.created_at AND earlier.id < deliveries.id))
-               ) < CASE WHEN EXISTS (
-                 SELECT 1
-                 FROM json_each(projects.portable_config, '$.modules') AS github_modules
-                 WHERE json_extract(github_modules.value, '$.moduleId') = 'jarvis.module.github'
-                   AND json_extract(github_modules.value, '$.enabled') = 1
-               ) THEN 1 ELSE COALESCE(
-                 CAST(json_extract(projects.portable_config, '$.workspace.maxConcurrentExecutions') AS INTEGER),
-                 1
-               ) END - (
+               ) < 1 - (
                  SELECT COUNT(*) FROM workspace_leases leases
                  WHERE leases.project_id = deliveries.project_id AND leases.status = 'active'
                ) - (

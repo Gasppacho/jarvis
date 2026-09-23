@@ -15,19 +15,11 @@ public struct ProjectModuleDraft: Identifiable, Sendable, Equatable {
     public var preservedRawConfigurations: [String: String]
     public var configurationRepairExplanation: String?
 
-    public var validationOrder: [String] {
-        get { (try? JSONDecoder().decode([String].self, from: Data(configurationValues["validationOrder", default: "[]"].utf8))) ?? [] }
-        set {
-            if let data = try? JSONEncoder().encode(newValue) {
-                configurationValues["validationOrder"] = String(decoding: data, as: UTF8.self)
-            }
-        }
-    }
-
     /// Displays the Engine's effective default without materializing it in the Draft.
     public func configurationValue(for key: String) -> String {
         configurationValues[key]
-            ?? (moduleId == "jarvis.module.development" && key == "readyLabel" ? "ready-to-dev" : "")
+            ?? (moduleId == "jarvis.module.development" && key == "readyLabel"
+                ? "ready-to-dev" : "")
     }
 
     init(payload: Components.Schemas.ModuleInstanceConfiguration, package: ModulePackage?) {
@@ -40,7 +32,9 @@ public struct ProjectModuleDraft: Identifiable, Sendable, Equatable {
         configurationFields = package?.configurationFields ?? []
         configurationValues = Dictionary(
             uniqueKeysWithValues: configurationFields.map { ($0.key, $0.initialValue) })
-        configurationValues.merge(Self.decodeConfiguration(payload.configuration)) { _, saved in saved }
+        configurationValues.merge(Self.decodeConfiguration(payload.configuration)) { _, saved in
+            saved
+        }
         rawConfigurationJSON = Self.encodeConfiguration(payload.configuration)
         preservedConfigurationValues = [moduleId: configurationValues]
         preservedRawConfigurations = [:]
@@ -130,7 +124,6 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
     public var modules: [ProjectModuleDraft]
     public var slotRequirements: [String: ProjectSlotDraft]
 
-    public var commands: [String: String]
     public var repositories: [Components.Schemas.ProjectRepositoryConfiguration]
     private let base: Components.Schemas.PortableProjectConfiguration
     public var isFixedComposition: Bool { base.compositionMode == .fixed_hyphen_modules }
@@ -140,8 +133,6 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
         packages: [ModulePackage]
     ) {
         base = configuration
-        let commandData = (try? JSONEncoder().encode(configuration.commands)) ?? Data()
-        commands = (try? JSONDecoder().decode([String: String].self, from: commandData)) ?? [:]
         repositories = configuration.repositories
         name = configuration.metadata.name
         let packagesById = Dictionary(uniqueKeysWithValues: packages.map { ($0.moduleId, $0) })
@@ -149,22 +140,6 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
             ProjectModuleDraft(payload: $0, package: packagesById[$0.moduleId])
         }
         slotRequirements = configuration.slots.additionalProperties.mapValues(ProjectSlotDraft.init)
-    }
-
-    public var validationCommandNames: [String] {
-        commands.keys.filter { $0 != "install" }.sorted()
-    }
-
-    /// Confirms the user's command choices, not their execution or Engine readiness.
-    public var workflowCommandsConfigured: Bool {
-        let development = modules.filter { $0.enabled && $0.moduleId == "jarvis.module.development" }
-        return !development.isEmpty && development.allSatisfy { module in
-            let preparation = module.configurationValues["preparation"]
-            let prepared = preparation == "none" || (preparation == "install" && commands["install"]?.isEmpty == false)
-            return prepared && !module.validationOrder.isEmpty && module.validationOrder.allSatisfy {
-                $0 != "install" && commands[$0]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-            }
-        }
     }
 
     /// The engine owns every discovered repository/Git/workspace value. Swift
@@ -247,7 +222,6 @@ public struct ProjectConfigurationDraft: Sendable, Equatable {
         var metadata = document["metadata"] as? [String: Any] ?? [:]
         metadata["name"] = name
         document["metadata"] = metadata
-        document["commands"] = commands
         let repositoriesData = try JSONEncoder().encode(repositories)
         document["repositories"] = try JSONSerialization.jsonObject(with: repositoriesData)
         document["slots"] = slotRequirements.mapValues { requirement in

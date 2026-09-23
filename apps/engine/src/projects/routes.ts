@@ -1,4 +1,4 @@
-import type { ProjectPreflight } from "./preflight.js";
+import type { ProjectPreflight } from "./preflight-types.js";
 import type { ActivateProjectRequest } from "../../../../packages/kernel/src/project-registry.js";
 import type { PortableProjectConfiguration } from "./types.js";
 import type { FastifyInstance } from "fastify";
@@ -40,6 +40,7 @@ export type LocalProjectRegistry = ProjectRegistry<
 > &
   ProjectResourceCandidateRegistry & {
     preflightProject(id: unknown): Promise<ProjectPreflight>;
+    getProjectPreflight(id: unknown): ProjectPreflight | undefined;
     scopePreflightProject(id: unknown, request: unknown): PortableProjectConfiguration;
     activatePreflightProject(request: ActivateProjectRequest): Promise<ProjectSummary>;
     bindProjectRuntime(id: unknown, request: unknown): ProjectAgentRuntimeChoices;
@@ -153,6 +154,19 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
     const service = requireDatabaseReady(deps);
     const params = request.params as { projectId?: string };
     return reply.code(200).send(await service.preflightProject(params.projectId));
+  });
+  app.get("/v1/projects/:projectId/preflight", async (request, reply) => {
+    const service = requireDatabaseReady(deps);
+    const params = request.params as { projectId?: string };
+    const report = service.getProjectPreflight(params.projectId);
+    if (report === undefined) {
+      throw new EngineError(
+        "project.activation-not-validated",
+        404,
+        "This Project has no current successful verification.",
+      );
+    }
+    return reply.code(200).send(report);
   });
   app.post("/v1/projects/:projectId/preflight-scope", async (request, reply) => {
     const service = requireDatabaseReady(deps);
@@ -279,12 +293,13 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectRouteDe
     const service = requireDatabaseReady(deps);
     const params = request.params as { projectId?: unknown } | undefined;
     const body = request.body as
-      { portableConfig?: unknown; writeToRepository?: unknown } | undefined;
+      { portableConfig?: unknown; writeToRepository?: unknown; bindings?: unknown } | undefined;
     return reply.code(200).send(
       service.replaceProjectConfiguration({
         projectId: params?.projectId,
         portableConfig: body?.portableConfig,
         writeToRepository: body?.writeToRepository,
+        bindings: body?.bindings,
       }),
     );
   });

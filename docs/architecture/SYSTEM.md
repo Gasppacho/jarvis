@@ -60,7 +60,7 @@ Le Kernel fournit les mécanismes partagés : Project Registry, Module Host, Con
 
 Chaque projet activé possède un runtime logique isolé qui :
 
-- résout sa configuration portable et ses bindings locaux ;
+- résout sa configuration locale et ses bindings machine ;
 - instancie ses modules ;
 - construit ses subscriptions ;
 - interdit la livraison cross-project ;
@@ -133,7 +133,7 @@ GitHub Poller
 Development (fixed-modules)
   ← request development.implementation.requested
 Development
-  → worktree → agent → validate → commit → push
+  → worktree → agent → commit → push
   → fact development.implementation.completed
   → request scm.change-request.creation-requested
 GitHub Action Handler

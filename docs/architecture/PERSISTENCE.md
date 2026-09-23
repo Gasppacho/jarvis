@@ -41,7 +41,7 @@ Jarvis ne revendique pas l'event sourcing complet des aggregates. La table `even
 
 ## Project deletion
 
-`DELETE /v1/projects/{projectId}` supprime la row `projects` dans une transaction SQLite. Les foreign keys `ON DELETE CASCADE` retirent atomiquement les Local Bindings et tout état moteur project-scoped rattaché ; les autres Projects restent isolés. Le commit rend l'absence durable après redémarrage. Dans cette transaction, un Project actif est refusé avant toute mutation.
+`DELETE /v1/projects/{projectId}` supprime la row `projects` dans une transaction SQLite. Les foreign keys `ON DELETE CASCADE` retirent atomiquement les Local Bindings et tout état moteur project-scoped rattaché ; les autres Projects restent isolés. Le commit rend l'absence durable après redémarrage. Un Project actif sans travail non terminal est mis en pause dans la transaction avant suppression ; une exécution ou livraison non terminale bloque toute mutation.
 
 Cette transaction ne couvre que l'état moteur local. Elle n'inclut ni le repository ni le Repository Grant shell-owned.
 
@@ -121,10 +121,9 @@ Le lease conserve repository, branch, base SHA, PID éventuel, expiration et cle
 - Une migration appliquée est immuable.
 - Backup automatique avant migration non triviale.
 - Test CI : base vide → latest et snapshot N-1 → latest.
-- La conversion guidée D06 conserve dans `project_migration_state` la configuration
-  et les Local Bindings précédents; sa transaction SQLite est compensée par le
-  writer atomique du repository si `.jarvis/project.yaml` a été explicitement
-  confirmé.
+- La configuration courante vit uniquement en SQLite. La migration 0039 retire
+  les anciennes politiques d'exécution des brouillons et des snapshots résolus ;
+  le runtime ne possède aucun lecteur de compatibilité pour ces champs.
 - Le retrait L13 ne supprime aucune table ni donnée historique. Une configuration
   contenant `jarvis.module.automation-rules` reste consultable et exportable;
   ses deliveries non terminales restent pending et sont refusées avec un

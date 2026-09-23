@@ -30,7 +30,8 @@ User-approved local access to a repository folder, represented by a durable loca
 _Avoid_: project permission, which also includes non-filesystem bindings.
 
 ### Project Wizard
-The native flow that creates a Project Configuration and its Local Bindings.
+The three-screen native flow for Workflow selection, Module settings and external
+dependency verification before Project creation or configuration application.
 
 ### Live Update
 An ephemeral UI notification from the Engine. Durable truth remains queryable through the Local API.

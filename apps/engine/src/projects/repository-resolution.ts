@@ -13,14 +13,12 @@ type UnresolvedRepositoryStatus =
   | "remote-missing"
   | "remote-ambiguous"
   | "unsupported-provider"
-  | "identity-unresolved"
-  | "ambiguous-identity";
+  | "identity-unresolved";
 
 export type RepositoryResolution =
   | {
       readonly status: "resolved";
       readonly repository: ProjectRepositoryIdentity;
-      readonly legacy: boolean;
     }
   | { readonly status: UnresolvedRepositoryStatus };
 
@@ -50,7 +48,7 @@ export class ProjectRepositoryResolver {
       if (instance.moduleId !== GITHUB_MODULE_ID) return [];
       return uniqueRepositoryReferences(instance.configuration).flatMap((reference) => {
         const resolution = resolveDeclaredRepository(declared, reference);
-        return resolution.status === "resolved" && !resolution.legacy
+        return resolution.status === "resolved"
           ? []
           : [repositoryFinding(instance.instanceId, reference, resolution)];
       });
@@ -119,22 +117,33 @@ export class ProjectRepositoryResolver {
       // allowing activation or provider calls to guess an identity.
     }
     return configuration.repositories.map((repository) => {
-      const remote =
-        repository.remote === undefined
-          ? undefined
-          : remotes.find((candidate) => candidate.name === repository.remote);
-      if (remote === undefined) {
+      if (remotes.length === 0) {
         return { id: repository.id, result: { status: "remote-missing" } };
       }
-      if (remote.urls.length !== 1 || remote.urls[0] === undefined) {
+      const candidates = remotes.flatMap((remote) => {
+        if (remote.urls.length !== 1 || remote.urls[0] === undefined) return [];
+        const identity = parseRepositoryRemote(remote.urls[0]);
+        return identity.provider === "github" &&
+          identity.owner !== undefined &&
+          identity.repository !== undefined
+          ? [{ remote, owner: identity.owner, name: identity.repository }]
+          : [];
+      });
+      const candidate =
+        candidates.find(({ remote }) => remote.name === "origin") ??
+        (candidates.length === 1 ? candidates[0] : undefined);
+      if (candidate === undefined && candidates.length > 1) {
         return { id: repository.id, result: { status: "remote-ambiguous" } };
       }
-      const parsed = parseRepositoryRemote(remote.urls[0]);
-      if (parsed.provider !== "github") {
-        return { id: repository.id, result: { status: "unsupported-provider" } };
-      }
-      if (parsed.owner === undefined || parsed.repository === undefined) {
-        return { id: repository.id, result: { status: "identity-unresolved" } };
+      if (candidate === undefined) {
+        return {
+          id: repository.id,
+          result: {
+            status: remotes.some((remote) => remote.urls.length !== 1)
+              ? "remote-ambiguous"
+              : "unsupported-provider",
+          },
+        };
       }
       return {
         id: repository.id,
@@ -142,9 +151,9 @@ export class ProjectRepositoryResolver {
           status: "resolved",
           repository: {
             repositoryId: repository.id,
-            provider: parsed.provider,
-            owner: parsed.owner,
-            name: parsed.repository,
+            provider: "github",
+            owner: candidate.owner,
+            name: candidate.name,
           },
         },
       };
@@ -174,29 +183,9 @@ function resolveDeclaredRepository(
   configuredReference: string,
 ): RepositoryResolution {
   const direct = declared.find((repository) => repository.id === configuredReference);
-  if (direct !== undefined) return withLegacy(direct.result, false);
-
-  const legacy = parseLegacyRepositoryReference(configuredReference);
-  if (legacy === undefined) return { status: "unknown-id" };
-  const matches = matchingDeclaredRepositories(declared, legacy.owner, legacy.repository);
-  if (matches.length !== 1) {
-    return matches.length === 0 ? { status: "unknown-id" } : { status: "ambiguous-identity" };
-  }
-  const match = matches[0];
-  if (match === undefined) return { status: "unknown-id" };
-  return withLegacy(match.result, true);
-}
-
-function matchingDeclaredRepositories(
-  declared: readonly DeclaredRepositoryResolution[],
-  owner: string,
-  repository: string,
-): readonly DeclaredRepositoryResolution[] {
-  return declared.filter(
-    (candidate) =>
-      candidate.result.status === "resolved" &&
-      sameIdentity(candidate.result.repository, owner, repository),
-  );
+  return direct?.result.status === "resolved"
+    ? { status: "resolved", repository: direct.result.repository }
+    : (direct?.result ?? { status: "unknown-id" });
 }
 
 function resolveStoredRepository(
@@ -212,58 +201,9 @@ function resolveStoredRepository(
     );
     return identity === undefined
       ? { status: "identity-unresolved" }
-      : { status: "resolved", repository: identity, legacy: false };
+      : { status: "resolved", repository: identity };
   }
-
-  const legacy = parseLegacyRepositoryReference(configuredReference);
-  if (legacy === undefined) return { status: "unknown-id" };
-  const matches = (snapshot.repositoryIdentities ?? []).filter((repository) =>
-    sameIdentity(repository, legacy.owner, legacy.repository),
-  );
-  if (matches.length !== 1) {
-    return matches.length === 0 ? { status: "unknown-id" } : { status: "ambiguous-identity" };
-  }
-  const match = matches[0];
-  return match === undefined
-    ? { status: "unknown-id" }
-    : { status: "resolved", repository: match, legacy: true };
-}
-
-function withLegacy(
-  result: DeclaredRepositoryResolution["result"],
-  legacy: boolean,
-): RepositoryResolution {
-  return result.status === "resolved"
-    ? { status: "resolved", repository: result.repository, legacy }
-    : result;
-}
-
-function parseLegacyRepositoryReference(
-  reference: string,
-): { readonly owner: string; readonly repository: string } | undefined {
-  const parts = reference
-    .trim()
-    .replace(/\.git$/i, "")
-    .split("/");
-  const [owner, repository] = parts;
-  return parts.length === 2 &&
-    owner !== undefined &&
-    repository !== undefined &&
-    owner !== "" &&
-    repository !== ""
-    ? { owner, repository }
-    : undefined;
-}
-
-function sameIdentity(
-  identity: Pick<ProjectRepositoryIdentity, "owner" | "name">,
-  owner: string,
-  repository: string,
-): boolean {
-  return (
-    identity.owner.toLowerCase() === owner.toLowerCase() &&
-    identity.name.toLowerCase() === repository.toLowerCase()
-  );
+  return { status: "unknown-id" };
 }
 
 function repositoryFinding(
@@ -272,36 +212,20 @@ function repositoryFinding(
   resolution: RepositoryResolution,
 ): ProjectValidationFinding {
   const reference = displayReference(configuredReference);
-  if (resolution.status === "resolved") {
-    return {
-      code: "project.instance-config-invalid",
-      severity: "warning",
-      message: `GitHub Module Instance "${instanceId}" uses historical repository reference ${reference}. Impact: compatibility resolution targets portable repository ID "${resolution.repository.repositoryId}". Action: replace it with that portable repository ID and save the Draft; the committed .jarvis/project.yaml changes only when you explicitly write it.`,
-      target: {
-        kind: "module-instance",
-        instanceId,
-        field: "/configuration/repositories/legacy",
-      },
-      repositoryReferenceReplacement: {
-        field: "/configuration/repositories",
-        from: configuredReference,
-        to: resolution.repository.repositoryId,
-      },
-    };
-  }
+  if (resolution.status === "resolved") throw new Error("resolved repository has no finding");
 
   const action =
     resolution.status === "unknown-id"
       ? "Use a repository ID declared by the Project and save the Draft, then validate again."
       : resolution.status === "remote-missing"
-        ? "Configure the declared remote for the bound repository, then validate again."
+        ? "Configure a Git remote for the bound repository, then validate again."
         : resolution.status === "remote-ambiguous"
-          ? "Configure the selected Git remote with exactly one URL, then validate again."
+          ? "Keep one unambiguous GitHub remote identity, then validate again."
           : resolution.status === "unsupported-provider"
             ? "Select a supported GitHub remote or use a Module for the configured provider, then validate again."
             : resolution.status === "identity-unresolved"
               ? "Set the selected remote to a GitHub owner/name remote, then validate again."
-              : "Replace this historical reference with the unique declared portable repository ID, then validate again.";
+              : "Use a repository ID declared by the Project and save the Draft, then validate again.";
   return {
     code: "project.instance-config-invalid",
     severity: "error",

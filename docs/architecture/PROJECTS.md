@@ -6,88 +6,31 @@ Le projet est la frontière où Jarvis assemble :
 
 - repository principal ;
 - instances de modules ;
-- connexions et MCP ;
-- runtime agentique ;
-- commandes ;
-- conventions Git ;
-- limites de concurrence ;
-- descriptor d'admission Development fixe ;
+- compte GitHub et CLI d'agent sélectionnés ;
 - stockage, événements, exécutions et artefacts scopés.
 
 Le Kernel connaît des packages et ressources globales ; il ne les expose pas automatiquement au projet.
 
-## Portable config and local bindings
+## Local project configuration
 
-### Portable project config
+La configuration vit uniquement dans Application Support/SQLite. Elle contient le
+workflow sélectionné, le compte GitHub, le label Développeur, la CLI d'agent et les
+références locales nécessaires au dépôt. Les secrets restent dans le Keychain.
 
-Le fichier `.jarvis/project.yaml` est commité dans le repository. Il contient des choix partageables :
-
-- ID et nom ;
-- repository logique `main` avec root relative `.` ;
-- branche par défaut et remote logique ;
-- slots requis ;
-- commandes ;
-- conventions Git ;
-- modules et configurations non secrètes ;
-- limites.
-
-Il ne contient :
-
-- aucun secret ;
-- aucun chemin absolu ;
-- aucun token ;
-- aucun identifiant machine spécifique ;
-- aucun bookmark macOS.
-
-### Local bindings
-
-Les bindings locaux restent dans Application Support/SQLite et référencent :
-
-- chemin réel du repository et security-scoped bookmark ;
-- connexion globale choisie pour un slot ;
-- runtime local choisi ;
-- MCP autorisés ;
-- overrides machine non portables.
-
-Un exemple exportable nettoyé est fourni sous `examples/project/local-bindings.yaml`, mais le fichier réel n'est pas commité. La configuration portable et les Local Bindings sont remplacés indépendamment dans SQLite ; chaque remplacement SQLite est transactionnel. Une configuration invalide ne modifie aucune ligne.
-
-Quand `writeToRepository` vaut `true`, le moteur écrit un sibling temporaire privé puis le renomme sur `.jarvis/project.yaml`, sans créer de commit Git. Le système de fichiers et SQLite ne peuvent pas partager une transaction : l'écriture/rename précède donc SQLite afin qu'un échec fichier ne change pas la base. Si SQLite refuse ensuite le remplacement, le moteur restaure le dernier fichier durable (ou supprime le nouveau fichier lorsqu'il n'en existait pas). Cette compensation est testée, sans prétendre fournir une transaction cross-resource générale.
-
-## Slots
-
-La configuration portable demande des capabilities via des noms stables :
-
-```yaml
-slots:
-  sourceControl:
-    requires: scm.change-request.manage
-  tickets:
-    requires: work-items.read
-  agentRuntime:
-    requires: agent.execute
-```
-
-Les bindings locaux pourront résoudre :
-
-```text
-sourceControl → connection/github-qservices
-tickets       → mcp/github-qservices
-agentRuntime  → runtime/codex-default
-```
-
-Un module référence un slot, jamais le catalogue global. Les Module Instances sélectionnées sont des candidats déjà project-scoped pour les capabilities qu'elles fournissent. Les catalogues persistés de connexions et de runtimes peuvent proposer des candidats globaux ; ils ne deviennent une autorisation pour un Module qu'après un binding local explicite du Project. Jarvis ne fabrique ni connexion ni activation implicite.
+Jarvis ne lit ni n'écrit `.jarvis/project.yaml`. Supprimer un Project supprime sa
+configuration ; réimporter ensuite le même dépôt crée un workflow vide. Les ressources
+globales restent de simples candidates jusqu'à leur sélection explicite dans ce Project.
 
 ## Import flow
 
 1. Le shell obtient l'accès au dossier.
 2. Le moteur inspecte le repository sans modification.
-3. Si `.jarvis/project.yaml` existe, il le valide ; sinon il propose un draft.
-4. L'utilisateur confirme les informations détectées et les conventions ; les commandes restent gérées par le module Development.
-5. Jarvis présente le diff de `.jarvis/project.yaml`; après confirmation, il écrit ce fichier dans le repository sans créer automatiquement de commit.
-6. L'utilisateur sélectionne les bindings locaux.
-7. Le Project Runtime résout manifests, contrats et capabilities.
-8. Le projet est sauvegardé en `inactive`.
-9. `Validate` produit un rapport ; `Activate` n'est autorisé que si le rapport est vert.
+3. Le moteur crée un Project local en brouillon avec un workflow vide.
+4. L'utilisateur sélectionne librement zéro, un ou deux Modules dans **Workflow**.
+5. **Paramétrage** choisit le compte GitHub, le label et la CLI des Modules présents.
+6. **Vérification** teste uniquement leurs dépendances externes.
+7. Une réussite autorise **Créer le projet** ; un Project actif utilise ensuite
+   **Appliquer la configuration** pour remplacer sa configuration.
 
 ## Detection
 
@@ -120,9 +63,10 @@ Les secrets restent dans le Keychain et sont accessibles uniquement via un bindi
 
 ## Project deletion
 
-La suppression oublie un Project inactif de l'installation locale : record du Project Registry, Local Bindings et état moteur project-scoped. Le moteur effectue cette suppression dans une transaction locale et refuse un Project `Active` tant qu'il n'est pas pausé.
-
-La suppression ne lit, ne modifie et ne supprime jamais le repository, `.jarvis/project.yaml`, les branches, commits ou fichiers. Le Repository Grant appartient au shell macOS : il n'est retiré, et son accès security-scoped n'est libéré, qu'après confirmation de la suppression moteur.
+La suppression met automatiquement le Project en pause, puis retire dans une transaction
+locale son Registry record, sa configuration, ses bindings, son état moteur et son
+Repository Grant. Une exécution encore active bloque la suppression. Le repository,
+ses branches, commits et fichiers ne sont jamais modifiés.
 
 ## Project states
 
@@ -131,8 +75,8 @@ Draft → Valid → Active → Paused → Archived
           ↘ Invalid / Degraded
 ```
 
-- `Draft` : configuration incomplète.
-- `Valid` : composition vérifiée mais subscriptions inactives.
+- `Draft` : configuration locale non vérifiée.
+- `Valid` : dépendances externes vérifiées mais subscriptions inactives.
 - `Active` : pollers, schedules et consumers actifs.
 - `Paused` : aucune nouvelle delivery ; exécutions en cours selon politique.
 - `Degraded` : ressource devenue indisponible ; chemins impactés suspendus.
@@ -152,52 +96,42 @@ avec une raison filtrée. Un Project en pause expose `paused`, bloque les nouvea
 dans la boucle de dispatch et continue à montrer les exécutions déjà actives.
 
 Les raisons d'éligibilité sont contractuelles et affichées par le shell sans être
-recalculées. L'état `blocked` est réservé aux références `blocked_by` GitHub ouvertes;
-un label absent produit une attente. Le template de projet utilise `ready-to-dev`;
-les valeurs historiques restent conservées uniquement pour migration et export.
+recalculées. L'état `blocked` est réservé aux références `blocked_by` GitHub ouvertes.
+Développeur interprète exactement le label sauvegardé ; un label vide n'admet aucun
+Work Item et ne constitue pas un échec de vérification.
 
 ## Validation report
 
-Le rapport `jarvis.dev/project-validation/v1` est calculé par le Project Runtime, derrière son port de validation et son input explicite, uniquement depuis la Portable Configuration et les Local Bindings sauvegardés, avec les métadonnées des Module Packages embarqués. L'adapter Engine charge cet état, fournit les grants et l'accessibilité locale, puis adapte le résultat à la Local API sans posséder la politique de composition. Il contient les routes de requests résolues, les capabilities satisfaites et des findings actionnables ciblant slots, instances ou extrémités d'une edge. Une Request dotée de métadonnées de targeting mais sans émission configurée ne crée ni route ni finding ; une déclaration sans targeting reste soumise à la résolution normale. Toute capability, optionnelle ou requise, est résolue : une optionnelle résolue apparaît dans `satisfiedCapabilities`, tandis que seule son absence de résolution est silencieuse. Chaque capability satisfaite nomme séparément sa cible (`slot` ou `module-instance`) et la ressource source qui la fournit ; un repository utilise le source kind `repository`, et un identifiant de binding ou de candidate n'est jamais présenté comme un `instanceId`. Les routes, capabilities, candidats et findings sont triés par leurs identifiants contractuels ; aucun timestamp ni identifiant aléatoire n'est ajouté. `valid` vaut `true` seulement en l'absence de finding `error`.
+Le rapport de vérification est calculé depuis la configuration locale sauvegardée.
+L'écran affiche chaque dépendance vérifiée, réussie ou échouée :
 
-`POST /v1/projects/{projectId}/validation-report` est strictement read-only : il ne remplace ni configuration ni bindings, ne change pas l'état du Project et ne crée aucune subscription. `POST /v1/projects/{projectId}/composition-choices` applique la même règle à une configuration sauvegardée ou proposée et dérive un inventaire Event/routage depuis les contrats et Manifests activés, sans stocker de draft ni de graphe. `POST /v1/projects/{projectId}/composition-review` agrège ces choix, le rapport, les routes, capabilities et choix de ressources pour la configuration sauvegardée ou proposée avec les Local Bindings courants. Son `readyToValidate` est strictement égal au `valid` du rapport Engine; aucun état Review, graphe ou résultat de présentation n'est persisté. L'ancien `POST /v1/projects/{projectId}/validate` reste une projection fermée `{valid, issues}` pour les clients existants. Les codes stables incluent `project.composition-incomplete`, `project.request-orphaned`, `project.request-ambiguous`, `project.capability-unresolved`, `project.binding-missing`, `project.module-package-unavailable`, `project.instance-config-invalid` et `project.contract-incompatible`. Un package inconnu ou rejeté produit `project.module-package-unavailable` sur le champ `/moduleId`, jamais un faux finding de configuration sous `/configuration/moduleId`.
+- GitHub produit trois lignes : dépôt Git local, identité du remote GitHub et accès du compte ;
+- Développeur produit une ligne pour la CLI choisie, installée, prise en charge et exécutable.
 
-Le rapport vérifie :
+Zéro Module produit un rapport réussi. Le label, les issues, les dépendances d'issues,
+les commandes, les tests et la compatibilité du routage ne font pas partie de ce
+rapport. La composition libre reste valide même si elle ne peut produire aucun travail.
+Le contrôle ne démarre ni agent, ni commande du dépôt, ni polling.
 
-- JSON Schema du projet ;
-- packages et versions de modules présents ;
-- schémas de configuration de chaque instance ;
-- compatibilité event type/version/kind, sans utiliser `schemaRef` comme identité alternative ;
-- unicité des consumers de requests ;
-- capabilities requises ;
-- bindings et secret refs ;
-- repository accessible et Git propre à l'import ;
-- branche/remote existants ;
-- commandes non vides et syntaxiquement valides ;
-- runtime disponible ;
-- cycles et limites ;
-- permissions demandées.
+Une réussite est persistée avec une identité stable dérivée uniquement des Modules
+sélectionnés, du compte GitHub et de la CLI. Modifier l'une de ces valeurs supprime
+la réussite dans la même transaction que la sauvegarde ; rétablir ensuite l'ancienne
+valeur ne la ressuscite pas. Modifier le label Développeur ne l'invalide pas. Le résultat
+survit au redémarrage de Jarvis.
 
 ## Activation
 
-Le rapport de validation n'est pas persisté ; il reste une évaluation read-only recalculée
-à chaque appel. `POST /v1/projects/{projectId}/activate` (ticket #53) résout donc la
-fraîcheur du rapport sans le stocker : le rapport porte un `compositionFingerprint`, un
-condensé stable dérivé uniquement de la Portable Configuration et des Local Bindings
-sauvegardées (jamais des grants globaux). Le client renvoie ce condensé à l'activation ;
-l'Engine recalcule le condensé de ce qui est sauvegardé à l'instant de l'appel et refuse
-sans jamais revalider silencieusement :
+`POST /v1/projects/{projectId}/activate` exige une réussite persistée correspondant au
+workflow, au compte et à la CLI actuellement sauvegardés. Il refuse une configuration
+jamais vérifiée ou invalidée, sans relancer silencieusement les contrôles. Un changement
+de label peut être appliqué avec la réussite existante.
 
-- `project.activation-not-validated` : aucun rapport réussi n'existe pour la composition
-  courante (condensé absent, ou la composition ne valide plus) ;
-- `project.activation-report-stale` : le condensé fourni ne correspond plus à la
-  configuration ou aux Local Bindings sauvegardées — elles ont changé depuis ce rapport.
-
-Un refus laisse l'état durable strictement inchangé. Un succès crée le Resolved Project
-immuable : composition figée, Module Instances, Local Bindings et routes de requests
-résolues au moment de l'activation, et fait passer le Project à `active`. Répéter
-l'activation de la même composition est idempotent : même Resolved Project, aucun second
-enregistrement.
+Un refus laisse l'état durable inchangé. Enregistrer une nouvelle configuration d'un
+Project actif ou pausé conserve son statut et son ancien Resolved Project : polling,
+exécutions et Overview continuent donc d'utiliser ce snapshot. Après vérification,
+Appliquer remplace explicitement le Resolved Project par la configuration sauvegardée.
+La première activation d'un brouillon le fait passer à `active`. Répéter l'application
+de la même configuration est idempotent.
 
 Le succès ouvre aussi, sans écriture ni store durable supplémentaire, exactement les
 subscriptions déclarées par les Module Instances project-scoped `enabled` du Resolved
@@ -213,44 +147,21 @@ exécution — la delivery reste le ticket #6.
 
 ## Logical repositories in MVP
 
-Le schema conserve une liste `repositories` avec des IDs uniques. Plusieurs IDs
-peuvent être observés par un Module Instance ; dans le MVP ils partagent encore
-le même root local `.` et donc le même Repository Grant. Cette limite sépare les
-remotes logiques (par exemple plusieurs dépôts GitHub) du futur multi-root local,
-sans confondre leurs cursors ni leurs identifiants dans les Events.
+Un Project possède un seul repository local. Jarvis conserve son chemin accordé et
+résout son remote vers l'identité GitHub `owner/name` lorsque le Module GitHub est
+sélectionné. Un dépôt non Git, un remote absent ou une identité ambiguë échoue seulement
+sur la ligne GitHub de la vérification ; sans Module GitHub, cet état ne bloque pas
+l'activation.
 
-L'identifiant de `repositories[].id` est la référence canonique dans la Portable
-Configuration et dans la configuration des Modules. Le champ `remote` sélectionne
-le remote Git du checkout lié ; à la validation, Jarvis résout chaque ID vers
-l'identité du provider portée par ce remote. Pour GitHub, les URLs HTTPS et SSH
-(avec ou sans `.git`) produisent la même identité `owner/name`. Un Module ne
-remplace donc pas l'ID portable par un slug provider et ne choisit jamais un
-remote ou un dépôt par position dans la liste.
+Lors de la migration vers les brouillons locaux, Jarvis conserve intégralement tout
+Project qui possède encore une exécution ou une livraison non terminale. Sa
+configuration, ses bindings et sa composition résolue restent inchangés afin que le
+travail en cours puisse terminer avec le même contexte. Une fois ce travail terminé,
+le Project peut être supprimé puis réimporté pour repartir d'un brouillon vide.
 
-Une référence inconnue, un remote absent, un provider non supporté ou une identité
-ambiguë produit un finding avant l'activation et bloque tout appel provider. Une
-ancienne référence `owner/name` reste lisible uniquement lorsqu'un seul repository
-déclaré correspond exactement ; l'interface propose alors de la remplacer par
-l'ID portable et expose une confirmation qui ne modifie que le Draft en mémoire.
-L'écriture du `.jarvis/project.yaml` commité reste une sauvegarde explicite
-séparée ; aucune normalisation silencieuse n'est effectuée.
+## Module catalogue
 
-Les snapshots activés avant la persistance des identités portent un finding de
-migration visible sur les projets actifs. Les opérations provider restent
-suspendues jusqu'à une validation puis une réactivation explicite ; cette
-réactivation met à jour le snapshot existant en place, sans créer une seconde
-composition résolue.
-
-## Project template
-
-Un template accélère le setup sans masquer la composition :
-
-```text
-GitHub Development
-  - GitHub Module
-  - Development Module
-  - Development admission descriptor
-  - sourceControl/tickets/agentRuntime slots
-```
-
-Le template produit un draft modifiable à partir des métadonnées, du repository, des commandes et des conventions détectées. Le Local API le sert avec le starting point `Custom composition`, les Module Packages validés et les choix Event recalculés pour toute proposition. Les valeurs initiales de configuration sont sûres et canoniques (`ignore-existing`, deux cycles de réparation, suppression du workspace après succès). Le template ne crée aucun grant ni Local Binding : les slots `sourceControl`, `tickets` et `agentRuntime` restent explicitement non résolus jusqu'au choix de l'utilisateur. Il n'est ni un workflow central ni un nouveau type de module.
+Le Catalogue embarqué contient GitHub et Développeur, chacun sélectionnable au plus
+une fois. Il n'existe ni template de workflow ni composition recommandée implicite.
+Le Module Développeur possède ses conventions de branche, commandes, validations,
+concurrence, worktrees et politique d'exécution.

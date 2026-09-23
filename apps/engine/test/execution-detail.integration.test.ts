@@ -15,7 +15,7 @@ afterEach(async () => {
 });
 
 describe("execution detail", () => {
-  it("projects one correlated issue through checks, push and the created PR", async () => {
+  it("projects one correlated issue through push and the created PR", async () => {
     const fixture = await startReferenceWorkflowFixture("execution-detail");
     fixtures.push(fixture);
     const workItemRef = "github://Gasppacho/jarvis/issues/16";
@@ -69,11 +69,10 @@ describe("execution detail", () => {
       ["eligibility-confirmed", "proved"],
       ["workspace-prepared", "proved"],
       ["agent-running", "proved"],
-      ["checks", "proved"],
       ["commit-push", "proved"],
       ["pull-request", "proved"],
     ]);
-    expect(detail.checks).toEqual([expect.objectContaining({ name: "test", status: "passed" })]);
+    expect(detail.checks).toEqual([]);
     expect(detail.agentExcerpts.length).toBeLessThanOrEqual(8);
     expect(detail.workspace?.status).toBe("released");
     expect(detail.pullRequest).toMatchObject({

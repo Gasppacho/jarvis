@@ -6,12 +6,11 @@ import SwiftUI
 struct WorkflowCanvasView: View {
     let presentation: WorkflowCanvasPresentation
     var onSelectModule: ((String) -> Void)?
-    @State private var selectedEdgeID: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Composition fixe").font(.headline)
-            Text("Les modules échangent automatiquement ces événements. Sélectionnez un module pour le régler.")
+            Text("Canvas du workflow").font(.headline)
+            Text("Les modules échangent automatiquement ces événements.")
                 .font(.callout).foregroundStyle(.secondary)
             GeometryReader { proxy in
                 ZStack {
@@ -40,20 +39,16 @@ struct WorkflowCanvasView: View {
                         }
                     }
                     ForEach(presentation.nodes) { node in
-                        Button { onSelectModule?(node.id) } label: {
-                            VStack(spacing: 4) {
-                                Image(systemName: node.enabled ? "shippingbox.fill" : "shippingbox")
-                                Text(node.title).font(.caption.weight(.medium)).multilineTextAlignment(.center)
-                                Text(node.enabled ? "Activé" : "Désactivé").font(.caption2)
-                            }
-                            .frame(width: 130, height: 68)
-                            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.secondary.opacity(0.4)))
+                        VStack(spacing: 4) {
+                            Image(systemName: node.enabled ? "shippingbox.fill" : "shippingbox")
+                            Text(node.title).font(.caption.weight(.medium)).multilineTextAlignment(.center)
+                            Text(node.enabled ? "Activé" : "Désactivé").font(.caption2)
                         }
-                        .buttonStyle(.plain)
+                        .frame(width: 130, height: 68)
+                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.secondary.opacity(0.4)))
                         .position(x: CGFloat(node.x) * proxy.size.width, y: CGFloat(node.y) * proxy.size.height)
                         .accessibilityLabel(node.accessibilityLabel)
-                        .accessibilityHint("Ouvrir les réglages du module")
                     }
                 }
             }
@@ -63,35 +58,17 @@ struct WorkflowCanvasView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Échanges — liste équivalente").font(.subheadline.weight(.semibold))
                 ForEach(presentation.connections) { edge in
-                    Button {
-                        selectedEdgeID = selectedEdgeID == edge.id ? nil : edge.id
-                    } label: {
-                        Label(edge.label, systemImage: edge.kind == .request ? "arrow.right" : "arrow.triangle.branch")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .buttonStyle(.plain)
+                    Label(edge.label, systemImage: edge.kind == .request ? "arrow.right" : "arrow.triangle.branch")
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityLabel(edge.accessibilityLabel)
-                    .accessibilityHint("Afficher le contrat et les conditions de déclenchement")
-                    if selectedEdgeID == edge.id {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Contrat : \(edge.compatibilityLabel)")
-                            Text(edge.triggerLabel)
-                        }
-                        .font(.caption)
-                        .padding(.leading, 24)
-                    }
                 }
-                DisclosureGroup("Sorties sans destinataire (\(presentation.unconnectedOutputs.count))") {
-                    ForEach(presentation.unconnectedOutputs) { edge in
-                        Label(edge.label, systemImage: edge.kind == .request ? "exclamationmark.triangle" : "circle.dotted")
-                            .accessibilityLabel(edge.accessibilityLabel)
+                ForEach(presentation.unconnectedOutputs) { edge in
+                    HStack {
+                        Label(edge.label, systemImage: "circle.dotted")
+                        Spacer()
+                        Text("Non connecté").foregroundStyle(.secondary)
                     }
-                }
-                DisclosureGroup("Détails techniques") {
-                    ForEach(presentation.edges) { edge in
-                        Text("\(edge.compatibilityLabel) · \(edge.triggerLabel)")
-                            .font(.caption).textSelection(.enabled)
-                    }
+                    .accessibilityLabel(edge.accessibilityLabel)
                 }
             }
         }

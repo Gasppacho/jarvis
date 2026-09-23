@@ -30,17 +30,24 @@ describe("project composition choices", () => {
     const imported = await engine.call("/v1/projects", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ repositoryPath, portableConfig }),
+      body: JSON.stringify({ repositoryPath }),
     });
     expect(imported.status).toBe(201);
-    const project = (await imported.json()) as {
+    const draft = (await imported.json()) as {
       id: string;
       portableConfig: Record<string, unknown>;
     };
+    const saved = await engine.call(`/v1/projects/${draft.id}/configuration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ portableConfig, writeToRepository: false }),
+    });
+    expect(saved.status, await saved.clone().text()).toBe(200);
+    const project = { ...draft, portableConfig };
     return { engine, project };
   }
 
-  const preview = (engine: Harness, projectId: string, portableConfig?: Record<string, unknown>) =>
+  const preview = (engine: Harness, projectId: string, portableConfig?: unknown) =>
     engine.call(`/v1/projects/${projectId}/composition-choices`, {
       method: "POST",
       ...(portableConfig === undefined
@@ -133,9 +140,6 @@ describe("project composition choices", () => {
     expect(fresh.startingPoints[0]?.description).toContain(
       "Repository main → GitHub QServices/token-warehouse",
     );
-    expect(fresh.startingPoints[0]?.description).toContain(
-      "push remote origin; target branch main",
-    );
 
     const template = fresh.startingPoints[0]?.template as {
       compositionMode: string;
@@ -152,16 +156,7 @@ describe("project composition choices", () => {
     });
     expect(template.modules[0]?.["bindings"]).toEqual({ sourceControl: "sourceControl" });
     expect(template.modules[1]?.["bindings"]).toEqual({ repository: "main" });
-    expect(template.modules[1]?.["configuration"]).toEqual({
-      environmentAllowlist: ["PATH", "HOME", "CODEX_HOME"],
-      maxRepairCycles: 2,
-      outputLimitBytes: 1048576,
-      preparation: "install",
-      readyLabel: "ready-to-dev",
-      retainWorkspaceOnSuccess: false,
-      timeoutMs: 300000,
-      validationOrder: ["lint", "typecheck", "test", "build"],
-    });
+    expect(template.modules[1]?.["configuration"]).toEqual({ readyLabel: "ready-to-dev" });
 
     const guidedResponse = await preview(engine, project.id, template);
     expect(guidedResponse.status, await guidedResponse.clone().text()).toBe(200);
@@ -256,7 +251,7 @@ describe("project composition choices", () => {
     });
   });
 
-  it("prefers a detected verify command for the guided validation plan", async () => {
+  it("keeps detected install commands out of guided configuration", async () => {
     const engine = await startEngine();
     engines.push(engine);
     const repositoryPath = makeNodeRepositoryFixture({
@@ -280,9 +275,7 @@ describe("project composition choices", () => {
       startingPoints: Array<{ id: string; template: { modules: Array<Record<string, unknown>> } }>;
     };
     const template = choices.startingPoints.find(({ id }) => id === "github-development")!.template;
-    expect(template.modules[1]?.["configuration"]).toEqual(
-      expect.objectContaining({ preparation: "install", validationOrder: ["verify"] }),
-    );
+    expect(template.modules[1]?.["configuration"]).toEqual({ readyLabel: "ready-to-dev" });
   });
 
   it("previews deterministic contract-owned choices for the canonical composition without mutation", async () => {
@@ -362,14 +355,14 @@ describe("project composition choices", () => {
   it("previews proposed add, remove, enable and package changes without saving the draft", async () => {
     const { engine, project } = await setup();
     const before = await (await engine.call(`/v1/projects/${project.id}`)).json();
-    const proposed = structuredClone(project.portableConfig);
-    const modules = proposed["modules"] as Array<Record<string, unknown>>;
-    const github = modules.find((module) => module["instanceId"] === "github")!;
-    github["enabled"] = false;
-    modules.splice(
-      modules.findIndex((module) => module["instanceId"] === "development"),
-      1,
-    );
+    const github = project.portableConfig.modules.find((module) => module.instanceId === "github")!;
+    const development = project.portableConfig.modules.find(
+      (module) => module.instanceId === "development",
+    )!;
+    const proposed = {
+      ...project.portableConfig,
+      modules: [{ ...github, enabled: false }],
+    };
 
     const disabledResponse = await preview(engine, project.id, proposed);
     expect(
@@ -381,15 +374,19 @@ describe("project composition choices", () => {
     };
     expect(disabled.choices).toEqual([]);
 
-    const originalDevelopment = (
-      project.portableConfig["modules"] as Array<Record<string, unknown>>
-    ).find((module) => module["instanceId"] === "development")!;
-    modules.push({ ...structuredClone(originalDevelopment), instanceId: "development-2" });
-
-    github["enabled"] = true;
-    github["moduleId"] = "jarvis.module.change-request-review";
-    delete github["configuration"];
-    const changed = (await (await preview(engine, project.id, proposed)).json()) as {
+    const { configuration: _configuration, ...githubWithoutConfiguration } = github;
+    const changedConfiguration = {
+      ...project.portableConfig,
+      modules: [
+        {
+          ...githubWithoutConfiguration,
+          enabled: true,
+          moduleId: "jarvis.module.change-request-review",
+        },
+        { ...development, instanceId: "development-2" },
+      ],
+    };
+    const changed = (await (await preview(engine, project.id, changedConfiguration)).json()) as {
       choices: Array<{ type: string }>;
     };
     expect(changed.choices.map((choice) => choice.type)).toEqual([
@@ -405,14 +402,18 @@ describe("project composition choices", () => {
 
   it("rejects executable Automation Rules in the fixed production composition", async () => {
     const { engine, project } = await setup();
-    const portableConfig = structuredClone(project.portableConfig);
-    const modules = portableConfig["modules"] as Array<Record<string, unknown>>;
-    modules.push({
-      instanceId: "automation-rules",
-      moduleId: "jarvis.module.automation-rules",
-      enabled: true,
-      configuration: { rules: [] },
-    });
+    const portableConfig = {
+      ...project.portableConfig,
+      modules: [
+        ...project.portableConfig.modules,
+        {
+          instanceId: "automation-rules",
+          moduleId: "jarvis.module.automation-rules",
+          enabled: true,
+          configuration: { rules: [] },
+        },
+      ],
+    };
 
     const rejected = await engine.call(`/v1/projects/${project.id}/configuration`, {
       method: "PUT",
@@ -433,10 +434,13 @@ describe("project composition choices", () => {
 
   it("keeps the fixed implementation Request routed to Development", async () => {
     const { engine, project } = await setup();
-    const portableConfig = structuredClone(project.portableConfig);
-    const modules = portableConfig["modules"] as Array<Record<string, unknown>>;
-    const development = modules.find((module) => module["instanceId"] === "development")!;
-    modules.push({ ...structuredClone(development), instanceId: "development-2" });
+    const development = project.portableConfig.modules.find(
+      (module) => module.instanceId === "development",
+    )!;
+    const portableConfig = {
+      ...project.portableConfig,
+      modules: [...project.portableConfig.modules, { ...development, instanceId: "development-2" }],
+    };
 
     const response = await preview(engine, project.id);
     const body = (await response.json()) as {

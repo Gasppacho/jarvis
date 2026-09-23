@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, realpath, stat } from "node:fs/promises";
+import { access, readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import type { AgentRun, AgentRunResult, AgentRuntime } from "../../../agent-runtime/src/index.js";
 import {
@@ -12,7 +12,6 @@ import type {
   ModuleHandlerContext,
   ModuleShell,
   ModuleShellCommandResult,
-  ProjectCommandsCapability,
   WorkItem,
   WorkItemStateObservation,
 } from "../../../module-sdk/src/index.js";
@@ -45,30 +44,15 @@ export const DEVELOPMENT_IMPLEMENTATION_FAILED = {
 } as const;
 
 const DEFAULT_TIMEOUT_MS = 300_000;
-const MAX_TIMEOUT_MS = 3_600_000;
 const DEFAULT_OUTPUT_LIMIT_BYTES = 1_048_576;
-const MAX_OUTPUT_LIMIT_BYTES = 10_485_760;
+const BRANCH_PATTERN = "agent/{workItemId}-{slug}";
+const MAX_CONCURRENT_EXECUTIONS = 1;
+const RETAIN_ON_FAILURE_DAYS = 7;
 const MAX_WORK_ITEM_CONTENT_BYTES = 64 * 1024;
-const VALIDATION_CHECKS = ["lint", "typecheck", "test", "build", "verify"] as const;
-type ValidationCheck = (typeof VALIDATION_CHECKS)[number];
-const VALIDATION_ENVIRONMENT_FAILURES = {
-  "project.validation-tool-missing":
-    "Un outil de validation est introuvable. Installez l’outil requis, vérifiez les commandes du projet puis relancez la vérification de configuration. Aucune réparation du code n’est demandée.",
-  "project.validation-access-denied":
-    "Le validateur rencontre une restriction d’accès. Corrigez l’autorisation locale nécessaire puis relancez la vérification de configuration. Aucune réparation du code n’est demandée.",
-  "project.validation-timed-out":
-    "La validation a atteint la durée limite configurée. Vérifiez la commande et ajustez sa durée limite avant de relancer. Aucune réparation du code n’est demandée.",
-  "project.validation-runner-failed":
-    "Le moteur n’a pas pu lancer la validation. Vérifiez le dossier et les outils locaux, puis relancez la vérification de configuration. Aucune réparation du code n’est demandée.",
-} as const;
-const VALIDATION_AUTHORITY =
-  "The Development module has handled the configured preparation and runs the full Validation Plan after your response, outside the agent sandbox. Do not rerun the full project gate inside Codex. You may run targeted checks that fit the sandbox; if access is denied, report the restriction and return your work for module validation. Change only files needed for the requested issue. Do not change unrelated tests or configuration to repair the environment; report unrelated failures instead.";
 type DevelopmentFailureCode =
-  | keyof typeof VALIDATION_ENVIRONMENT_FAILURES
   | "event.payload-invalid"
   | "project.config-invalid"
   | "project.capability-unresolved"
-  | "project.preparation-unconfigured"
   | "project.preparation-failed"
   | "workspace.allocation-failed"
   | "workspace.branch-conflict"
@@ -77,13 +61,11 @@ type DevelopmentFailureCode =
   | "workspace.lease-not-found"
   | "workspace.release-failed"
   | "git.base-not-found"
-  | "git.validation-failed"
   | "git.no-changes"
   | "git.commit-failed"
   | "git.push-failed"
   | "git.recovery-required"
   | "git.recovery-unavailable"
-  | "git.recovery-validation-missing"
   | "agent.run-failed"
   | "agent.run-timed-out"
   | "agent.run-cancelled"
@@ -93,48 +75,32 @@ type DevelopmentFailureCode =
   | "github.work-item-read-failed"
   | "system.internal-error";
 
-interface ValidationFailureContext {
-  readonly validationCheck?: ValidationCheck;
-  readonly validationOutput?: string;
-}
-
 class DevelopmentExecutionError extends Error {
   public constructor(
     public readonly code: DevelopmentFailureCode,
     message: string,
     retryable = false,
-    context: ValidationFailureContext = {},
   ) {
     super(message);
     this.name = "DevelopmentExecutionError";
     this.failureClass = failureClass(code);
     this.errorClass = this.failureClass;
     this.retryable = retryable;
-    this.validationCheck = context.validationCheck;
-    this.validationOutput = context.validationOutput;
   }
 
   public readonly failureClass:
-    "configuration" | "input" | "validation" | "workspace" | "agent" | "cancelled" | "internal";
+    "configuration" | "input" | "workspace" | "agent" | "cancelled" | "internal";
   public readonly errorClass: DevelopmentExecutionError["failureClass"];
   public readonly retryable: boolean;
-  public readonly validationCheck: ValidationCheck | undefined;
-  public readonly validationOutput: string | undefined;
 }
 
 function failureClass(
   code: DevelopmentFailureCode,
-): "configuration" | "input" | "validation" | "workspace" | "agent" | "cancelled" | "internal" {
+): "configuration" | "input" | "workspace" | "agent" | "cancelled" | "internal" {
   if (code === "event.payload-invalid") return "input";
-  if (Object.hasOwn(VALIDATION_ENVIRONMENT_FAILURES, code)) return "configuration";
-  if (
-    code === "project.config-invalid" ||
-    code === "project.capability-unresolved" ||
-    code === "project.preparation-unconfigured"
-  ) {
+  if (code === "project.config-invalid" || code === "project.capability-unresolved") {
     return "configuration";
   }
-  if (code === "git.validation-failed") return "validation";
   if (code === "agent.run-cancelled") return "cancelled";
   if (code === "agent.run-failed" || code === "agent.run-timed-out") return "agent";
   if (code === "system.internal-error") return "internal";
@@ -149,16 +115,12 @@ interface ImplementationRequest {
   readonly requestedGeneration?: number;
 }
 
-export type DevelopmentScope =
-  { readonly kind: "all" } | { readonly kind: "issue"; readonly workItemRef: string };
-
 export interface DevelopmentEligibilityInput {
   readonly repositoryId: string;
   readonly authorizedRepositoryId: string | undefined;
   readonly workItemRef: string;
   readonly observation: WorkItemStateObservation;
   readonly readyLabel: string;
-  readonly scope: DevelopmentScope;
   readonly alreadyStarted: boolean;
 }
 
@@ -204,9 +166,6 @@ export function assessDevelopmentEligibility(
       blockerRefs: input.observation.dependencies.openWorkItemRefs,
     };
   }
-  if (input.scope.kind === "issue" && input.scope.workItemRef !== input.workItemRef) {
-    return { eligible: false, reason: "scope-mismatch", blockerRefs: [] };
-  }
   if (input.alreadyStarted) {
     return { eligible: false, reason: "already-started", blockerRefs: [] };
   }
@@ -234,13 +193,6 @@ export interface DevelopmentRunResult {
   readonly changedFiles: readonly string[];
   readonly headBranch?: string;
   readonly headCommit?: string;
-  readonly validation: readonly {
-    readonly name: ValidationCheck;
-    readonly status: "passed";
-    readonly durationMs: number;
-  }[];
-  readonly commands: ProjectCommandsCapability["commands"];
-  readonly git: ProjectCommandsCapability["git"];
 }
 
 /** Runs one deterministic implementation attempt in the Project's worktree. */
@@ -267,9 +219,8 @@ export function handleWorkItemObserved(ctx: ModuleHandlerContext): DevelopmentOb
     );
   }
   const readyLabel = readReadyLabel(ctx.configuration);
-  const scope = readDevelopmentScope(ctx.configuration["scope"]);
   const decision =
-    readyLabel === undefined || scope === undefined
+    readyLabel === undefined
       ? { eligible: false, reason: "configuration-invalid", blockerRefs: [] }
       : assessDevelopmentEligibility({
           repositoryId: observed.repositoryId,
@@ -277,7 +228,6 @@ export function handleWorkItemObserved(ctx: ModuleHandlerContext): DevelopmentOb
           workItemRef: observed.workItemRef,
           observation: observed.observation,
           readyLabel,
-          scope,
           alreadyStarted:
             ctx.capabilities.developmentAdmission?.wasStarted(
               observed.repositoryId,
@@ -415,7 +365,6 @@ async function runImplementationRequested(
   const runtime = ctx.capabilities.agentRuntime;
   const workspace = ctx.capabilities.workspace;
   const projectBindings = ctx.capabilities.projectBindings;
-  const projectCommands = ctx.capabilities.projectCommands;
   const shell = ctx.capabilities.shell;
   const workItems = ctx.capabilities.workItems;
   const requiresGitHubWorkItem = request.workItemRef.startsWith("github://");
@@ -423,26 +372,19 @@ async function runImplementationRequested(
     runtime === undefined ||
     workspace === undefined ||
     projectBindings === undefined ||
-    projectCommands === undefined ||
     shell === undefined ||
     (requiresGitHubWorkItem && workItems === undefined)
   ) {
     throw new DevelopmentExecutionError(
       "project.capability-unresolved",
-      "Development requires a project-bound Agent Runtime, workspace, and Project Commands; GitHub Work Items also require project-bound Work Item access.",
+      "Development requires a project-bound Agent Runtime, workspace, and shell; GitHub Work Items also require project-bound Work Item access.",
     );
   }
-  const validationOrder = readValidationOrder(ctx.configuration["validationOrder"]);
-  const maxRepairCycles = readMaxRepairCycles(ctx.configuration["maxRepairCycles"]);
-  const timeoutMs = boundedPositiveConfigNumber(
-    ctx.configuration["timeoutMs"],
-    DEFAULT_TIMEOUT_MS,
-    MAX_TIMEOUT_MS,
-  );
-  const outputLimitBytes = boundedPositiveConfigNumber(
-    ctx.configuration["outputLimitBytes"],
+  const timeoutMs = testExecutionLimit("JARVIS_DEVELOPMENT_TIMEOUT_MS", DEFAULT_TIMEOUT_MS, 100);
+  const outputLimitBytes = testExecutionLimit(
+    "JARVIS_DEVELOPMENT_OUTPUT_LIMIT_BYTES",
     DEFAULT_OUTPUT_LIMIT_BYTES,
-    MAX_OUTPUT_LIMIT_BYTES,
+    1_024,
   );
   let checkpointSequence = ctx.lastCheckpointSequence?.() ?? 0;
   let existingAllocation = false;
@@ -467,7 +409,6 @@ async function runImplementationRequested(
           workItemRef: request.workItemRef,
           observation,
           readyLabel: request.tag,
-          scope: readDevelopmentScope(ctx.configuration["scope"]) ?? { kind: "all" },
           alreadyStarted: false,
         });
         if (!decision.eligible) {
@@ -522,6 +463,11 @@ async function runImplementationRequested(
             ? branchValue(`implementation-${ctx.executionId}`)
             : workItemSlug(workItem.title, ctx.executionId),
       },
+      policy: {
+        branchPattern: BRANCH_PATTERN,
+        maxConcurrentExecutions: MAX_CONCURRENT_EXECUTIONS,
+        retainOnFailureDays: RETAIN_ON_FAILURE_DAYS,
+      },
     });
   } catch (error: unknown) {
     if (
@@ -544,12 +490,10 @@ async function runImplementationRequested(
   let releaseOutcome: "success" | "failure" | "cancelled" = "failure";
   let run: AgentRun | undefined;
   try {
-    const preparation = readPreparation(ctx.configuration["preparation"]);
     const repositoryInstructionText = await repositoryInstructions(allocation.path);
     const ticketContent = workItemContent(request.workItemRef, workItem);
     await runWorktreePreparation({
-      preparation,
-      commands: projectCommands.commands,
+      command: await installationCommand(allocation.path),
       shell,
       cwd: allocation.path,
       signal: ctx.signal,
@@ -586,7 +530,12 @@ async function runImplementationRequested(
           repositoryInstructions: repositoryInstructionText,
           ticketContent: input.ticketContent,
         },
-        environmentAllowlist: stringArray(ctx.configuration["environmentAllowlist"]),
+        environmentAllowlist: Object.keys(
+          runtimeGrant.projectBindings.runtimeSlot === undefined
+            ? {}
+            : (runtimeGrant.projectBindings.slots[runtimeGrant.projectBindings.runtimeSlot]
+                ?.environment ?? {}),
+        ),
         projectBindings: runtimeGrant.projectBindings,
         mcpSlotNames: [],
         timeoutMs,
@@ -656,64 +605,16 @@ async function runImplementationRequested(
         status: result.status,
         summary: result.summary,
         changedFiles,
-        validation: [],
-        commands: projectCommands.commands,
-        git: projectCommands.git,
       };
     };
-    let attempt = await executeAgent({
+    const attempt = await executeAgent({
       objective: "Implement the requested work item in the allocated workspace.",
-      moduleContract: `Development implements one requested work item in this workspace. Do not commit, push, or claim that validation passed. ${VALIDATION_AUTHORITY}`,
+      moduleContract:
+        "Development implements one requested work item in this workspace. Do not commit or push. Change only files needed for the requested issue.",
       ticketContent,
     });
-    let validation: DevelopmentRunResult["validation"];
-    let repairCycles = 0;
-    for (;;) {
-      const stopped = stoppedAgentResult(attempt);
-      if (stopped !== undefined) return stopped;
-      try {
-        validation = await runValidationPlan({
-          order: validationOrder,
-          commands: projectCommands.commands,
-          shell,
-          cwd: allocation.path,
-          signal: ctx.signal,
-          timeoutMs,
-          outputLimitBytes,
-          nextCheckpointSequence: () => ++checkpointSequence,
-          recordCheckpoint: ctx.recordCheckpoint,
-        });
-        break;
-      } catch (error) {
-        if (
-          !(error instanceof DevelopmentExecutionError) ||
-          error.code !== "git.validation-failed" ||
-          ctx.signal.aborted ||
-          repairCycles >= maxRepairCycles ||
-          error.validationCheck === undefined ||
-          error.validationOutput === undefined
-        ) {
-          throw error;
-        }
-        repairCycles += 1;
-        ctx.recordCheckpoint({
-          type: "agent.repair-started",
-          sequence: ++checkpointSequence,
-          timestamp: new Date().toISOString(),
-        });
-        attempt = await executeAgent({
-          objective: "Repair the implementation after the Validation Plan failed.",
-          moduleContract: `Development performs one bounded Repair Cycle in this workspace. Use the supplied validation failure, make the smallest fix, and do not commit, push, or claim that validation passed. ${VALIDATION_AUTHORITY}`,
-          ticketContent: [
-            ticketContent,
-            "",
-            `Validation failure check: ${error.validationCheck}`,
-            "Captured validation output:",
-            sanitizeRepairOutput(error.validationOutput, allocation.path, outputLimitBytes),
-          ].join("\n"),
-        });
-      }
-    }
+    const stopped = stoppedAgentResult(attempt);
+    if (stopped !== undefined) return stopped;
     const result = attempt.result;
     const changedFiles = attempt.changedFiles;
     if (result.status !== "completed") {
@@ -727,7 +628,7 @@ async function runImplementationRequested(
       baseRevisionSha: allocation.baseRevisionSha,
       workItemRef: request.workItemRef,
       ...(workItem === undefined ? {} : { workItemTitle: workItem.title }),
-      commitStrategy: projectCommands.git.commitStrategy,
+      commitStrategy: "conventional",
       signal: ctx.signal,
       timeoutMs,
       outputLimitBytes,
@@ -738,10 +639,6 @@ async function runImplementationRequested(
       timestamp: new Date().toISOString(),
       branch: commit.branch,
       sha: commit.sha,
-      validation: {
-        planHash: validationPlanHash(validationOrder, projectCommands),
-        commands: validation,
-      },
       ...(workItem === undefined
         ? {}
         : { title: safeFailureReference(workItem.title, undefined, "Work Item", 256) }),
@@ -750,18 +647,10 @@ async function runImplementationRequested(
       workspacePath: allocation.path,
       branch: commit.branch,
       sha: commit.sha,
-      pushRemote: projectCommands.git.pushRemote,
+      pushRemote: await resolvePushRemote(allocation.path, ctx.signal),
       signal: ctx.signal,
-      timeoutMs: boundedPositiveConfigNumber(
-        ctx.configuration["timeoutMs"],
-        DEFAULT_TIMEOUT_MS,
-        MAX_TIMEOUT_MS,
-      ),
-      outputLimitBytes: boundedPositiveConfigNumber(
-        ctx.configuration["outputLimitBytes"],
-        DEFAULT_OUTPUT_LIMIT_BYTES,
-        MAX_OUTPUT_LIMIT_BYTES,
-      ),
+      timeoutMs,
+      outputLimitBytes,
     });
     if (typeof __JARVIS_TEST_HOOKS__ !== "undefined" && __JARVIS_TEST_HOOKS__) {
       testFailpoint?.("after-development-push-before-checkpoint");
@@ -776,7 +665,7 @@ async function runImplementationRequested(
     if (typeof __JARVIS_TEST_HOOKS__ !== "undefined" && __JARVIS_TEST_HOOKS__) {
       testFailpoint?.("after-development-checkpoint-before-terminal");
     }
-    publishDevelopmentOutputs(ctx, request, result, commit, validation, workItem?.title);
+    publishDevelopmentOutputs(ctx, request, result, commit, workItem?.title);
     releaseOutcome = "success";
     return {
       status: result.status,
@@ -784,9 +673,6 @@ async function runImplementationRequested(
       changedFiles,
       headBranch: commit.branch,
       headCommit: commit.sha,
-      validation,
-      commands: projectCommands.commands,
-      git: projectCommands.git,
     };
   } catch (error) {
     if (ctx.signal.aborted) releaseOutcome = "cancelled";
@@ -799,7 +685,11 @@ async function runImplementationRequested(
     }
     throw error;
   } finally {
-    await workspace.release({ executionId: ctx.executionId, outcome: releaseOutcome });
+    await workspace.release({
+      executionId: ctx.executionId,
+      outcome: releaseOutcome,
+      policy: { retainOnFailureDays: RETAIN_ON_FAILURE_DAYS },
+    });
   }
 }
 
@@ -810,59 +700,34 @@ async function recoverPushedChange(
   testFailpoint?: (id: string) => void,
 ): Promise<DevelopmentRunResult> {
   const workspace = ctx.capabilities.workspace;
-  const commands = ctx.capabilities.projectCommands;
-  if (workspace?.recover === undefined || commands === undefined) {
+  if (workspace?.recover === undefined) {
     throw new DevelopmentExecutionError(
       "git.recovery-required",
-      "Recovery requires the original workspace and Project Commands; restore the Project bindings.",
+      "Recovery requires the original workspace; restore the Project bindings.",
     );
   }
   const payload = checkpoint.payload;
   const branch = payload["branch"];
   const sha = payload["sha"];
-  const snapshot = payload["validation"];
-  const order = readValidationOrder(ctx.configuration["validationOrder"]);
   if (
     typeof branch !== "string" ||
     branch === "" ||
     typeof sha !== "string" ||
-    !/^[a-f0-9]{40,64}$/.test(sha) ||
-    !isRecord(snapshot) ||
-    snapshot["planHash"] !== validationPlanHash(order, commands) ||
-    !Array.isArray(snapshot["commands"]) ||
-    snapshot["commands"].length !== order.length ||
-    !snapshot["commands"].every(
-      (check: unknown, index: number) =>
-        isRecord(check) &&
-        check["name"] === order[index] &&
-        check["status"] === "passed" &&
-        typeof check["durationMs"] === "number" &&
-        Number.isFinite(check["durationMs"]) &&
-        check["durationMs"] >= 0,
-    )
+    !/^[a-f0-9]{40,64}$/.test(sha)
   ) {
     throw new DevelopmentExecutionError(
-      "git.recovery-validation-missing",
-      "The pushed change has no complete validation snapshot for this Project configuration; inspect the retained evidence before replay.",
+      "git.recovery-required",
+      "The pushed change checkpoint is incomplete; preserve the workspace and inspect its commit before replay.",
     );
   }
-  const validation = snapshot["commands"] as DevelopmentRunResult["validation"];
   const allocation = await workspace.recover({
     executionId: checkpoint.executionId,
     repositoryId: request.repositoryId,
   });
   const git = new GitRunner({
     cwd: allocation.path,
-    timeoutMs: boundedPositiveConfigNumber(
-      ctx.configuration["timeoutMs"],
-      DEFAULT_TIMEOUT_MS,
-      MAX_TIMEOUT_MS,
-    ),
-    outputLimitBytes: boundedPositiveConfigNumber(
-      ctx.configuration["outputLimitBytes"],
-      DEFAULT_OUTPUT_LIMIT_BYTES,
-      MAX_OUTPUT_LIMIT_BYTES,
-    ),
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+    outputLimitBytes: DEFAULT_OUTPUT_LIMIT_BYTES,
   });
   const options = { signal: ctx.signal };
   const local = await git.run(
@@ -881,17 +746,11 @@ async function recoverPushedChange(
     if (!head.ok || head.stdout.trim() !== sha || !clean.ok || clean.stdout.trim() !== "") {
       throw new DevelopmentExecutionError(
         "git.recovery-required",
-        "The retained workspace changed after validation; preserve and inspect its work before replay.",
+        "The retained workspace changed after commit; preserve and inspect its work before replay.",
       );
     }
   }
-  const remote = commands.git.pushRemote.trim();
-  if (remote === "" || remote.startsWith("-") || /\s/.test(remote)) {
-    throw new DevelopmentExecutionError(
-      "git.recovery-required",
-      "The configured push remote is invalid; correct it before replay.",
-    );
-  }
+  const remote = await resolvePushRemote(allocation.path, ctx.signal, "git.recovery-required");
   const remoteHead = await git.run(
     ["ls-remote", "--heads", remote, `refs/heads/${branch}`],
     options,
@@ -933,41 +792,27 @@ async function recoverPushedChange(
   }
   const result: DevelopmentRunResult = {
     status: "completed",
-    summary: "Recovered the validated pushed change without another Agent Run.",
+    summary: "Recovered the pushed change without another Agent Run.",
     changedFiles: changed.stdout.split("\0").filter(Boolean),
     headBranch: branch,
     headCommit: sha,
-    validation,
-    commands: commands.commands,
-    git: commands.git,
   };
   publishDevelopmentOutputs(
     ctx,
     request,
     result,
     { branch, sha },
-    validation,
     typeof payload["title"] === "string" ? payload["title"] : undefined,
   );
-  await workspace.release({ executionId: checkpoint.executionId, outcome: "success" });
+  await workspace.release({
+    executionId: checkpoint.executionId,
+    outcome: "success",
+    policy: { retainOnFailureDays: RETAIN_ON_FAILURE_DAYS },
+  });
   if (typeof __JARVIS_TEST_HOOKS__ !== "undefined" && __JARVIS_TEST_HOOKS__) {
     testFailpoint?.("after-development-cleanup-before-terminal");
   }
   return result;
-}
-
-function validationPlanHash(
-  order: readonly ValidationCheck[],
-  commands: ProjectCommandsCapability,
-): string {
-  return createHash("sha256")
-    .update(
-      JSON.stringify({
-        checks: order.map((name) => [name, commands.commands[name]]),
-        pushRemote: commands.git.pushRemote,
-      }),
-    )
-    .digest("hex");
 }
 
 function publishDevelopmentFailure(
@@ -1023,13 +868,10 @@ function readFailure(
 }
 
 function stableFailureCode(code: string): DevelopmentFailureCode {
-  if (Object.hasOwn(VALIDATION_ENVIRONMENT_FAILURES, code))
-    return code as keyof typeof VALIDATION_ENVIRONMENT_FAILURES;
   if (code === "event.payload-invalid") return code;
   if (
     code === "project.config-invalid" ||
     code === "project.capability-unresolved" ||
-    code === "project.preparation-unconfigured" ||
     code === "project.preparation-failed"
   ) {
     return code;
@@ -1046,7 +888,6 @@ function stableFailureCode(code: string): DevelopmentFailureCode {
   }
   if (
     code === "git.base-not-found" ||
-    code === "git.validation-failed" ||
     code === "git.no-changes" ||
     code === "git.commit-failed" ||
     code === "git.push-failed"
@@ -1072,34 +913,26 @@ function stableFailureCode(code: string): DevelopmentFailureCode {
 }
 
 function failureMessage(ctx: ModuleHandlerContext, code: DevelopmentFailureCode): string {
-  if (Object.hasOwn(VALIDATION_ENVIRONMENT_FAILURES, code))
-    return VALIDATION_ENVIRONMENT_FAILURES[code as keyof typeof VALIDATION_ENVIRONMENT_FAILURES];
   const prefix = `Project ${ctx.projectId} / Module ${ctx.moduleInstanceId}`;
   switch (code) {
     case "event.payload-invalid":
       return `${prefix} received an invalid implementation request; correct the Work Item, repository, and base branch, then retry.`;
     case "project.config-invalid":
-      return `${prefix} has invalid configuration; correct the Validation Plan or Git policy, then retry.`;
+      return `${prefix} has invalid configuration; correct the Project or Git policy, then retry.`;
     case "project.capability-unresolved":
       return `${prefix} cannot resolve a required capability; repair the Project binding and activate it again.`;
-    case "project.preparation-unconfigured":
-      return `${prefix} has no confirmed worktree preparation; choose the configured install command or confirm that no preparation is necessary, then rerun preflight.`;
     case "project.preparation-failed":
       return `${prefix} worktree preparation failed; inspect the retained workspace and rerun preflight.`;
-    case "git.validation-failed":
-      return `${prefix} validation failed; fix the first failing Project command and retry.`;
     case "git.no-changes":
       return `${prefix} produced no changes; update the Work Item or agent instructions and retry.`;
     case "git.commit-failed":
       return `${prefix} could not create a commit; inspect the retained workspace and retry.`;
     case "git.push-failed":
-      return `${prefix} could not push the branch; verify the configured remote and retry.`;
+      return `${prefix} could not push the branch; verify repository remotes and retry.`;
     case "git.recovery-required":
       return `${prefix} cannot reconcile the pushed commit with its original workspace and remote; preserve the work, resolve the divergence or missing evidence, then replay.`;
     case "git.recovery-unavailable":
       return `${prefix} cannot read the pushed remote branch; bounded recovery retries preserve the work. Restore remote access or the branch, then replay if retries are exhausted.`;
-    case "git.recovery-validation-missing":
-      return `${prefix} has no complete validation snapshot matching the current configuration; no validated PR was requested. Inspect the retained evidence before replay.`;
     case "agent.run-failed":
       return `${prefix} agent run failed; inspect the retained workspace and retry.`;
     case "agent.run-timed-out":
@@ -1144,7 +977,6 @@ function publishDevelopmentOutputs(
   request: ImplementationRequest,
   result: { readonly summary: string },
   commit: { readonly branch: string; readonly sha: string },
-  validation: DevelopmentRunResult["validation"],
   workItemTitle?: string,
 ): void {
   const subject = {
@@ -1157,7 +989,6 @@ function publishDevelopmentOutputs(
     baseBranch: request.baseBranch,
     headBranch: commit.branch,
     headCommit: commit.sha,
-    validation: { passed: true, commands: validation },
     summary: result.summary.slice(0, 4_000),
   };
 
@@ -1200,142 +1031,52 @@ export function buildChangeRequestIdempotencyKey(
   return `change-request:${createHash("sha256").update(material).digest("hex")}`;
 }
 
-async function runValidationPlan(input: {
-  readonly order: readonly ValidationCheck[];
-  readonly commands: ProjectCommandsCapability["commands"];
-  readonly shell: ModuleShell;
-  readonly cwd: string;
-  readonly signal: AbortSignal;
-  readonly timeoutMs: number;
-  readonly outputLimitBytes: number;
-  readonly nextCheckpointSequence: () => number;
-  readonly recordCheckpoint: ModuleHandlerContext["recordCheckpoint"];
-}): Promise<DevelopmentRunResult["validation"]> {
-  const passed: Array<DevelopmentRunResult["validation"][number]> = [];
-  for (const check of input.order) {
-    const command = input.commands[check];
-    if (typeof command !== "string" || command.trim() === "") {
-      throw new DevelopmentExecutionError(
-        "project.config-invalid",
-        `Project command "${check}" is required by the Validation Plan but is not declared.`,
-      );
+async function installationCommand(cwd: string): Promise<string | undefined> {
+  for (const [lockfile, command] of [
+    ["pnpm-lock.yaml", "pnpm install --frozen-lockfile"],
+    ["yarn.lock", "yarn install --frozen-lockfile"],
+    ["bun.lock", "bun install --frozen-lockfile"],
+    ["bun.lockb", "bun install --frozen-lockfile"],
+    ["package-lock.json", "npm ci"],
+    ["npm-shrinkwrap.json", "npm ci"],
+  ] as const) {
+    try {
+      await access(resolve(cwd, lockfile));
+      return command;
+    } catch {
+      // Try the next lockfile.
     }
-    input.recordCheckpoint({
-      type: "validation.started",
-      sequence: input.nextCheckpointSequence(),
-      timestamp: new Date().toISOString(),
-      check,
-    });
-    const startedAt = Date.now();
-    const result = await input.shell.run({
-      command,
-      cwd: input.cwd,
-      signal: input.signal,
-      timeoutMs: input.timeoutMs,
-      outputLimitBytes: input.outputLimitBytes,
-    });
-    if (input.signal.aborted) {
-      throw new DevelopmentExecutionError("agent.run-cancelled", "The validation was cancelled.");
-    }
-    if (!result.ok) {
-      const output = validationOutput(result, input.outputLimitBytes);
-      input.recordCheckpoint({
-        type: "validation.failed",
-        sequence: input.nextCheckpointSequence(),
-        timestamp: new Date().toISOString(),
-        check,
-        output,
-      });
-      const environmentCode = validationEnvironmentFailure(result);
-      if (environmentCode !== undefined) {
-        throw new DevelopmentExecutionError(
-          environmentCode,
-          VALIDATION_ENVIRONMENT_FAILURES[environmentCode],
-        );
-      }
-      throw new DevelopmentExecutionError(
-        "git.validation-failed",
-        `Project command "${check}" failed (${result.code}).`,
-        false,
-        {
-          validationCheck: check,
-          validationOutput: output,
-        },
-      );
-    }
-    const durationMs = Math.max(0, Date.now() - startedAt);
-    passed.push({ name: check, status: "passed", durationMs });
-    input.recordCheckpoint({
-      type: "validation.completed",
-      sequence: input.nextCheckpointSequence(),
-      timestamp: new Date().toISOString(),
-      check,
-      durationMs,
-      planComplete: passed.length === input.order.length,
-    });
   }
-  return passed;
-}
-
-function validationEnvironmentFailure(
-  result: Extract<ModuleShellCommandResult, { ok: false }>,
-): keyof typeof VALIDATION_ENVIRONMENT_FAILURES | undefined {
-  if (result.code === "process.timed-out") return "project.validation-timed-out";
-  if (result.code !== "process.non-zero-exit") return "project.validation-runner-failed";
-  const output = `${result.stdout}\n${result.stderr}`;
-  if (
-    result.exitCode === 127 ||
-    /\b(?:command not found|ERR_PNPM_COMMAND_NOT_FOUND)\b|\bCommand ["'][^"'\r\n]+["'] not found\b/i.test(
-      output,
-    )
-  )
-    return "project.validation-tool-missing";
-  // ponytail: recognize explicit OS denial diagnostics; other test failures keep the bounded repair cycle.
-  if (
-    result.exitCode === 126 ||
-    /\b(?:listen|bind|spawn|open|mkdir|exec)\s+(?:EPERM|EACCES)\b|\b(?:EPERM|EACCES):\s*(?:operation not permitted|permission denied)/i.test(
-      output,
-    )
-  )
-    return "project.validation-access-denied";
   return undefined;
 }
 
-function readValidationOrder(value: unknown): readonly ValidationCheck[] {
-  if (
-    !Array.isArray(value) ||
-    value.length === 0 ||
-    value.some((item) => typeof item !== "string" || !isValidationCheck(item))
-  ) {
+async function resolvePushRemote(
+  cwd: string,
+  signal: AbortSignal,
+  failureCode: "git.push-failed" | "git.recovery-required" = "git.push-failed",
+): Promise<string> {
+  const result = await new GitRunner({
+    cwd,
+    timeoutMs: DEFAULT_TIMEOUT_MS,
+    outputLimitBytes: DEFAULT_OUTPUT_LIMIT_BYTES,
+  }).run(["remote"], { signal });
+  const remotes = result.ok ? result.stdout.split(/\r?\n/).filter(Boolean) : [];
+  const remote = remotes.includes("origin")
+    ? "origin"
+    : remotes.length === 1
+      ? remotes[0]
+      : undefined;
+  if (remote === undefined || remote.startsWith("-") || /\s/.test(remote)) {
     throw new DevelopmentExecutionError(
-      "project.config-invalid",
-      "Development validationOrder must contain only declared validation checks.",
+      failureCode,
+      "Development requires an origin remote or exactly one Git remote.",
     );
   }
-  return value as readonly ValidationCheck[];
-}
-
-function readMaxRepairCycles(value: unknown): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 5) {
-    throw new DevelopmentExecutionError(
-      "project.config-invalid",
-      "Development maxRepairCycles must be an integer between 0 and 5.",
-    );
-  }
-  return value;
-}
-
-function readPreparation(value: unknown): "install" | "none" {
-  if (value === "install" || value === "none") return value;
-  throw new DevelopmentExecutionError(
-    "project.preparation-unconfigured",
-    "Worktree preparation is not configured. Confirm the install command or explicitly confirm that no preparation is necessary.",
-  );
+  return remote;
 }
 
 async function runWorktreePreparation(input: {
-  readonly preparation: "install" | "none";
-  readonly commands: ProjectCommandsCapability["commands"];
+  readonly command: string | undefined;
   readonly shell: ModuleShell;
   readonly cwd: string;
   readonly signal: AbortSignal;
@@ -1345,7 +1086,7 @@ async function runWorktreePreparation(input: {
   readonly recordCheckpoint: ModuleHandlerContext["recordCheckpoint"];
   readonly hasCheckpoint: ModuleHandlerContext["hasCheckpoint"];
 }): Promise<void> {
-  if (input.preparation === "none") return;
+  if (input.command === undefined) return;
   if (input.hasCheckpoint?.("preparation.completed") === true) return;
   if (input.hasCheckpoint?.("preparation.started") === true) {
     throw new DevelopmentExecutionError(
@@ -1354,13 +1095,7 @@ async function runWorktreePreparation(input: {
       true,
     );
   }
-  const command = input.commands.install;
-  if (typeof command !== "string" || command.trim() === "") {
-    throw new DevelopmentExecutionError(
-      "project.preparation-unconfigured",
-      "Worktree preparation requires the configured install command.",
-    );
-  }
+  const command = input.command;
   input.recordCheckpoint({
     type: "preparation.started",
     sequence: input.nextCheckpointSequence(),
@@ -1393,7 +1128,7 @@ async function runWorktreePreparation(input: {
       type: "preparation.failed",
       sequence: input.nextCheckpointSequence(),
       timestamp: new Date().toISOString(),
-      output: validationOutput(result, input.outputLimitBytes),
+      output: commandOutput(result, input.outputLimitBytes),
     });
     throw new DevelopmentExecutionError(
       "project.preparation-failed",
@@ -1440,11 +1175,7 @@ async function preflightRuntime(
   }
 }
 
-function isValidationCheck(value: string): value is ValidationCheck {
-  return (VALIDATION_CHECKS as readonly string[]).includes(value);
-}
-
-function validationOutput(
+function commandOutput(
   result: Extract<ModuleShellCommandResult, { readonly ok: false }>,
   limitBytes: number,
 ): string {
@@ -1454,17 +1185,6 @@ function validationOutput(
   const marker = "\n[output truncated]\n";
   const contentLimit = Math.max(0, limitBytes - Buffer.byteLength(marker));
   return `${bytes.subarray(0, contentLimit).toString("utf8")}${marker}`;
-}
-
-function sanitizeRepairOutput(value: string, workspacePath: string, limitBytes: number): string {
-  let safe = value.replaceAll(workspacePath, "<workspace>");
-  for (const secret of processSecretValues()) safe = safe.replaceAll(secret, "<redacted>");
-  safe = safe.replace(
-    /(?:\/Users|\/home|\/private\/var|\/var\/folders|\/tmp)\/[^\s"'`<>]+/g,
-    "<path>",
-  );
-  const bytes = Buffer.from(safe, "utf8");
-  return bytes.byteLength <= limitBytes ? safe : bytes.subarray(0, limitBytes).toString("utf8");
 }
 
 async function createCommit(input: {
@@ -1565,24 +1285,17 @@ async function pushBranch(input: {
   readonly timeoutMs: number;
   readonly outputLimitBytes: number;
 }): Promise<void> {
-  const remote = input.pushRemote.trim();
-  if (remote === "" || remote.startsWith("-") || /\s/.test(remote)) {
-    throw new DevelopmentExecutionError(
-      "project.config-invalid",
-      "The Project push remote is invalid.",
-    );
-  }
   const git = new GitRunner({
     cwd: input.workspacePath,
     timeoutMs: input.timeoutMs,
     outputLimitBytes: input.outputLimitBytes,
   });
   const options = { signal: input.signal };
-  const pushed = await git.run(["push", "--set-upstream", remote, input.branch], options);
+  const pushed = await git.run(["push", "--set-upstream", input.pushRemote, input.branch], options);
   if (!pushed.ok) throwPushFailure(pushed, "push the working branch");
 
   const remoteHead = await git.run(
-    ["ls-remote", "--heads", remote, `refs/heads/${input.branch}`],
+    ["ls-remote", "--heads", input.pushRemote, `refs/heads/${input.branch}`],
     options,
   );
   if (!remoteHead.ok) throwPushFailure(remoteHead, "verify the pushed branch");
@@ -1737,23 +1450,18 @@ function readReadyLabel(configuration: Readonly<Record<string, unknown>>): strin
       : undefined;
 }
 
-function readDevelopmentScope(value: unknown): DevelopmentScope | undefined {
-  if (value === undefined) return { kind: "all" };
-  if (!isRecord(value)) return undefined;
-  if (value["kind"] === "all") return { kind: "all" };
-  return value["kind"] === "issue" &&
-    typeof value["workItemRef"] === "string" &&
-    value["workItemRef"].trim() !== ""
-    ? { kind: "issue", workItemRef: value["workItemRef"] }
-    : undefined;
-}
-
 function implementationIdentity(
   projectId: string,
   repositoryId: string,
   workItemRef: string,
 ): string {
   return `development:${createHash("sha256").update([projectId, repositoryId, workItemRef].join("\0")).digest("hex")}`;
+}
+
+function testExecutionLimit(name: string, fallback: number, minimum: number): number {
+  if (typeof __JARVIS_TEST_HOOKS__ === "undefined" || !__JARVIS_TEST_HOOKS__) return fallback;
+  const value = Number(process.env[name]);
+  return Number.isSafeInteger(value) && value >= minimum ? value : fallback;
 }
 
 function branchValue(value: string): string {
@@ -1835,16 +1543,6 @@ function boundedWorkItemContent(value: string): string {
   const marker = "\n[Work Item content truncated by Jarvis]";
   const contentLimit = MAX_WORK_ITEM_CONTENT_BYTES - Buffer.byteLength(marker, "utf8");
   return `${bytes.subarray(0, contentLimit).toString("utf8")}${marker}`;
-}
-
-function stringArray(value: unknown): readonly string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string") ? value : [];
-}
-
-function boundedPositiveConfigNumber(value: unknown, fallback: number, maximum: number): number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
-    ? Math.min(value, maximum)
-    : fallback;
 }
 
 async function repositoryInstructions(workspacePath: string): Promise<string> {

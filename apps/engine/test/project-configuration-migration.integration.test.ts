@@ -213,14 +213,17 @@ describe("project composition migrations", () => {
     expect(JSON.parse(before.portable_config)).not.toHaveProperty("slots");
   });
 
-  it("preserves an existing composition byte-for-byte when normalization is reapplied", async () => {
+  it("keeps the locally normalized draft stable when the old normalization is reapplied", async () => {
     const fixture = fixtureAt0003WithLegacyDraft();
-    const before = completeExistingComposition(fixture.databasePath);
+    completeExistingComposition(fixture.databasePath);
     const engine = await startEngine({ dataRoot: fixture.dataRoot });
     engines.push(engine);
     await engine.dispose();
 
     const db = new Database(fixture.databasePath);
+    const before = db
+      .prepare("SELECT portable_config FROM projects WHERE id = ?")
+      .get("imported-project") as { portable_config: string };
     db.exec(
       readFileSync(
         join(REPO_ROOT, "apps/engine/src/db/migrations/0004_normalize_project_drafts.sql"),
@@ -231,7 +234,12 @@ describe("project composition migrations", () => {
       .prepare("SELECT portable_config FROM projects WHERE id = ?")
       .get("imported-project") as { portable_config: string };
     db.close();
-    expect(after.portable_config).toBe(before);
+    expect(after.portable_config).toBe(before.portable_config);
+    expect(JSON.parse(after.portable_config)).toMatchObject({
+      compositionMode: "fixed-modules",
+      slots: {},
+      modules: [],
+    });
   });
 
   it("keeps the first valid snapshot across a failed migration retry", async () => {

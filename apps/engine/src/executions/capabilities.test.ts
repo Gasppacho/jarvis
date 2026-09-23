@@ -29,14 +29,16 @@ const moduleComposition = {
   },
 };
 
-type SnapshotConfiguration = Pick<ResolvedProjectSnapshot["composition"], "commands" | "git">;
-
-function snapshot(
-  runtimeRef?: string,
-  composition: SnapshotConfiguration = {} as SnapshotConfiguration,
-): ResolvedProjectSnapshot {
+function snapshot(runtimeRef?: string): ResolvedProjectSnapshot {
   return {
-    composition: composition as ResolvedProjectSnapshot["composition"],
+    composition: {
+      apiVersion: "jarvis.dev/project/v1",
+      kind: "Project",
+      metadata: { id: "project", name: "Project" },
+      repositories: [{ id: "main", root: "." }],
+      slots: {},
+      modules: [],
+    },
     moduleInstances: [
       {
         instanceId: "development",
@@ -54,57 +56,20 @@ function snapshot(
 }
 
 describe("ProjectModuleCapabilityResolver", () => {
-  it("resolves project commands and Git policy from the addressed Project snapshot only", () => {
-    const snapshots = new Map([
-      [
-        "project-a",
-        snapshot("runtime/fake-test", {
-          commands: { test: "pnpm test" },
-          git: {
-            branchPattern: "agent/{workItemId}",
-            commitStrategy: "conventional",
-            pushRemote: "origin",
-            allowForcePush: false,
-          },
-        }),
-      ],
-      [
-        "project-b",
-        snapshot("runtime/fake-test", {
-          commands: { test: "npm test" },
-          git: {
-            branchPattern: "work/{slug}",
-            commitStrategy: "ticket-prefix",
-            pushRemote: "upstream",
-            allowForcePush: false,
-          },
-        }),
-      ],
-    ]);
+  it("resolves the engine shell without exposing project execution policy", () => {
+    const snapshots = new Map([["project-a", snapshot("runtime/fake-test")]]);
     const resolver = new ProjectModuleCapabilityResolver(
       { getResolvedProject: (projectId) => snapshots.get(projectId) },
       moduleComposition,
       new LocalAgentRuntimeRegistry(),
     );
 
-    expect(resolver.resolve("project-a", "development", "project-commands-module")).toMatchObject({
-      projectCommands: {
-        commands: { test: "pnpm test" },
-        git: {
-          branchPattern: "agent/{workItemId}",
-          commitStrategy: "conventional",
-          pushRemote: "origin",
-          allowForcePush: false,
-        },
-      },
-    });
-    expect(
-      resolver.resolve("project-b", "development", "project-commands-module").projectCommands
-        ?.commands,
-    ).toEqual({ test: "npm test" });
+    const capabilities = resolver.resolve("project-a", "development", "project-commands-module");
+    expect(capabilities.shell).toBeDefined();
+    expect(capabilities).not.toHaveProperty("projectCommands");
   });
 
-  it("leaves project commands unavailable before Project activation", () => {
+  it("leaves the shell unavailable before Project activation", () => {
     const resolver = new ProjectModuleCapabilityResolver(
       { getResolvedProject: () => undefined },
       moduleComposition,
@@ -112,7 +77,7 @@ describe("ProjectModuleCapabilityResolver", () => {
     );
 
     expect(
-      resolver.resolve("project-a", "development", "project-commands-module").projectCommands,
+      resolver.resolve("project-a", "development", "project-commands-module").shell,
     ).toBeUndefined();
   });
 

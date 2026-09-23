@@ -37,7 +37,7 @@ describe("Project repository resolution", () => {
     },
   );
 
-  it("resolves each portable ID through its selected remote, regardless of module order", () => {
+  it("resolves the Project repository through origin", () => {
     const root = repositoryFixture(
       [
         '[remote "origin"]',
@@ -47,20 +47,13 @@ describe("Project repository resolution", () => {
       ].join("\n"),
     );
     const result = new ProjectRepositoryResolver().validate(
-      configuration(
-        [
-          { id: "main", remote: "origin" },
-          { id: "secondary", remote: "upstream" },
-        ],
-        ["secondary", "main"],
-      ),
+      configuration([{ id: "main", remote: "origin" }], ["main"]),
       root,
     );
 
     expect(result.findings).toEqual([]);
     expect(result.repositoryIdentities).toEqual([
       { repositoryId: "main", provider: "github", owner: "Gasppacho", name: "jarvis" },
-      { repositoryId: "secondary", provider: "github", owner: "Other", name: "repo" },
     ]);
   });
 
@@ -80,7 +73,7 @@ describe("Project repository resolution", () => {
     expect(result.findings).toMatchObject([
       {
         severity: "error",
-        message: expect.stringContaining("exactly one URL"),
+        message: expect.stringContaining("unambiguous GitHub remote identity"),
       },
     ]);
     expect(result.repositoryIdentities).toEqual([]);
@@ -94,14 +87,6 @@ describe("Project repository resolution", () => {
       remote: "git@github.com:Gasppacho/jarvis.git",
       action: "Use a repository ID declared by the Project",
       identityCount: 1,
-    },
-    {
-      name: "absent remote",
-      repositories: [{ id: "main", remote: "missing" }],
-      references: ["main"],
-      remote: "git@github.com:Gasppacho/jarvis.git",
-      action: "Configure the declared remote",
-      identityCount: 0,
     },
     {
       name: "unsupported provider",
@@ -128,7 +113,7 @@ describe("Project repository resolution", () => {
     },
   );
 
-  it("keeps a unique historical slug readable and rejects an ambiguous one", () => {
+  it("rejects historical repository slugs instead of preserving compatibility", () => {
     const uniqueRoot = repositoryFixture(
       '[remote "origin"]\n\turl = git@github.com:Gasppacho/jarvis.git\n',
     );
@@ -138,40 +123,7 @@ describe("Project repository resolution", () => {
       uniqueRoot,
     );
     expect(unique.findings).toMatchObject([
-      {
-        severity: "warning",
-        message: expect.stringContaining('portable repository ID "main"'),
-        repositoryReferenceReplacement: {
-          field: "/configuration/repositories",
-          from: "Gasppacho/jarvis.git",
-          to: "main",
-        },
-      },
-    ]);
-
-    const ambiguousRoot = repositoryFixture(
-      [
-        '[remote "origin"]',
-        "\turl = git@github.com:Gasppacho/jarvis.git",
-        '[remote "upstream"]',
-        "\turl = https://github.com/Gasppacho/jarvis.git",
-      ].join("\n"),
-    );
-    const ambiguous = resolver.validate(
-      configuration(
-        [
-          { id: "main", remote: "origin" },
-          { id: "secondary", remote: "upstream" },
-        ],
-        ["Gasppacho/jarvis"],
-      ),
-      ambiguousRoot,
-    );
-    expect(ambiguous.findings).toMatchObject([
-      {
-        severity: "error",
-        message: expect.stringContaining("unique declared portable repository ID"),
-      },
+      { severity: "error", message: expect.stringContaining("repository ID declared") },
     ]);
   });
 
@@ -240,24 +192,8 @@ function configuration(
     apiVersion: "jarvis.dev/project/v1",
     kind: "Project",
     metadata: { id: "repository-resolution", name: "Repository Resolution" },
-    repositories: repositories.map((repository) => ({
-      ...repository,
-      root: "." as const,
-      defaultBranch: "main",
-    })),
+    repositories: repositories.map((repository) => ({ id: repository.id, root: "." as const })),
     slots: {},
-    commands: {},
-    git: {
-      branchPattern: "agent/{slug}",
-      commitStrategy: "conventional",
-      pushRemote: "origin",
-      allowForcePush: false,
-    },
-    workspace: {
-      strategy: "git-worktree",
-      maxConcurrentExecutions: 1,
-      retainOnFailureDays: 1,
-    },
     modules: [
       {
         instanceId: "github",

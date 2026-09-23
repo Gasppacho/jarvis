@@ -42,22 +42,29 @@ describe("project composition graph", () => {
     const fixed = fixedProjectConfiguration("composition-graph");
     const portableConfig = {
       ...fixed,
-      repositories: fixed.repositories.map((repository) => ({ ...repository, remote: "origin" })),
+      repositories: fixed.repositories,
     };
     const imported = await engine.call("/v1/projects", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ repositoryPath, portableConfig }),
+      body: JSON.stringify({ repositoryPath }),
     });
     expect(imported.status).toBe(201);
-    const project = (await imported.json()) as {
+    const draft = (await imported.json()) as {
       id: string;
       portableConfig: Record<string, unknown>;
     };
+    const saved = await engine.call(`/v1/projects/${draft.id}/configuration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ portableConfig, writeToRepository: false }),
+    });
+    expect(saved.status, await saved.clone().text()).toBe(200);
+    const project = { ...draft, portableConfig };
     return { engine, project, repositoryPath };
   }
 
-  const graph = (engine: Harness, projectId: string, portableConfig?: Record<string, unknown>) =>
+  const graph = (engine: Harness, projectId: string, portableConfig?: unknown) =>
     engine.call(`/v1/projects/${projectId}/composition-graph`, {
       method: "POST",
       ...(portableConfig === undefined
@@ -72,8 +79,8 @@ describe("project composition graph", () => {
   async function assertDeterministicAndUnmutated(
     engine: Harness,
     projectId: string,
-    portableConfig: Record<string, unknown> | undefined,
-    first: Record<string, unknown>,
+    portableConfig: unknown,
+    first: unknown,
   ) {
     expect(validateGraph(first), explain(validateGraph)).toBe(true);
     const beforeProject = await (await engine.call(`/v1/projects/${projectId}`)).json();
@@ -222,20 +229,24 @@ describe("project composition graph", () => {
 
   it("projects fixed GitHub to Development facts, both requests, and orphan outputs", async () => {
     const { engine, project } = await setupCanonicalProject();
-    const fixed = structuredClone(project.portableConfig);
-    fixed["compositionMode"] = "fixed-modules";
-    fixed["slots"] = {
-      agentRuntime: { requires: "agent.execute" },
-      sourceControl: { requires: "scm.change-request.manage" },
+    const fixed = {
+      ...project.portableConfig,
+      compositionMode: "fixed-modules" as const,
+      slots: {
+        agentRuntime: { requires: "agent.execute" },
+        sourceControl: { requires: "scm.change-request.manage" },
+      },
+      modules: project.portableConfig.modules
+        .filter((module) => module.moduleId !== "jarvis.module.automation-rules")
+        .map((module) => {
+          const copy = structuredClone(module);
+          if (copy.instanceId === "github")
+            return { ...copy, bindings: { sourceControl: "sourceControl" } };
+          if (copy.instanceId === "development")
+            return { ...copy, bindings: { repository: "main" } };
+          return copy;
+        }),
     };
-    fixed["modules"] = (fixed["modules"] as Array<Record<string, unknown>>)
-      .filter((module) => module["moduleId"] !== "jarvis.module.automation-rules")
-      .map((module) => {
-        const copy = structuredClone(module);
-        if (copy["instanceId"] === "github") copy["bindings"] = { sourceControl: "sourceControl" };
-        if (copy["instanceId"] === "development") copy["bindings"] = { repository: "main" };
-        return copy;
-      });
 
     const response = await graph(engine, project.id, fixed);
     expect(response.status, await response.clone().text()).toBe(200);
@@ -291,10 +302,12 @@ describe("project composition graph", () => {
 
   it("projects an orphaned request and a disabled node for a proposed configuration", async () => {
     const { engine, project } = await setupCanonicalProject();
-    const proposed = structuredClone(project.portableConfig);
-    const modules = proposed["modules"] as Array<Record<string, unknown>>;
-    const github = modules.find((module) => module["instanceId"] === "github")!;
-    github["enabled"] = false;
+    const proposed = {
+      ...project.portableConfig,
+      modules: project.portableConfig.modules.map((module) =>
+        module.instanceId === "github" ? { ...module, enabled: false } : module,
+      ),
+    };
 
     const response = await graph(engine, project.id, proposed);
     expect(response.status, await response.clone().text()).toBe(200);
@@ -343,20 +356,18 @@ describe("project composition graph", () => {
     }
     expect(body.findings.map((finding) => finding.code)).toContain("project.request-orphaned");
 
-    await assertDeterministicAndUnmutated(
-      engine,
-      project.id,
-      proposed,
-      body as unknown as Record<string, unknown>,
-    );
+    await assertDeterministicAndUnmutated(engine, project.id, proposed, body);
   });
 
   it("names an ambiguous request's candidate consumers for a proposed configuration", async () => {
     const { engine, project } = await setupCanonicalProject();
-    const proposed = structuredClone(project.portableConfig);
-    const modules = proposed["modules"] as Array<Record<string, unknown>>;
-    const github = modules.find((module) => module["moduleId"] === "jarvis.module.github")!;
-    modules.push({ ...structuredClone(github), instanceId: "github-secondary" });
+    const github = project.portableConfig.modules.find(
+      (module) => module.moduleId === "jarvis.module.github",
+    )!;
+    const proposed = {
+      ...project.portableConfig,
+      modules: [...project.portableConfig.modules, { ...github, instanceId: "github-secondary" }],
+    };
 
     const response = await graph(engine, project.id, proposed);
     expect(response.status, await response.clone().text()).toBe(200);
@@ -397,12 +408,7 @@ describe("project composition graph", () => {
     ).toEqual(["github", "github-secondary"]);
     expect(body.findings.map((finding) => finding.code)).toContain("project.request-ambiguous");
 
-    await assertDeterministicAndUnmutated(
-      engine,
-      project.id,
-      proposed,
-      body as unknown as Record<string, unknown>,
-    );
+    await assertDeterministicAndUnmutated(engine, project.id, proposed, body);
   });
 
   it("projects a fully bound fixed composition: resolved routing, bound rail, no findings", async () => {
@@ -500,11 +506,6 @@ describe("project composition graph", () => {
     ).toBe(true);
     expect(body.findings).toEqual([]);
 
-    await assertDeterministicAndUnmutated(
-      engine,
-      project.id,
-      undefined,
-      body as unknown as Record<string, unknown>,
-    );
+    await assertDeterministicAndUnmutated(engine, project.id, undefined, body);
   });
 });

@@ -20,7 +20,7 @@ verified observation against the project label, scope, repository binding and
 durable admission identity, then emits one targeted Implementation Request.
 
 ### Implementation
-The local attempt that transforms a Work Item into a validated pushed branch.
+The local attempt that transforms a Work Item into a pushed branch.
 
 _Avoid_: Pull Request; that resource is created later by an SCM provider.
 
@@ -32,19 +32,16 @@ start Development once capacity and current Work Item eligibility permit it.
 A durable pause of new Development starts for one project. Running work and
 its Change Request creation continue; this is distinct from Cancellation.
 
-### Validation Plan
-The ordered project commands that determine whether the change is acceptable.
-
 ### Worktree Preparation
-The confirmed `install` command, or explicit `none`, run once after workspace
-allocation and before the first agent start. Its durable checkpoints prevent a
-recovered execution from running install twice.
-
-### Repair Cycle
-A bounded additional Agent Run using validation failure context.
+The package-manager install selected from the repository lockfile, or no command
+when no supported lockfile is present. It runs once after workspace allocation
+and before the first agent start. Durable checkpoints prevent a recovered
+execution from running it twice.
 
 ### Pushed Change
-A branch and commit successfully present on the configured remote.
+A branch and commit successfully present on the GitHub remote discovered from
+the worktree. `origin` is preferred; otherwise exactly one GitHub remote is
+required.
 
 ### Implementation Result
 The terminal domain outcome: completed, failed or cancelled.

@@ -8,8 +8,6 @@ import type {
   PollCursorCapability,
   WorkItemReadinessCapability,
   ModuleWorkspace,
-  ProjectCommandName,
-  ProjectCommandsCapability,
   WorkItemsCapability,
 } from "../../../../packages/module-sdk/src/index.js";
 import type {
@@ -29,10 +27,7 @@ import {
 import { runProjectCommand } from "./project-command.js";
 import type { ResolvedProjectSnapshot } from "../projects/store.js";
 import type { ConnectionDescriptor } from "../connections/registry.js";
-import type {
-  WorkspaceManager,
-  WorkspaceProjectConfiguration,
-} from "../../../../packages/workspace/src/workspace-manager.js";
+import type { WorkspaceManager } from "../../../../packages/workspace/src/workspace-manager.js";
 
 export interface ProjectSnapshotReader {
   getResolvedProject(projectId: string): ResolvedProjectSnapshot | undefined;
@@ -83,13 +78,6 @@ export class ProjectWorkspaceCapabilityResolver implements ProjectWorkspaceResol
   public resolve(projectId: string): ModuleWorkspace | undefined {
     const snapshot = this.snapshots.getResolvedProject(projectId);
     if (snapshot === undefined) return undefined;
-    const project: WorkspaceProjectConfiguration = {
-      git: { branchPattern: snapshot.composition.git.branchPattern },
-      workspace: {
-        maxConcurrentExecutions: snapshot.composition.workspace.maxConcurrentExecutions,
-        retainOnFailureDays: snapshot.composition.workspace.retainOnFailureDays,
-      },
-    };
     const repositoryPath = snapshot.bindings.repository.path;
     return {
       recover: (input) => this.manager.recover({ ...input, projectId, repositoryPath }),
@@ -98,7 +86,13 @@ export class ProjectWorkspaceCapabilityResolver implements ProjectWorkspaceResol
           ...input,
           projectId,
           repositoryPath,
-          project,
+          project: {
+            git: { branchPattern: input.policy.branchPattern },
+            workspace: {
+              maxConcurrentExecutions: input.policy.maxConcurrentExecutions,
+              retainOnFailureDays: input.policy.retainOnFailureDays,
+            },
+          },
         }),
       release: async (input) => {
         await this.manager.release({
@@ -106,7 +100,13 @@ export class ProjectWorkspaceCapabilityResolver implements ProjectWorkspaceResol
           projectId,
           executionId: input.executionId,
           repositoryPath,
-          project,
+          project: {
+            git: { branchPattern: "unused-on-release" },
+            workspace: {
+              maxConcurrentExecutions: 1,
+              retainOnFailureDays: input.policy.retainOnFailureDays,
+            },
+          },
         });
       },
     };
@@ -137,9 +137,7 @@ export class ProjectModuleCapabilityResolver {
     const requirements = this.modules.composition(moduleId)?.requires ?? [];
     const agentRequirement = requirements.find((candidate) => candidate.id === "agent.execute");
     const workspaceRequired = requirements.some((candidate) => candidate.id === "repository.write");
-    const projectCommandsRequired = requirements.some(
-      (candidate) => candidate.id === "shell.execute",
-    );
+    const shellRequired = requirements.some((candidate) => candidate.id === "shell.execute");
     const githubRequirement = requirements.find((candidate) => candidate.id === "github.api");
     const workItemsRequirement = requirements.find(
       (candidate) => candidate.id === "work-items.read",
@@ -147,7 +145,7 @@ export class ProjectModuleCapabilityResolver {
     if (
       agentRequirement === undefined &&
       !workspaceRequired &&
-      !projectCommandsRequired &&
+      !shellRequired &&
       githubRequirement === undefined &&
       workItemsRequirement === undefined &&
       this.externalMappings === undefined &&
@@ -273,13 +271,7 @@ export class ProjectModuleCapabilityResolver {
       }
       resolved = { ...resolved, workspace };
     }
-    if (projectCommandsRequired) {
-      resolved = {
-        ...resolved,
-        projectCommands: projectCommands(snapshot.composition),
-        shell: { run: runProjectCommand },
-      };
-    }
+    if (shellRequired) resolved = { ...resolved, shell: { run: runProjectCommand } };
     const workItemsApiRequirement = githubRequirement ?? workItemsRequirement;
     if (workItemsApiRequirement !== undefined) {
       const githubApi = this.resolveGitHubApi(
@@ -521,27 +513,6 @@ function linkedRepository(
       identity.owner.toLowerCase() === owner.toLowerCase() &&
       identity.name.toLowerCase() === repository.toLowerCase(),
   );
-}
-
-function projectCommands(
-  composition: ResolvedProjectSnapshot["composition"],
-): ProjectCommandsCapability {
-  const commands: Partial<Record<ProjectCommandName, string>> = {};
-  for (const name of ["install", "lint", "typecheck", "test", "build", "verify"] as const) {
-    const command = composition.commands[name];
-    if (typeof command === "string") commands[name] = command;
-  }
-  return {
-    commands,
-    git: {
-      branchPattern: composition.git.branchPattern,
-      commitStrategy: composition.git.commitStrategy,
-      pushRemote: composition.git.pushRemote,
-      ...(composition.git.allowForcePush === undefined
-        ? {}
-        : { allowForcePush: composition.git.allowForcePush }),
-    },
-  };
 }
 
 function capabilitySlot(

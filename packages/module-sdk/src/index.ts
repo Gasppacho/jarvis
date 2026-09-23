@@ -9,18 +9,6 @@ import type { AgentProjectBindings } from "../../agent-runtime/src/request-build
 
 export type ModuleConfiguration = Readonly<Record<string, unknown>>;
 
-export type ProjectCommandName = "install" | "lint" | "typecheck" | "test" | "build" | "verify";
-
-export interface ProjectCommandsCapability {
-  readonly commands: Readonly<Partial<Record<ProjectCommandName, string>>>;
-  readonly git: {
-    readonly branchPattern: string;
-    readonly commitStrategy: "conventional" | "ticket-prefix" | "freeform";
-    readonly pushRemote: string;
-    readonly allowForcePush?: false;
-  };
-}
-
 export interface ModuleShellCommandInput {
   readonly command: string;
   readonly cwd: string;
@@ -209,7 +197,6 @@ export interface ModuleHandlerCapabilities {
   readonly githubApi?: GitHubApi;
   readonly workItems?: WorkItemsCapability;
   readonly projectBindings?: AgentProjectBindings;
-  readonly projectCommands?: ProjectCommandsCapability;
   readonly shell?: ModuleShell;
   readonly workspace?: ModuleWorkspace;
 }
@@ -245,10 +232,16 @@ export interface ModuleWorkspace {
       readonly workItemId: string;
       readonly slug: string;
     };
+    readonly policy: {
+      readonly branchPattern: string;
+      readonly maxConcurrentExecutions: number;
+      readonly retainOnFailureDays: number;
+    };
   }): Promise<ModuleWorkspaceAllocation>;
   release(input: {
     readonly executionId: string;
     readonly outcome: "success" | "failure" | "cancelled";
+    readonly policy: { readonly retainOnFailureDays: number };
   }): Promise<void>;
 }
 

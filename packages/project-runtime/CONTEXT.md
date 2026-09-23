@@ -3,15 +3,18 @@
 ## Terms
 
 ### Project
-The isolated composition root for repositories, Module Instances, bindings, commands and limits.
+The isolated composition root for one repository, selected Module Instances and their local resource choices.
 
 _Avoid_: workspace, which is a temporary Git checkout; repository, which is only one project resource.
 
-### Portable Configuration
-The committed, machine-independent `.jarvis/project.yaml` definition.
+### Project Configuration
+The project-scoped local selection of Module Instances and their user-facing values.
+It is removed with the Project and is never restored from the repository.
+Execution commands, Git policy, workspace policy and runtime limits are not Project
+Configuration. Their former fields are rejected and removed during database migration.
 
 ### Local Bindings
-Machine-specific resolution of repository paths, connections, MCP and Agent Runtimes.
+Machine-specific resolution of the repository path, GitHub account and Agent CLI.
 
 ### Slot
 A stable project name for a required capability, resolved by Local Bindings.
@@ -23,7 +26,9 @@ The read-only, project-scoped intersection of a Slot capability, the capabilitie
 The immutable validated composition used while a Project is active.
 
 ### Project Validation
-The read-only evaluation determining whether a saved Project composition may be activated. Project Runtime owns this policy behind `ProjectCompositionValidationPort`; adapters supply a `SavedProjectCompositionValidationInput` loaded from persisted Portable Configuration, Local Bindings, project grants and local repository availability.
+The persisted result of checking only the external dependencies required by the
+selected Modules. Its identity contains the workflow, GitHub account and Agent CLI;
+changing the Development label does not invalidate it.
 
 ### Project Request Route
 The unique producer-to-consumer edge resolved for one versioned Request Event in a Project.

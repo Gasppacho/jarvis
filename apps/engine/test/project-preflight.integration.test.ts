@@ -1,635 +1,335 @@
-import { localApiValidator, explain } from "./contract.js";
-import type { ProjectPreflight } from "../src/projects/preflight.js";
-import { join, dirname } from "node:path";
+import { execFileSync } from "node:child_process";
+import { chmodSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
-import { RuntimeDescriptorStore } from "../src/runtimes/registry.js";
-import { chmodSync, writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { afterEach, expect, it } from "vitest";
+import { RuntimeDescriptorStore } from "../src/runtimes/registry.js";
+import type { ProjectPreflight } from "../src/projects/preflight.js";
 import {
   startReferenceWorkflowFixture,
   type ReferenceWorkflowFixture,
 } from "./reference-workflow-fixture.js";
-import type { PortableProjectConfiguration } from "../../../packages/project-runtime/src/project-types.js";
+import type {
+  PortableProjectConfiguration,
+  ProjectBindings,
+} from "../../../packages/project-runtime/src/project-types.js";
 
 const fixtures: ReferenceWorkflowFixture[] = [];
-it("validates the documented preflight example", () => {
-  const validate = localApiValidator("ProjectPreflightV1");
-  const example: unknown = JSON.parse(
-    readFileSync(
-      new URL("../../../examples/project/preflight-report.json", import.meta.url),
-      "utf8",
-    ),
-  );
-  expect(validate(example), explain(validate)).toBe(true);
-});
 afterEach(async () => {
-  await Promise.all(fixtures.splice(0).map((f) => f.dispose()));
+  await Promise.all(fixtures.splice(0).map((fixture) => fixture.dispose()));
 });
 
-async function setup(env: Readonly<Record<string, string>> = {}, fixed = true) {
-  const f = await startReferenceWorkflowFixture("preflight", env, true, fixed);
-  fixtures.push(f);
-  const path = `/v1/projects/${f.projectId}`;
-  const detail = (await (await f.engine.call(path)).json()) as {
+async function setup() {
+  const fixture = await startReferenceWorkflowFixture("simple-verification", {}, true, true);
+  fixtures.push(fixture);
+  const path = `/v1/projects/${fixture.projectId}`;
+  const detail = (await (await fixture.engine.call(path)).json()) as {
     portableConfig: PortableProjectConfiguration;
   };
-  const config = {
-    ...detail.portableConfig,
-    commands: { verify: "node --test" },
-    modules: detail.portableConfig.modules.map((m) =>
-      m.instanceId === "development"
-        ? {
-            ...m,
-            configuration: {
-              ...m.configuration,
-              preparation: "none",
-              validationOrder: ["verify"],
-              environmentAllowlist: ["PATH", "HOME"],
-            },
-          }
-        : m,
-    ),
-  };
-  expect(
-    (
-      await f.engine.call(`${path}/configuration`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ portableConfig: config, writeToRepository: false }),
-      })
-    ).status,
-  ).toBe(200);
-  const executable = join(dirname(f.runtimeCounterPath), "preflight-codex");
-  writeFileSync(
-    executable,
-    `#!${process.execPath}
-const fs = require("node:fs");
-if (process.argv.includes("--version")) { console.log("codex-cli 0.153.4"); process.exit(0); }
-if (process.argv.includes("login")) { console.log("Logged in using ChatGPT"); process.exit(0); }
-fs.appendFileSync(${JSON.stringify(f.runtimeCounterPath)}, "agent\\n");
-fs.writeFileSync("preflight-change.txt", "Tested improvement\\n");
-console.log(JSON.stringify({type: "item.completed", item: {type: "agent_message", text: "Implemented improvement"}}));
-console.log(JSON.stringify({type: "turn.completed", usage: {input_tokens: 1, output_tokens: 1}}));
-`,
-  );
+  const executable = join(dirname(fixture.runtimeCounterPath), "verified-codex");
+  writeFileSync(executable, "#!/bin/sh\nexit 0\n");
   chmodSync(executable, 0o755);
-  const db = new Database(join(f.engine.dataRoot, "jarvis.sqlite"));
-  new RuntimeDescriptorStore(db).upsert({
-    id: "runtime/codex-preflight",
+  const database = new Database(join(fixture.engine.dataRoot, "jarvis.sqlite"));
+  new RuntimeDescriptorStore(database).upsert({
+    id: "runtime/codex-verified",
     provider: "codex",
-    displayName: "Controlled Codex",
+    displayName: "Verified Codex",
     executablePath: executable,
-    version: "0.153.4",
+    version: "1.0.0",
     capabilities: ["agent.execute"],
     status: "available",
   });
-  db.close();
-  const bindings = (await (await f.engine.call(`${path}/bindings`)).json()) as {
-    slots: Record<string, unknown>;
-  };
-  bindings.slots["agentRuntime"] = {
-    kind: "runtime",
-    ref: "runtime/codex-preflight",
-    environment: { PATH: process.env["PATH"], HOME: process.env["HOME"] },
-  };
-  expect(
-    (
-      await f.engine.call(`${path}/bindings`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(bindings),
-      })
-    ).status,
-  ).toBe(200);
-  f.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis", {
+  database.close();
+  const currentBindings = await readBindings(fixture, path);
+  const bindings = { ...currentBindings, slots: { ...currentBindings.slots } };
+  bindings.slots["agentRuntime"] = { kind: "runtime", ref: "runtime/codex-verified" };
+  expect((await put(fixture, `${path}/bindings`, bindings)).status).toBe(200);
+  fixture.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis", {
     status: 200,
     body: { permissions: { pull: true, push: true } },
   });
-  f.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis/labels/ready-for-agent", {
-    status: 200,
-    body: { name: "ready-for-agent" },
-  });
-  if (fixed)
-    f.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis/labels/ready-to-dev", {
-      status: 200,
-      body: { name: "ready-to-dev" },
-    });
-  return { f, path, config };
+  return { fixture, path, config: detail.portableConfig, executable };
 }
 
-it("checks a slow backlog within the read budget and still rejects incomplete observations", async () => {
-  const { f, path } = await setup();
-  const numbers = Array.from({ length: 24 }, (_, index) => 200 + index);
-  for (const number of numbers) {
-    seed(f, number, number === 204);
-    f.fakeGitHub.scriptRoute("GET", `/repos/Gasppacho/jarvis/issues/${number}`, {
-      status: 200,
-      delayMs: 600,
-      body: {
-        number,
-        title: `Issue ${number}`,
-        state: "open",
-        labels: [{ name: "ready-to-dev" }],
-      },
-    });
-  }
-  const complete = await report(f, path);
-  expect(complete.candidateEligibility.status).toBe("available");
-  expect(complete.candidateEligibility.items).toHaveLength(24);
+it("accepts an empty workflow immediately and activates only after verification", async () => {
+  const { fixture, path, config } = await setup();
+  await save(fixture, path, { ...config, modules: [], slots: {} });
   expect(
-    complete.candidateEligibility.items.filter((item) => item.status === "eligible"),
-  ).toHaveLength(23);
-  expect(
-    complete.candidateEligibility.items.find((item) => item.workItemRef.endsWith("/204"))
-      ?.openDependencyCount,
-  ).toBe(1);
+    (await post(fixture, `${path}/preflight-activate`, { compositionFingerprint: "none" })).status,
+  ).toBe(409);
 
-  f.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis/issues/223", {
-    status: 503,
-    body: {},
+  const verified = await report(fixture, path);
+  expect(verified).toMatchObject({ valid: true, configurationReady: true, checks: [] });
+  const activated = await post(fixture, `${path}/preflight-activate`, {
+    compositionFingerprint: verified.compositionFingerprint,
   });
-  const incomplete = await report(f, path);
-  expect(incomplete.candidateEligibility.status).toBe("unavailable");
-  expect(
-    incomplete.candidateEligibility.items.find((item) => item.workItemRef.endsWith("/223"))?.status,
-  ).toBe("unavailable");
-  expect(
-    incomplete.checks.find((item) => item.id === "dependencies:Gasppacho/jarvis")?.status,
-  ).toBe("failed");
-  expect(f.fakeGitHub.pullRequests).toHaveLength(0);
-}, 30_000);
-
-it("preflights and activates GitHub observation without Development or a ready label", async () => {
-  const { f, path, config } = await setup();
-  f.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis", {
-    status: 200,
-    body: { permissions: { pull: true, push: false } },
-  });
-  await save(f, path, {
-    ...config,
-    modules: config.modules.filter((module) => module.moduleId === "jarvis.module.github"),
-  });
-  const bindings = (await (await f.engine.call(`${path}/bindings`)).json()) as {
-    slots: Record<string, unknown>;
-  };
-  expect(bindings.slots).not.toHaveProperty("agentRuntime");
-  expect(bindings.slots).toHaveProperty("sourceControl");
-  const detail = (await (await f.engine.call(path)).json()) as {
-    portableConfig: PortableProjectConfiguration;
-  };
-  expect(detail.portableConfig.slots).not.toHaveProperty("agentRuntime");
-  const ready = await report(f, path);
-  expect(ready.valid, JSON.stringify(ready.checks)).toBe(true);
-  expect(ready.runtime.required).toBe(false);
-  expect(ready.trigger).toBeUndefined();
-  expect(
-    ready.checks.some((item) => item.id === "development" || item.id.startsWith("label:")),
-  ).toBe(false);
-  expect(
-    (
-      await post(f, `${path}/preflight-activate`, {
-        compositionFingerprint: ready.compositionFingerprint,
-      })
-    ).status,
-  ).toBe(200);
-  expect(readFileSync(f.runtimeCounterPath, "utf8")).toBe("");
+  expect(activated.status, await activated.clone().text()).toBe(200);
+  expect((await activated.json()) as { status: string }).toMatchObject({ status: "active" });
 });
 
-it("keeps a project-bound Codex graph contract-valid without exposing its environment", async () => {
-  const { f, path } = await setup();
-  const response = await post(f, `${path}/composition-graph`, {});
-  const graph = await response.json();
-  const validate = localApiValidator("ProjectCompositionGraphV1");
-  expect(response.status).toBe(200);
-  expect(validate(graph), explain(validate)).toBe(true);
-  expect(JSON.stringify(graph)).not.toContain('"environment"');
-  expect(graph).toMatchObject({
-    rail: expect.arrayContaining([
-      expect.objectContaining({
-        kind: "slot",
-        slot: "agentRuntime",
-        binding: { kind: "runtime", ref: "runtime/codex-preflight" },
-      }),
-    ]),
-  });
+it("reports only Git initialization, GitHub identity and account access", async () => {
+  const { fixture, path } = await setup();
+  rmSync(join(fixture.repositoryRoot, ".git"), { recursive: true, force: true });
+  const missingGit = await report(fixture, path);
+  expect(missingGit.valid).toBe(false);
+  expect(missingGit.checks).toMatchObject([
+    { id: "git-repository", status: "failed" },
+    { id: "github-repository", status: "failed" },
+    { id: "github-account", status: "failed" },
+    { id: "agent-cli", status: "passed" },
+  ]);
+  expect(JSON.stringify(missingGit)).not.toMatch(/label:|dependencies:|issues:|tool:/);
 });
 
-it("cannot bypass a failed preflight through direct activation or either resume route", async () => {
-  const { f, path } = await setup();
-  const ready = await report(f, path);
-  expect(ready.valid).toBe(true);
-  expect(
-    (
-      await post(f, `${path}/preflight-activate`, {
-        compositionFingerprint: ready.compositionFingerprint,
-      })
-    ).status,
-  ).toBe(200);
-  expect((await post(f, `${path}/pause`, {})).status).toBe(200);
-  f.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis", { status: 403, body: {} });
-  expect((await report(f, path)).valid).toBe(false);
-  for (const route of ["activate", "resume", "development-admission/resume"]) {
-    expect(
-      (
-        await post(f, `${path}/${route}`, {
-          compositionFingerprint: ready.compositionFingerprint,
-        })
-      ).status,
-      route,
-    ).toBe(409);
-  }
-  expect(((await (await f.engine.call(path)).json()) as { status: string }).status).toBe("paused");
-  expect(readFileSync(f.runtimeCounterPath, "utf8")).toBe("");
-});
-
-it("a pause wins over an in-flight resume preflight", async () => {
-  const { f, path } = await setup();
-  const ready = await report(f, path);
-  expect(
-    (
-      await post(f, `${path}/preflight-activate`, {
-        compositionFingerprint: ready.compositionFingerprint,
-      })
-    ).status,
-  ).toBe(200);
-  await post(f, `${path}/pause`, {});
-  const repositoryReads = () =>
-    f.fakeGitHub.requests.filter((request) => request.path === "/repos/Gasppacho/jarvis").length;
-  const before = repositoryReads();
-  f.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis", {
-    status: 200,
-    delayMs: 1500,
-    body: { permissions: { pull: true, push: true } },
+it("fails when the remote is not GitHub or the selected account cannot access it", async () => {
+  const { fixture, path } = await setup();
+  execFileSync("git", ["remote", "set-url", "origin", "https://example.com/acme/repo.git"], {
+    cwd: fixture.repositoryRoot,
   });
-  const resuming = post(f, `${path}/resume`, {});
-  await expect.poll(repositoryReads).toBeGreaterThan(before);
-  expect((await post(f, `${path}/pause`, {})).status).toBe(200);
-  expect((await resuming).status).toBe(409);
-  expect(await (await f.engine.call(path)).json()).toMatchObject({ status: "paused" });
-});
-
-it("preflights fixed-modules from Development and scopes without an Automation Rule", async () => {
-  const { f, path } = await setup({}, true);
-  const ready = await report(f, path);
-  expect(ready.valid, JSON.stringify(ready.checks)).toBe(true);
-  expect(ready.rule).toBeUndefined();
-  expect(ready.trigger).toEqual({
-    moduleInstanceId: "development",
-    moduleId: "jarvis.module.development",
-    readyLabel: "ready-to-dev",
-    scope: { kind: "all" },
+  execFileSync("git", ["remote", "set-url", "github", "https://example.com/acme/repo.git"], {
+    cwd: fixture.repositoryRoot,
   });
-  expect(ready.candidateEligibility).toEqual({ status: "empty", items: [] });
-  const scoped = await post(f, `${path}/preflight-scope`, {
-    compositionFingerprint: ready.compositionFingerprint,
-    scope: "all",
-  });
-  expect(scoped.status).toBe(200);
-  const configuration = (await scoped.json()) as PortableProjectConfiguration;
-  expect(configuration.modules).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        moduleId: "jarvis.module.development",
-        configuration: expect.objectContaining({ scope: { kind: "all" } }),
-      }),
-    ]),
+  const unidentified = await report(fixture, path);
+  expect(unidentified.checks).toContainEqual(
+    expect.objectContaining({ id: "github-repository", status: "failed" }),
   );
-  expect(
-    configuration.modules.some((module) => module.moduleId === "jarvis.module.automation-rules"),
-  ).toBe(false);
-});
 
-it("rejects an ineligible fixed-modules trial before activation", async () => {
-  const { f, path } = await setup({ JARVIS_GITHUB_POLL_INTERVAL_MS: "25" }, true);
-  seed(f, 1, true, "ready-to-dev");
-  const ready = await report(f, path);
-  expect(ready.valid).toBe(true);
-  expect(ready.candidateEligibility.items[0]).toMatchObject({ status: "ineligible" });
-  const rejected = await post(f, `${path}/preflight-scope`, {
-    compositionFingerprint: ready.compositionFingerprint,
-    scope: "issue",
-    workItemRef: "github://Gasppacho/jarvis/issues/1",
+  execFileSync("git", ["remote", "set-url", "origin", "git@github.com:Gasppacho/jarvis.git"], {
+    cwd: fixture.repositoryRoot,
   });
-  expect(rejected.status).toBe(409);
-  expect(f.fakeGitHub.pullRequests).toHaveLength(0);
-  expect(readFileSync(f.runtimeCounterPath, "utf8")).toBe("");
-  expect(await (await f.engine.call(`${path}/executions`)).json()).toEqual({ items: [] });
-});
-
-it("runs fixed-modules A, preserves it across restart, then admits B after scope all", async () => {
-  const { f, path } = await setup({ JARVIS_GITHUB_POLL_INTERVAL_MS: "25" }, true);
-  seed(f, 1, false, "ready-to-dev");
-  seed(f, 2, false, "ready-to-dev");
-  const before = await report(f, path);
-  const scopedA = await post(f, `${path}/preflight-scope`, {
-    compositionFingerprint: before.compositionFingerprint,
-    scope: "issue",
-    workItemRef: "github://Gasppacho/jarvis/issues/1",
-  });
-  expect(scopedA.status).toBe(200);
-  await save(f, path, (await scopedA.json()) as PortableProjectConfiguration);
-  const trialA = await report(f, path);
-  expect(trialA.trigger?.scope).toEqual({
-    kind: "issue",
-    workItemRef: "github://Gasppacho/jarvis/issues/1",
-  });
-  expect(
-    (
-      await post(f, `${path}/preflight-activate`, {
-        compositionFingerprint: trialA.compositionFingerprint,
-      })
-    ).status,
-  ).toBe(200);
-  await expect.poll(() => f.fakeGitHub.pullRequests.length, { timeout: 20000 }).toBe(1);
-  expect(readFileSync(f.runtimeCounterPath, "utf8").trim().split("\n")).toHaveLength(1);
-
-  await f.restart();
-  await expect
-    .poll(
-      () =>
-        f.fakeGitHub.requests.filter((request) => request.path.includes("/issues?state=open"))
-          .length,
-    )
-    .toBeGreaterThan(2);
-  expect(f.fakeGitHub.pullRequests).toHaveLength(1);
-  expect(readFileSync(f.runtimeCounterPath, "utf8").trim().split("\n")).toHaveLength(1);
-
-  const current = await report(f, path);
-  expect((await post(f, `${path}/pause`, {})).status).toBe(200);
-  expect((await post(f, `${path}/resume`, {})).status).toBe(200);
-  expect(f.fakeGitHub.pullRequests).toHaveLength(1);
-  const monitoring = await post(f, `${path}/preflight-scope`, {
-    compositionFingerprint: current.compositionFingerprint,
-    scope: "all",
-  });
-  expect(monitoring.status).toBe(200);
-  await save(f, path, (await monitoring.json()) as PortableProjectConfiguration);
-  const all = await report(f, path);
-  expect(all.trigger?.scope).toEqual({ kind: "all" });
-  expect(
-    (
-      await post(f, `${path}/preflight-activate`, {
-        compositionFingerprint: all.compositionFingerprint,
-      })
-    ).status,
-  ).toBe(200);
-  await expect.poll(() => f.fakeGitHub.pullRequests.length, { timeout: 20000 }).toBe(2);
-  expect(readFileSync(f.runtimeCounterPath, "utf8").trim().split("\n")).toHaveLength(2);
-
-  await f.restart();
-  await expect
-    .poll(
-      () =>
-        f.fakeGitHub.requests.filter((request) => request.path.includes("/issues?state=open"))
-          .length,
-    )
-    .toBeGreaterThan(4);
-  expect(f.fakeGitHub.pullRequests).toHaveLength(2);
-  expect(readFileSync(f.runtimeCounterPath, "utf8").trim().split("\n")).toHaveLength(2);
-});
-
-it("preflights a ready configuration with no candidates without starting work", async () => {
-  const { f, path } = await setup();
-  const response = await f.engine.call(`${path}/preflight`, { method: "POST" });
-  expect(response.status).toBe(200);
-  const report = (await response.json()) as ProjectPreflight;
-  const validate = localApiValidator("ProjectPreflightV1");
-  expect(validate(report), explain(validate)).toBe(true);
-  expect(report, JSON.stringify(report)).toMatchObject({
-    apiVersion: "jarvis.dev/project-preflight/v1",
-    projectId: f.projectId,
-    valid: true,
-    configurationReady: true,
-    candidateEligibility: { status: "empty", items: [] },
-  });
-  expect(readFileSync(f.runtimeCounterPath, "utf8")).toBe("");
-  expect(f.fakeGitHub.requests.every((r) => r.method === "GET")).toBe(true);
-  expect(await (await f.engine.call(`${path}/events`)).json()).toEqual({ items: [] });
-  expect(await (await f.engine.call(`${path}/executions`)).json()).toEqual({ items: [] });
-  expect(report.checks).toContainEqual(
-    expect.objectContaining({ id: "tool:git", status: "passed" }),
-  );
-  expect(report.checks).toContainEqual(
-    expect.objectContaining({ id: "tool:node", status: "passed" }),
+  fixture.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis", { status: 403, body: {} });
+  const inaccessible = await report(fixture, path);
+  expect(inaccessible.checks).toContainEqual(
+    expect.objectContaining({ id: "github-account", status: "failed" }),
   );
 });
 
-it("reports missing validator tools with a repair destination without running project scripts", async () => {
-  const { f, path } = await setup({ PATH: "/jarvis-no-tools" });
-  const result = await report(f, path);
+it("fails when the selected agent CLI is no longer executable", async () => {
+  const { fixture, path, executable } = await setup();
+  chmodSync(executable, 0o644);
+  const result = await report(fixture, path);
   expect(result.valid).toBe(false);
   expect(result.checks).toContainEqual(
-    expect.objectContaining({
-      id: "tool:node",
-      status: "failed",
-      repairStep: "Connections",
-      impact: expect.stringContaining("Installez ou réparez node"),
-    }),
+    expect.objectContaining({ id: "agent-cli", status: "failed" }),
   );
-  expect(readFileSync(f.runtimeCounterPath, "utf8")).toBe("");
-  expect(JSON.stringify(result)).not.toContain("/jarvis-no-tools");
 });
 
-it("inspects selected scripts transitively without executing package-manager shims", async () => {
-  const { f, path, config } = await setup();
-  const bin = join(f.repositoryRoot, "tool-shims");
-  const marker = join(bin, "executed");
-  mkdirSync(bin);
-  for (const tool of ["pnpm", "bun"]) {
-    const executable = join(bin, tool);
-    writeFileSync(
-      executable,
-      `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(marker)}, "executed");\n`,
-    );
-    chmodSync(executable, 0o755);
-  }
-  writeFileSync(
-    join(f.repositoryRoot, "package.json"),
-    JSON.stringify({
-      scripts: {
-        verify: "pnpm run check",
-        check: "bun run check.ts && pnpm run toString",
-        benchmark: "yarn benchmark",
-      },
-    }),
+it("does not inspect the Development label, issues, commands, tests or routing", async () => {
+  const { fixture, path, config } = await setup();
+  const modules = config.modules.map((module) =>
+    module.moduleId === "jarvis.module.development"
+      ? { ...module, configuration: { ...module.configuration, readyLabel: "" } }
+      : module,
   );
-  await save(f, path, { ...config, commands: { verify: "pnpm verify", test: "yarn test" } });
-  await f.restart({ PATH: `${bin}:${process.env["PATH"] ?? ""}` });
-  const result = await report(f, path);
-  expect(result.valid, JSON.stringify(result)).toBe(true);
-  expect(result.checks).toContainEqual(
-    expect.objectContaining({ id: "tool:pnpm", status: "passed" }),
-  );
-  expect(result.checks).toContainEqual(
-    expect.objectContaining({ id: "tool:bun", status: "passed" }),
-  );
-  expect(result.checks.some((item) => item.id === "tool:yarn")).toBe(false);
-  expect(existsSync(marker)).toBe(false);
-  expect(readFileSync(f.runtimeCounterPath, "utf8")).toBe("");
+  await save(fixture, path, { ...config, modules });
+  const requestCount = fixture.fakeGitHub.requests.length;
+  const result = await report(fixture, path);
+  expect(result.valid, JSON.stringify(result.checks)).toBe(true);
+  expect(result.candidateEligibility).toEqual({ status: "empty", items: [] });
+  expect(fixture.fakeGitHub.requests.slice(requestCount).map((request) => request.path)).toEqual([
+    "/repos/Gasppacho/jarvis",
+  ]);
+  expect(readFileSync(fixture.runtimeCounterPath, "utf8")).toBe("");
 });
 
-function seed(
-  f: ReferenceWorkflowFixture,
-  number: number,
-  blocked = false,
-  label = "ready-to-dev",
-) {
-  f.fakeGitHub.seedIssue({
-    owner: "Gasppacho",
-    repository: "jarvis",
-    issue: {
-      number,
-      title: `Issue ${number}`,
-      body: "Implement a small tested improvement",
-      state: "open",
-      labels: [{ name: label }],
-      blockedBy: blocked
-        ? [{ number: 99, state: "open", title: "Dependency 99", body: "", labels: [] }]
-        : [],
-    },
+it("persists success across restart and restores it without rerunning probes", async () => {
+  const { fixture, path } = await setup();
+  const verified = await report(fixture, path);
+  const reads = fixture.fakeGitHub.requests.length;
+  await fixture.restart();
+  const restored = await fixture.engine.call(`${path}/preflight`);
+  expect(restored.status, await restored.clone().text()).toBe(200);
+  expect((await restored.json()) as ProjectPreflight).toEqual(verified);
+  expect(fixture.fakeGitHub.requests).toHaveLength(reads);
+  expect(
+    (
+      await post(fixture, `${path}/preflight-activate`, {
+        compositionFingerprint: verified.compositionFingerprint,
+      })
+    ).status,
+  ).toBe(200);
+});
+
+it("keeps verification for a label edit and never resurrects it after workflow, account or CLI round trips", async () => {
+  const { fixture, path, config } = await setup();
+  const first = await report(fixture, path);
+  const modules = config.modules.map((module) =>
+    module.moduleId === "jarvis.module.development"
+      ? { ...module, configuration: { ...module.configuration, readyLabel: "another-label" } }
+      : module,
+  );
+  await save(fixture, path, { ...config, modules });
+  expect((await fixture.engine.call(`${path}/preflight`)).status).toBe(200);
+
+  const currentBindings = await readBindings(fixture, path);
+  const bindings = { ...currentBindings, slots: { ...currentBindings.slots } };
+  delete bindings.slots["sourceControl"];
+  expect((await put(fixture, `${path}/bindings`, bindings)).status).toBe(200);
+  expect((await fixture.engine.call(`${path}/preflight`)).status).toBe(404);
+  expect(
+    (
+      await post(fixture, `${path}/preflight-activate`, {
+        compositionFingerprint: first.compositionFingerprint,
+      })
+    ).status,
+  ).toBe(409);
+
+  bindings.slots["sourceControl"] = {
+    kind: "connection",
+    ref: "connection/reference-github",
+  };
+  expect((await put(fixture, `${path}/bindings`, bindings)).status).toBe(200);
+  expect((await fixture.engine.call(`${path}/preflight`)).status).toBe(404);
+  expect(
+    (
+      await post(fixture, `${path}/preflight-activate`, {
+        compositionFingerprint: first.compositionFingerprint,
+      })
+    ).status,
+  ).toBe(409);
+
+  await report(fixture, path);
+  delete bindings.slots["agentRuntime"];
+  expect((await put(fixture, `${path}/bindings`, bindings)).status).toBe(200);
+  expect((await fixture.engine.call(`${path}/preflight`)).status).toBe(404);
+
+  bindings.slots["agentRuntime"] = { kind: "runtime", ref: "runtime/codex-verified" };
+  expect((await put(fixture, `${path}/bindings`, bindings)).status).toBe(200);
+  expect((await fixture.engine.call(`${path}/preflight`)).status).toBe(404);
+  await report(fixture, path);
+  const withoutGitHub = {
+    ...config,
+    modules: config.modules.filter((module) => module.moduleId !== "jarvis.module.github"),
+    slots: { agentRuntime: config.slots["agentRuntime"]! },
+  };
+  await save(fixture, path, withoutGitHub);
+  expect((await fixture.engine.call(`${path}/preflight`)).status).toBe(404);
+  await save(fixture, path, config);
+  expect((await fixture.engine.call(`${path}/preflight`)).status).toBe(404);
+  expect(
+    (
+      await post(fixture, `${path}/preflight-activate`, {
+        compositionFingerprint: first.compositionFingerprint,
+      })
+    ).status,
+  ).toBe(409);
+});
+
+it("keeps an active snapshot operational until the verified configuration is applied", async () => {
+  const { fixture, path, config } = await setup();
+  const initial = await report(fixture, path);
+  expect(
+    (
+      await post(fixture, `${path}/preflight-activate`, {
+        compositionFingerprint: initial.compositionFingerprint,
+      })
+    ).status,
+  ).toBe(200);
+  const before = resolvedSnapshot(fixture);
+  const updated = {
+    ...config,
+    modules: config.modules
+      .filter((module) => module.moduleId !== "jarvis.module.github")
+      .map((module) =>
+        module.moduleId === "jarvis.module.development"
+          ? { ...module, configuration: { ...module.configuration, readyLabel: "new-label" } }
+          : module,
+      ),
+    slots: { agentRuntime: config.slots["agentRuntime"]! },
+  };
+  await save(fixture, path, updated);
+
+  const saved = (await (await fixture.engine.call(path)).json()) as { status: string };
+  expect(saved.status).toBe("active");
+  expect(resolvedSnapshot(fixture)).toEqual(before);
+  const oldOverview = (await (await fixture.engine.call(`${path}/overview`)).json()) as {
+    readinessHelp: string;
+    status: string;
+  };
+  expect(oldOverview.status).not.toBe("draft");
+  expect(oldOverview.readinessHelp).toContain("ready-to-dev");
+  expect(oldOverview.readinessHelp).not.toContain("new-label");
+
+  const next = await report(fixture, path);
+  expect(
+    (
+      await post(fixture, `${path}/preflight-activate`, {
+        compositionFingerprint: next.compositionFingerprint,
+      })
+    ).status,
+  ).toBe(200);
+  expect(resolvedSnapshot(fixture)).not.toEqual(before);
+  const appliedOverview = (await (await fixture.engine.call(`${path}/overview`)).json()) as {
+    readinessHelp: string;
+  };
+  expect(appliedOverview.readinessHelp).toContain("new-label");
+
+  expect((await post(fixture, `${path}/pause`, {})).status).toBe(200);
+  const pausedSnapshot = resolvedSnapshot(fixture);
+  await save(fixture, path, {
+    ...updated,
+    modules: updated.modules.map((module) =>
+      module.moduleId === "jarvis.module.development"
+        ? { ...module, configuration: { ...module.configuration, readyLabel: "paused-label" } }
+        : module,
+    ),
   });
-}
-async function report(f: ReferenceWorkflowFixture, path: string): Promise<ProjectPreflight> {
-  const response = await f.engine.call(`${path}/preflight`, { method: "POST" });
-  expect(response.status).toBe(200);
+  const paused = (await (await fixture.engine.call(path)).json()) as { status: string };
+  expect(paused.status).toBe("paused");
+  expect(resolvedSnapshot(fixture)).toEqual(pausedSnapshot);
+  const pausedOverview = (await (await fixture.engine.call(`${path}/overview`)).json()) as {
+    readinessHelp: string;
+  };
+  expect(pausedOverview.readinessHelp).toContain("new-label");
+  expect(pausedOverview.readinessHelp).not.toContain("paused-label");
+});
+
+async function report(fixture: ReferenceWorkflowFixture, path: string): Promise<ProjectPreflight> {
+  const response = await fixture.engine.call(`${path}/preflight`, { method: "POST" });
+  expect(response.status, await response.clone().text()).toBe(200);
   return (await response.json()) as ProjectPreflight;
 }
-async function post(f: ReferenceWorkflowFixture, path: string, body: unknown) {
-  if (path.endsWith("/preflight-scope") && typeof body === "object" && body !== null) {
-    const request = body as { workItemRef?: string | null };
-    body = {
-      ...body,
-      scope: request.workItemRef == null ? "all" : "issue",
-      ...(request.workItemRef == null ? { workItemRef: undefined } : {}),
-    };
-  }
-  return f.engine.call(path, {
+
+async function readBindings(
+  fixture: ReferenceWorkflowFixture,
+  path: string,
+): Promise<ProjectBindings> {
+  return (await (await fixture.engine.call(`${path}/bindings`)).json()) as ProjectBindings;
+}
+
+async function save(
+  fixture: ReferenceWorkflowFixture,
+  path: string,
+  portableConfig: PortableProjectConfiguration,
+): Promise<void> {
+  const response = await put(fixture, `${path}/configuration`, {
+    portableConfig,
+    writeToRepository: false,
+  });
+  expect(response.status, await response.clone().text()).toBe(200);
+}
+
+function put(fixture: ReferenceWorkflowFixture, path: string, body: unknown) {
+  return fixture.engine.call(path, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function post(fixture: ReferenceWorkflowFixture, path: string, body: unknown) {
+  return fixture.engine.call(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
 }
-async function save(
-  f: ReferenceWorkflowFixture,
-  path: string,
-  config: PortableProjectConfiguration,
-) {
-  const response = await f.engine.call(`${path}/configuration`, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ portableConfig: config, writeToRepository: false }),
-  });
-  expect(response.status, await response.text()).toBe(200);
+
+function resolvedSnapshot(fixture: ReferenceWorkflowFixture): unknown {
+  const database = new Database(join(fixture.engine.dataRoot, "jarvis.sqlite"));
+  const row = database
+    .prepare("SELECT resolved_project FROM project_resolved_compositions WHERE project_id = ?")
+    .get(fixture.projectId) as { resolved_project: string };
+  database.close();
+  return JSON.parse(row.resolved_project) as unknown;
 }
-
-it("separates native eligibility, scoped GET failures, label repair and resource findings", async () => {
-  const { f, path, config } = await setup();
-  seed(f, 1);
-  seed(f, 2, true);
-  const ready = await report(f, path);
-  expect(ready.valid).toBe(true);
-  expect(ready.candidateEligibility.items).toMatchObject([
-    {
-      workItemRef: "github://Gasppacho/jarvis/issues/1",
-      status: "eligible",
-      openDependencyCount: 0,
-    },
-    {
-      workItemRef: "github://Gasppacho/jarvis/issues/2",
-      status: "ineligible",
-      openDependencyCount: 1,
-      blockerRefs: ["github://Gasppacho/jarvis/issues/99"],
-    },
-  ]);
-  const unavailable = f.fakeGitHub.scriptRoute(
-    "GET",
-    "/repos/Gasppacho/jarvis/issues/1/dependencies/blocked_by?per_page=100&page=1",
-    { status: 403, body: { message: "secret provider error" } },
-  );
-  const failed = await report(f, path);
-  expect(failed.valid).toBe(false);
-  expect(failed.checks).toContainEqual(
-    expect.objectContaining({
-      id: "dependencies:Gasppacho/jarvis",
-      status: "failed",
-      repairStep: "Connections",
-    }),
-  );
-  expect(JSON.stringify(failed)).not.toContain("secret provider error");
-  expect(
-    (
-      await post(f, `${path}/preflight-activate`, {
-        compositionFingerprint: ready.compositionFingerprint,
-      })
-    ).status,
-  ).toBe(409);
-  unavailable();
-  const absentLabel = f.fakeGitHub.scriptRoute(
-    "GET",
-    "/repos/Gasppacho/jarvis/labels/ready-to-dev",
-    { status: 404, body: {} },
-  );
-  expect((await report(f, path)).checks).toContainEqual(
-    expect.objectContaining({
-      id: "label:Gasppacho/jarvis",
-      status: "failed",
-      repairStep: "Workflow",
-    }),
-  );
-  absentLabel();
-  await save(f, path, { ...config, commands: {} });
-  const invalid = await report(f, path);
-  expect(invalid.configurationReady).toBe(false);
-  expect(invalid.checks).toContainEqual(
-    expect.objectContaining({ id: "composition", status: "failed", repairStep: "Workflow" }),
-  );
-  expect(f.fakeGitHub.requests.every((r) => r.method === "GET")).toBe(true);
-  expect(readFileSync(f.runtimeCounterPath, "utf8")).toBe("");
-});
-
-it("does not contact GitHub for an unbound project and rejects a response predating an edit", async () => {
-  const { f, path, config } = await setup();
-  const bindings = (await (await f.engine.call(`${path}/bindings`)).json()) as {
-    slots: Record<string, unknown>;
-  };
-  delete bindings.slots["sourceControl"];
-  expect(
-    (
-      await f.engine.call(`${path}/bindings`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(bindings),
-      })
-    ).status,
-  ).toBe(200);
-  const requestCount = f.fakeGitHub.requests.length;
-  const missing = await report(f, path);
-  expect(missing.valid).toBe(false);
-  expect(missing.checks).toContainEqual(
-    expect.objectContaining({ id: "account", status: "failed", repairStep: "Connections" }),
-  );
-  expect(f.fakeGitHub.requests).toHaveLength(requestCount);
-  bindings.slots["sourceControl"] = { kind: "connection", ref: "connection/reference-github" };
-  expect(
-    (
-      await f.engine.call(`${path}/bindings`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(bindings),
-      })
-    ).status,
-  ).toBe(200);
-  f.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis", {
-    status: 200,
-    body: { permissions: { pull: true, push: true } },
-    delayMs: 200,
-  });
-  const pending = f.engine.call(`${path}/preflight`, { method: "POST" });
-  await expect.poll(() => f.fakeGitHub.requests.length).toBeGreaterThan(requestCount);
-  await save(f, path, {
-    ...config,
-    metadata: { ...config.metadata, name: "Edited during preflight" },
-  });
-  expect((await pending).status).toBe(409);
-  expect(readFileSync(f.runtimeCounterPath, "utf8")).toBe("");
-});

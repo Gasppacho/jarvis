@@ -2,49 +2,40 @@
 
 ## Parcours canonique
 
-Décision du 13 septembre 2026 : **Dépôt → Workflow → Accès et agent → Vérification**
-est l'unique parcours recommandé. Il remplace les anciens assistants à cinq étapes
-et le second panneau de navigation. Les modules fixes se règlent dans leurs cartes ;
-les diagnostics restent accessibles dans **Réglages avancés**, avec un retour
-explicite au guide du même projet. Après activation, **Configurer** réutilise le même guide. Les diagnostics donnent
-accès à la composition complète, aux bindings et aux contrats techniques.
+Décision du 19 septembre 2026 : l'import d'un dépôt crée immédiatement un Project
+en brouillon. **Configurer** contient exactement trois écrans accessibles directement :
+
+1. **Workflow** sélectionne les Modules dans le Catalogue et construit leur canvas ;
+2. **Paramétrage** expose les seuls champs du compte GitHub, du label et de la CLI ;
+3. **Vérification** teste uniquement les dépendances externes des Modules sélectionnés.
+
+Il n'existe aucun réglage avancé de configuration. Après activation, **Configurer**
+réutilise les mêmes trois écrans. Une modification sauvegardée reste un brouillon
+tant que l'utilisateur ne l'a pas appliquée ; la configuration active continue de
+fonctionner jusque-là.
 Le plan et les preuves de livraison sont suivis dans
 [`PROGRESS.md`](../../PROGRESS.md) ; les captures de la maquette d'audit représentent
 des données fictives, pas des résultats exécutés.
 
 La sidebar native privilégie **Projets**, avec **Ajouter un projet**, puis la
 **Bibliothèque** (Comptes et connexions, Catalogue des modules). Le détail d'un
-projet contient un en-tête avec nom, dépôt, état et prochaine action. Les quatre
-étapes sont des boutons dans le contenu, sur une rangée quand la largeur le permet
-et dans une liste verticale sinon. Le contenu reste aligné à gauche, avec une
+projet contient un en-tête avec nom et dépôt. Le contenu reste aligné à gauche, avec une
 largeur de lecture limitée et un défilement vertical. Aucune seconde sidebar vide.
 
-Chaque étape reste accessible, même si le brouillon est incomplet. Une seule action
-principale fait avancer l'étape ; les actions de correction sont contextuelles.
-La sauvegarde reste visible en bas, avec **Modifications à enregistrer**,
-**Enregistrement…**, **Enregistré** ou **Échec — Réessayer**. Sauvegarder ne démarre
-aucun travail. Changer d'étape ou ouvrir les réglages avancés conserve le brouillon.
-Une réouverture retrouve les valeurs enregistrées et l'étape du projet.
+**Enregistrer** et **Supprimer** restent visibles dans le parcours. Enregistrer conserve
+le brouillon sans vérifier, activer ni démarrer de travail. **Créer le projet** reste
+grisé avant une vérification réussie ; après activation, **Appliquer la configuration**
+joue le même rôle. Les trois écrans restent accessibles même si le brouillon est vide.
 
 Le détail opérationnel présente trois parcours : **Configurer**, **Superviser** et
-**Suivre**. Configurer ouvre les quatre étapes du guide, y compris pour un projet
+**Suivre**. Configurer ouvre les trois écrans, y compris pour un projet
 déjà activé. Superviser affiche le workflow, le travail courant et toutes les
 **Issues suivies**, filtrables, avec leur situation et l’explication fournie par
 l’Engine. Suivre ouvre le travail sélectionné, sinon le dernier travail connu, ou
 l’historique pour en choisir un.
-Le menu **Diagnostics** conserve le schéma, les événements, les livraisons en
-échec et la composition avancée. Changer de projet efface la sélection d’exécution.
-
-Dans le workflow guidé, quatre cartes donnent accès à **Issue prête**,
-**Développement**, **Vérifications** et **Pull Request**. Elles décrivent le parcours
-recommandé et indiquent ce qui est absent, à configurer ou prévu dans le brouillon.
-GitHub seul est présenté comme une observation des issues, sans promesse de PR ;
-seul le schéma avancé représente les abonnements calculés par l’Engine.
-Le label reste éditable. Les commandes de préparation et de validation sont
-choisies automatiquement par Development ; le guide ne demande pas leur saisie
-ou leur confirmation. Les contrôles d'ajout, de retrait et d'activation des
-modules restent accessibles.
-Le suivi présente l’avancement et les vérifications à côté du contexte et du
+Le menu **Diagnostics** conserve le schéma, les événements et les livraisons en
+échec. Changer de projet efface la sélection d’exécution.
+Le suivi présente l’avancement à côté du contexte et du
 dernier message réel de l’agent ; les colonnes s’empilent dans une petite fenêtre.
 
 Les raccourcis **⌘N** (ajouter un projet) et **⌘S** (enregistrer le brouillon)
@@ -58,165 +49,96 @@ signification ne dépend uniquement de la couleur. Les couleurs système suivent
 l'apparence claire ou sombre. Les identifiants, contrats, chemins internes et
 documents JSON sont repliés dans **Détails techniques**.
 
-## Dépôt
+## Import du dépôt
 
 Le premier lancement explique le résultat : développer une issue prête, vérifier
 le travail puis proposer une Pull Request. **Ajouter un projet** ouvre le sélecteur
 de dossier macOS. L'inspection est en lecture seule : Git, remote, branche de base,
 manifestes, gestionnaire de paquets, commandes et instructions du dépôt.
 
-Le résumé propose le nom modifiable, le dépôt GitHub et la branche de base. Annuler
-ne crée aucun projet. Un dossier non Git ou inaccessible conserve son erreur et
-propose de choisir un autre dossier. Un dépôt déjà connu propose **Ouvrir ce projet**.
-Après confirmation, le nouveau brouillon est sélectionné immédiatement. L'accès au
-dossier reste local à ce Mac et peut être réautorisé depuis cette étape.
+Le résumé propose le nom modifiable et le dépôt détecté. Annuler ne crée aucun projet.
+Un dossier inaccessible conserve son erreur et propose d'en choisir un autre. Un dépôt
+déjà connu propose **Ouvrir ce projet**. Après confirmation, le brouillon local est
+sélectionné immédiatement. Jarvis ne lit ni n'écrit `.jarvis/project.yaml` ; réimporter
+un dépôt supprimé commence avec un workflow vide.
+
+Lors de l'adoption de ce modèle, les Projects existants conservent leur accès au dépôt
+mais reviennent à un brouillon vide. Leur ancienne composition n'est ni migrée ni restaurée.
+Un Project avec une exécution ou une livraison non terminale reste inchangé jusqu'à la
+fin de ce travail ; il peut ensuite être supprimé puis réimporté pour repartir vide.
 
 ## Workflow
 
-**Préparer le parcours recommandé GitHub → Développement → PR** ajoute les deux
-modules au brouillon. **Observer uniquement les issues** est un choix explicite.
-**Ajouter GitHub** et **Ajouter Développement** ajoutent chacun un seul module,
-sans activation ni accord de ressource. GitHub seul permet l'observation ;
-Développement seul reste un brouillon non activable. Le schéma présente les
-échanges calculés par l'Engine, y compris le retour :
+Le Catalogue contient exactement les deux Modules embarqués **GitHub** et
+**Développeur**. Chaque card sélectionne ou retire une unique instance. Un workflow
+vide, GitHub seul, Développeur seul ou les deux Modules sont tous enregistrables,
+vérifiables et activables, même lorsque la composition ne produira aucun travail.
+
+Le canvas read-only se reconstruit à chaque sélection depuis les événements déclarés
+par les Modules :
 
 ```text
 GitHub → observation des issues → Développement
 GitHub ← demande de Pull Request ← Développement
 ```
 
-Chaque carte révèle ses réglages usuels et son retrait du brouillon. Un package
-déjà présent, même désactivé, ne peut pas être ajouté deux fois. Le schéma projette
-les événements déclarés par l'Engine ; Swift ne recalcule aucun routage. Trait plein
-pour les demandes, pointillés pour les faits, flèches et liste équivalente indiquent
-les destinataires. Les sorties sans destinataire sont consultables séparément ;
-l'auto-demande interne reste technique. Les configurations historiques restent
-inertes jusqu'à leur migration ou reconstruction explicite.
+Swift ne recalcule aucun routage. Les libellés sont métier, sans identifiants de
+contrats. Un événement sans destinataire se termine par **Non connecté**, dans un
+état neutre et non bloquant. Retirer un Module efface immédiatement son paramétrage ;
+le réajouter repart de ses valeurs initiales.
 
-Une configuration historique active propose **Mettre le projet en pause** avant
-la migration et garde le guide ouvert après l’action. Si des travaux restent
-actifs, l’écran explique ce blocage et ouvre **Superviser** pour les suivre.
+## Paramétrage des Modules
 
-Le Workflow règle le comportement et le label. **Accès et agent** est le
-seul lieu où choisir le compte GitHub et le runtime ; le résumé du Workflow y
-conduit directement. Si le catalogue est indisponible ou incomplet, l'ajout est
-désactivé et un bouton **Réessayer** accompagne l'explication. La saisie d'une
-branche reste visible pendant l'édition et se valide avant l'enregistrement.
-**Enregistrer et continuer** nomme la sauvegarde implicite.
+**GitHub** propose uniquement le compte à utiliser et affiche séparément **Dépôt Git
+initialisé** et **Dépôt GitHub identifié**. Le compte vient de **Comptes et connexions** ;
+si la liste est vide, **Configurer un compte GitHub** ouvre cette bibliothèque puis
+revient au brouillon.
 
-Le parcours recommandé utilise une issue ouverte portant **ready-to-dev**, sans
-bloqueur GitHub natif ouvert. GitHub produit `scm.work-item.observed`, puis
-Development vérifie l'admission et produit `development.implementation.requested` avant de préparer le
-worktree, exécute l'agent et les validations détectées automatiquement, commit et pousse. GitHub
-crée la PR après `scm.change-request.creation-requested`. **Une issue à la fois** ;
-**relecture et merge humains**. Les projets historiques restent consultables et
-exportables jusqu'à leur migration explicite.
+**Développeur** propose uniquement le label d'issue et la CLI d'agent. Le label peut
+être vide. Toutes les CLI prises en charge sont visibles avec leur disponibilité ;
+une CLI absente reste sélectionnable afin que la vérification explique le problème.
 
-**Préparer et vérifier le projet** n'est pas une étape de saisie. Development choisit
-les commandes détectées pour préparer le worktree et vérifier le changement ; le
-guide ne lance aucune commande et ne demande aucune confirmation technique. Le
-contrôle de configuration porte sur les accès, le label et les liens du workflow.
-Un brouillon incomplet reste enregistrable. **Workflow configuré** décrit uniquement
-la composition ; ce libellé ne prouve jamais la réussite des commandes.
-
-## Accès et agent
-
-Deux cartes : **Compte GitHub** et **Agent de développement**. Un candidat peut être
-préselectionné visuellement, mais seul un choix explicite autorise ce projet à
-l'utiliser. Une ressource globale n'est jamais un accord implicite aux projets.
-
-Après le choix du compte, afficher **Utilisé par ce projet**, le résultat du contrôle
-d'accès au dépôt, sa date et **Modifier**. Plusieurs comptes restent distinguables.
-Aucun compte, connexion expirée ou accès refusé conserve une action de réparation.
-
-Pour l'agent, distinguer : choisir d'abord un workflow, Codex absent, connexion
-requise, version incompatible, outil manquant, vérification en cours, prêt et erreur
-du moteur. Un Codex valide sans workflow n'est pas une version incompatible.
-Présenter le modèle effectivement choisi ou **Modèle par défaut de Codex** lorsque
-le runner utilise son défaut. Ne pas déduire un modèle d'une configuration globale
-ignorée par le runner. Les délais et permissions détaillés restent dans les réglages
-avancés. Aucun secret ni valeur d'environnement n'entre dans la configuration portable.
-
-La vérification du runtime et des outils ne démarre pas Development et ne garantit
-pas le succès des tests. Elle utilise les accès effectivement accordés au projet.
-Une édition ou réouverture demande un contrôle courant ; un accord conservé ne
-constitue pas à lui seul une preuve de disponibilité actuelle.
+Le nom de branche, la concurrence, les commandes, les validations, les worktrees et
+la stratégie d'exécution appartiennent au Module Développeur. Ils ne sont ni des
+champs du workflow ni des réglages avancés. Un comportement différent demande un
+autre Module ou une modification de ce Module.
 
 ## Vérification
 
-**Vérifier la configuration** résume accès, déclencheur et sortie attendue. Les
-contrôles proviennent du preflight Engine ; aucun agent ni aucune commande de projet
-n'est lancé. Un échec présente
-son impact en français et **Corriger**, qui ouvre l'étape et place le focus sur
-le contrôle concerné lorsque sa destination est connue. Les contrôles
-de même cause sont regroupés ; compte GitHub et runtime restent deux corrections
-distinctes même lorsqu’ils relèvent tous deux d’**Accès et agent**. Les messages
-bruts, identifiants, fingerprint, références de contrats et routes restent dans
-les détails techniques. Les réglages de commandes restent réservés aux réglages
-avancés ; le parcours guidé ne demande aucune saisie ni confirmation technique.
+L'écran contient une ligne par dépendance du workflow sélectionné :
 
-**Configuration prête** ne signifie ni tests réussis ni issue disponible. Une liste
-vide d'issues est normale ; une erreur GitHub ou des dépendances inconnues bloque
-l'éligibilité et ne ressemble pas à une liste vide. Toute modification invalide le
-rapport ; une réponse périmée ou d'un autre projet ne devient jamais courante.
+- **GitHub** vérifie que le dépôt local est initialisé, qu'un dépôt GitHub est identifié
+  et que le compte choisi peut y accéder ;
+- **Développeur** vérifie que la CLI choisie est installée, prise en charge et exécutable.
 
-La carte **Première exécution** distingue **Tester avec cette issue** et
-**Surveiller les issues prêtes**. Le choix mono-issue ajoute le filtre exact au
-descriptor d'admission fixe et conserve les autres valeurs ; sa portée reste visible après
-vérification. Le bouton final reprend l'intention et le numéro de l'issue.
-Élargir à toutes les issues retire uniquement le filtre posé par l'essai, exige
-un nouveau rapport puis une activation explicite. Une issue déjà admise ne redémarre
-pas. Sans rapport courant, fingerprint exact et ressources requises disponibles,
-aucune activation n'est permise, y compris depuis les réglages avancés.
+Aucun Module sélectionné réussit immédiatement. La vérification ne contrôle ni le
+label, ni les issues, ni leurs dépendances, ni les commandes, ni les tests, ni la
+compatibilité des événements. Elle ne lance aucun agent. Un échec reste sur cet écran ;
+l'utilisateur navigue directement vers **Workflow** ou **Paramétrage** pour modifier
+une valeur, sans bouton **Corriger**.
+
+Une réussite est persistée pour la combinaison workflow, compte GitHub et CLI. Elle
+survit à l'enregistrement et au redémarrage. Modifier l'une de ces trois valeurs
+l'invalide et grise le bouton final. Modifier le label ne l'invalide pas.
 
 ## Inventaire des états
 
 | État observé | Présentation | Action utile |
 | --- | --- | --- |
 | Aucun projet | Résultat attendu, aucun travail lancé | Ajouter un projet |
-| Brouillon incomplet | Valeurs conservées, étapes à compléter | Enregistrer ou compléter |
-| Configuration prête | Contrôles de configuration courants, tests non encore exécutés | Choisir la portée et démarrer |
+| Brouillon | Valeurs locales conservées | Enregistrer ou configurer |
+| Configuration vérifiée | Dépendances externes accessibles | Créer le projet ou appliquer |
 | Vérification en cours | Progression nommée, activation indisponible | Attendre le résultat |
 | Exécution en cours | Issue, étape réelle, durée et dernière mise à jour | Ouvrir, mettre en pause les départs ou annuler l'exécution |
-| Échec | Cause, tentative et contrôle concernés avant les détails | Corriger ou reprendre selon le remède Engine |
+| Échec de vérification | Dépendance inaccessible et raison lisible | Modifier Workflow ou Paramétrage |
 | Déconnecté / données anciennes | Dernier résultat conservé, âge et état de connexion | Réessayer |
-| Rapport périmé | Ancien rapport explicitement marqué | Vérifier à nouveau |
+| Vérification invalidée | Workflow, compte ou CLI modifié | Vérifier à nouveau |
 | Projet en pause | Aucun nouveau départ ; l'actif reste suivi | Reprendre après vérification de portée |
 
 Le rendu se vérifie à 1100×800 et 1512×949, en clair et sombre. Les preuves
 Harness, fixtures de présentation, captures natives et session réelle restent
 identifiées séparément. Un test de libellés ou une image rendue hors interaction
 ne prouve pas le parcours utilisateur complet.
-
-## Réglages avancés de composition
-
-En mode fixe, les cartes GitHub et Développement sont le chemin d'édition métier.
-Les éditeurs génériques de modules et exigences de slots ne sont pas proposés.
-Les bindings, capabilities, compatibilités et destinations issus de l'Engine sont
-regroupés sous **Détails techniques de la composition**. Le choix d'une ressource
-écrit les Local Bindings, jamais un secret dans la Portable Configuration.
-La sauvegarde conserve ces documents canoniques, sans lignes de présentation.
-
-### Historique : Module Configuration structurée
-
-Le formulaire générique antérieur au mode fixe éditait la configuration depuis son JSON Schema :
-contrôles scalaires, enums, objets, collections et valeurs répétables. Le contrôle montre
-le `title`, la `description`, les exemples, l'état requis ou optionnel, le défaut et les
-bornes appartenant au schema. Le JSON brut reste sous `Advanced` pour la réparation et
-n'est jamais le chemin principal.
-
-Changer de Module Package conserve en mémoire les entrées valides ou invalides du package
-précédent, indique comment les réparer ou les retrouver, et restaure ces valeurs si
-l'utilisateur revient au package. Le wizard ne déduit aucune sémantique du nom d'une
-propriété et ne crée ni nom de Slot ni capability factice : le nom reste saisi, tandis que
-la capability est offerte depuis le Module Catalog ou explicitement saisie sous `Advanced`.
-La sauvegarde sérialisait uniquement la Module Configuration canonique, sans état de contrôle
-propre au shell. Ce formulaire n'est plus un parcours de configuration du mode fixe ;
-les configurations legacy sont consultables/exportables pour migration, sans exécution.
-
-Le contrôle de binding d'une Module Instance propose de même les noms déclarés par
-`ModulePackage.requires[].binding` du Module Package sélectionné (ticket 48) — jamais une
-liste inventée par le shell — avec un nom saisi explicitement sous `Advanced`.
 
 ## Overview projet
 
@@ -225,8 +147,7 @@ sélectionné. Elle affiche :
 
 - le nom du Project et son statut `Draft`, `Ready`, `Running`, `Paused` ou `Degraded` ;
 - l'action cohérente avec ce statut (`Activate`, `Pause`, `Resume` ou `Refresh`) ;
-- le parcours `GitHub → Development → Pull Request` pour `fixed-modules`; les projets legacy
-  affichent leur état de migration inerte et la prochaine étape attendue ;
+- le canvas des Modules sélectionnés et de leurs événements connectés ou non ;
 - les issues GitHub pertinentes, avec numéro, titre, statut (`Eligible`, `En attente`,
   `Déjà en cours`, `Bloquée par des dépendances`, `Non éligible` ou `Impossible de
   vérifier`) et explication lisible ;
@@ -247,14 +168,16 @@ Cette surface reste limitée pour le statut global, la dernière activité et le
 
 ## Suppression d'un projet
 
-Project Detail expose l'action destructive `Delete Project…`. Elle ouvre une confirmation native qui nomme le Project et explique que l'état Jarvis local, les Local Bindings et le Repository Grant seront retirés, tandis que tous les fichiers du repository — dont `.jarvis/project.yaml` — resteront intacts.
-
-`Cancel` ne déclenche aucune opération. Après confirmation, la sidebar et sa sélection ne sont effacées qu'une fois la suppression moteur réussie. Un échec API conserve le Project et son Repository Grant ; un échec de nettoyage du grant après suppression moteur est signalé comme résultat partiel. Un Project actif doit d'abord être pausé.
+**Supprimer** ouvre une confirmation native qui nomme le Project. Après confirmation,
+Jarvis met automatiquement le Project en pause puis supprime toute sa configuration
+locale, son historique project-scoped et son Repository Grant. Aucun fichier du dépôt
+n'est modifié. Si une exécution travaille encore, la suppression reste bloquée et
+**Superviser** permet de l'arrêter ou d'attendre sa fin.
 
 ## Graphe émergent — diagnostic avancé
 
 Cette section décrit la projection technique et l'historique des prototypes.
-Le guide fixe utilise désormais les deux modules et leurs flèches aller/retour.
+Le canvas de configuration reste la version métier minimale de cette projection.
 
 Le graphe est dérivé des manifests et instances actives. Il n'est pas un éditeur de workflow impératif. La vue runtime livrée par #18 est l'onglet **Graph** de Project Detail : après activation, il lit `GET /v1/projects/{projectId}/graph` et affiche les Module Instances et contrats effectivement actifs. L'onglet **Timeline** expose les Executions et leur action d'annulation par la même Local API.
 
@@ -323,18 +246,18 @@ Liste filtrable par projet, module, statut et corrélation. Une fiche affiche :
 Depuis une issue active de l'Overview ou une ligne d'exécution de la Timeline, l'utilisateur
 ouvre la fiche corrélée. Elle regroupe les exécutions finies et en cours autour de
 l’événement d’entrée : réception de l’issue, éligibilité, préparation du worktree,
-agent, validations, commit et push, création de la Pull Request. Les étapes suivent
+agent, commit et push, création de la Pull Request. Les étapes suivent
 les résultats et tentatives réellement enregistrés par l’Engine.
 
-Chaque étape distingue **Pas encore commencé**, **En cours**, **Réussi**, **Échoué**,
-**Réparation en cours** et **Annulé**. **Information indisponible** signifie que les
+Chaque étape distingue **Pas encore commencé**, **En cours**, **Réussi**, **Échoué** et
+**Annulé**. **Information indisponible** signifie que les
 données ne permettent réellement pas de conclure. Un checkpoint de démarrage ne
-prouve pas un succès. Pendant une réparation, le contrôle échoué reste visible ;
-une tentative réussie remplace l’alerte active et conserve l’historique. L’agent
-possède ses propres dates de fin, distinctes de celles des validations suivantes.
+prouve pas un succès. Les anciennes exécutions conservent leur historique de
+vérifications, sans que Development n'en produise de nouvelles.
 
 La fiche distingue `Live`, `Reconnecting…` et `Snapshot précédent` sans effacer le dernier
-snapshot. Elle montre les checks avec leur nom, durée et résultat, les extraits agentiques
+snapshot. Pour les anciennes exécutions, elle montre les checks avec leur nom, durée et
+résultat. Elle montre les extraits agentiques
 bornés avec leur timestamp, puis le diagnostic, l'impact et l'action possible en cas d'échec,
 de dépassement de délai ou d'annulation. Une Pull Request créée expose son numéro, titre et
 lien; le message rappelle qu'une revue manuelle est requise. Les identifiants techniques,

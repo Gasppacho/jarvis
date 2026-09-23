@@ -2,32 +2,30 @@
 
 ## Sources
 
-- Portable : `.jarvis/project.yaml`, schéma `project-config.v1.schema.json`.
-- Local : base Jarvis, forme exportable `project-bindings.v1.schema.json`.
+- Configuration logique locale : base Jarvis, schéma `project-config.v1.schema.json`.
+- Bindings machine : base Jarvis, forme exportable `project-bindings.v1.schema.json`.
 
-## Portable config
+Le nom historique `PortableProjectConfiguration` subsiste dans certains types de
+l'API locale, mais Jarvis ne lit ni n'écrit `.jarvis/project.yaml`.
 
-La configuration portable définit la composition logique. Exemple complet : `examples/project/.jarvis/project.yaml`.
+## Project Configuration
+
+La configuration locale définit la composition logique. Exemple complet : `examples/project/.jarvis/project.yaml`.
 
 ### Key sections
 
 - `metadata` : ID stable et nom.
-- `repositories` : un ou plusieurs repositories logiques aux IDs uniques, chacun avec root `.` ; branche et remote. Ils partagent le Repository Grant local unique du MVP.
+- `repositories` : exactement un repository logique, identifié par `id` et de root `.`.
 - `slots` : capabilities que la machine doit binder.
-- `commands` : commandes projet contrôlées.
-- `git` : pattern de branche, stratégie de commit et push.
-- `workspace` : worktree et concurrence.
 - `modules` : instances, package, activation, config et bindings.
 - `compositionMode` : `fixed-modules` choisit explicitement la composition par modules fixes
-  pendant la transition. Son absence conserve la lecture legacy; elle ne se déduit jamais de
-  l'absence de règles.
+  et demeure obligatoire.
 
-L'instance Development déclare aussi une décision `preparation` : `install`
-exécute l'unique `commands.install` confirmé dans le worktree, `none` confirme
-explicitement qu'aucune préparation n'est requise. Une valeur absente arrête
-l'exécution avant l'agent. Elle peut également déclarer `timeoutMs`,
-`outputLimitBytes` et `environmentAllowlist`. L'allowlist ne contient que des
-noms, jamais des valeurs ni des secrets.
+L'instance Development ne configure que `readyLabel`. Elle possède en interne
+la préparation dérivée du lockfile, la branche, le commit, le push, la concurrence,
+la rétention et les limites d'exécution. Les anciens champs techniques sont refusés
+par le schéma et retirés des configurations sauvegardées par migration ; ils ne sont
+pas lus pour compatibilité.
 
 ## Local bindings
 
@@ -55,14 +53,14 @@ slots:
       PATH: /opt/homebrew/bin:/usr/bin:/bin
 ```
 
-Le profil `environment` est local au binding runtime : il fournit uniquement
-les valeurs nommées dans l'allowlist au child et au preflight. Il peut inclure
+Le profil `environment` est local au binding runtime : ses clés explicites sont
+les seules valeurs fournies au child et au preflight. Il peut inclure
 un contexte d'authentification local tel que `CODEX_HOME`, jamais un token ni
 un chemin vers un fichier de credentials. Les noms secrets, tokens et chemins
 de fichiers d'authentification sont refusés. Le fichier est un exemple de
 forme ; l'implémentation stocke ces valeurs localement et ne les commit pas.
 
-Un import ou draft non résolu reste explicitement valide avec `slots: {}`. Un ancien import peut aussi porter `bookmarkRef: null` jusqu'à ce que le macOS Shell fournisse un Repository Grant. Un `ref` de slot n'est accepté que s'il désigne un candidat explicitement dans l'autorité du projet, du bon `kind`, et fournissant **toutes** les capabilities demandées par le Slot et par les Module Instances qui le référencent. Les descripteurs Connection et Runtime persistés alimentent les candidats globaux ; le guide lie automatiquement l'unique candidat éligible et demande un choix explicite lorsqu'il y en a plusieurs. En dehors de cette aide locale, aucun grant implicite n'est synthétisé. Les Module Instances déjà sélectionnées sont des candidats project-scoped uniquement pour les capabilities déclarées dans `provides` par leur Manifest.
+Un import ou draft non résolu reste explicitement valide avec `slots: {}`. Un ancien import peut aussi porter `bookmarkRef: null` jusqu'à ce que le macOS Shell fournisse un Repository Grant. Un `ref` de slot n'est accepté que s'il désigne un candidat explicitement dans l'autorité du projet, du bon `kind`, et fournissant **toutes** les capabilities demandées par le Slot et par les Module Instances qui le référencent. Les descripteurs Connection et Runtime persistés alimentent les candidats globaux ; le guide les affiche mais exige toujours un choix explicite. Aucun grant implicite n'est synthétisé. Les Module Instances déjà sélectionnées sont des candidats project-scoped uniquement pour les capabilities déclarées dans `provides` par leur Manifest.
 
 `GET /v1/projects/{projectId}/binding-candidates` renvoie cette intersection pour la configuration sauvegardée; `POST` la prévisualise pour un Draft proposé, sans mutation. Les lignes sont ordonnées par Slot. Chaque ligne porte un statut `bound`, `available`, `missing`, `inaccessible` ou `incompatible`, l'impact sur les Module Instances et une action de réparation. Sa liste `candidates` n'expose jamais une ressource globale non accordée à ce Project — ADR 0014 ne change rien à cette moitié de la règle.
 
@@ -70,7 +68,7 @@ ADR 0014 change l'autre moitié : une ressource déjà accordée à ce Project m
 
 ## Merge algorithm
 
-1. Valider portable config.
+1. Valider la Project Configuration locale.
 2. Charger bindings correspondant au `projectId`.
 3. Résoudre repository roots.
 4. Résoudre chaque slot.
@@ -90,10 +88,9 @@ Un `ref` de connexion peut pointer vers un record global contenant un `secretRef
 Certaines règles sont sémantiques :
 
 - ID unique de module instance ;
-- au moins un repository logique aux IDs uniques, chacun de root `.` ;
+- exactement un repository logique de root `.` ;
 - tous les bindings requis présents ;
 - requests avec un consumer unique ;
-- commandes autorisées ;
 - modules compatibles ;
 - runtime et provider disponibles.
 

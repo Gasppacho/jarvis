@@ -96,7 +96,7 @@ Sans `resolution`, `binding` référence un slot du projet. `resolution.kind: pr
 
 ## Configuration
 
-`configuration.schemaRef` pointe vers un JSON Schema du module. La configuration d'instance est stockée dans `.jarvis/project.yaml` et validée au chargement.
+`configuration.schemaRef` pointe vers un JSON Schema du module. La configuration d'instance est stockée localement par Jarvis et validée au chargement.
 
 ### Guided configuration semantics
 

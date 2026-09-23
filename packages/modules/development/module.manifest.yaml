@@ -61,7 +61,7 @@ capabilities:
       binding: repository
       resolution:
         kind: project-repository
-    # Project commands execute after the Agent Runtime in the allocated worktree.
+    # The optional install command prepares the allocated worktree before the Agent Runtime.
     - id: shell.execute
       optional: true
       resolution:

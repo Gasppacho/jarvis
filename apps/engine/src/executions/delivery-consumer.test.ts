@@ -79,16 +79,8 @@ function activate(
     apiVersion: "jarvis.dev/project/v1",
     kind: "Project",
     metadata: { id: projectId, name: projectId },
-    repositories: [{ id: "main", root: ".", defaultBranch: "main", remote: "origin" }],
+    repositories: [{ id: "main", root: "." }],
     slots: {},
-    commands: {},
-    git: {
-      branchPattern: "agent/{workItemId}-{slug}",
-      commitStrategy: "conventional",
-      pushRemote: "origin",
-      allowForcePush: false,
-    },
-    workspace: { strategy: "git-worktree", maxConcurrentExecutions: 1, retainOnFailureDays: 7 },
     modules: [],
   };
   store.createProject({
@@ -238,7 +230,7 @@ describe("DeliveryConsumer", () => {
     });
   });
 
-  it("respects independently configured capacities and suspensions", async () => {
+  it("enforces the fixed per-project capacity and suspensions", async () => {
     const state = harness();
     for (const projectId of ["project-a", "project-b"]) {
       activate(state.store, projectId, [
@@ -249,14 +241,9 @@ describe("DeliveryConsumer", () => {
     }
     state.dispatcher.dispatchPending();
     state.db.prepare("UPDATE deliveries SET module_id = 'jarvis.module.development'").run();
-    state.db
-      .prepare(
-        "UPDATE projects SET portable_config = json_set(portable_config, '$.workspace.maxConcurrentExecutions', 2) WHERE id = 'project-b'",
-      )
-      .run();
     new DevelopmentAdmissions(state.db, state.clock).suspend("project-a");
     expect(claimDueDeliveries(state.db, state.clock).map((delivery) => delivery.projectId)).toEqual(
-      ["project-b", "project-b"],
+      ["project-b"],
     );
     expect(claimDueDeliveries(state.db, state.clock)).toEqual([]);
   });
@@ -273,7 +260,7 @@ describe("DeliveryConsumer", () => {
     state.db.prepare("UPDATE deliveries SET module_id = 'jarvis.module.development'").run();
     state.db
       .prepare(
-        "UPDATE projects SET portable_config = json_set(json_set(portable_config, '$.workspace.maxConcurrentExecutions', 2), '$.modules', json(?)) WHERE id = 'github-project'",
+        "UPDATE projects SET portable_config = json_set(portable_config, '$.modules', json(?)) WHERE id = 'github-project'",
       )
       .run(
         JSON.stringify([{ instanceId: "github", moduleId: "jarvis.module.github", enabled: true }]),

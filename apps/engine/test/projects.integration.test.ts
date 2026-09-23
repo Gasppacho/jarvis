@@ -136,12 +136,36 @@ describe("repository discovery and project import", () => {
       body: JSON.stringify({ path }),
     });
 
-  const importProject = (engine: Harness, body: Record<string, unknown>) =>
+  const rawImportProject = (engine: Harness, body: Record<string, unknown>) =>
     engine.call("/v1/projects", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
+
+  // Most legacy integration scenarios need a configured project as their
+  // fixture. Import now always creates an empty Draft, so configure it through
+  // the public replacement endpoint after import instead of smuggling state
+  // through ImportProjectRequest.
+  const importProject = async (engine: Harness, body: Record<string, unknown>) => {
+    const { portableConfig, ...importBody } = body;
+    const response = await rawImportProject(engine, importBody);
+    if (response.status !== 201 || body["portableConfig"] === undefined) return response;
+    const imported = (await response.json()) as { id: string };
+    const configured = await engine.call(`/v1/projects/${imported.id}/configuration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        portableConfig,
+        writeToRepository: false,
+      }),
+    });
+    if (configured.status !== 200) return configured;
+    return new Response(await configured.text(), {
+      status: 201,
+      headers: { "content-type": "application/json" },
+    });
+  };
 
   it("imports the chosen name atomically and rejects invalid names without creating a project", async () => {
     const engine = await start();
@@ -162,8 +186,7 @@ describe("repository discovery and project import", () => {
     const detail = (await response.json()) as components["schemas"]["ProjectDetail"];
     expect(detail.name).toBe("Mon projet guidé");
     expect(detail.portableConfig.metadata.name).toBe("Mon projet guidé");
-    expect(detail.portableConfig.repositories[0]?.defaultBranch).toBe("trunk");
-    expect(detail.portableConfig.commands.install).toContain("--frozen-lockfile");
+    expect(detail.portableConfig.repositories).toEqual([{ id: "main", root: "." }]);
     expect(detail.portableConfig.modules).toEqual([]);
     expect(treeSnapshot(root)).toBe(before);
   });
@@ -212,7 +235,7 @@ describe("repository discovery and project import", () => {
     enabled: true,
     runtimeSlot: "agentRuntime",
     bindings: { repository: "main", tickets: "tickets" },
-    configuration: { validationOrder: ["test"], maxRepairCycles: 0 },
+    configuration: { readyLabel: "ready-to-dev" },
   });
 
   const embeddedTestProducerConfig = () =>
@@ -355,15 +378,19 @@ capabilities:
     expect(body["isGitRepository"]).toBe(false);
   });
 
-  it("rejects importing a plain directory with the contractual error code", async () => {
+  it("imports a plain directory as an empty local draft", async () => {
     const engine = await start();
     const root = fixture(() => makeRepositoryFixture({}));
     rmSync(join(root, ".git"), { recursive: true, force: true });
 
     const response = await importProject(engine, { repositoryPath: root });
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(201);
     expect((await response.json()) as Record<string, unknown>).toMatchObject({
-      error: { code: "repository.not-git" },
+      status: "draft",
+      portableConfig: { modules: [], slots: {} },
+      bindingStatus: {
+        main: { isGitRepository: false, isGitHubRepository: false },
+      },
     });
   });
 
@@ -403,8 +430,6 @@ capabilities:
         repositories: [{ id: "main", root: "." }],
         slots: {},
         modules: [],
-        git: expect.any(Object),
-        workspace: expect.any(Object),
       },
     });
     const validateDraft = localApiValidator("PortableProjectDraft");
@@ -430,22 +455,26 @@ capabilities:
     );
   });
 
-  it("rejects a supplied portable config that breaks the schema", async () => {
+  it("ignores supplied portable configuration and starts from an empty local draft", async () => {
     const engine = await start();
     const root = fixture(() => makeNodeRepositoryFixture());
 
-    const response = await importProject(engine, {
+    const response = await rawImportProject(engine, {
       repositoryPath: root,
-      portableConfig: { apiVersion: "jarvis.dev/project/v1", kind: "Project" },
+      portableConfig: {
+        apiVersion: "jarvis.dev/project/v1",
+        kind: "Project",
+        modules: [{ instanceId: "legacy", moduleId: "jarvis.module.legacy" }],
+        slots: { legacy: { requires: "legacy" } },
+      },
     });
-    expect(response.status).toBe(400);
-    const body = (await response.json()) as {
-      error: { code: string; message: string };
-    };
-    expect(body.error.code).toBe("project.config-invalid");
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as components["schemas"]["ProjectDetail"];
+    expect(body.portableConfig.modules).toEqual([]);
+    expect(body.portableConfig.slots).toEqual({});
   });
 
-  it("adopts an existing .jarvis/project.yaml", async () => {
+  it("starts from an empty local draft when .jarvis/project.yaml exists", async () => {
     const engine = await start();
     const committed = readFileSync(
       join(REPO_ROOT, "examples/project/.jarvis/project.yaml"),
@@ -456,28 +485,28 @@ capabilities:
     const inspection = (await (await discover(engine, root)).json()) as {
       suggested: components["schemas"]["PortableProjectConfiguration"];
     };
-    expect(inspection.suggested.metadata.name).toBe("Token Warehouse");
-    expect(inspection.suggested.repositories).toEqual(
-      (parseYaml(committed) as components["schemas"]["PortableProjectConfiguration"]).repositories,
-    );
+    expect(inspection.suggested.metadata.name).not.toBe("Token Warehouse");
+    expect(inspection.suggested.modules).toEqual([]);
 
     const detail = (await (await importProject(engine, { repositoryPath: root })).json()) as {
       id: string;
       name: string;
       moduleCount: number;
+      status: string;
+      portableConfig: { modules: unknown[]; slots: Record<string, unknown> };
     };
-    expect(detail.id).toBe("token-warehouse");
-    expect(detail.name).toBe("Token Warehouse");
-    expect(detail.moduleCount).toBe(2);
+    expect(detail.status).toBe("draft");
+    expect(detail.moduleCount).toBe(0);
+    expect(detail.portableConfig.modules).toEqual([]);
+    expect(detail.portableConfig.slots).toEqual({});
   });
 
-  it("inspects the configured remote without falling back to origin", async () => {
+  it("ignores committed Jarvis configuration and inspects Git directly", async () => {
     const engine = await start();
     const committed = readFileSync(
       join(REPO_ROOT, "examples/project/.jarvis/project.yaml"),
       "utf8",
-    ).replace("remote: origin", "remote: upstream");
-    expect(committed).toContain("remote: upstream");
+    );
     for (const urls of [
       ["https://user:fixture-password@github.com/selected/repository.git?fixture=private#fragment"],
       [],
@@ -492,23 +521,22 @@ capabilities:
       const inspection = (await (
         await discover(engine, root)
       ).json()) as components["schemas"]["RepositoryDiscovery"];
-      expect(inspection.remoteUrl).toBe(
-        urls.length === 1 ? "https://github.com/selected/repository.git" : null,
-      );
-      expect(inspection.provider).toBe(urls.length === 1 ? "github" : null);
+      expect(inspection.remoteUrl).toBe("git@github.com:QServices/token-warehouse.git");
+      expect(inspection.provider).toBe("github");
       const created = (await (
         await importProject(engine, { repositoryPath: root })
       ).json()) as components["schemas"]["ProjectDetail"];
-      writeFileSync(
-        join(root, ".jarvis/project.yaml"),
-        committed.replace("remote: upstream", "remote: origin"),
-      );
+      writeFileSync(join(root, ".jarvis/project.yaml"), committed);
       const detail = (await (
         await engine.call(`/v1/projects/${created.id}`)
       ).json()) as components["schemas"]["ProjectDetail"];
       expect(detail.bindingStatus["main"]?.remoteUrl).toBe(
-        urls.length === 1 ? "https://github.com/selected/repository.git" : null,
+        "git@github.com:QServices/token-warehouse.git",
       );
+      expect(detail.bindingStatus["main"]).toMatchObject({
+        isGitRepository: true,
+        isGitHubRepository: true,
+      });
     }
   });
 
@@ -1690,20 +1718,18 @@ capabilities:
     );
   });
 
-  it("refuses an oversized committed configuration instead of ignoring it", async () => {
+  it("ignores an oversized legacy repository configuration", async () => {
     const engine = await start();
     const root = fixture(() => makeNodeRepositoryFixture());
     mkdirSync(join(root, ".jarvis"), { recursive: true });
     writeFileSync(join(root, ".jarvis", "project.yaml"), "#".repeat(600 * 1024), "utf8");
 
     const response = await importProject(engine, { repositoryPath: root });
-    expect(response.status).toBe(400);
-    expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
-      "project.config-invalid",
-    );
+    expect(response.status).toBe(201);
+    expect(((await response.json()) as { moduleCount: number }).moduleCount).toBe(0);
   });
 
-  it("refuses an unreadable committed configuration instead of replacing it", async () => {
+  it("ignores an unreadable legacy repository configuration", async () => {
     const engine = await start();
     const root = fixture(() => makeNodeRepositoryFixture());
     const directory = join(root, ".jarvis");
@@ -1714,10 +1740,8 @@ capabilities:
 
     try {
       const response = await importProject(engine, { repositoryPath: root });
-      expect(response.status).toBe(400);
-      expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
-        "project.config-invalid",
-      );
+      expect(response.status).toBe(201);
+      expect(((await response.json()) as { moduleCount: number }).moduleCount).toBe(0);
     } finally {
       chmodSync(file, 0o600);
     }
@@ -1753,6 +1777,8 @@ capabilities:
         path: created.bindingStatus["main"]?.path,
         accessible: false,
         bookmarkRef: null,
+        isGitRepository: false,
+        isGitHubRepository: false,
         remoteUrl: null,
       });
     } finally {
@@ -1853,7 +1879,7 @@ capabilities:
       "invalid package configuration",
       (config: Record<string, unknown>) => {
         const modules = config["modules"] as Record<string, unknown>[];
-        (modules[1]!["configuration"] as Record<string, unknown>)["maxRepairCycles"] = "invalid";
+        (modules[1]!["configuration"] as Record<string, unknown>)["timeoutMs"] = "invalid";
       },
     ],
     [
@@ -1892,12 +1918,6 @@ capabilities:
       "nested Windows absolute path",
       (config: Record<string, unknown>) =>
         setNestedConfigurationValue(config, "C:\\Users\\alice\\private"),
-    ],
-    [
-      "whitespace-padded command absolute path",
-      (config: Record<string, unknown>) => {
-        (config["commands"] as Record<string, unknown>)["test"] = "  /usr/local/bin/test  ";
-      },
     ],
     [
       "file URL in metadata",
@@ -1968,7 +1988,7 @@ capabilities:
     });
   });
 
-  it("preserves valid remote URLs and relative commands during portable validation", async () => {
+  it("rejects removed remote and command configuration", async () => {
     const engine = await start();
     const root = fixture(() => makeNodeRepositoryFixture());
     const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
@@ -1979,14 +1999,14 @@ capabilities:
     ) as Record<string, unknown>;
     (portableConfig["repositories"] as Record<string, unknown>[])[0]!["remote"] =
       "https://github.com/QServices/token-warehouse.git";
-    (portableConfig["commands"] as Record<string, unknown>)["test"] = "pnpm test";
+    portableConfig["commands"] = { test: "pnpm test" };
 
     const response = await engine.call(`/v1/projects/${created.id}/configuration`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ portableConfig, writeToRepository: false }),
     });
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(400);
   });
 
   it("allows API routes as domain text but rejects them in path-bearing fields", async () => {
@@ -2324,7 +2344,7 @@ capabilities:
     expect(await (await engine.call(`/v1/projects/${created.id}/bindings`)).json()).toEqual(before);
   });
 
-  it("refuses a symlinked .jarvis write target before changing SQLite", async () => {
+  it("saves configuration locally without following a symlinked .jarvis path", async () => {
     const engine = await start();
     const root = fixture(() => makeNodeRepositoryFixture());
     const created = (await (await importProject(engine, { repositoryPath: root })).json()) as {
@@ -2342,17 +2362,14 @@ capabilities:
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ portableConfig, writeToRepository: true }),
     });
-    expect(response.status).toBe(500);
-    expect(((await response.json()) as { error: { code: string } }).error.code).toBe(
-      "project.repository-write-failed",
-    );
+    expect(response.status).toBe(200);
     expect(existsSync(join(outside, "project.yaml"))).toBe(false);
     expect(await (await engine.call(`/v1/projects/${created.id}`)).json()).toMatchObject({
-      portableConfig: created.portableConfig,
+      portableConfig,
     });
   });
 
-  it("atomically writes portable YAML only when explicitly requested and does not commit it", async () => {
+  it("never writes project configuration into the repository", async () => {
     const engine = await start();
     const root = fixture(() => makeNodeRepositoryFixture());
     execFileSync("git", ["-C", root, "init"]);
@@ -2384,15 +2401,11 @@ capabilities:
       body: JSON.stringify({ portableConfig, writeToRepository: true }),
     });
     expect(response.status).toBe(200);
-    expect(parseYaml(readFileSync(join(root, ".jarvis", "project.yaml"), "utf8"))).toEqual(
-      portableConfig,
-    );
+    expect(existsSync(join(root, ".jarvis", "project.yaml"))).toBe(false);
     expect(execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" })).toBe(
       beforeHead,
     );
-    expect(execFileSync("git", ["-C", root, "status", "--short"], { encoding: "utf8" })).toContain(
-      ".jarvis/",
-    );
+    expect(execFileSync("git", ["-C", root, "status", "--short"], { encoding: "utf8" })).toBe("");
   });
 
   it("deletes one inactive Project durably without touching either repository", async () => {
@@ -2429,7 +2442,7 @@ capabilities:
     }
   });
 
-  it("rejects active Projects and returns the stable not-found error for repeated deletion", async () => {
+  it("auto-pauses an idle active Project and blocks deletion while an execution is active", async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-project-active-delete-"));
     const root = fixture(() => makeNodeRepositoryFixture());
     try {
@@ -2445,27 +2458,46 @@ capabilities:
 
       const second = await start({ dataRoot });
       const activeDelete = await second.call(`/v1/projects/${created.id}`, { method: "DELETE" });
-      expect(activeDelete.status).toBe(409);
-      expect((await activeDelete.json()) as unknown).toMatchObject({
-        error: { code: "project.active" },
-      });
-      expect((await second.call(`/v1/projects/${created.id}`)).status).toBe(200);
+      expect(activeDelete.status).toBe(204);
+      expect((await second.call(`/v1/projects/${created.id}`)).status).toBe(404);
       await second.dispose();
-
-      const pausedDatabase = new Database(join(dataRoot, "jarvis.sqlite"));
-      pausedDatabase.prepare("UPDATE projects SET status = 'paused' WHERE id = ?").run(created.id);
-      pausedDatabase.close();
 
       const third = await start({ dataRoot });
       started.push(third);
-      expect((await third.call(`/v1/projects/${created.id}`, { method: "DELETE" })).status).toBe(
-        204,
-      );
       const repeated = await third.call(`/v1/projects/${created.id}`, { method: "DELETE" });
       expect(repeated.status).toBe(404);
       expect((await repeated.json()) as unknown).toMatchObject({
         error: { code: "project.not-found" },
       });
+
+      const busyRoot = fixture(() => makeNodeRepositoryFixture());
+      const busy = (await (await importProject(third, { repositoryPath: busyRoot })).json()) as {
+        id: string;
+      };
+      const busyDatabase = new Database(join(dataRoot, "jarvis.sqlite"));
+      busyDatabase.prepare("UPDATE projects SET status = 'active' WHERE id = ?").run(busy.id);
+      busyDatabase
+        .prepare(
+          `INSERT INTO events
+             (id, project_id, type, version, kind, envelope, occurred_at, recorded_at, correlation_id)
+           VALUES ('busy-event', ?, 'test.requested', 1, 'request', '{}', '2026-09-19', '2026-09-19', 'busy')`,
+        )
+        .run(busy.id);
+      busyDatabase
+        .prepare(
+          `INSERT INTO executions
+             (id, project_id, module_instance_id, module_id, input_event_id, status, started_at, created_at)
+           VALUES ('busy-execution', ?, 'development', 'jarvis.module.development', 'busy-event', 'running', '2026-09-19', '2026-09-19')`,
+        )
+        .run(busy.id);
+      busyDatabase.close();
+
+      const blocked = await third.call(`/v1/projects/${busy.id}`, { method: "DELETE" });
+      expect(blocked.status).toBe(409);
+      expect((await blocked.json()) as unknown).toMatchObject({
+        error: { code: "project.active" },
+      });
+      expect((await third.call(`/v1/projects/${busy.id}`)).status).toBe(200);
     } finally {
       await rm(dataRoot, { recursive: true, force: true });
     }
@@ -2506,6 +2538,8 @@ capabilities:
         path: updated.bindingStatus["main"]?.path,
         accessible: true,
         bookmarkRef: `bookmark/${created.id}/main`,
+        isGitRepository: true,
+        isGitHubRepository: true,
         remoteUrl: "git@github.com:QServices/token-warehouse.git",
       });
     } finally {
@@ -2591,12 +2625,24 @@ capabilities:
       return setupFixedProject(dataRoot, "project-activation");
     }
 
-    const activate = (engine: Harness, projectId: string, body: Record<string, unknown>) =>
-      engine.call(`/v1/projects/${projectId}/activate`, {
+    const activate = async (engine: Harness, projectId: string, body: Record<string, unknown>) => {
+      const current = await engine.call(`/v1/projects/${projectId}/preflight`);
+      let fingerprint = body["compositionFingerprint"];
+      if (current.status === 200) {
+        const validation = (await (
+          await engine.call(`/v1/projects/${projectId}/validation-report`, { method: "POST" })
+        ).json()) as { compositionFingerprint: string };
+        if (fingerprint === validation.compositionFingerprint) {
+          fingerprint = ((await current.json()) as { compositionFingerprint: string })
+            .compositionFingerprint;
+        }
+      }
+      return engine.call(`/v1/projects/${projectId}/preflight-activate`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...body, compositionFingerprint: fingerprint }),
       });
+    };
 
     function tableNames(dataRoot: string): string[] {
       const database = new Database(join(dataRoot, "jarvis.sqlite"));
@@ -2661,7 +2707,7 @@ capabilities:
       });
       expect(response.status).toBe(409);
       expect((await response.json()) as unknown).toMatchObject({
-        error: { code: "project.activation-report-stale" },
+        error: { code: "project.activation-not-validated" },
       });
     });
 
@@ -2686,7 +2732,7 @@ capabilities:
         await engine.dispose();
         const rows = resolvedCompositionRows(dataRoot, projectId);
         expect(rows).toHaveLength(1);
-        expect(rows[0]?.composition_fingerprint).toBe(report.compositionFingerprint);
+        expect(rows[0]?.composition_fingerprint).toHaveLength(64);
         const snapshot = JSON.parse(rows[0]!.resolved_project) as {
           composition: { modules: { instanceId: string }[] };
           moduleInstances: { instanceId: string }[];
@@ -2809,7 +2855,7 @@ capabilities:
 
       expect(
         (await engine.call(`/v1/projects/${projectId}/pause`, { method: "POST" })).status,
-      ).toBe(409);
+      ).toBe(200);
       const savedAfterPause = await engine.call(`/v1/projects/${projectId}/configuration`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
@@ -2899,6 +2945,9 @@ capabilities:
         await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
       ).json()) as { valid: boolean; compositionFingerprint: string; findings: unknown[] };
       expect(validReport.valid, JSON.stringify(validReport.findings)).toBe(true);
+      expect(
+        (await engine.call(`/v1/projects/${created.id}/preflight`, { method: "POST" })).status,
+      ).toBe(200);
       expect(
         (
           await activate(engine, created.id, {
@@ -3145,7 +3194,7 @@ capabilities:
         });
         expect(response.status).toBe(409);
         expect((await response.json()) as unknown).toMatchObject({
-          error: { code: "project.activation-report-stale" },
+          error: { code: "project.activation-not-validated" },
         });
 
         const detail = (await (await engine.call(`/v1/projects/${projectId}`)).json()) as {
@@ -3159,10 +3208,10 @@ capabilities:
       }
     });
 
-    it("rejects activation once Local Bindings changed after the supplied report, leaving durable state intact", async () => {
+    it("keeps verification when only the repository bookmark changes", async () => {
       const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-project-activate-stale-bindings-"));
       try {
-        const { engine, projectId, report, repositoryPath } = await setupGreenProject(dataRoot);
+        const { engine, projectId, repositoryPath } = await setupGreenProject(dataRoot);
 
         const rebind = await engine.call(`/v1/projects/${projectId}/repositories/main/binding`, {
           method: "PUT",
@@ -3174,20 +3223,20 @@ capabilities:
         });
         expect(rebind.status).toBe(200);
 
+        const currentValidation = (await (
+          await engine.call(`/v1/projects/${projectId}/validation-report`, { method: "POST" })
+        ).json()) as { compositionFingerprint: string };
         const response = await activate(engine, projectId, {
-          compositionFingerprint: report.compositionFingerprint,
+          compositionFingerprint: currentValidation.compositionFingerprint,
         });
-        expect(response.status).toBe(409);
-        expect((await response.json()) as unknown).toMatchObject({
-          error: { code: "project.activation-report-stale" },
-        });
+        expect(response.status).toBe(200);
 
         const detail = (await (await engine.call(`/v1/projects/${projectId}`)).json()) as {
           status: string;
         };
-        expect(detail.status).toBe("draft");
+        expect(detail.status).toBe("active");
         await engine.dispose();
-        expect(resolvedCompositionRows(dataRoot, projectId)).toHaveLength(0);
+        expect(resolvedCompositionRows(dataRoot, projectId)).toHaveLength(1);
       } finally {
         await rm(dataRoot, { recursive: true, force: true });
       }
@@ -3249,6 +3298,7 @@ capabilities:
           "project_bindings",
           "project_migration_state",
           "project_resolved_compositions",
+          "project_verifications",
           "projects",
           "runtime_descriptors",
           "schema_migrations",
@@ -3291,6 +3341,10 @@ capabilities:
           await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
         ).json()) as { valid: boolean; compositionFingerprint: string; findings: unknown[] };
         expect(report.valid, JSON.stringify(report.findings)).toBe(true);
+        const preflight = await engine.call(`/v1/projects/${created.id}/preflight`, {
+          method: "POST",
+        });
+        expect(preflight.status, await preflight.clone().text()).toBe(200);
         const activation = await activate(engine, created.id, {
           compositionFingerprint: report.compositionFingerprint,
         });
@@ -3401,6 +3455,9 @@ capabilities:
           await engine.call(`/v1/projects/${created.id}/validation-report`, { method: "POST" })
         ).json()) as { valid: boolean; compositionFingerprint: string; findings: unknown[] };
         expect(validReport.valid, JSON.stringify(validReport.findings)).toBe(true);
+        expect(
+          (await engine.call(`/v1/projects/${created.id}/preflight`, { method: "POST" })).status,
+        ).toBe(200);
         expect(
           (
             await activate(engine, created.id, {
@@ -3529,6 +3586,7 @@ capabilities:
             "project_bindings",
             "project_migration_state",
             "project_resolved_compositions",
+            "project_verifications",
             "projects",
             "runtime_descriptors",
             "schema_migrations",

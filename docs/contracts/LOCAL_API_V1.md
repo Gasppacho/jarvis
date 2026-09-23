@@ -54,10 +54,9 @@ toute création ; les autres valeurs découvertes ou présentes dans le dépôt 
 inchangées. Sans `name`, le comportement d’adoption existant est conservé.
 L’inspection propose le nom et les branches d’une configuration du dépôt existante,
 afin que la confirmation graphique ne remplace pas silencieusement ces valeurs.
-Après import, `bindingStatus[].remoteUrl` du détail projette le remote sélectionné
-par la configuration conservée dans l’Engine, sans identifiants ni paramètres
-d’URL. Ce champ additif optionnel vaut `null` si le remote est absent, ambigu ou
-illisible ; il ne relit pas le choix dans un YAML modifié depuis l’import.
+Après import, `bindingStatus[]` expose `isGitRepository`, `isGitHubRepository` et
+`remoteUrl` depuis l’état courant du dossier. Le remote public ne contient ni
+identifiants ni paramètres d’URL et vaut `null` s’il est absent, ambigu ou illisible.
 
 `POST /v1/projects/{projectId}/validate` est conservé pour compatibilité et sa réponse
 fermée reste exactement `{valid, issues}`. `issues` projette les `findings` avec
@@ -91,24 +90,28 @@ d'une composition inchangée laisse cet ensemble inchangé. Ouvrir une subscript
 pas délivrer un Event : cette lecture ne dispatche, ne délivre et ne démarre rien.
 
 `POST /v1/projects/{projectId}/composition-choices` prévisualise, sans mutation, les
-Events déclarés par la configuration sauvegardée ou par une `portableConfig` proposée.
+Events déclarés par la configuration sauvegardée ou par une `portableConfig` locale proposée.
 La réponse `ProjectCompositionChoicesV1` est déterministe et explique la diffusion des
 Facts ainsi que les Requests orphelines, résolues ou ambiguës. Elle expose aussi les
-starting points `github-development` et `custom`, le catalogue des Module Packages
-validés et les cartes des Module Instances de la proposition. Le template transporte
-une Portable Configuration complète; `custom` n'en transporte aucune et conserve le
-draft importé. Les cartes mènent par nom et description humains, puis donnent Events,
+starting points de compatibilité `github-development` et `custom`, le catalogue des Module Packages
+validés et les cartes des Module Instances de la proposition. Le premier transporte
+les valeurs internes permettant au shell d'initialiser un Module isolé; `custom` n'en
+transporte aucune et conserve le draft importé. Le parcours guidé ne présente ni template
+ni composition recommandée. Les cartes mènent par nom et description humains, puis donnent Events,
 capabilities requises, compatibilité et ressources manquantes; IDs, versions et
 références de schéma restent des détails techniques.
 
 Labels, descriptions et payload schemas viennent des contrats Event versionnés; les
 producteurs, consumers et routes viennent des Manifests des Module Instances activées.
-Prévisualiser ou choisir un template ne crée aucun Local Binding, grant ou graphe impératif persistant.
+Prévisualiser ces valeurs de compatibilité ne crée aucun Local Binding, grant ou graphe impératif persistant.
 
 `PUT /v1/projects/{projectId}/configuration` accepte aussi le `PortableProjectDraft`
 Engine complet mais encore vide de Slots et Module Instances. Cela permet de sauvegarder
 et rouvrir un point de départ incomplet sans affaiblir le schéma de la Portable
 Configuration prête à valider.
+Le body peut inclure un remplacement complet `bindings`; dans ce cas la configuration
+et les Local Bindings sont validés ensemble puis enregistrés dans la même transaction
+SQLite. Un échec conserve les deux versions précédentes.
 
 ### Migration guidée historique
 
@@ -122,8 +125,8 @@ condition, surcharge, cible, instance ou règle supplémentaire bloque la conver
 avec une raison lisible.
 
 `POST /v1/projects/{projectId}/migration/apply` exige le fingerprint exact de cet
-aperçu et `writeToRepository: true` pour réécrire `.jarvis/project.yaml`; avec
-`false`, seul l'état local est converti. Le Project doit être pausé et sans
+aperçu. Le champ `writeToRepository` est conservé pour compatibilité mais ignoré :
+seul l'état local est converti et aucun fichier du dépôt n'est écrit. Le Project doit être pausé et sans
 exécution ou Delivery non terminale. L'opération est transactionnelle, idempotente
 après redémarrage et renvoie la sauvegarde locale exportable (configuration et
 bindings précédents). Les faits d'admission et demandes terminées ne sont pas
@@ -132,7 +135,7 @@ rejoués.
 `POST /v1/projects/{projectId}/composition-review` assemble le même inventaire avec le
 rapport de validation et les choix de ressources dans une réponse
 `ProjectCompositionReviewV1`. `readyToValidate` est exactement le résultat Engine de
-validation de la Portable Configuration proposée (ou sauvegardée) avec les Local Bindings
+validation de la Project Configuration proposée (ou sauvegardée) avec les Local Bindings
 courants. L'opération est read-only : elle ne sauvegarde ni Draft, ni relation Event, ni
 état de Review. Le shell invalide l'état Ready dès qu'un Draft sauvegardé est modifié et ne
 le rétablit qu'après une nouvelle réponse Engine.
@@ -256,23 +259,21 @@ déclarées dans OpenAPI : `GET /v1/projects/{projectId}/dead-letters` et
 `GET /v1/projects/{projectId}/executions/{executionId}/detail` (ticket #200) renvoie
 une projection corrélée et durable d'une Execution. Le moteur retrouve l'Event d'entrée
 dans le même Project, suit son `correlationId`, puis regroupe les Executions, checkpoints,
-leases et faits de Pull Request prouvés par ces identifiants. La réponse expose toujours
-les sept étapes ordonnées `Issue reçue`, `Éligibilité confirmée`, `Préparation du projet`,
-`Développement`, `Vérifications`, `Commit et push` et `Création de la Pull Request`.
+leases et faits de Pull Request prouvés par ces identifiants. La réponse expose les six
+étapes ordonnées `Issue reçue`, `Éligibilité confirmée`, `Préparation du projet`,
+`Développement`, `Commit et push` et `Création de la Pull Request`. Les anciennes
+exécutions qui possèdent des checkpoints de validation conservent une septième étape
+`Vérifications` pour rendre leur historique fidèlement.
 Une étape indique `not-started`, `active`, `proved`, `failed`, `repairing`, `cancelled`
 ou `unavailable`. `proved` exige le résultat réussi, jamais le seul démarrage.
 `not-started` concerne une étape future ; `unavailable` une preuve manquante.
 Les valeurs nouvelles sont ajoutées au contrat v1 avec le client généré et l’Engine
 embarqués ensemble. Aucun timestamp, résultat, artefact ou diagnostic n’est fabriqué.
 
-`checks` conserve les tentatives successives, identifiées par `executionId`, `name`
-et `attempt` (cycle de validation, distinct de la tentative de livraison). Un échec
-reste présent pendant une réparation ; la réussite de la nouvelle tentative retire
-l’alerte active et conserve l’historique. `running` et `cancelled` complètent les
-résultats `passed`, `failed`, `unavailable`. Les nouveaux checkpoints durables
-`agent.repair-started` et `validation.completed` séparent réparation et validation.
-Le dernier check réussi porte `planComplete`, attestant la fin du plan entier ;
-les anciens journaux utilisent le snapshot de validation attaché à `commit.created`.
+`checks` expose uniquement les tentatives présentes dans les anciens journaux,
+identifiées par `executionId`, `name` et `attempt`. Development ne produit plus de
+checkpoint `validation.*`, ne lance plus de réparation après un contrôle et n'ajoute
+plus de snapshot de validation à `commit.created`.
 
 Les Executions et les Checks portent leur durée seulement quand une fin durable est
 enregistrée. Les extraits agentiques sont limités et nettoyés; les événements techniques
@@ -352,13 +353,15 @@ grant anything; readiness starts `unchecked` on reopening, even for a saved bind
 
 `POST /v1/projects/{projectId}/runtime-binding` accepts only
 `{ "ref": "runtime/codex-default", "approveEnvironment": true }`. It requires an
-eligible candidate and approval, resolves the workflow runtime slots
+compatible candidate and approval, resolves the workflow runtime slots
 in the Engine, and replaces only their local bindings. The detected profile
 contains only `PATH`, `HOME` and `CODEX_HOME` when present. These machine values
 stay local and pass the existing credential filter; neither the portable
 configuration nor any authentication file is written or copied. Configuration
 continues to specify the allowlist by name; existing projects with an empty
 allowlist remain unready until the user changes that configuration explicitly.
+An unavailable but compatible Codex CLI remains selectable and durable; its
+readiness stays `absent` or `access-denied` until the verification screen runs.
 
 `POST /v1/projects/{projectId}/runtime-readiness` returns `ProjectAgentRuntimeChoices`.
 It checks each required bound runtime with the same absolute descriptor and
@@ -375,38 +378,25 @@ The finite statuses are `ready`, `absent`, `access-denied`, `incompatible`,
 never decides capability or runtime policy. Readiness is ephemeral and does not
 replace the normal activation validation report or Development preflight.
 
-### Workflow preflight and scoped trial (#198)
+### Project verification
 
 `POST /v1/projects/{projectId}/preflight` returns `ProjectPreflightV1`
-(`jarvis.dev/project-preflight/v1`): the existing versioned validation report,
-its composition fingerprint, bounded runtime readiness, actionable checks with
-`Repository`, `Workflow` or `Connections` destinations, the Development label
-scope,
-and `candidateEligibility`. A fixed-modules response also carries the typed
-`trigger` descriptor (`moduleInstanceId`, Development `readyLabel`, and explicit
-`scope` of `issue` or `all`); the legacy `rule` field remains transitional.
-`valid` and `configurationReady` describe the
-configuration; `empty` candidates and open blockers alone do not invalidate it.
-Unknown GitHub/dependency reads produce failed checks. A previously admitted
-candidate is shown as ineligible for automatic admission.
+(`jarvis.dev/project-preflight/v1`). GitHub contributes only three checks: local
+Git initialization, GitHub remote identity and access by the selected account.
+Development contributes only the selected CLI's support, availability and executable
+state. An empty workflow succeeds immediately. Labels, issues, dependencies,
+commands, tests, routing, branches and worktrees are not inspected.
 
-The fixed path uses Development's durable `readyLabel` and scope. Historical
-Automation Rules configurations remain saved, readable and exportable, but
-the preflight is blocked with an explicit migration-required finding; legacy
-labels and raw rules are never silently rewritten or executed.
+The successful or failed result is persisted with a verification fingerprint derived
+only from the enabled Modules, selected GitHub account and selected agent CLI. `GET
+/v1/projects/{projectId}/preflight` returns that result while the fingerprint still
+matches. A label edit therefore preserves it; a workflow, account or CLI edit makes
+the GET return `project.activation-not-validated` until POST runs again. The result
+survives an Engine restart.
 
-GitHub calls are authenticated GETs for linked repositories, labels, issues and
-native `blocked_by`, using the existing provider assessment and pagination.
-The read window is bounded; incomplete reads fail closed. Repository role
-permissions are checked, but read-only probes cannot prove every future write
-will succeed. With no current issues the API cannot exercise an issue-specific
-`blocked_by` route: the report says so and admission still rechecks every
-candidate. No label, comment, dependency, worktree, event, agent execution or
-remote object is created by preflight. Runtime version/login probes are not
-agent executions.
-
-`POST /v1/projects/{projectId}/preflight-scope` accepts
-`{compositionFingerprint, scope: "issue", workItemRef}` and returns a Portable Configuration
+`POST /v1/projects/{projectId}/preflight-scope` is retained for wire compatibility
+with the retired scoped-trial interface. It accepts
+`{compositionFingerprint, scope: "issue", workItemRef}` and returns a Project Configuration
 proposal only. The reference must belong to the current scoped preview; `scope: "all"` (without `workItemRef`)
 removes the Development scope filter. The label, target, resources and every
 other configuration field remain unchanged. The optional legacy `rule` response
@@ -417,8 +407,7 @@ locally as a Draft; selection then reevaluates preflight, while restoration
 requires the user's explicit new preflight and activation.
 
 `POST /v1/projects/{projectId}/preflight-activate` requires the exact fingerprint
-of a successful current preflight in this Engine session, then delegates to
-the existing activation guard. A restart, invalid result, late response or
-configuration/binding edit cannot authorize activation with the old report.
+of the persisted successful verification that still matches the Project. A restart
+does not invalidate it. A changed workflow, account or CLI does.
 The older validation and activation endpoints retain wire compatibility for
 existing integrations; both native activation surfaces use preflight.

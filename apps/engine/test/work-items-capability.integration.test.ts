@@ -154,14 +154,13 @@ function snapshot(
 ): ResolvedProjectSnapshot {
   return {
     composition: {
-      commands: {},
-      git: {
-        branchPattern: "agent/{workItemId}",
-        commitStrategy: "conventional",
-        pushRemote: "origin",
-        allowForcePush: false,
-      },
-    } as ResolvedProjectSnapshot["composition"],
+      apiVersion: "jarvis.dev/project/v1",
+      kind: "Project",
+      metadata: { id: projectId, name: projectId },
+      repositories: [{ id: "main", root: "." }],
+      slots: {},
+      modules: [],
+    },
     moduleInstances: [{ instanceId: "reader", moduleId: "work-items-reader", enabled: true }],
     ...(includeRepositoryIdentity
       ? {

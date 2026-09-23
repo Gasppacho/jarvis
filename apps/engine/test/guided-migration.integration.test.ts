@@ -133,23 +133,19 @@ describe("guided historical project migration", () => {
     } as const;
     const classified = classifyGuidedMigration(configuration, bindings);
     expect(classified.reasons).toEqual([]);
-    expect(classified.plan?.destination.scope).toEqual({
-      kind: "issue",
-      workItemRef: "github://owner/repo/issues/7",
-    });
     const migrated = migratedConfiguration(configuration, classified.plan!);
     expect(
       migrated.modules.find(({ moduleId }) => moduleId === "jarvis.module.development")
         ?.configuration?.["scope"],
-    ).toEqual({ kind: "issue", workItemRef: "github://owner/repo/issues/7" });
+    ).toBeUndefined();
     const allConfiguration = structuredClone(configuration);
     const allWhen = (
       allConfiguration.modules[1]!.configuration!["rules"] as Record<string, unknown>[]
     )[0]!["when"] as Record<string, unknown>;
     allWhen["equals"] = { "payload.tag": "custom" };
-    expect(classifyGuidedMigration(allConfiguration, bindings).plan?.destination.scope).toEqual({
-      kind: "all",
-    });
+    expect(
+      classifyGuidedMigration(allConfiguration, bindings).plan?.destination,
+    ).not.toHaveProperty("scope");
   });
 
   it("previews and applies exact D06 once, preserving the local backup across restart", async () => {
@@ -186,8 +182,10 @@ describe("guided historical project migration", () => {
       expect((previewBody["plan"] as Record<string, any>)["destination"]).toMatchObject({
         compositionMode: "fixed-modules",
         readyLabel: "ready-for-agent",
-        scope: { kind: "issue", workItemRef: "github://Gasppacho/jarvis/issues/231" },
       });
+      expect((previewBody["plan"] as Record<string, any>)["destination"]).not.toHaveProperty(
+        "scope",
+      );
       expect((previewBody["plan"] as Record<string, any>)["removedModule"]).toBe(
         "jarvis.module.automation-rules",
       );
@@ -212,13 +210,6 @@ describe("guided historical project migration", () => {
         ],
       ).toHaveLength(3);
       expect(appliedBody["configuration"]).toMatchObject({ compositionMode: "fixed-modules" });
-      expect(
-        (
-          (appliedBody["configuration"] as Record<string, any>)["modules"] as Record<string, any>[]
-        ).find(({ moduleId }) => moduleId === "jarvis.module.development")!["configuration"][
-          "scope"
-        ],
-      ).toEqual({ kind: "issue", workItemRef: "github://Gasppacho/jarvis/issues/231" });
       const migratedModules = (appliedBody["configuration"] as Record<string, unknown>)[
         "modules"
       ] as { moduleId: string; configuration?: Record<string, unknown> }[];
@@ -229,6 +220,10 @@ describe("guided historical project migration", () => {
         migratedModules.find(({ moduleId }) => moduleId === "jarvis.module.development")
           ?.configuration?.["readyLabel"],
       ).toBe("ready-for-agent");
+      expect(
+        migratedModules.find(({ moduleId }) => moduleId === "jarvis.module.development")
+          ?.configuration,
+      ).not.toHaveProperty("scope");
 
       await fixture.restart();
       const retry = await fixture.engine.call(`/v1/projects/${fixture.projectId}/migration/apply`, {

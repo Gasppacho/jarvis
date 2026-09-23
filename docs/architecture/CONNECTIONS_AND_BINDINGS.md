@@ -47,11 +47,11 @@ An MCP descriptor records transport, server identity, available tools/resources 
 
 ## Runtime descriptor
 
-An Agent Runtime descriptor records executable path, provider, version, authentication state and normalized capabilities. Executable discovery is machine-local and never stored in `.jarvis/project.yaml`.
+An Agent Runtime descriptor records executable path, provider, version, authentication state and normalized capabilities. Executable discovery is machine-local and never stored in Project Configuration.
 
 ## Bindings
 
-Portable slots express requirements. Local bindings resolve them. A Module Instance can map one of its named bindings to a Project slot:
+Project slots express requirements. Local bindings resolve them. A Module Instance can map one of its named bindings to a Project slot:
 
 ```yaml
 modules:
@@ -66,8 +66,8 @@ modules:
 The resolved Module Context receives only these objects.
 
 A runtime Local Binding may additionally hold a confirmed environment profile.
-Portable module configuration names the allowed variables; only that binding
-holds machine-local values such as `PATH`. Secret-named variables, tokens and
+Its explicit keys form the complete allowlist; Project and Module Configuration
+do not duplicate it. Secret-named variables, tokens and
 authentication-file paths are not valid profile values and are never copied
 from the Engine environment.
 

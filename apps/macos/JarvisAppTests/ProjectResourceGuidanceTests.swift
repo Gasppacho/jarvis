@@ -10,24 +10,12 @@ final class ProjectResourceGuidanceTests: XCTestCase {
             "apiVersion": "jarvis.dev/project/v1",
             "kind": "Project",
             "metadata": ["id": "guided", "name": "Guided"],
-            "repositories": [[
-                "id": "main", "root": ".", "defaultBranch": "main", "remote": "origin",
-            ]],
+            "repositories": [["id": "main", "root": "."]],
             "slots": [
                 "sourceControl": ["requires": "scm.change-request.manage"],
                 "agentRuntime": ["requires": "agent.execute"],
                 "tickets": ["requires": "work-items.read"],
                 "artifacts": ["requires": "artifact.write"],
-            ],
-            "commands": [:],
-            "git": [
-                "branchPattern": "agent/{workItemId}-{slug}",
-                "commitStrategy": "conventional", "pushRemote": "origin",
-                "allowForcePush": false,
-            ],
-            "workspace": [
-                "strategy": "git-worktree", "maxConcurrentExecutions": 1,
-                "retainOnFailureDays": 1,
             ],
             "modules": [[
                 "instanceId": "development", "moduleId": "jarvis.module.development",
@@ -119,16 +107,6 @@ final class ProjectResourceGuidanceTests: XCTestCase {
             "slots": [
                 "sourceControl": ["requires": "capability.source"],
                 "agentRuntime": ["requires": "capability.runtime"],
-            ],
-            "commands": [:],
-            "git": [
-                "branchPattern": "agent/{workItemId}-{slug}",
-                "commitStrategy": "conventional", "pushRemote": "origin",
-                "allowForcePush": false,
-            ],
-            "workspace": [
-                "strategy": "git-worktree", "maxConcurrentExecutions": 1,
-                "retainOnFailureDays": 1,
             ],
             "modules": [
                 [

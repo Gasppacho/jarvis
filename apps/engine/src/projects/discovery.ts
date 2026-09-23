@@ -72,13 +72,7 @@ export function discoverRepository(
     defaultBranch: defaultBranch ?? null,
     packageManager,
     scripts: manifest?.scripts ?? {},
-    suggested: buildSuggested(
-      canonical,
-      remote?.name,
-      defaultBranch ?? null,
-      packageManager,
-      manifest,
-    ),
+    suggested: buildSuggested(canonical, manifest),
   };
 }
 
@@ -351,69 +345,17 @@ function detectPackageManager(root: string, hasManifest: boolean): string | null
 
 function buildSuggested(
   canonical: string,
-  remoteName: string | undefined,
-  defaultBranch: string | null,
-  packageManager: string | null,
   manifest: PackageManifest | undefined,
 ): SuggestedProjectConfig {
   const directoryName = basename(canonical) || "project";
   const name = manifest?.name ?? directoryName;
   const id = slugify(name) || "project";
 
-  const commands: Record<string, string> = {};
-  // A frozen install is the only one the engine can recommend before the project
-  // has ever been built on this machine; it needs a lockfile to be meaningful.
-  if (packageManager !== null) {
-    const hasLockfile = Object.keys(LOCKFILES).some((file) => {
-      try {
-        return statSync(join(canonical, file)).isFile();
-      } catch {
-        return false;
-      }
-    });
-    if (hasLockfile) {
-      commands["install"] =
-        packageManager === "npm" ? "npm ci" : `${packageManager} install --frozen-lockfile`;
-    }
-  }
-  // Standard commands are invoked by script *name* through the package manager,
-  // never by quoting the declared command line: the wizard re-displays the
-  // declared script, and the suggestion stays stable even for a complex one.
-  for (const standard of ["lint", "typecheck", "test", "build", "verify"]) {
-    if (manifest?.scripts[standard] !== undefined && packageManager !== null) {
-      commands[standard] =
-        packageManager === "npm"
-          ? `${packageManager} run ${standard}`
-          : `${packageManager} ${standard}`;
-    }
-  }
-
   return {
     apiVersion: "jarvis.dev/project/v1",
     kind: "Project",
     metadata: { id, name },
-    repositories: [
-      {
-        id: "main",
-        root: ".",
-        // `main` is a guess, but the wizard (UX step 2) shows it for confirmation;
-        // an unknown branch must not silently steer the development module.
-        defaultBranch: defaultBranch ?? "main",
-        remote: remoteName ?? "origin",
-      },
-    ],
-    commands,
-    git: {
-      branchPattern: "agent/{workItemId}-{slug}",
-      commitStrategy: "conventional",
-      pushRemote: remoteName ?? "origin",
-      allowForcePush: false,
-    },
-    workspace: {
-      strategy: "git-worktree",
-      maxConcurrentExecutions: 1,
-      retainOnFailureDays: 7,
-    },
+    repositories: [{ id: "main", root: "." }],
     slots: {},
     modules: [],
   };

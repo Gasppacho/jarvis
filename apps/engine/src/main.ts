@@ -29,9 +29,9 @@ import { acquireEngineClaim, EngineAlreadyRunningError, type EngineClaim } from 
 import { buildServer } from "./http/server.js";
 import { watchParentProcess } from "./parent-watch.js";
 import { API_VERSION } from "./version.js";
-import { AtomicProjectConfigurationWriter } from "./projects/repository-config-writer.js";
 import { LocalRepositoryAccessibility } from "./projects/repository-accessibility.js";
 import { ProjectService, RepositoryDiscoveryService } from "./projects/service.js";
+import { discoverRepository } from "./projects/discovery.js";
 import { EventJournalReader } from "./events/timeline.js";
 import { EventingDeadLetterReader } from "./events/dead-letters.js";
 import { ExecutionLedgerReader } from "./executions/ledger.js";
@@ -327,7 +327,6 @@ async function main(): Promise<void> {
       : new ProjectService(
           projectStore,
           modules,
-          new AtomicProjectConfigurationWriter(),
           resourceGrants,
           new SavedProjectCompositionValidator(modules),
           new LocalRepositoryAccessibility(),
@@ -511,10 +510,18 @@ async function main(): Promise<void> {
       // Event naming a repository this composition does not carry would emit a
       // Request pairing that repository with a different one's default branch.
       // `undefined` lets the calling handler reject instead.
-      return projectStore
-        .getResolvedProject(projectId)
-        ?.composition.repositories.find((repository) => repository.id === repositoryId)
-        ?.defaultBranch;
+      const snapshot = projectStore.getResolvedProject(projectId);
+      if (
+        snapshot === undefined ||
+        !snapshot.composition.repositories.some((repository) => repository.id === repositoryId)
+      ) {
+        return undefined;
+      }
+      try {
+        return discoverRepository(snapshot.bindings.repository.path).defaultBranch ?? undefined;
+      } catch {
+        return undefined;
+      }
     };
     const publishedContracts: ModulePublishedContractsLookup = (moduleId) =>
       modules.composition(moduleId)?.produces;

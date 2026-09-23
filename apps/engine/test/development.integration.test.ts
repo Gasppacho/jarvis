@@ -65,132 +65,6 @@ afterEach(async () => {
 });
 
 describe("Development Module tracer bullet", () => {
-  it.each([
-    ["jarvis_tool_that_does_not_exist", "project.validation-tool-missing"],
-    ["pnpm exec jarvis_tool_that_does_not_exist", "project.validation-tool-missing"],
-    [
-      "node -e \"console.error('listen EPERM: operation not permitted');process.exit(1)\"",
-      "project.validation-access-denied",
-    ],
-  ])(
-    "stops an environmental validation failure without asking for unrelated repairs: %s",
-    async (command, code) => {
-      const fixture = makeRealGitRepositoryFixture();
-      roots.push(fixture.root, fixture.remoteRoot);
-      const engine = await startEngine({
-        enginePath: testBundlePath,
-        env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
-      });
-      engines.push(engine);
-      await activateProject(
-        engine,
-        "validation-environment",
-        fixture,
-        "success",
-        30_000,
-        4096,
-        { test: command },
-        ["test"],
-        false,
-        "origin",
-        2,
-      );
-      await publishTag(engine, "validation-environment", "environment");
-      const executions = await waitForExecutions(engine, "validation-environment", 1);
-      const development = executions.find(
-        (execution) => execution.moduleInstanceId === "development",
-      )!;
-      await expect
-        .poll(
-          async () =>
-            (await readExecutionDetail(engine, "validation-environment", development.id)).failure
-              ?.code,
-        )
-        .toBe(code);
-      const detail = await readExecutionDetail(engine, "validation-environment", development.id);
-      expect(detail.checks).toHaveLength(1);
-      expect(detail.checks[0]).toMatchObject({ status: "failed", attempt: 1 });
-      expect(detail.steps.find((step) => step.id === "commit-push")?.status).toBe("not-started");
-      expect(detail.failure?.code).toBe(code);
-    },
-  );
-
-  it.each(["failed", "cancelled"])(
-    "keeps a running validation and its %s result honest in the public execution detail",
-    async (outcome) => {
-      const fixture = makeRealGitRepositoryFixture();
-      const dataRoot = mkdtempSync(join("/tmp", "jarvis-validation-detail-"));
-      roots.push(fixture.root, fixture.remoteRoot, dataRoot);
-      const projectId = "validation-detail";
-      const engine = await startEngine({
-        dataRoot,
-        enginePath: testBundlePath,
-        env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
-      });
-      engines.push(engine);
-      const release = join(dataRoot, "release-validation");
-      await activateProject(
-        engine,
-        projectId,
-        fixture,
-        "success",
-        30_000,
-        1_024,
-        {
-          lint: "true",
-          test: `node -e "const fs=require('node:fs'); setInterval(() => { if (fs.existsSync('${release}')) { console.error('Expected test failure'); process.exit(7); } }, 20)"`,
-        },
-        ["lint", "test"],
-        false,
-        "origin",
-        0,
-      );
-      await publishTag(engine, projectId, "validation-detail");
-      const readDetail = async (snapshot?: string) => {
-        const response = await engine.call(`/v1/projects/${projectId}/executions`);
-        const { items } = (await response.json()) as {
-          items: { id: string; moduleInstanceId: string }[];
-        };
-        const execution = items.find((item) => item.moduleInstanceId === "development");
-        if (execution === undefined) return undefined;
-        return readExecutionDetail(engine, projectId, execution.id, snapshot);
-      };
-      await expect
-        .poll(async () => (await readDetail())?.checks.some((check) => check.name === "test"))
-        .toBe(true);
-      const running = (await readDetail("running"))!;
-      expect(running.steps.find((step) => step.id === "checks")?.status).toBe("active");
-      expect(running.steps.find((step) => step.id === "agent-running")?.status).toBe("proved");
-      expect(running.checks).toEqual([
-        expect.objectContaining({ name: "lint", status: "passed" }),
-        expect.objectContaining({ name: "test", status: "running" }),
-      ]);
-      expect(running.steps.find((step) => step.id === "checks")?.completedAt).toBeNull();
-      expect(running.steps.find((step) => step.id === "agent-running")?.completedAt).toBe(
-        running.checks[0]?.startedAt,
-      );
-      if (outcome === "cancelled") {
-        const response = await engine.call(
-          `/v1/executions/${running.cancellableExecutionId}/cancel`,
-          { method: "POST" },
-        );
-        expect(response.status).toBe(202);
-      } else writeFileSync(release, "release");
-      await waitForExecutions(engine, projectId, 1);
-      const failed = (await readDetail(
-        outcome === "cancelled" ? "validation-cancelled" : "failed",
-      ))!;
-      expect(failed.steps.find((step) => step.id === "checks")?.status).toBe(outcome);
-      expect(failed.steps.find((step) => step.id === "agent-running")?.status).toBe("proved");
-      expect(failed.checks).toContainEqual(
-        expect.objectContaining({ name: "test", status: outcome }),
-      );
-      if (outcome === "failed")
-        expect(failed.checks.at(-1)?.output).toContain("Expected test failure");
-      expect(failed.steps.find((step) => step.id === "commit-push")?.status).toBe("not-started");
-    },
-  );
-
   it("serializes three issues through real agents and PRs, preserving waiting identities across restart and suspension", async () => {
     const { engine, fixture } = await admissionFixture("serial", "await-signal");
     const database = new Database(join(engine.dataRoot, "jarvis.sqlite"));
@@ -198,25 +72,24 @@ describe("Development Module tracer bullet", () => {
     try {
       for (const number of [1, 2, 3]) {
         seedReadyIssue(number);
-        observedEventIds.push(
-          await publishObserved(
-            engine,
-            "serial",
-            `github://Gasppacho/jarvis/issues/${number}`,
-            1,
-            "open",
-            ["ready-to-dev"],
-          ),
+        const observedEventId = await publishObserved(
+          engine,
+          "serial",
+          `github://Gasppacho/jarvis/issues/${number}`,
+          1,
+          "open",
+          ["ready-to-dev"],
         );
+        observedEventIds.push(observedEventId);
         await expect
           .poll(() =>
             database
               .prepare(
-                "SELECT count(*) AS n FROM deliveries JOIN events ON events.id = deliveries.event_id WHERE deliveries.module_id = 'jarvis.module.development' AND events.type = 'scm.work-item.observed'",
+                "SELECT count(*) AS n FROM deliveries WHERE module_id = 'jarvis.module.development' AND event_id = ?",
               )
-              .get(),
+              .get(observedEventId),
           )
-          .toEqual({ n: number });
+          .toEqual({ n: 1 });
       }
       await expect
         .poll(
@@ -418,7 +291,7 @@ describe("Development Module tracer bullet", () => {
     },
   );
 
-  it("refuses module removal while a paused project retains a pending request", async () => {
+  it("stages module removal without replacing a paused project's active snapshot", async () => {
     const projectId = "paused-module-removal";
     const { engine } = await admissionFixture(projectId, "await-signal");
     expect((await engine.call(`/v1/projects/${projectId}/pause`, { method: "POST" })).status).toBe(
@@ -452,7 +325,19 @@ describe("Development Module tracer bullet", () => {
           writeToRepository: false,
         }),
       });
-      expect(removal.status, await removal.text()).toBe(409);
+      expect(removal.status, await removal.clone().text()).toBe(200);
+      expect((await removal.json()) as { status: string }).toMatchObject({ status: "paused" });
+      const activeSnapshot = database
+        .prepare("SELECT resolved_project FROM project_resolved_compositions WHERE project_id = ?")
+        .get(projectId) as { resolved_project: string };
+      const resolved = JSON.parse(activeSnapshot.resolved_project) as {
+        composition: PortableProjectConfiguration;
+      };
+      expect(
+        resolved.composition.modules.some(
+          (module) => module.moduleId === "jarvis.module.development",
+        ),
+      ).toBe(true);
     } finally {
       database.close();
     }
@@ -641,10 +526,8 @@ describe("Development Module tracer bullet", () => {
       300_000,
       1_048_576,
       { test: "node --test" },
-      ["test"],
       false,
       "origin",
-      0,
       "runtime/fake-test",
       { github: true },
     );
@@ -766,10 +649,8 @@ describe("Development Module tracer bullet", () => {
       300_000,
       1_048_576,
       { test: "node --test" },
-      ["test"],
       false,
       "origin",
-      0,
       "runtime/fake-test",
       { github: true },
     );
@@ -938,10 +819,6 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
 
     const before = repositoryState(fixture.root);
     const projectId = "development-codex";
-    const commands = {
-      install: `node -e "require('node:fs').writeFileSync('run-order.txt','install\\n')"`,
-      test: `node -e "const fs=require('node:fs'); if (fs.readFileSync('run-order.txt','utf8') !== 'install\\nagent\\n') process.exit(7); fs.appendFileSync('run-order.txt','validation\\n')"`,
-    };
     await activateProject(
       engine,
       projectId,
@@ -949,11 +826,9 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
       false,
       300_000,
       1_048_576,
-      commands,
-      ["test"],
+      {},
       false,
       "origin",
-      0,
       "runtime/codex-default",
     );
     await publishTag(engine, projectId, "codex");
@@ -992,7 +867,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
           ["--git-dir", fixture.remoteRoot, "show", `${result.headCommit}:run-order.txt`],
           { encoding: "utf8" },
         ),
-      ).toBe("install\nagent\nvalidation\n");
+      ).toBe("agent\n");
       expect(
         execFileSync(
           "git",
@@ -1053,10 +928,8 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
       300_000,
       1_048_576,
       { test: "node --test" },
-      ["test"],
       false,
       "origin",
-      0,
       "runtime/codex-default",
     );
     chmodSync(executable, 0o644);
@@ -1083,7 +956,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
     }
   });
 
-  it("retains a failed preparation without starting, validating, committing, pushing, or requesting a PR", async () => {
+  it("retains a failed preparation without starting, committing, pushing, or requesting a PR", async () => {
     const fixture = makeRealGitRepositoryFixture();
     roots.push(fixture.root, fixture.remoteRoot);
     const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-preparation-failure-"));
@@ -1096,19 +969,10 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
     });
     engines.push(engine);
 
-    await activateProject(
-      engine,
-      projectId,
-      fixture,
-      false,
-      300_000,
-      1_048_576,
-      {
-        install: "node -e \"process.stderr.write('install failed'); process.exit(7)\"",
-        test: "false",
-      },
-      ["test"],
-    );
+    writeFileSync(join(fixture.root, "pnpm-lock.yaml"), "lockfileVersion: invalid\n");
+    execFileSync("git", ["add", "pnpm-lock.yaml"], { cwd: fixture.root });
+    execFileSync("git", ["commit", "-m", "test: add invalid lockfile"], { cwd: fixture.root });
+    await activateProject(engine, projectId, fixture);
     await publishTag(engine, projectId, "preparation-failure");
     const executions = await waitForExecutions(engine, projectId, 1);
     const development = executions.find(
@@ -1162,13 +1026,10 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
 
     const before = repositoryState(fixture.root);
     const commands = {
-      test: `node -e "const fs=require('node:fs'); const {execFileSync}=require('node:child_process'); if (!process.cwd().includes('/workspaces/') || !fs.existsSync('fake-runtime-change.txt') || !fs.existsSync('src/server.ts') || execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim() !== '${before.head}') process.exit(7)"`,
-      build: `node -e "require('node:fs').accessSync('src/server.ts')"`,
+      test: 'node -e "process.exit(7)"',
+      build: 'node -e "process.exit(7)"',
     };
-    await activateProject(engine, projectId, fixture, false, 300_000, 1_048_576, commands, [
-      "test",
-      "build",
-    ]);
+    await activateProject(engine, projectId, fixture, false, 300_000, 1_048_576, commands);
     const firstFact = await publishTag(engine, projectId);
     const firstExecutions = await waitForExecutions(engine, projectId, 1);
     expect(
@@ -1208,17 +1069,6 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
           /^agent\/fixture-development-tracer-first-implementation-/,
         ),
         headCommit: expect.stringMatching(/^[0-9a-f]{40}$/),
-        validation: [
-          { name: "test", status: "passed", durationMs: expect.any(Number) },
-          { name: "build", status: "passed", durationMs: expect.any(Number) },
-        ],
-        commands,
-        git: {
-          branchPattern: "agent/{workItemId}-{slug}",
-          commitStrategy: "conventional",
-          pushRemote: "origin",
-          allowForcePush: false,
-        },
       });
       const outputRows = database
         .prepare(
@@ -1244,13 +1094,6 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
           baseBranch: "main",
           headBranch: recordedResult.headBranch,
           headCommit: recordedResult.headCommit,
-          validation: {
-            passed: true,
-            commands: [
-              { name: "test", status: "passed", durationMs: expect.any(Number) },
-              { name: "build", status: "passed", durationMs: expect.any(Number) },
-            ],
-          },
           summary: "Fake Runtime applied deterministic change.",
         },
       });
@@ -1430,15 +1273,11 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
       expect(checkpoints.map((checkpoint) => checkpoint.type)).toEqual([
         "agent.started",
         "agent.message",
-        "validation.started",
-        "validation.completed",
         "commit.created",
         "branch.pushed",
       ]);
-      expect(checkpoints.map((checkpoint) => checkpoint.sequence)).toEqual([1, 2, 3, 4, 5, 6]);
-      expect(checkpoints.map((checkpoint) => checkpoint.sourceSequence)).toEqual([
-        1, 2, 3, 4, 5, 6,
-      ]);
+      expect(checkpoints.map((checkpoint) => checkpoint.sequence)).toEqual([1, 2, 3, 4]);
+      expect(checkpoints.map((checkpoint) => checkpoint.sourceSequence)).toEqual([1, 2, 3, 4]);
       expect(checkpoints[1]?.payload).toEqual({
         message: "Fake Runtime applied deterministic change.",
       });
@@ -1498,11 +1337,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
             "SELECT type FROM execution_checkpoints WHERE execution_id = ? ORDER BY sequence",
           )
           .all(development!.id),
-      ).toEqual([
-        { type: "agent.started" },
-        { type: "validation.started" },
-        { type: "validation.completed" },
-      ]);
+      ).toEqual([{ type: "agent.started" }]);
       expect(
         database
           .prepare("SELECT status FROM workspace_leases WHERE project_id = ? AND execution_id = ?")
@@ -1535,7 +1370,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
     }
   });
 
-  it("fails when the configured push remote is unavailable", async () => {
+  it("fails when the repository push remote is unavailable", async () => {
     const fixture = makeRealGitRepositoryFixture();
     roots.push(fixture.root, fixture.remoteRoot);
     const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-push-failure-"));
@@ -1557,10 +1392,12 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
       300_000,
       1_048_576,
       { test: "node --test" },
-      ["test"],
       false,
       "unreachable",
     );
+    execFileSync("git", ["remote", "set-url", "origin", join(dataRoot, "missing.git")], {
+      cwd: fixture.root,
+    });
     await publishTag(engine, projectId, "push-failure");
     const executions = await waitForExecutions(engine, projectId, 1);
     const development = executions.find(
@@ -1608,13 +1445,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
             "SELECT type FROM execution_checkpoints WHERE execution_id = ? ORDER BY sequence",
           )
           .all(development!.id),
-      ).toEqual([
-        { type: "agent.started" },
-        { type: "agent.message" },
-        { type: "validation.started" },
-        { type: "validation.completed" },
-        { type: "commit.created" },
-      ]);
+      ).toEqual([{ type: "agent.started" }, { type: "agent.message" }, { type: "commit.created" }]);
       expect(
         database
           .prepare("SELECT status FROM workspace_leases WHERE project_id = ? AND execution_id = ?")
@@ -1634,7 +1465,10 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
     const engine = await startEngine({
       dataRoot,
       enginePath: testBundlePath,
-      env: { JARVIS_ENABLE_TEST_HOOKS: "1", JARVIS_FAKE_SCENARIO: "ignore-terminate" },
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_FAKE_SCENARIO: "ignore-terminate",
+      },
     });
     engines.push(engine);
 
@@ -1760,7 +1594,11 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
     const engine = await startEngine({
       dataRoot,
       enginePath: testBundlePath,
-      env: { JARVIS_ENABLE_TEST_HOOKS: "1", JARVIS_FAKE_SCENARIO: "ignore-terminate" },
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_FAKE_SCENARIO: "ignore-terminate",
+        JARVIS_DEVELOPMENT_TIMEOUT_MS: "100",
+      },
     });
     engines.push(engine);
 
@@ -1864,7 +1702,11 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
     const engine = await startEngine({
       dataRoot,
       enginePath: testBundlePath,
-      env: { JARVIS_ENABLE_TEST_HOOKS: "1", JARVIS_FAKE_SCENARIO: "oversized" },
+      env: {
+        JARVIS_ENABLE_TEST_HOOKS: "1",
+        JARVIS_FAKE_SCENARIO: "oversized",
+        JARVIS_DEVELOPMENT_OUTPUT_LIMIT_BYTES: "1024",
+      },
     });
     engines.push(engine);
 
@@ -1895,438 +1737,7 @@ emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
       };
       expect(JSON.parse(result.result)).toMatchObject({
         status: "completed",
-        validation: [{ name: "test", status: "passed", durationMs: expect.any(Number) }],
-        commands: { test: "node --test" },
-        git: { pushRemote: "origin" },
       });
-    } finally {
-      database.close();
-    }
-  });
-
-  it("runs the validation plan in order and stops after the first failure", async () => {
-    const fixture = makeRealGitRepositoryFixture();
-    roots.push(fixture.root, fixture.remoteRoot);
-    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-validation-"));
-    roots.push(dataRoot);
-    const projectId = "development-validation";
-    const engine = await startEngine({
-      dataRoot,
-      enginePath: testBundlePath,
-      env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
-    });
-    engines.push(engine);
-
-    await activateProject(
-      engine,
-      projectId,
-      fixture,
-      false,
-      300_000,
-      1_048_576,
-      {
-        test: `node -e "require('node:fs').appendFileSync('validation-order.txt', 'test\\n')"`,
-        build: `node -e "require('node:fs').appendFileSync('validation-order.txt', 'build\\n'); process.exit(7)"`,
-        lint: `node -e "require('node:fs').appendFileSync('validation-order.txt', 'lint\\n')"`,
-      },
-      ["test", "build", "lint"],
-    );
-    await publishTag(engine, projectId, "validation");
-    const executions = await waitForExecutions(engine, projectId, 1);
-    const development = executions.find(
-      (execution) => execution.moduleInstanceId === "development",
-    );
-    expect(development).toMatchObject({ status: "failed" });
-    expect(development).toBeDefined();
-
-    const workspacePath = join(dataRoot, "projects", projectId, "workspaces", development!.id);
-    expect(readFileSync(join(workspacePath, "validation-order.txt"), "utf8")).toBe("test\nbuild\n");
-
-    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
-    try {
-      expect(
-        database
-          .prepare(
-            "SELECT code, message, attempts FROM dead_letters WHERE module_instance_id = 'development'",
-          )
-          .get(),
-      ).toEqual({ code: "git.validation-failed", message: expect.any(String), attempts: 1 });
-      expect(
-        database.prepare("SELECT 1 FROM inbox WHERE module_instance_id = 'development'").get(),
-      ).toBeUndefined();
-      expect(readFailureEvent(database, projectId)).toMatchObject({
-        type: "development.implementation.failed",
-        payload: {
-          workItemRef: `fixture://${projectId}/validation`,
-          repositoryId: "main",
-          code: "git.validation-failed",
-          message: expect.stringContaining(`Project ${projectId}`),
-          retryable: false,
-          workspaceRef: `workspace://${projectId}/${development!.id}`,
-        },
-      });
-      expect(
-        database
-          .prepare(
-            "SELECT type FROM execution_checkpoints WHERE execution_id = ? ORDER BY sequence",
-          )
-          .all(development!.id),
-      ).toEqual([
-        { type: "agent.started" },
-        { type: "agent.message" },
-        { type: "validation.started" },
-        { type: "validation.completed" },
-        { type: "validation.started" },
-        { type: "validation.failed" },
-      ]);
-      expect(
-        database
-          .prepare("SELECT status FROM workspace_leases WHERE project_id = ? AND execution_id = ?")
-          .get(projectId, development!.id),
-      ).toEqual({ status: "retained" });
-    } finally {
-      database.close();
-    }
-  });
-
-  it("repairs a red validation plan within its configured budget", async () => {
-    const fixture = makeRealGitRepositoryFixture();
-    roots.push(fixture.root, fixture.remoteRoot);
-    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-repair-success-"));
-    roots.push(dataRoot);
-    const projectId = "development-repair-success";
-    const engine = await startEngine({
-      dataRoot,
-      enginePath: testBundlePath,
-      env: { JARVIS_ENABLE_TEST_HOOKS: "1", JARVIS_FAKE_SCENARIO: "repair" },
-    });
-    engines.push(engine);
-
-    const outputLimitBytes = 1_024;
-    await activateProject(
-      engine,
-      projectId,
-      fixture,
-      "repair",
-      300_000,
-      outputLimitBytes,
-      {
-        test: `node -e "const fs=require('node:fs'); if (!fs.existsSync('validation-fix.txt')) { process.stdout.write(process.cwd() + ' token=repair-secret ' + 'x'.repeat(5000)); process.exit(7); }"`,
-      },
-      ["test"],
-      false,
-      "origin",
-      1,
-    );
-    await publishTag(engine, projectId, "repair-success");
-    const executions = await waitForExecutions(engine, projectId, 1);
-    const development = executions.find(
-      (execution) => execution.moduleInstanceId === "development",
-    );
-    expect(executions).toHaveLength(1);
-    expect(development).toMatchObject({ status: "completed" });
-    expect(development).toBeDefined();
-
-    const detail = await readExecutionDetail(engine, projectId, development!.id, "repaired");
-    expect(detail.steps.find((step) => step.id === "checks")?.status).toBe("proved");
-    expect(detail.checks).toEqual([
-      expect.objectContaining({ name: "test", status: "failed", attempt: 1 }),
-      expect.objectContaining({ name: "test", status: "passed", attempt: 2 }),
-    ]);
-    expect(detail.failure).toBeNull();
-
-    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
-    try {
-      const checkpoints = database
-        .prepare(
-          "SELECT type, payload FROM execution_checkpoints WHERE execution_id = ? ORDER BY sequence",
-        )
-        .all(development!.id) as { type: string; payload: string }[];
-      expect(checkpoints.map(({ type }) => type)).toEqual([
-        "agent.started",
-        "agent.message",
-        "validation.started",
-        "validation.failed",
-        "agent.repair-started",
-        "agent.message",
-        "validation.started",
-        "validation.completed",
-        "commit.created",
-        "branch.pushed",
-      ]);
-      const repairMessages = checkpoints
-        .filter(({ type }) => type === "agent.message")
-        .map(({ payload }) => (JSON.parse(payload) as { message: string }).message)
-        .filter((message) => message.includes("Validation failure check: test"));
-      expect(repairMessages).toHaveLength(1);
-      expect(repairMessages[0]).toContain("Captured validation output:");
-      expect(repairMessages[0]).toContain("<workspace>");
-      expect(repairMessages[0]).not.toContain(fixture.root);
-      expect(repairMessages[0]).not.toContain("repair-secret");
-      expect(Buffer.byteLength(repairMessages[0]!, "utf8")).toBeLessThanOrEqual(outputLimitBytes);
-      expect(
-        database
-          .prepare(
-            `SELECT COUNT(*) AS count FROM outbox
-             WHERE project_id = ?
-               AND json_extract(envelope, '$.type') IN ('development.implementation.completed', 'scm.change-request.creation-requested')`,
-          )
-          .get(projectId),
-      ).toEqual({ count: 2 });
-    } finally {
-      database.close();
-    }
-  });
-
-  it("stops after the configured number of repair cycles", async () => {
-    const fixture = makeRealGitRepositoryFixture();
-    roots.push(fixture.root, fixture.remoteRoot);
-    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-repair-exhausted-"));
-    roots.push(dataRoot);
-    const projectId = "development-repair-exhausted";
-    const engine = await startEngine({
-      dataRoot,
-      enginePath: testBundlePath,
-      env: { JARVIS_ENABLE_TEST_HOOKS: "1", JARVIS_FAKE_SCENARIO: "repair" },
-    });
-    engines.push(engine);
-    const before = repositoryState(fixture.root);
-
-    await activateProject(
-      engine,
-      projectId,
-      fixture,
-      "repair",
-      300_000,
-      1_024,
-      {
-        test: `node -e "process.stdout.write(process.cwd() + ' token=repair-secret ' + 'x'.repeat(5000)); process.exit(7)"`,
-      },
-      ["test"],
-      false,
-      "origin",
-      2,
-    );
-    await publishTag(engine, projectId, "repair-exhausted");
-    const executions = await waitForExecutions(engine, projectId, 1);
-    const development = executions.find(
-      (execution) => execution.moduleInstanceId === "development",
-    );
-    expect(executions).toHaveLength(1);
-    expect(development).toMatchObject({ status: "failed" });
-    expect(development).toBeDefined();
-    expect(repositoryState(fixture.root)).toEqual(before);
-
-    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
-    try {
-      expect(
-        database
-          .prepare(
-            "SELECT code, message, attempts FROM dead_letters WHERE module_instance_id = 'development'",
-          )
-          .get(),
-      ).toEqual({ code: "git.validation-failed", message: expect.any(String), attempts: 1 });
-      expect(
-        database.prepare("SELECT 1 FROM inbox WHERE module_instance_id = 'development'").get(),
-      ).toBeUndefined();
-      const checkpoints = database
-        .prepare(
-          "SELECT type, payload FROM execution_checkpoints WHERE execution_id = ? ORDER BY sequence",
-        )
-        .all(development!.id) as { type: string; payload: string }[];
-      expect(checkpoints.map(({ type }) => type)).toEqual([
-        "agent.started",
-        "agent.message",
-        "validation.started",
-        "validation.failed",
-        "agent.repair-started",
-        "agent.message",
-        "validation.started",
-        "validation.failed",
-        "agent.repair-started",
-        "agent.message",
-        "validation.started",
-        "validation.failed",
-      ]);
-      expect(
-        checkpoints.filter(
-          ({ type, payload }) =>
-            type === "agent.message" &&
-            (JSON.parse(payload) as { message: string }).message.includes(
-              "Validation failure check: test",
-            ),
-        ),
-      ).toHaveLength(2);
-      expect(
-        database
-          .prepare(
-            `SELECT COUNT(*) AS count FROM outbox
-             WHERE project_id = ?
-               AND json_extract(envelope, '$.type') IN ('development.implementation.completed', 'scm.change-request.creation-requested')`,
-          )
-          .get(projectId),
-      ).toEqual({ count: 0 });
-      expect(
-        database
-          .prepare(
-            "SELECT COUNT(*) AS count FROM workspace_leases WHERE project_id = ? AND status = 'active'",
-          )
-          .get(projectId),
-      ).toEqual({ count: 0 });
-      expect(readFailureEvent(database, projectId)).toMatchObject({
-        type: "development.implementation.failed",
-        payload: {
-          workItemRef: `fixture://${projectId}/repair-exhausted`,
-          repositoryId: "main",
-          code: "git.validation-failed",
-          retryable: false,
-          workspaceRef: `workspace://${projectId}/${development!.id}`,
-        },
-      });
-    } finally {
-      database.close();
-    }
-  });
-
-  it("cancels a repair run and leaves no child process behind", async () => {
-    const fixture = makeRealGitRepositoryFixture();
-    roots.push(fixture.root, fixture.remoteRoot);
-    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-repair-cancel-"));
-    roots.push(dataRoot);
-    const projectId = "development-repair-cancel";
-    const engine = await startEngine({
-      dataRoot,
-      enginePath: testBundlePath,
-      env: {
-        JARVIS_ENABLE_TEST_HOOKS: "1",
-        JARVIS_FAKE_SCENARIO: "repair-ignore-terminate",
-      },
-    });
-    engines.push(engine);
-
-    await activateProject(
-      engine,
-      projectId,
-      fixture,
-      "repair-ignore-terminate",
-      300_000,
-      1_048_576,
-      { test: `node -e "process.exit(7)"` },
-      ["test"],
-      false,
-      "origin",
-      1,
-    );
-    await publishTag(engine, projectId, "repair-cancel");
-    const running = await waitForExecution(engine, projectId, "development", "running");
-    const workspacePath = join(dataRoot, "projects", projectId, "workspaces", running.id);
-    const childPid = await waitForPid(join(workspacePath, "fake-runtime-repair-child.pid"));
-
-    const repairing = await readExecutionDetail(engine, projectId, running.id, "repairing");
-    expect(repairing.steps.find((step) => step.id === "checks")?.status).toBe("repairing");
-    expect(repairing.checks).toEqual([expect.objectContaining({ status: "failed", attempt: 1 })]);
-    expect(repairing.failure?.code).toBe("git.validation-failed");
-
-    const response = await engine.call(`/v1/executions/${running.id}/cancel`, { method: "POST" });
-    expect(response.status).toBe(202);
-    const cancelled = await waitForExecution(engine, projectId, "development", "cancelled");
-    expect(cancelled.id).toBe(running.id);
-    const detail = await readExecutionDetail(engine, projectId, running.id, "cancelled");
-    expect(detail.steps.find((step) => step.id === "agent-running")?.status).toBe("cancelled");
-    expect(existsSync(join(workspacePath, "fake-runtime-repair-child-interrupt.txt"))).toBe(true);
-    await expectProcessGone(childPid);
-
-    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
-    try {
-      expect(readFailureEvent(database, projectId)).toMatchObject({
-        type: "development.implementation.failed",
-        payload: {
-          workItemRef: `fixture://${projectId}/repair-cancel`,
-          repositoryId: "main",
-          code: "agent.run-cancelled",
-          retryable: false,
-          workspaceRef: `workspace://${projectId}/${running.id}`,
-        },
-      });
-      expect(
-        database
-          .prepare(
-            `SELECT COUNT(*) AS count FROM outbox
-             WHERE project_id = ?
-               AND json_extract(envelope, '$.type') IN ('development.implementation.completed', 'scm.change-request.creation-requested')`,
-          )
-          .get(projectId),
-      ).toEqual({ count: 0 });
-    } finally {
-      database.close();
-    }
-  });
-
-  it("fails with a configuration error when a selected command is undeclared", async () => {
-    const fixture = makeRealGitRepositoryFixture();
-    roots.push(fixture.root, fixture.remoteRoot);
-    const dataRoot = mkdtempSync(join("/tmp", "jarvis-development-missing-command-"));
-    roots.push(dataRoot);
-    const projectId = "development-missing-command";
-    const engine = await startEngine({
-      dataRoot,
-      enginePath: testBundlePath,
-      env: { JARVIS_ENABLE_TEST_HOOKS: "1" },
-    });
-    engines.push(engine);
-
-    await activateProject(engine, projectId, fixture);
-    await engine.call(`/v1/projects/${projectId}/pause`, { method: "POST" });
-    const detail = (await (await engine.call(`/v1/projects/${projectId}`)).json()) as {
-      portableConfig: PortableProjectConfiguration;
-    };
-    const configuration = {
-      ...detail.portableConfig,
-      modules: detail.portableConfig.modules.map((module) =>
-        module.instanceId === "development"
-          ? {
-              ...module,
-              configuration: { ...module.configuration, validationOrder: ["build"] },
-            }
-          : module,
-      ),
-    };
-    const saved = await engine.call(`/v1/projects/${projectId}/configuration`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ portableConfig: configuration, writeToRepository: false }),
-    });
-    expect(saved.status).toBe(200);
-    const report = (await (
-      await engine.call(`/v1/projects/${projectId}/validation-report`, { method: "POST" })
-    ).json()) as {
-      valid: boolean;
-      compositionFingerprint: string;
-      findings: { code: string; target: { field?: string } }[];
-    };
-    expect(report.valid).toBe(false);
-    expect(report.findings).toContainEqual(
-      expect.objectContaining({
-        code: "project.instance-config-invalid",
-        target: expect.objectContaining({ field: "/configuration/validationOrder" }),
-      }),
-    );
-    const activated = await engine.call(`/v1/projects/${projectId}/activate`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ compositionFingerprint: report.compositionFingerprint }),
-    });
-    expect(activated.status).toBe(409);
-    const database = new Database(join(dataRoot, "jarvis.sqlite"), { readonly: true });
-    try {
-      // The error is now caught before activation, allocation or any agent side effect.
-      for (const table of ["executions", "workspace_leases", "outbox", "dead_letters"]) {
-        expect(
-          database
-            .prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE project_id = ?`)
-            .get(projectId),
-        ).toEqual({ count: 0 });
-      }
     } finally {
       database.close();
     }
@@ -2353,11 +1764,9 @@ async function admissionFixture(projectId: string, scenario: string) {
     scenario,
     300_000,
     1_048_576,
-    { test: "node --test" },
-    ["test"],
+    {},
     false,
     "origin",
-    0,
     "runtime/fake-test",
     { github: true },
   );
@@ -2430,13 +1839,11 @@ async function activateProject(
   projectId: string,
   fixture: RealGitRepositoryFixture,
   fakeScenario: string | false = false,
-  timeoutMs = 300_000,
-  outputLimitBytes = 1_048_576,
-  commands: PortableProjectConfiguration["commands"] = { test: "node --test" },
-  validationOrder: readonly string[] = ["test"],
-  retainWorkspaceOnSuccess = false,
-  pushRemote = "origin",
-  maxRepairCycles = 0,
+  _timeoutMs = 300_000,
+  _outputLimitBytes = 1_048_576,
+  _commands: Readonly<Record<string, string>> = {},
+  _retainWorkspaceOnSuccess = false,
+  _pushRemote = "origin",
   runtimeRef = "runtime/fake-test",
   admission: { readonly github?: boolean; readonly maxConcurrent?: number } = {},
 ): Promise<void> {
@@ -2463,30 +1870,11 @@ async function activateProject(
     kind: "Project",
     compositionMode: "fixed-modules" as const,
     metadata: { id: projectId, name: "Development tracer" },
-    repositories: [
-      {
-        id: "main",
-        root: ".",
-        defaultBranch: "main",
-        remote: admission.github ? "github" : "origin",
-      },
-    ],
+    repositories: [{ id: "main", root: "." }],
     slots: {
       agentRuntime: { requires: "agent.execute" },
       tickets: { requires: "work-items.read" },
       ...(admission.github ? { sourceControl: { requires: "scm.change-request.manage" } } : {}),
-    },
-    commands,
-    git: {
-      branchPattern: "agent/{workItemId}-{slug}",
-      commitStrategy: "conventional",
-      pushRemote,
-      allowForcePush: false,
-    },
-    workspace: {
-      strategy: "git-worktree",
-      maxConcurrentExecutions: admission.maxConcurrent ?? 1,
-      retainOnFailureDays: 7,
     },
     modules: [
       {
@@ -2497,19 +1885,6 @@ async function activateProject(
         bindings: { repository: "main", tickets: "tickets" },
         configuration: {
           readyLabel: "ready-to-dev",
-          scope: { kind: "all" },
-          validationOrder,
-          maxRepairCycles,
-          preparation: commands.install === undefined ? "none" : "install",
-          retainWorkspaceOnSuccess,
-          timeoutMs,
-          outputLimitBytes,
-          environmentAllowlist:
-            runtimeRef === "runtime/codex-default"
-              ? ["PATH"]
-              : fakeScenario === false
-                ? []
-                : ["JARVIS_FAKE_SCENARIO"],
         },
       },
       ...(admission.github
@@ -2535,12 +1910,26 @@ async function activateProject(
           ]),
     ],
   };
+  const packageJsonPath = join(fixture.root, "package.json");
+  const originalPackageJson = readFileSync(packageJsonPath, "utf8");
+  const packageJson = JSON.parse(originalPackageJson) as Record<string, unknown>;
+  writeFileSync(
+    packageJsonPath,
+    `${JSON.stringify({ ...packageJson, name: projectId }, null, 2)}\n`,
+  );
   const imported = await engine.call("/v1/projects", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ repositoryPath: fixture.root, portableConfig }),
+    body: JSON.stringify({ repositoryPath: fixture.root }),
   });
+  writeFileSync(packageJsonPath, originalPackageJson);
   expect(imported.status, await imported.clone().text()).toBe(201);
+  const savedConfiguration = await engine.call(`/v1/projects/${projectId}/configuration`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ portableConfig, writeToRepository: false }),
+  });
+  expect(savedConfiguration.status, await savedConfiguration.clone().text()).toBe(200);
   const repositoryBinding = await engine.call(
     `/v1/projects/${projectId}/repositories/main/binding`,
     {
@@ -2603,10 +1992,19 @@ async function activateProject(
     await seedActivatedConsumerProject(engine, projectId);
     return;
   }
-  const activated = await engine.call(`/v1/projects/${projectId}/activate`, {
+  const preflightResponse = await engine.call(`/v1/projects/${projectId}/preflight`, {
+    method: "POST",
+  });
+  const preflight = (await preflightResponse.json()) as {
+    valid: boolean;
+    compositionFingerprint?: string;
+  };
+  expect(preflightResponse.status).toBe(200);
+  expect(preflight.valid, JSON.stringify(preflight)).toBe(true);
+  const activated = await engine.call(`/v1/projects/${projectId}/preflight-activate`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ compositionFingerprint: report.compositionFingerprint }),
+    body: JSON.stringify({ compositionFingerprint: preflight.compositionFingerprint }),
   });
   expect(activated.status, await activated.clone().text()).toBe(200);
 }

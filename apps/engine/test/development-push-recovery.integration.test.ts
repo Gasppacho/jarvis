@@ -82,33 +82,19 @@ describe("Development push crash recovery", () => {
     await assertSuccess(fixture, database, commit);
   });
 
-  it.each(["remote-divergent", "validation-missing", "validation-partial", "workspace-modified"])(
+  it.each(["remote-divergent", "workspace-modified"])(
     "retains evidence and exposes a safe diagnostic for %s",
     async (scenario) => {
       const { fixture, database, commit, workspacePath } = await crash();
       if (scenario === "remote-divergent")
         remoteGit(fixture, ["update-ref", `refs/heads/${commit.branch}`, fixture.initialCommitSha]);
-      if (scenario === "validation-missing")
-        database
-          .prepare(
-            "UPDATE execution_checkpoints SET payload = json_remove(payload, '$.validation') WHERE type = 'commit.created'",
-          )
-          .run();
-      if (scenario === "validation-partial")
-        database
-          .prepare(
-            "UPDATE execution_checkpoints SET payload = json_set(payload, '$.validation.commands', json('[]')) WHERE type = 'commit.created'",
-          )
-          .run();
       if (scenario === "workspace-modified")
         writeFileSync(
           `${workspacePath}/user-work.txt`,
           "Work added by the user after the crash.\n",
         );
       await fixture.restart();
-      const code = scenario.startsWith("validation")
-        ? "git.recovery-validation-missing"
-        : "git.recovery-required";
+      const code = "git.recovery-required";
       await expect.poll(async () => (await deadLetters(fixture))[0]?.code).toBe(code);
       await assertFailureVisible(fixture, code);
       expect(runtimeCalls(fixture)).toBe(1);
@@ -320,10 +306,8 @@ async function assertSuccess(
   expect(completed.causationId).toBe(implementation.id);
   expect(creation.causationId).toBe(implementation.id);
   expect(creation.payload["title"]).toBe("Implement Recover pushed change");
-  expect(completed.payload).toMatchObject({
-    headCommit: commit.sha,
-    validation: { passed: true, commands: [{ name: "test", status: "passed" }] },
-  });
+  expect(completed.payload).toMatchObject({ headCommit: commit.sha });
+  expect(completed.payload).not.toHaveProperty("validation");
   expect(
     database
       .prepare(
@@ -354,13 +338,11 @@ async function assertFailureVisible(fixture: ReferenceWorkflowFixture, code: str
   const executions = await fixture.engine.call(`/v1/projects/${fixture.projectId}/executions`);
   const body = await executions.text();
   const diagnostic =
-    code === "git.recovery-validation-missing"
-      ? "validation snapshot"
-      : code === "git.recovery-unavailable"
-        ? "cannot currently be read"
-        : code === "workspace.release-failed"
-          ? "live process"
-          : "before replay";
+    code === "git.recovery-unavailable"
+      ? "cannot currently be read"
+      : code === "workspace.release-failed"
+        ? "live process"
+        : "before replay";
   expect(body).toContain(diagnostic);
   expect(body).not.toContain("ghs_reference_fixture");
   expect(body).not.toContain(fixture.repositoryRoot);

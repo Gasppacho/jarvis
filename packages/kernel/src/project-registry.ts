@@ -15,6 +15,7 @@ export interface ReplaceProjectConfigurationRequest {
   readonly projectId: unknown;
   readonly portableConfig: unknown;
   readonly writeToRepository: unknown;
+  readonly bindings?: unknown;
 }
 
 export interface ReplaceProjectBindingsRequest {

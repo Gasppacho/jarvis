@@ -131,11 +131,6 @@ public final class ProjectsModel {
                 return
             }
             guard revision == importRevision else { return }
-            guard inspection.isGitRepository else {
-                importState = .failed(
-                    "This folder is not a Git repository. Choose another folder to import a repository.")
-                return
-            }
             let existing = try await existingProject(at: url)
             guard revision == importRevision else { return }
             if let existing {
@@ -451,10 +446,6 @@ public final class ProjectsModel {
                     "\(message) (\(code)) The saved configuration was not changed. Fix the named configuration path and try again."
                 case "project.bindings-invalid":
                     "\(message) (\(code)) Local Bindings were not changed. Bind only declared project repositories and slots, then try again."
-                case "project.repository-write-failed":
-                    "\(message) (\(code)) SQLite was not changed. Restore repository write access and try again."
-                case "project.repository-compensation-failed":
-                    "\(message) (\(code)) Do not retry until .jarvis/project.yaml has been inspected."
                 case "repository.path-invalid":
                     "\(message) (\(code)) No project was created. Choose an accessible repository folder and try again."
                 case "engine.database-unavailable":

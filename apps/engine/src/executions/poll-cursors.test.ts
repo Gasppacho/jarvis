@@ -206,16 +206,8 @@ function projectSnapshot(
     apiVersion: "jarvis.dev/project/v1",
     kind: "Project",
     metadata: { id: projectId, name: projectId },
-    repositories: [{ id: "main", root: ".", defaultBranch: "main", remote: "origin" }],
+    repositories: [{ id: "main", root: "." }],
     slots: {},
-    commands: {},
-    git: {
-      branchPattern: "agent/{workItemId}-{slug}",
-      commitStrategy: "conventional",
-      pushRemote: "origin",
-      allowForcePush: false,
-    },
-    workspace: { strategy: "git-worktree", maxConcurrentExecutions: 1, retainOnFailureDays: 7 },
     modules: [],
   };
   return {

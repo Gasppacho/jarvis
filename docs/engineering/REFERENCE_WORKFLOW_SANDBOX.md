@@ -18,11 +18,11 @@ Confirm the runtime and GitHub connection are available before activating the pr
 
 ## Isolated project setup
 
-1. Create a new private repository with no relationship to any project or client repository. Add only a minimal fixture matching the reference workflow: a valid `.jarvis/project.yaml`, a `main` branch, and the project validation command.
+1. Create a new private repository with no relationship to any project or client repository. Add only a minimal fixture matching the reference workflow: a valid `.jarvis/project.yaml` and a `main` branch.
 2. Import that checkout as a new Jarvis Project and use a disposable `JARVIS_DATA_ROOT`.
 3. Register and validate a dedicated GitHub connection for the sandbox account. Bind that connection to both `sourceControl` and `tickets`.
 4. Bind `agentRuntime` to the detected real `runtime/codex-default` candidate. Do not rely on a global candidate without a Project Binding.
-5. Configure the GitHub module to poll only the new sandbox repository. Bind Development to its repository, `tickets`, and `sourceControl`; keep the validated branch pattern, push remote, bounded timeout, output limit, and validation commands from the project example.
+5. Configure the GitHub module to poll only the new sandbox repository. Bind Development to its repository, `tickets`, and `sourceControl`; keep the branch pattern, push remote, bounded timeout, and output limit from the project example.
 6. Validate the composition and activate the Project. Record only safe identifiers needed for cleanup; do not record tokens, personal absolute paths, or source content.
 
 ## Run

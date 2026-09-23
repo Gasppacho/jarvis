@@ -4,6 +4,8 @@
 
 Accepted for the expand → migrate → remove transition described by parent issue #220.
 
+D04 and D06 are superseded by ADR 0020. D01, D02, D03 and D05 remain normative.
+
 ## Context
 
 The current GitHub inbound adapter mixes provider reading with readiness labels and

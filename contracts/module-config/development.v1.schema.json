@@ -1,140 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Development Module Config v1",
-  "description": "Validation and workspace behavior for one Development Module Instance.",
+  "description": "User-facing admission behavior for one Development Module Instance.",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "validationOrder",
-    "maxRepairCycles"
-  ],
+  "required": [],
   "properties": {
     "readyLabel": {
       "title": "Ready label",
       "description": "Exact label whose verified observation may request Development.",
       "type": "string",
-      "minLength": 1,
       "maxLength": 200,
       "default": "ready-to-dev",
       "examples": ["ready-to-dev"]
-    },
-    "scope": {
-      "title": "Work Item scope",
-      "description": "Whether observations may request all Work Items or one exact reference.",
-      "default": { "kind": "all" },
-      "oneOf": [
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind"],
-          "properties": { "kind": { "const": "all" } }
-        },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["kind", "workItemRef"],
-          "properties": {
-            "kind": { "const": "issue" },
-            "workItemRef": { "type": "string", "minLength": 1, "maxLength": 2048 }
-          }
-        }
-      ]
-    },
-    "validationOrder": {
-      "title": "Validation order",
-      "description": "Commands explicitly selected for validation in the allocated worktree after implementation. An empty list is an incomplete draft and cannot activate.",
-      "type": "array",
-      "default": [
-        "lint",
-        "typecheck",
-        "test",
-        "build"
-      ],
-      "examples": [
-        [
-          "lint",
-          "typecheck",
-          "test",
-          "build"
-        ]
-      ],
-      "minItems": 0,
-      "uniqueItems": true,
-      "items": {
-        "title": "Validation check",
-        "description": "A project command to run during validation.",
-        "enum": [
-          "lint",
-          "typecheck",
-          "test",
-          "build",
-          "verify"
-        ]
-      }
-    },
-    "maxRepairCycles": {
-      "title": "Maximum repair cycles",
-      "description": "Maximum implementation repair attempts after validation fails.",
-      "type": "integer",
-      "default": 2,
-      "examples": [
-        2
-      ],
-      "minimum": 0,
-      "maximum": 5
-    },
-    "preparation": {
-      "title": "Worktree preparation",
-      "description": "Confirmed preparation before the Agent Runtime: run the configured install command, or explicitly confirm that no preparation is necessary.",
-      "enum": [
-        "install",
-        "none"
-      ]
-    },
-    "retainWorkspaceOnSuccess": {
-      "title": "Retain successful workspace",
-      "description": "Keep the temporary Git workspace after a successful execution.",
-      "type": "boolean",
-      "default": false,
-      "examples": [
-        false
-      ]
-    },
-    "timeoutMs": {
-      "title": "Agent timeout",
-      "description": "Maximum duration of one Agent Runtime session.",
-      "type": "integer",
-      "default": 300000,
-      "examples": [
-        300000
-      ],
-      "minimum": 100,
-      "maximum": 3600000
-    },
-    "outputLimitBytes": {
-      "title": "Agent output limit",
-      "description": "Maximum captured output for one Agent Runtime session.",
-      "type": "integer",
-      "default": 1048576,
-      "examples": [
-        1048576
-      ],
-      "minimum": 1024,
-      "maximum": 10485760
-    },
-    "environmentAllowlist": {
-      "title": "Agent environment allowlist",
-      "description": "Environment variable names explicitly allowed in the Agent Runtime process.",
-      "type": "array",
-      "default": [],
-      "examples": [
-        []
-      ],
-      "uniqueItems": true,
-      "items": {
-        "type": "string",
-        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
-      }
     }
   }
 }

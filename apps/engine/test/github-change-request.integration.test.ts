@@ -11,7 +11,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { parse as parseYaml } from "yaml";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ProjectBindings } from "../../../packages/project-runtime/src/project-types.js";
 import { TAGS_REQUEST_PRODUCER_MODULE_ID } from "../src/test-support/test-fixtures.js";
@@ -1151,9 +1151,10 @@ async function createGitHubProject(
   id: string,
   includeTagsRequestProducer = false,
 ): Promise<{ readonly id: string; readonly repositoryPath: string }> {
+  const configuration = githubProjectConfiguration(id, includeTagsRequestProducer);
   const repositoryPath = makeNodeRepositoryFixture({
     remoteUrl: "git@github.com:QServices/repo.git",
-    projectYaml: stringifyYaml(githubProjectConfiguration(id, includeTagsRequestProducer)),
+    packageJson: { name: id },
   });
   repositories.push(repositoryPath);
   const response = await engine.call("/v1/projects", {
@@ -1164,6 +1165,12 @@ async function createGitHubProject(
   const body = (await response.json()) as { readonly id?: string; readonly error?: unknown };
   expect(response.status, JSON.stringify(body)).toBe(201);
   expect(body.id).toBe(id);
+  const saved = await engine.call(`/v1/projects/${body.id}/configuration`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ portableConfig: configuration, writeToRepository: false }),
+  });
+  expect(saved.status, await saved.clone().text()).toBe(200);
   return { id: body.id!, repositoryPath };
 }
 
@@ -1213,10 +1220,19 @@ async function bindAndActivate(
   };
   expect(reportResponse.status, JSON.stringify(report)).toBe(200);
   expect(report.valid, JSON.stringify(report)).toBe(true);
-  const activated = await engine.call(`/v1/projects/${project.id}/activate`, {
+  const preflightResponse = await engine.call(`/v1/projects/${project.id}/preflight`, {
+    method: "POST",
+  });
+  const preflight = (await preflightResponse.json()) as {
+    readonly valid: boolean;
+    readonly compositionFingerprint?: string;
+  };
+  expect(preflightResponse.status).toBe(200);
+  expect(preflight.valid, JSON.stringify(preflight)).toBe(true);
+  const activated = await engine.call(`/v1/projects/${project.id}/preflight-activate`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ compositionFingerprint: report.compositionFingerprint }),
+    body: JSON.stringify({ compositionFingerprint: preflight.compositionFingerprint }),
   });
   expect(activated.status, await activated.clone().text()).toBe(200);
 }
@@ -1409,13 +1425,7 @@ function githubProjectConfiguration(
       runtimeSlot: "agentRuntime",
       bindings: { repository: "main", sourceControl: "sourceControl", tickets: "tickets" },
       configuration: {
-        validationOrder: ["test"],
-        maxRepairCycles: 0,
-        preparation: "none",
-        retainWorkspaceOnSuccess: false,
-        timeoutMs: 300000,
-        outputLimitBytes: 1048576,
-        environmentAllowlist: [],
+        readyLabel: "ready-to-dev",
       },
     },
   ];

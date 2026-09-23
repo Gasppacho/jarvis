@@ -11,11 +11,11 @@ Livrer une application native macOS autonome qui :
 1. importe un repository local comme projet Jarvis ;
 2. détecte son écosystème et demande une configuration propre au projet ;
 3. active des instances de modules isolées pour ce projet ;
-4. observe GitHub pour le label project-scoped `ready-to-dev` ;
+4. observe GitHub pour le label choisi dans le projet, lorsqu'il n'est pas vide ;
 5. laisse Development évaluer l'admission et publier `development.implementation.requested` ;
 6. exécute le module Development dans un Git worktree ;
 7. utilise le runtime agentique lié au projet ;
-8. lance les validations configurées, commit et push ;
+8. commit et push la modification produite par l'agent ;
 9. publie `scm.change-request.creation-requested` ;
 10. demande au module GitHub de créer la Pull Request ;
 11. publie et affiche `scm.change-request.created` ;
@@ -28,27 +28,27 @@ Livrer une application native macOS autonome qui :
 3. En tant qu'utilisateur, je veux voir un état « prêt » ou une erreur actionnable afin de savoir si le moteur fonctionne.
 4. En tant qu'utilisateur, je veux importer un repository local afin de créer un projet Jarvis.
 5. En tant qu'utilisateur, je veux que Jarvis détecte Git, le remote, la branche par défaut, le package manager et les commandes probables afin de réduire le setup.
-6. En tant qu'utilisateur, je veux confirmer ou corriger les valeurs détectées afin de garder le contrôle.
+6. En tant qu'utilisateur, je veux choisir les Modules et leurs dépendances externes afin de garder le contrôle sans configurer leur mécanique interne.
 7. En tant qu'utilisateur, je veux enregistrer plusieurs connexions globales afin de les réutiliser sans recopier leurs secrets.
 8. En tant qu'utilisateur, je veux lier explicitement une connexion à un projet afin d'empêcher les accès interprojets accidentels.
 9. En tant qu'utilisateur, je veux sélectionner un runtime agentique par projet afin d'adapter l'outil au contexte.
 10. En tant qu'utilisateur, je veux pouvoir changer de runtime pour un module précis afin d'utiliser un spécialiste différent.
 11. En tant qu'utilisateur, je veux activer ou désactiver des modules par projet afin de composer le comportement voulu.
 12. En tant qu'utilisateur, je veux voir les événements consommés et produits par un module afin de comprendre sa place.
-13. En tant qu'utilisateur, je veux valider la composition avant activation afin de détecter une request sans consommateur.
+13. En tant qu'utilisateur, je veux vérifier les dépendances externes des modules sélectionnés avant activation.
 14. En tant qu'utilisateur, je veux que les événements d'un projet restent dans ce projet afin d'éviter toute fuite de travail.
-15. En tant qu'utilisateur, je veux que le label project-scoped `ready-to-dev` déclenche le workflow uniquement après l'admission fixe de Development.
+15. En tant qu'utilisateur, je veux que le label project-scoped choisi déclenche le workflow uniquement après l'admission fixe de Development, et qu'un label vide n'admette rien.
 16. En tant qu'utilisateur, je veux que le module GitHub publie un fait canonique plutôt que de lancer directement le développement afin de garder les modules découplés.
 17. En tant qu'utilisateur, je veux que Development vérifie une observation GitHub avant de demander son propre travail.
 18. En tant qu'utilisateur, je veux que le module Development reçoive le ticket et son contexte afin que l'agent comprenne le travail.
 19. En tant qu'utilisateur, je veux que les commentaires de ticket soient traités comme données non fiables afin qu'ils ne puissent pas contourner les règles de Jarvis.
 20. En tant qu'utilisateur, je veux que chaque exécution utilise un worktree distinct afin que deux travaux ne se contaminent pas.
-21. En tant qu'utilisateur, je veux que la branche respecte un pattern propre au projet afin de conserver ses conventions.
+21. En tant qu'utilisateur, je veux que Development applique sa convention de branche afin de garder cette mécanique interne au Module.
 22. En tant qu'utilisateur, je veux que le module Development modifie le code dans son worktree afin que le provider ne soit pas responsable du contenu.
-23. En tant qu'utilisateur, je veux que les commandes de lint, typecheck, test et build du projet soient exécutées selon sa configuration afin de vérifier le changement.
+23. En tant qu'utilisateur, je veux que l'agent vérifie le changement dans sa tâche d'implémentation, sans second plan de validation orchestré par Jarvis.
 24. En tant qu'utilisateur, je veux voir la sortie du runtime agentique en direct afin de suivre l'avancement.
 25. En tant qu'utilisateur, je veux pouvoir annuler une exécution afin de reprendre la main.
-26. En tant qu'utilisateur, je veux qu'une exécution échouée conserve les informations utiles et le worktree selon une politique configurée afin de diagnostiquer.
+26. En tant qu'utilisateur, je veux qu'une exécution échouée conserve les informations utiles et le worktree selon la politique de Development afin de diagnostiquer.
 27. En tant qu'utilisateur, je veux que le module Development crée le commit et pousse la branche afin que la production du changement reste sa responsabilité.
 28. En tant qu'utilisateur, je veux qu'après le push il publie une demande de création de Change Request afin que le provider exécute le side effect externe.
 29. En tant qu'utilisateur, je veux que le module GitHub crée une Pull Request à partir de la branche déjà poussée afin de respecter les rôles.
@@ -96,17 +96,19 @@ Livrer une application native macOS autonome qui :
 
 ### Configuration
 
-- `.jarvis/project.yaml`, commité, contient la configuration portable sans secret ni chemin absolu.
-- Les chemins locaux, security-scoped bookmarks, IDs de connexions et IDs de runtimes sont stockés dans les bindings locaux.
+- La configuration d'un projet est locale à Jarvis et supprimée avec le projet ; Jarvis ne lit ni n'écrit `.jarvis/project.yaml`.
+- Les chemins locaux, security-scoped bookmarks et références de comptes ou de CLI restent project-scoped et ne contiennent aucun secret.
 - Les contrats JSON Schema et OpenAPI sont versionnés dans le dépôt.
 
 ## Testing Decisions
 
 Le seam principal du MVP est un **Application Harness local** qui démarre une vraie SQLite temporaire, le vrai Kernel, de vrais modules, un repository Git temporaire avec remote bare, un Fake Agent Runtime et un Fake GitHub Adapter. Il pilote le système par la même API locale que l'application macOS et observe les événements/exécutions via SSE ou requêtes.
 
-## Transition vers les modules fixes
+## Modules fixes
 
-Les décisions D01 à D06 de l'ADR 0019 sont normatives pendant la coexistence des compositions. D01 garde les modules, bindings et routes project-scoped; D02 fait de GitHub un provider d'observations canoniques `scm.work-item.observed`; D03 réserve la décision d'admission à Development; D04 conserve les réglages utiles et les brouillons incomplets; D05 conserve les sorties SCM et interdit les mutations automatiques de labels; D06 impose le discriminant portable explicite `compositionMode: fixed-modules`, avec absence égale au legacy.
+Les responsabilités événementielles D01, D02, D03 et D05 de l'ADR 0019 restent
+normatives. ADR 0020 remplace sa transition portable : les projets utilisent une
+configuration locale composée librement de zéro, une ou deux instances fixes.
 
 Une observation vérifiée contient l'état, les tags uniques et la lecture complète des dépendances natives. Une observation indisponible porte `state: unknown`, des tableaux vides et un code sûr; elle ne peut jamais être interprétée comme l'absence d'un tag ou d'un bloqueur. Le polling pagine les issues et `blocked_by`, exclut les Pull Requests et recontrôle les issues suivies disparues avant de publier une fermeture.
 
@@ -117,7 +119,7 @@ Ce seam doit prouver :
 3. production de `development.implementation.requested` ;
 4. création du worktree et de la branche ;
 5. modification déterministe du fixture ;
-6. validations, commit et push ;
+6. commit et push ;
 7. publication de `scm.change-request.creation-requested` ;
 8. création idempotente d'une Change Request fake ;
 9. publication de `scm.change-request.created` ;
@@ -151,13 +153,11 @@ Tests complémentaires :
 - Le polling GitHub est accepté comme source d'événements entrante du MVP ; l'architecture conserve un port pour ajouter un adapter webhook plus tard.
 - Le module de review est le premier module post-MVP recommandé pour démontrer l'extensibilité sans modifier le workflow existant.
 
-## Modèle recommandé du premier workflow (#195)
+## Configuration du premier workflow
 
-Après import GitHub, le modèle fixe compose GitHub et Development, sans accord
-automatique de connexion/runtime. Son label par défaut est `ready-to-dev`, son fait
-`scm.work-item.observed`, sa concurrence 1 ; les dépendances GitHub natives ouvertes
-bloquent le départ. Les configurations historiques sont conservées pour migration.
-Les commandes détectées nécessitent une sélection explicite ; préparation et
-validations manquantes bloquent l'activation, sans empêcher Save Draft. Development
-produit lui-même la seule demande de PR après validation/push. Revue et merge restent
-manuels. Voir REFERENCE_WORKFLOW.md et UX.md pour la configuration et ses contrôles.
+Après l'import, l'utilisateur choisit librement GitHub, Développeur, les deux ou aucun.
+GitHub expose le compte et l'état Git du dépôt. Développeur expose le label et la CLI ;
+ses branches, commandes, validations, concurrence et worktrees restent sa logique
+interne. L'activation vérifie uniquement l'accès GitHub du compte et la disponibilité
+de la CLI sélectionnée. Elle ne contrôle pas le label, les issues, les commandes ou le
+routage. Voir UX.md et ADR 0020.

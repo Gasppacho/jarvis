@@ -202,15 +202,14 @@ describe("bundled Module Package catalogue", () => {
       },
     });
     expect(schemas["jarvis.module.development"]).toMatchObject({
+      additionalProperties: false,
       properties: {
-        validationOrder: {
-          title: "Validation order",
-          examples: [["lint", "typecheck", "test", "build"]],
-        },
-        maxRepairCycles: { title: "Maximum repair cycles", default: 2 },
-        retainWorkspaceOnSuccess: { title: "Retain successful workspace", default: false },
+        readyLabel: { title: "Ready label", default: "ready-to-dev" },
       },
     });
+    expect(Object.keys(schemas["jarvis.module.development"]?.["properties"] ?? {})).toEqual([
+      "readyLabel",
+    ]);
   });
 
   it("serves the versioned capability catalogue matching the documented meaning (ticket 48)", async () => {

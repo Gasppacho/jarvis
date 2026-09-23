@@ -1,69 +1,44 @@
 # Reference Development Workflow
 
-## Recommended guided starting point (#195)
+## Canonical GitHub → Development flow
 
-Fresh imports use `compositionMode: fixed-modules`, the project-scoped
-`ready-to-dev` label and the canonical `scm.work-item.observed` v1 Fact. GitHub
-confirms the issue is open and its complete native `blocked_by` list contains no
-open blocker. Development owns the fixed admission predicate, targets its own
-instance, and requests PR creation after validation and push. No user rule,
-editable target, payload mapping or merge permission exists.
+Fresh imports start with an empty `fixed-modules` composition. The user may select
+GitHub, Development, both or neither. When both are selected, GitHub confirms the
+issue is open and its complete native `blocked_by` list contains no open blocker;
+Development owns the admission predicate and requests PR creation after push. No user
+rule, editable target, payload mapping or merge permission exists.
 
-The template preserves discovered repository IDs, target branches and remote names;
 `repositories[].remote` identifies the GitHub owner/name through the granted local
-repository, while `git.pushRemote` is the explicitly configured Git push destination.
-The poller receives a portable repository ID, never an example owner/name. Different
-identity and push remotes are supported (and exercised with a bare remote by the harness).
-Concurrency is fixed to one in the template. Global connections and runtimes remain
-candidates until the guide binds the only eligible candidate; when several candidates
-exist, the user chooses explicitly.
+repository. Branch, push destination, worktree, command and concurrency policy are
+internal to Development. Global connections and runtimes remain candidates until the
+user selects one explicitly for this Project.
 
-Commands remain proposals during discovery. The guided starting point selects the
-detected `verify` script alone when present, otherwise the detected standard scripts
-in order; a lockfile selects frozen installation and a repository without one uses
-no preparation. The guide never asks for command text or confirmation. Advanced
-settings retain command editing and validation selection for non-standard or
-historical projects; editing command text clears its selection, and editing `install`
-clears preparation. An empty validation plan, a missing selected command, or absent
-worktree preparation blocks Engine readiness and activation, while the incomplete
-draft remains saveable. Install runs in each fresh worktree before the agent;
-selected validations run there after implementation and must pass before push.
-Jarvis requires macOS/Xcode command line tools and Swift, Node 24, and the pnpm version
-in `packageManager`, with tool paths approved in the project runtime binding.
+Development may run its detected installation step in each fresh worktree before the
+agent. It does not run a second project-validation plan after the agent. None of these
+internal choices appear in Project configuration.
 
-Custom composition keeps the current draft. Returning to the recommended model asks
-for replacement confirmation; declining preserves edits. This replaces modules,
-slot requirements, preserving project details and command text. Saving
-or choosing a model never activates the project. Review announces pre-existing ready
-issues and the manual review/merge boundary before explicit activation.
-
-The migration example below retains the historical configuration for read-only
-preview/export. Opening and saving it does not execute or rewrite that historical
-configuration; fixed projects use only the typed Development descriptor.
-`examples/guided-project/.jarvis/project.yaml` illustrates confirmed choices for a
-repository with `verify`; templates do not copy either example into real projects.
+Selecting or removing a Module never activates the Project. Removing one also removes
+its settings and bindings; selecting it again starts from its defaults.
 
 ## Guided configuration and proof
 
-The native guide is **Dépôt → Workflow → Accès et agent → Vérification**.
-Its four-card diagram explains the canonical Engine configuration; it is not a
-second routing model. Save does not activate. Preflight checks current access and
-configuration without running the agent or project validation commands. A scoped
-first trial names the selected issue; broadening scope requires a new verification.
+After the read-only repository import, native configuration has exactly three screens:
+**Workflow → Paramétrage → Vérification**. The canvas explains the Engine-declared
+events; it is not a second routing model. Verification checks only the selected
+external dependencies without running the agent or repository commands.
 
-The recommended chain is `scm.work-item.observed` →
-`development.implementation.requested` → Development preparation, agent, validations,
+When both Modules are selected, the chain is `scm.work-item.observed` →
+`development.implementation.requested` → Development preparation, agent,
 commit and push → `scm.change-request.creation-requested` → GitHub PR creation.
-Failed checks remain visible across repair attempts and restarts. The overview keeps
-the failed execution linked even after removal of the trigger label. Pausing stops
+The overview keeps the failed execution linked even after removal of the trigger label. Pausing stops
 new admissions; cancelling an active execution is a separate explicit action.
 
 The [progress ledger](../../PROGRESS.md) distinguishes Harness coverage, native
 screenshots and real GitHub/Codex delivery. None substitutes for another.
 
-## Fixed configuration
+## Fixed catalogue
 
-The Project enables exactly two Module Instances:
+The catalogue offers these two Module Instances, each selectable at most once:
 
 ```text
 github

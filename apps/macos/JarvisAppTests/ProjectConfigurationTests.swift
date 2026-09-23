@@ -45,24 +45,34 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertNil(module.configurationValues["readyLabel"])
         XCTAssertEqual(module.configurationValue(for: "readyLabel"), "ready-to-dev")
 
-        var draft = ProjectConfigurationDraft(
+        let draft = ProjectConfigurationDraft(
             configuration: try projectConfiguration(projectId: "round-trip"),
             packages: [package])
-        draft.repositories[0].defaultBranch = "develop"
         let reopened = ProjectConfigurationDraft(
             configuration: try draft.payload(),
             packages: [package])
-        XCTAssertEqual(reopened.repositories.first?.defaultBranch, "develop")
+        XCTAssertEqual(reopened.repositories.first?.id, "main")
         XCTAssertNil(reopened.modules.first?.configurationValues["readyLabel"])
     }
 
     @MainActor
     func testRuntimeCheckRefusesAnUnsavedDraftInsteadOfCertifyingTheOlderProfile() async throws {
         let repository = try makeRepository()
-        let session = EngineSessionModel(supervisor: EngineSupervisor(resources: .developmentBuild(), dataRoot: temporaryDirectory(prefix: "runtime-draft")))
-        let projects = ProjectsModel(session: session, repositoryGrants: RepositoryGrantStore(storageDirectory: temporaryDirectory(prefix: "runtime-grants")))
-        let api = RuntimeAPIStub(choices: .init(required: true, items: [], readiness: .init(status: .unchecked, checkedAt: nil, detail: "")),
-            result: .init(required: true, items: [], readiness: .init(status: .ready, checkedAt: nil, detail: "Saved profile ready")))
+        let session = EngineSessionModel(
+            supervisor: EngineSupervisor(
+                resources: .developmentBuild(),
+                dataRoot: temporaryDirectory(prefix: "runtime-draft")))
+        let projects = ProjectsModel(
+            session: session,
+            repositoryGrants: RepositoryGrantStore(
+                storageDirectory: temporaryDirectory(prefix: "runtime-grants")))
+        let api = RuntimeAPIStub(
+            choices: .init(
+                required: true, items: [],
+                readiness: .init(status: .unchecked, checkedAt: nil, detail: "")),
+            result: .init(
+                required: true, items: [],
+                readiness: .init(status: .ready, checkedAt: nil, detail: "Saved profile ready")))
         let model = ProjectConfigurationModel(session: session, projects: projects, runtimeAPI: api)
         await session.start()
         await projects.inspect(at: repository)
@@ -73,7 +83,9 @@ final class ProjectConfigurationTests: XCTestCase {
         model.editDraft(projectId: imported.id) { draft in draft.name = "New unsaved profile" }
         await model.checkRuntime(projectId: imported.id)
         XCTAssertEqual(model.state(for: imported.id).runtimePresentation.status, "Non vérifié")
-        XCTAssertTrue(model.state(for: imported.id).runtimePresentation.detail.contains("Enregistrez le brouillon"))
+        XCTAssertTrue(
+            model.state(for: imported.id).runtimePresentation.detail.contains(
+                "Enregistrez le brouillon"))
         XCTAssertFalse(model.state(for: imported.id).runtimeAllowsActivation)
         await session.shutdown()
     }
@@ -343,8 +355,9 @@ final class ProjectConfigurationTests: XCTestCase {
             ).validation.isReadyToActivate)
 
         configuration.editDraft(projectId: imported.id) { $0.name = "Edited composition" }
-        guard case .stale(let historicalReport) =
-            configuration.state(for: imported.id).validation
+        guard
+            case .stale(let historicalReport) =
+                configuration.state(for: imported.id).validation
         else { return XCTFail("a Portable Configuration edit must make the report stale") }
         XCTAssertEqual(historicalReport, report)
         let stalePresentation = ProjectDetailPresentation(
@@ -414,7 +427,8 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertTrue(repositoryBindingSaved)
         await configuration.refreshAfterRepositoryBindingChange(projectId: imported.id)
         guard case .stale = configuration.state(for: imported.id).validation else {
-            return XCTFail("a successful repository Local Binding edit must remain stale after reload")
+            return XCTFail(
+                "a successful repository Local Binding edit must remain stale after reload")
         }
 
         projects.releaseRepositoryAccess()
@@ -423,7 +437,8 @@ final class ProjectConfigurationTests: XCTestCase {
 
     func testSchemaDescriptorsDistinguishControlsAndApplyDefaults() throws {
         let package = try schemaFixturePackage()
-        let fields = Dictionary(uniqueKeysWithValues: package.configurationFields.map { ($0.key, $0) })
+        let fields = Dictionary(
+            uniqueKeysWithValues: package.configurationFields.map { ($0.key, $0) })
 
         XCTAssertEqual(fields["enabled"]?.kind, .boolean)
         XCTAssertEqual(fields["enabled"]?.defaultValue, "true")
@@ -442,7 +457,8 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(fields["name"]?.description, "Human-readable rule name")
         XCTAssertEqual(fields["name"]?.examples, ["release"])
         XCTAssertEqual(fields["name"]?.accessibilityLabel, "name, required, text")
-        XCTAssertTrue(fields["name"]?.accessibilityHint.contains("Human-readable rule name") == true)
+        XCTAssertTrue(
+            fields["name"]?.accessibilityHint.contains("Human-readable rule name") == true)
         XCTAssertEqual(fields["name"]?.pattern, "^[a-z]+$")
         XCTAssertTrue(fields["name"]?.required == true)
 
@@ -482,7 +498,8 @@ final class ProjectConfigurationTests: XCTestCase {
 
         draft.select(package: development, for: moduleID)
 
-        XCTAssertTrue(draft.modules[0].configurationRepairExplanation?.contains("preserved") == true)
+        XCTAssertTrue(
+            draft.modules[0].configurationRepairExplanation?.contains("preserved") == true)
         draft.select(package: github, for: moduleID)
         XCTAssertEqual(draft.modules[0].configurationValues["name"], "INVALID VALUE")
     }
@@ -547,7 +564,8 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(state.agentRuntimes?.required, false)
         XCTAssertEqual(state.runtimePresentation.status, "Choisissez d’abord un workflow")
 
-        let githubPackage = try XCTUnwrap(catalog.packages.first { $0.moduleId == "jarvis.module.github" })
+        let githubPackage = try XCTUnwrap(
+            catalog.packages.first { $0.moduleId == "jarvis.module.github" })
         configuration.addModule(projectId: imported.id, package: githubPackage)
         await configuration.refreshCompositionChoices(projectId: imported.id)
         let githubOnly = try XCTUnwrap(configuration.state(for: imported.id).draft)
@@ -560,21 +578,29 @@ final class ProjectConfigurationTests: XCTestCase {
                 project: imported,
                 configuration: configuration.state(for: imported.id)
             ).steps.first(where: { $0.id == .workflow })?.status,
-            .needsAction,
-            "GitHub seul ne doit pas annoncer le parcours Development/PR")
+            .complete,
+            "GitHub seul reste un workflow autorisé")
         configuration.editDraft(projectId: imported.id) { $0.modules[0].enabled = false }
         configuration.addModule(projectId: imported.id, package: githubPackage)
         XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.count, 1)
-        configuration.editDraft(projectId: imported.id) { $0.modules = []; $0.slotRequirements = [:] }
+        configuration.editDraft(projectId: imported.id) {
+            $0.modules = []
+            $0.slotRequirements = [:]
+        }
         await configuration.refreshCompositionChoices(projectId: imported.id)
 
-        configuration.apply(.addSlot(name: "custom-slot", requirement: "agent.execute"), projectId: imported.id, packages: catalog.packages)
+        configuration.apply(
+            .addSlot(name: "custom-slot", requirement: "agent.execute"), projectId: imported.id,
+            packages: catalog.packages)
         let slotsOnly = configuration.state(for: imported.id).draft
-        configuration.chooseStartingPoint(projectId: imported.id, startingPointId: "github-development")
+        configuration.chooseStartingPoint(
+            projectId: imported.id, startingPointId: "github-development")
         XCTAssertEqual(configuration.state(for: imported.id).draft, slotsOnly)
-        XCTAssertEqual(configuration.state(for: imported.id).pendingStartingPointID, "github-development")
+        XCTAssertEqual(
+            configuration.state(for: imported.id).pendingStartingPointID, "github-development")
         configuration.cancelStartingPointReplacement(projectId: imported.id)
-        configuration.apply(.removeSlot("custom-slot"), projectId: imported.id, packages: catalog.packages)
+        configuration.apply(
+            .removeSlot("custom-slot"), projectId: imported.id, packages: catalog.packages)
         configuration.chooseStartingPoint(
             projectId: imported.id, startingPointId: "github-development")
         await configuration.refreshCompositionChoices(projectId: imported.id)
@@ -584,28 +610,51 @@ final class ProjectConfigurationTests: XCTestCase {
             ["github", "development"])
         XCTAssertEqual(state.localBindings?.slots, [])
         XCTAssertEqual(state.agentRuntimes?.required, true)
-        let proposedDevelopment = try XCTUnwrap(state.draft?.modules.first { $0.instanceId == "development" })
-        XCTAssertEqual(proposedDevelopment.configurationValues["validationOrder"], "[]")
-        XCTAssertEqual(proposedDevelopment.configurationValues["preparation"], "none")
-        XCTAssertFalse(state.draft?.workflowCommandsConfigured ?? true)
+        await configuration.refreshRuntimeCandidates(
+            projectId: imported.id, autoSelectUnique: false)
+        XCTAssertEqual(
+            configuration.state(for: imported.id).agentRuntimes?.required,
+            true,
+            "runtime discovery must keep evaluating the current unsaved workflow")
+        let proposedDevelopment = try XCTUnwrap(
+            state.draft?.modules.first { $0.instanceId == "development" })
+        XCTAssertEqual(proposedDevelopment.configurationValues["readyLabel"], "ready-to-dev")
         XCTAssertEqual(
             ProjectOnboardingPresentation(
                 project: imported,
                 configuration: state
             ).steps.first(where: { $0.id == .workflow })?.status,
-            .readyForReview,
-            "le parcours guidé ne doit pas exiger la configuration manuelle des commandes")
+            .complete)
         XCTAssertEqual(state.compositionReview?.githubDevelopmentFlow, true)
         let canvas = WorkflowCanvasPresentation(graph: try XCTUnwrap(state.compositionGraph))
-        XCTAssertEqual(Set(canvas.connections.map(\.contractType)), ["scm.work-item.observed", "scm.change-request.creation-requested"])
-        XCTAssertTrue(canvas.edges.contains { $0.contractType == "development.implementation.requested" && $0.from == $0.to })
+        XCTAssertEqual(
+            Set(canvas.connections.map(\.contractType)),
+            ["scm.work-item.observed", "scm.change-request.creation-requested"])
+        XCTAssertTrue(
+            canvas.edges.contains {
+                $0.contractType == "development.implementation.requested" && $0.from == $0.to
+            })
         XCTAssertFalse(canvas.connections.contains { $0.from == $0.to })
+        let firstInstanceID = try XCTUnwrap(state.draft?.modules.first?.instanceId)
+        configuration.editDraft(projectId: imported.id) { $0.modules[0].instanceId = "" }
+        XCTAssertNil(
+            configuration.state(for: imported.id).compositionGraph,
+            "editing the Draft must remove the stale canvas before its refresh finishes")
+        await configuration.refreshCompositionChoices(projectId: imported.id)
+        XCTAssertNil(
+            configuration.state(for: imported.id).compositionGraph,
+            "a rejected refresh must not restore the previous canvas")
+        configuration.editDraft(projectId: imported.id) {
+            $0.modules[0].instanceId = firstInstanceID
+        }
+        await configuration.refreshCompositionChoices(projectId: imported.id)
+        state = configuration.state(for: imported.id)
 
         XCTAssertEqual(
             state.resourceChoices.map(\.slotId),
             [
-            "agentRuntime", "sourceControl",
-        ])
+                "agentRuntime", "sourceControl",
+            ])
         XCTAssertEqual(
             state.resourceChoices.first { $0.slotId == "sourceControl" }?.status,
             .incompatible)
@@ -625,11 +674,12 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(
             presentation.startingPoints.map(\.displayName),
             [
-            "GitHub Development", "Custom composition",
-        ])
+                "GitHub Development", "Custom composition",
+            ])
         XCTAssertTrue(
             presentation.actions.contains(
-                .edit(.chooseStartingPoint("github-development", displayName: "GitHub Development"))))
+                .edit(.chooseStartingPoint("github-development", displayName: "GitHub Development"))
+            ))
         let developmentCard = try XCTUnwrap(
             presentation.moduleCards.first { $0.displayName == "Development" })
         XCTAssertTrue(developmentCard.description.contains("isolated Git workspace"))
@@ -644,39 +694,32 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertTrue(
             developmentCard.technicalDetails.contains("development.implementation.requested.v1"))
 
-        let savedIncomplete = await configuration.saveDraft(projectId: imported.id, writeToRepository: false)
+        let savedIncomplete = await configuration.saveDraft(
+            projectId: imported.id, writeToRepository: false)
         XCTAssertNotNil(savedIncomplete, configuration.state(for: imported.id).errorMessage ?? "")
         await configuration.refresh(projectId: imported.id, packages: catalog.packages)
-        XCTAssertFalse(configuration.state(for: imported.id).compositionReview?.readyToValidate ?? true)
-        let commandModule = try XCTUnwrap(configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "development" })
-        configuration.setCommand(projectId: imported.id, name: "verify", command: "pnpm verify")
-        configuration.selectValidationCommand(projectId: imported.id, moduleID: commandModule.id, name: "verify", selected: true)
-        XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.first { $0.id == commandModule.id }?.configurationValues["validationOrder"], #"["verify"]"#)
-        configuration.setCommand(projectId: imported.id, name: "test", command: "pnpm test")
-        configuration.selectValidationCommand(projectId: imported.id, moduleID: commandModule.id, name: "test", selected: true)
-        configuration.setCommand(projectId: imported.id, name: "verify", command: "pnpm verify --changed")
-        XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.first { $0.id == commandModule.id }?.configurationValues["validationOrder"], #"["test"]"#, "editing verify must preserve the other confirmed validation")
-        configuration.selectValidationCommand(projectId: imported.id, moduleID: commandModule.id, name: "test", selected: false)
-        configuration.selectValidationCommand(projectId: imported.id, moduleID: commandModule.id, name: "verify", selected: true)
-        configuration.setCommand(projectId: imported.id, name: "install", command: "pnpm install --frozen-lockfile")
-        configuration.apply(.setModuleConfiguration(commandModule.id, "preparation", "install"), projectId: imported.id, packages: catalog.packages)
-        configuration.setCommand(projectId: imported.id, name: "install", command: "pnpm install --frozen-lockfile")
-        XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.first { $0.id == commandModule.id }?.configurationValues["preparation"], "install", "an identical command is not a change requiring reconfirmation")
-        let confirmedSave = await configuration.saveDraft(projectId: imported.id, writeToRepository: false)
+        XCTAssertFalse(
+            configuration.state(for: imported.id).compositionReview?.readyToValidate ?? true)
+        let confirmedSave = await configuration.saveDraft(
+            projectId: imported.id, writeToRepository: false)
         XCTAssertNotNil(confirmedSave)
         await configuration.refresh(projectId: imported.id, packages: catalog.packages)
-        let reopenedDevelopment = try XCTUnwrap(configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "development" })
-        XCTAssertEqual(reopenedDevelopment.configurationValues["preparation"], "install")
-        XCTAssertEqual(reopenedDevelopment.configurationValues["validationOrder"], #"["verify"]"#)
-        XCTAssertTrue(configuration.state(for: imported.id).draft?.workflowCommandsConfigured == true)
+        let reopenedDevelopment = try XCTUnwrap(
+            configuration.state(for: imported.id).draft?.modules.first {
+                $0.instanceId == "development"
+            })
+        XCTAssertEqual(reopenedDevelopment.configurationValues["readyLabel"], "ready-to-dev")
         XCTAssertEqual(
             ProjectOnboardingPresentation(
                 project: imported,
                 configuration: configuration.state(for: imported.id)
             ).steps.first(where: { $0.id == .workflow })?.status,
-            .readyForReview)
+            .complete)
         configuration.editDraft(projectId: imported.id) { draft in
-            guard let index = draft.modules.firstIndex(where: { $0.id == reopenedDevelopment.id }) else { return }
+            guard let index = draft.modules.firstIndex(where: { $0.id == reopenedDevelopment.id })
+            else {
+                return
+            }
             draft.modules[index].enabled = false
         }
         XCTAssertEqual(
@@ -684,46 +727,74 @@ final class ProjectConfigurationTests: XCTestCase {
                 project: imported,
                 configuration: configuration.state(for: imported.id)
             ).steps.first(where: { $0.id == .workflow })?.status,
-            .needsAction,
-            "un module Development désactivé casse le parcours recommandé")
+            .complete,
+            "un module désactivé ne bloque pas une composition libre")
         configuration.editDraft(projectId: imported.id) { draft in
-            guard let index = draft.modules.firstIndex(where: { $0.id == reopenedDevelopment.id }) else { return }
+            guard let index = draft.modules.firstIndex(where: { $0.id == reopenedDevelopment.id })
+            else {
+                return
+            }
             draft.modules[index].enabled = true
         }
-        configuration.setCommand(projectId: imported.id, name: "install", command: "pnpm install --frozen-lockfile --offline")
-        XCTAssertFalse(configuration.state(for: imported.id).draft?.workflowCommandsConfigured ?? true)
-        XCTAssertEqual(configuration.state(for: imported.id).draft?.modules.first { $0.id == reopenedDevelopment.id }?.validationOrder, ["verify"])
         configuration.setReadyLabel(projectId: imported.id, label: "approved-work")
         XCTAssertEqual(
-            configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "development" }?.configurationValues["readyLabel"],
+            configuration.state(for: imported.id).draft?.modules.first {
+                $0.instanceId == "development"
+            }?
+            .configurationValues["readyLabel"],
             "approved-work")
         XCTAssertNil(
-            configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "github" }?.configurationValues["readyLabel"])
+            configuration.state(for: imported.id).draft?.modules.first {
+                $0.instanceId == "github"
+            }?
+            .configurationValues["readyLabel"])
         configuration.setGuidedReadyLabel(projectId: imported.id, label: "ready-for-review")
         XCTAssertEqual(
-            configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "development" }?.configurationValues["readyLabel"],
+            configuration.state(for: imported.id).draft?.modules.first {
+                $0.instanceId == "development"
+            }?
+            .configurationValues["readyLabel"],
             "ready-for-review")
         XCTAssertNil(
-            configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "github" }?.configurationValues["readyLabel"])
-        let labelModule = try XCTUnwrap(configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "development" })
-        configuration.apply(.setModuleConfiguration(labelModule.id, "readyLabel", "reviewed-work"), projectId: imported.id, packages: catalog.packages)
+            configuration.state(for: imported.id).draft?.modules.first {
+                $0.instanceId == "github"
+            }?
+            .configurationValues["readyLabel"])
+        let labelModule = try XCTUnwrap(
+            configuration.state(for: imported.id).draft?.modules.first {
+                $0.instanceId == "development"
+            })
+        configuration.apply(
+            .setModuleConfiguration(labelModule.id, "readyLabel", "reviewed-work"),
+            projectId: imported.id, packages: catalog.packages)
         XCTAssertEqual(
-            configuration.state(for: imported.id).draft?.modules.first { $0.instanceId == "development" }?.configurationValues["readyLabel"],
+            configuration.state(for: imported.id).draft?.modules.first {
+                $0.instanceId == "development"
+            }?
+            .configurationValues["readyLabel"],
             "reviewed-work")
         XCTAssertTrue(ProjectDetailPresentation.activationNotice.contains("carrying"))
-        XCTAssertTrue(ProjectDetailPresentation.activationNotice.contains("Historical compositions"))
-        XCTAssertTrue(presentation.startingPoints.first?.description.contains("QServices/swift-config") == true)
+        XCTAssertTrue(
+            ProjectDetailPresentation.activationNotice.contains("Historical compositions"))
+        XCTAssertTrue(
+            presentation.startingPoints.first?.description.contains("QServices/swift-config")
+                == true)
         let custom = try XCTUnwrap(configuration.state(for: imported.id).draft)
         configuration.chooseStartingPoint(projectId: imported.id, startingPointId: "custom")
         XCTAssertEqual(configuration.state(for: imported.id).draft, custom)
-        configuration.chooseStartingPoint(projectId: imported.id, startingPointId: "github-development")
+        configuration.chooseStartingPoint(
+            projectId: imported.id, startingPointId: "github-development")
         XCTAssertEqual(configuration.state(for: imported.id).draft, custom)
-        XCTAssertEqual(configuration.state(for: imported.id).pendingStartingPointID, "github-development")
+        XCTAssertEqual(
+            configuration.state(for: imported.id).pendingStartingPointID, "github-development")
         configuration.cancelStartingPointReplacement(projectId: imported.id)
         XCTAssertNil(configuration.state(for: imported.id).pendingStartingPointID)
         XCTAssertEqual(configuration.state(for: imported.id).draft, custom)
-        configuration.chooseStartingPoint(projectId: imported.id, startingPointId: "github-development", confirmedReplacement: true)
-        XCTAssertEqual(configuration.state(for: imported.id).draft?.commands["verify"], "pnpm verify --changed")
+        configuration.chooseStartingPoint(
+            projectId: imported.id, startingPointId: "github-development",
+            confirmedReplacement: true)
+        XCTAssertEqual(
+            configuration.state(for: imported.id).draft?.repositories.map(\.id), ["main"])
         await configuration.refreshCompositionChoices(projectId: imported.id)
 
         configuration.apply(
@@ -751,13 +822,55 @@ final class ProjectConfigurationTests: XCTestCase {
             }),
             nil)
 
-        configuration.removeModule(projectId: imported.id, moduleId: development.id)
-        let removedSave = await configuration.saveDraft(projectId: imported.id, writeToRepository: false)
-        XCTAssertNotNil(removedSave)
-        XCTAssertNil(configuration.state(for: imported.id).draft?.slotRequirements["agentRuntime"])
-        let repeatedSave = await configuration.saveDraft(projectId: imported.id, writeToRepository: false)
-        XCTAssertNotNil(repeatedSave)
+        let runtimeCandidate = try XCTUnwrap(
+            state.candidates.first { $0.kind.rawValue == "runtime" })
+        let savedRuntimeBinding = await configuration.setLocalBinding(
+            projectId: imported.id,
+            slotId: "agentRuntime",
+            candidate: runtimeCandidate)
+        XCTAssertNotNil(savedRuntimeBinding)
+        XCTAssertEqual(
+            configuration.state(for: imported.id).localBindings?.slots.map(\.slotId),
+            ["agentRuntime"])
+        configuration.setReadyLabel(projectId: imported.id, label: "reviewed-work")
+        XCTAssertEqual(
+            configuration.state(for: imported.id).draft?.modules.first(where: {
+                $0.instanceId == "development"
+            })?.configurationValue(for: "readyLabel"),
+            "reviewed-work")
 
+        configuration.removeModule(projectId: imported.id, moduleId: development.id)
+        XCTAssertNil(configuration.state(for: imported.id).draft?.slotRequirements["agentRuntime"])
+        XCTAssertFalse(
+            configuration.state(for: imported.id).localBindings?.slots.contains(where: {
+                $0.slotId == "agentRuntime"
+            }) ?? true)
+        let developmentPackage = try XCTUnwrap(
+            catalog.packages.first { $0.moduleId == "jarvis.module.development" })
+        configuration.addModule(projectId: imported.id, package: developmentPackage)
+        let readdedDevelopment = try XCTUnwrap(
+            configuration.state(for: imported.id).draft?.modules.first {
+                $0.moduleId == "jarvis.module.development"
+            })
+        XCTAssertEqual(readdedDevelopment.configurationValue(for: "readyLabel"), "ready-to-dev")
+        XCTAssertNotEqual(
+            readdedDevelopment.configurationValue(for: "readyLabel"), "reviewed-work")
+        XCTAssertFalse(
+            configuration.state(for: imported.id).localBindings?.slots.contains(where: {
+                $0.slotId == "agentRuntime"
+            }) ?? true,
+            "re-adding before save must not restore the removed CLI binding")
+        let removedSave = await configuration.saveDraft(
+            projectId: imported.id, writeToRepository: false)
+        XCTAssertNotNil(removedSave)
+        await configuration.refresh(projectId: imported.id, packages: catalog.packages)
+        XCTAssertFalse(
+            configuration.state(for: imported.id).localBindings?.slots.contains(where: {
+                $0.slotId == "agentRuntime"
+            }) ?? true,
+            "save then reload must not restore the removed CLI binding")
+
+        state = configuration.state(for: imported.id)
         let github = try XCTUnwrap(state.draft?.modules.first { $0.instanceId == "github" })
         configuration.apply(
             .setModulePackage(github.id, "jarvis.module.change-request-review"),
@@ -780,262 +893,95 @@ final class ProjectConfigurationTests: XCTestCase {
     }
 
     @MainActor
-    func testFreshImportPreservesEngineDraftValuesWhileComposingSavingAndReopening() async throws {
-        let repository = try makeRepository()
+    func testSettingsRefreshStagesAndReloadsAccountRuntimeAndLabel() async throws {
+        let fakeTools = temporaryDirectory(prefix: "jarvis-settings-tools")
+        let fakeGitHub = fakeTools.appendingPathComponent("gh")
         try """
-            [remote "upstream"]
-            \turl = git@github.com:QServices/swift-config.git
-            """.write(
-                to: repository.appendingPathComponent(".git/config"),
-                atomically: true,
-                encoding: .utf8)
-        try "ref: refs/heads/develop\n".write(
-            to: repository.appendingPathComponent(".git/HEAD"), atomically: true, encoding: .utf8)
+        #!/bin/sh
+        printf '%s\\n' '{"hosts":{"github.com":[{"state":"success","login":"SwiftAccount"}]}}'
+        """.write(to: fakeGitHub, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755], ofItemAtPath: fakeGitHub.path)
+        let previousGitHubExecutable = ProcessInfo.processInfo.environment[
+            "JARVIS_GH_EXECUTABLE"]
+        setenv("JARVIS_GH_EXECUTABLE", fakeGitHub.path, 1)
+        defer {
+            if let previousGitHubExecutable {
+                setenv("JARVIS_GH_EXECUTABLE", previousGitHubExecutable, 1)
+            } else {
+                unsetenv("JARVIS_GH_EXECUTABLE")
+            }
+        }
+
+        let repository = try makeRepository()
+        let developmentResources = EngineResources.developmentBuild()
+        let resources = EngineResources(
+            nodeExecutable: developmentResources.nodeExecutable,
+            bundle: developmentResources.bundle.deletingLastPathComponent()
+                .appendingPathComponent("engine.test-bundle.mjs"))
         let session = EngineSessionModel(
             supervisor: EngineSupervisor(
-                resources: .developmentBuild(),
-                dataRoot: temporaryDirectory(prefix: "jarvis-fresh-flow-data")))
+                resources: resources,
+                dataRoot: temporaryDirectory(prefix: "jarvis-settings-data")))
         let projects = ProjectsModel(
             session: session,
             repositoryGrants: RepositoryGrantStore(
-                storageDirectory: temporaryDirectory(prefix: "jarvis-fresh-flow-grants")))
+                storageDirectory: temporaryDirectory(prefix: "jarvis-settings-grants")))
         let configuration = ProjectConfigurationModel(session: session, projects: projects)
+        let connections = ConnectionsModel(session: session)
         let catalog = ModuleCatalogModel(session: session)
         await session.start()
         await catalog.refresh()
         await projects.inspect(at: repository)
         let importResult = await projects.confirmImport()
         let imported = try XCTUnwrap(importResult)
-
         await configuration.refresh(projectId: imported.id, packages: catalog.packages)
-        XCTAssertEqual(configuration.state(for: imported.id).draft?.modules, [])
-        XCTAssertEqual(configuration.state(for: imported.id).draft?.slotRequirements, [:])
+        configuration.chooseStartingPoint(
+            projectId: imported.id, startingPointId: "github-development")
+        configuration.setReadyLabel(projectId: imported.id, label: "keep-after-account-refresh")
 
-        let github = try XCTUnwrap(
-            catalog.packages.first { $0.moduleId == "jarvis.module.github" })
-        let development = try XCTUnwrap(
-            catalog.packages.first { $0.moduleId == "jarvis.module.development" })
-        configuration.apply(
-            .setProjectName("Action-edited Project"),
+        await connections.refresh()
+        await configuration.refreshAfterConnectionManagement(
             projectId: imported.id, packages: catalog.packages)
-        configuration.apply(
-            .addSlot(name: "sourceControl", requirement: "scm.change-request.manage"),
-            projectId: imported.id, packages: catalog.packages)
-        configuration.apply(
-            .setSlotOptional("sourceControl", true),
-            projectId: imported.id, packages: catalog.packages)
-        configuration.apply(
-            .setSlotDescription("sourceControl", "Primary source-control provider"),
-            projectId: imported.id, packages: catalog.packages)
-        configuration.apply(
-            .addSlot(name: "temporary", requirement: "repository.read"),
-            projectId: imported.id, packages: catalog.packages)
-        configuration.apply(
-            .removeSlot("temporary"), projectId: imported.id, packages: catalog.packages)
-        configuration.apply(
-            .addModule(development.moduleId),
-            projectId: imported.id, packages: catalog.packages)
-        let moduleId = try XCTUnwrap(
-            configuration.state(for: imported.id).draft?.modules.first?.id)
-        configuration.apply(
-            .addModule(development.moduleId),
-            projectId: imported.id, packages: catalog.packages)
-        let removedModuleId = try XCTUnwrap(
-            configuration.state(for: imported.id).draft?.modules.last?.id)
-        configuration.apply(
-            .removeModule(removedModuleId),
-            projectId: imported.id, packages: catalog.packages)
-        configuration.apply(
-            .setModulePackage(moduleId, github.moduleId),
-            projectId: imported.id, packages: catalog.packages)
-        configuration.apply(
-            .setModuleInstanceID(moduleId, "github-primary"),
-            projectId: imported.id, packages: catalog.packages)
-        configuration.apply(
-            .setModuleEnabled(moduleId, true),
-            projectId: imported.id, packages: catalog.packages)
-        configuration.apply(
-            .setModuleRuntimeSlot(moduleId, "sourceControl"),
-            projectId: imported.id, packages: catalog.packages)
-        configuration.apply(
-            .addModuleBinding(moduleId),
-            projectId: imported.id, packages: catalog.packages, bindingOptions: ["main"])
-        configuration.apply(
-            .renameModuleBinding(moduleId, "binding1", "repository"),
-            projectId: imported.id, packages: catalog.packages)
-        configuration.apply(
-            .setModuleBinding(moduleId, "repository", "main"),
-            projectId: imported.id, packages: catalog.packages)
-        configuration.apply(
-            .addModuleBinding(moduleId),
-            projectId: imported.id, packages: catalog.packages, bindingOptions: ["main"])
-        configuration.apply(
-            .removeModuleBinding(moduleId, "binding2"),
-            projectId: imported.id, packages: catalog.packages)
-        configuration.apply(
-            .setModuleConfiguration(moduleId, "pollIntervalSeconds", "60"),
-            projectId: imported.id, packages: catalog.packages)
-        configuration.apply(
-            .setModuleConfiguration(moduleId, "repositories", #"["Gasppacho/jarvis"]"#),
-            projectId: imported.id, packages: catalog.packages)
-        configuration.applyRepositoryReferenceReplacement(
-            projectId: imported.id,
-            moduleInstanceID: "github-primary",
-            replacement: ProjectRepositoryReferenceReplacement(
-                field: "/configuration/repositories",
-                from: "Gasppacho/jarvis",
-                to: "main"))
         XCTAssertEqual(
-            configuration.state(for: imported.id).draft?.modules.first?.configurationValues[
-                "repositories"],
-            #"["main"]"#)
-        XCTAssertFalse(configuration.state(for: imported.id).isDraftSaved)
+            configuration.state(for: imported.id).draft?.modules.first {
+                $0.moduleId == "jarvis.module.development"
+            }?.configurationValue(for: "readyLabel"),
+            "keep-after-account-refresh")
+        let account = try XCTUnwrap(
+            configuration.state(for: imported.id).resourceChoices
+                .flatMap(\.candidates)
+                .first { $0.ref == "connection/github-SwiftAccount" })
+        configuration.stageGitHubConnection(projectId: imported.id, connectionID: account.ref)
 
-        let editorState = configuration.state(for: imported.id)
-        let presentation = ProjectDetailPresentation(
-            project: imported,
-            detail: editorState.detail,
-            state: editorState,
-            packages: catalog.packages)
-        XCTAssertEqual(presentation.repositories.map(\.repositoryId), ["main"])
-        XCTAssertEqual(presentation.slots.map(\.id), ["sourceControl"])
-        XCTAssertEqual(presentation.modules.map(\.moduleId), ["jarvis.module.github"])
-        XCTAssertTrue(presentation.actions.contains(.repositoryPicker(.chooseRepository("main"))))
-        XCTAssertTrue(
-            presentation.actions.contains(
-                .edit(.addSlot(name: "", requirement: ""))))
-        XCTAssertEqual(
-            presentation.actions.compactMap { action -> String? in
-                guard case .edit(let edit) = action,
-                    case .addModule(let packageId) = edit.operation
-                else { return nil }
-                return packageId
-            }.sorted(),
-            catalog.packages.map(\.moduleId).sorted())
-        XCTAssertTrue(
-            presentation.actions.contains(.edit(.setProjectName("Action-edited Project"))))
-        XCTAssertTrue(presentation.actions.contains(.edit(.removeSlot("sourceControl"))))
-        XCTAssertTrue(
-            presentation.actions.contains(
-                .edit(.setSlotRequirement("sourceControl", "scm.change-request.manage"))))
-        XCTAssertTrue(
-            presentation.actions.contains(.edit(.setSlotOptional("sourceControl", true))))
-        XCTAssertTrue(
-            presentation.actions.contains(
-                .edit(
-                    .setSlotDescription("sourceControl", "Primary source-control provider"))))
-        XCTAssertTrue(
-            presentation.actions.contains(.asynchronous(.setLocalBinding("sourceControl", nil))))
-        XCTAssertTrue(presentation.actions.contains(.edit(.removeModule(moduleId))))
-        XCTAssertTrue(
-            presentation.actions.contains(.edit(.setModulePackage(moduleId, github.moduleId))))
-        XCTAssertTrue(
-            presentation.actions.contains(.edit(.setModuleInstanceID(moduleId, "github-primary"))))
-        XCTAssertTrue(presentation.actions.contains(.edit(.setModuleEnabled(moduleId, true))))
-        XCTAssertTrue(
-            presentation.actions.contains(
-                .edit(.setModuleRuntimeSlot(moduleId, "sourceControl"))))
-        XCTAssertTrue(presentation.actions.contains(.edit(.addModuleBinding(moduleId))))
-        XCTAssertTrue(
-            presentation.actions.contains(.edit(.removeModuleBinding(moduleId, "repository"))))
-        XCTAssertTrue(
-            presentation.actions.contains(
-                .edit(.setModuleBinding(moduleId, "repository", "main"))))
-        XCTAssertTrue(
-            presentation.actions.contains(
-                .edit(.setModuleConfiguration(moduleId, "pollIntervalSeconds", "60"))))
-        XCTAssertTrue(presentation.actions.contains(.asynchronous(.saveLocal)))
-        XCTAssertTrue(presentation.actions.contains(.asynchronous(.saveRepository)))
-        XCTAssertTrue(presentation.actions.contains(.confirmation(.deleteProject)))
-        XCTAssertTrue(presentation.actions.contains(.noOp(.cancelProjectDeletion)))
-        XCTAssertEqual(
-            ProjectDetailPresentation.Action.Confirmation.deleteProject.label,
-            "Delete Project…")
-        XCTAssertEqual(
-            ProjectDetailPresentation.Action.NoOp.cancelProjectDeletion.label,
-            "Cancel")
-        XCTAssertEqual(
-            presentation.deletionConfirmation.confirmAction,
-            .confirmProjectDeletion)
-        XCTAssertEqual(
-            presentation.deletionConfirmation.cancelAction,
-            .cancelProjectDeletion)
-        XCTAssertEqual(presentation.deletionConfirmation.title, "Delete “\(imported.name)”?")
-        XCTAssertTrue(presentation.deletionConfirmation.message.contains("Project Registry record"))
-        XCTAssertTrue(
-            presentation.deletionConfirmation.message.contains("project-scoped engine state"))
-        XCTAssertTrue(presentation.deletionConfirmation.message.contains("Local Bindings"))
-        XCTAssertTrue(presentation.deletionConfirmation.message.contains("Repository Grant"))
-        XCTAssertTrue(presentation.deletionConfirmation.message.contains("remain untouched"))
-        XCTAssertEqual(presentation.deletionConfirmation.cancelAction.label, "Cancel")
-        XCTAssertEqual(presentation.deletionConfirmation.confirmAction.label, "Delete Project")
-        XCTAssertTrue(presentation.deletionConfirmation.isEnabled)
-        let activeProject = Project(
-            id: imported.id,
-            name: imported.name,
-            status: .active,
-            moduleCount: imported.moduleCount,
-            activeExecutions: imported.activeExecutions)
-        XCTAssertFalse(
-            ProjectDetailPresentation(
-                project: activeProject,
-                detail: editorState.detail,
-                state: editorState,
-                packages: catalog.packages
-            ).deletionConfirmation.isEnabled)
-        XCTAssertTrue(presentation.isSaveEnabled)
-
-        await configuration.perform(.saveLocal, projectId: imported.id)
-        let saved = configuration.state(for: imported.id).detail
-        XCTAssertEqual(saved?.portableConfiguration?.metadata.name, "Action-edited Project")
-        XCTAssertEqual(saved?.modules.map(\.moduleId), ["jarvis.module.github"])
-        XCTAssertEqual(saved?.modules.map(\.instanceId), ["github-primary"])
-        XCTAssertEqual(saved?.modules.map(\.enabled), [true])
-        XCTAssertEqual(saved?.modules.map(\.runtimeSlot), ["sourceControl"])
-        XCTAssertEqual(saved?.portableConfiguration?.repositories.first?.defaultBranch, "develop")
-        XCTAssertEqual(saved?.portableConfiguration?.repositories.first?.remote, "upstream")
-        XCTAssertEqual(saved?.portableConfiguration?.git.pushRemote, "upstream")
-        XCTAssertEqual(saved?.portableConfiguration?.workspace.maxConcurrentExecutions, 1)
-        let candidate = try XCTUnwrap(
-            configuration.state(for: imported.id).candidates.first {
-                $0.capabilities.contains("scm.change-request.manage")
+        await configuration.refreshRuntimeCandidates(
+            projectId: imported.id, discover: true, autoSelectUnique: false)
+        let runtime = try XCTUnwrap(
+            configuration.state(for: imported.id).agentRuntimes?.items.first {
+                $0.selectable
             })
-        await configuration.perform(
-            .setLocalBinding("sourceControl", candidate.id),
-            projectId: imported.id)
-        XCTAssertEqual(
-            configuration.state(for: imported.id).localBindings?.slots.map(\.slotId),
-            ["sourceControl"])
+        configuration.stageRuntime(projectId: imported.id, ref: runtime.ref)
+        let saved = await configuration.saveDraft(
+            projectId: imported.id, writeToRepository: false)
+        XCTAssertNotNil(saved)
 
-        let reopenedConfiguration = ProjectConfigurationModel(
-            session: session, projects: projects)
-        await reopenedConfiguration.refresh(
-            projectId: imported.id, packages: catalog.packages)
-        let reopened = try XCTUnwrap(reopenedConfiguration.state(for: imported.id).draft)
-        XCTAssertEqual(reopened.name, "Action-edited Project")
-        XCTAssertEqual(reopened.modules.map(\.moduleId), ["jarvis.module.github"])
-        XCTAssertEqual(reopened.modules.map(\.instanceId), ["github-primary"])
-        XCTAssertEqual(reopened.modules.map(\.enabled), [true])
-        XCTAssertEqual(reopened.modules.map(\.runtimeSlot), ["sourceControl"])
-        XCTAssertEqual(reopened.modules.first?.bindings, ["repository": "main"])
-        XCTAssertEqual(reopened.modules.first?.configurationValues["pollIntervalSeconds"], "60")
-        XCTAssertEqual(reopened.modules.first?.configurationValues["repositories"], #"["main"]"#)
-        let roundTripped = try reopened.payload()
-        XCTAssertEqual(roundTripped.repositories.first?.defaultBranch, "develop")
-        XCTAssertEqual(roundTripped.repositories.first?.remote, "upstream")
-        XCTAssertEqual(roundTripped.git.pushRemote, "upstream")
-        XCTAssertEqual(roundTripped.workspace.maxConcurrentExecutions, 1)
-        XCTAssertEqual(Set(reopened.slotRequirements.keys), Set(["sourceControl"]))
+        let reloaded = ProjectConfigurationModel(session: session, projects: projects)
+        await reloaded.refresh(projectId: imported.id, packages: catalog.packages)
+        let reloadedState = reloaded.state(for: imported.id)
         XCTAssertEqual(
-            reopened.slotRequirements["sourceControl"]?.requires,
-            "scm.change-request.manage")
-        XCTAssertEqual(reopened.slotRequirements["sourceControl"]?.optional, true)
-        XCTAssertEqual(
-            reopened.slotRequirements["sourceControl"]?.description,
-            "Primary source-control provider")
-        XCTAssertEqual(
-            reopenedConfiguration.state(for: imported.id).localBindings?.slots.map(\.slotId),
-            ["sourceControl"])
+            reloadedState.draft?.modules.first {
+                $0.moduleId == "jarvis.module.development"
+            }?.configurationValue(for: "readyLabel"),
+            "keep-after-account-refresh")
+        XCTAssertTrue(
+            reloadedState.localBindings?.slots.contains {
+                $0.kind == .connection && $0.ref == account.ref
+            } == true)
+        XCTAssertTrue(
+            reloadedState.localBindings?.slots.contains {
+                $0.kind == .runtime && $0.ref == runtime.ref
+            } == true)
+
         projects.releaseRepositoryAccess()
         await session.shutdown()
     }
@@ -1076,7 +1022,7 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(bundledFields["bootstrapLabelPolicy"]?.defaultValue, "ignore-existing")
         XCTAssertEqual(
             bundledFields["bootstrapLabelPolicy"]?.kind,
-                       .choice(["ignore-existing", "emit-existing"]))
+            .choice(["ignore-existing", "emit-existing"]))
         XCTAssertEqual(bundledFields["pollIntervalSeconds"]?.kind, .integer)
         XCTAssertEqual(bundledFields["pollIntervalSeconds"]?.minimum, 15)
         XCTAssertEqual(bundledFields["pollIntervalSeconds"]?.maximum, 3600)
@@ -1091,13 +1037,10 @@ final class ProjectConfigurationTests: XCTestCase {
             catalog.packages.first { $0.moduleId == "jarvis.module.development" })
         let developmentDraft = ProjectModuleDraft(
             package: development, instanceId: "development")
-        XCTAssertEqual(
-            developmentDraft.configurationValues["retainWorkspaceOnSuccess"],
-            "false")
+        XCTAssertEqual(developmentDraft.configurationValues["readyLabel"], "ready-to-dev")
         let developmentFields = Dictionary(
             uniqueKeysWithValues: development.configurationFields.map { ($0.key, $0) })
-        XCTAssertNotNil(
-            developmentFields["validationOrder"]?.validationIssue(for: #"["unknown"]"#))
+        XCTAssertEqual(Set(developmentFields.keys), ["readyLabel"])
         configuration.renameSlot(
             projectId: imported.id, from: "sourceControl", to: "provider")
         XCTAssertEqual(
@@ -1137,7 +1080,8 @@ final class ProjectConfigurationTests: XCTestCase {
     }
 
     @MainActor
-    func testInvalidBundledPackageConfigurationIsActionableAndDoesNotReplaceTheDraft() async throws {
+    func testInvalidBundledPackageConfigurationIsActionableAndDoesNotReplaceTheDraft() async throws
+    {
         let repository = try makeRepository()
         let dataRoot = temporaryDirectory(prefix: "jarvis-invalid-config-data")
         let session = EngineSessionModel(
@@ -1209,8 +1153,13 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertNotNil(freshState.compositionReview, freshState.errorMessage ?? "missing review")
         XCTAssertFalse(freshState.compositionReview?.readyToValidate ?? true)
         XCTAssertEqual(freshState.saveStatus, "Enregistré")
-        XCTAssertEqual(ProjectOnboardingPresentation(project: imported, configuration: freshState).steps.first?.status, .complete)
-        XCTAssertEqual(ProjectOnboardingPresentation(project: imported, configuration: freshState).steps[1].status, .needsAction)
+        XCTAssertEqual(
+            ProjectOnboardingPresentation(project: imported, configuration: freshState).steps.first?
+                .status, .complete)
+        XCTAssertEqual(
+            ProjectOnboardingPresentation(project: imported, configuration: freshState).steps[1]
+                .status,
+            .complete)
 
         let incomplete = try projectConfiguration(projectId: imported.id)
         let saveResult = await configuration.saveConfiguration(
@@ -1256,28 +1205,39 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertFalse(presentation.isReadyForValidation)
         XCTAssertEqual(state.draft?.name, "Unsaved review edit")
         XCTAssertEqual(state.saveStatus, "Modifications à enregistrer")
-        XCTAssertEqual(ProjectOnboardingPresentation(project: imported, configuration: state).steps.last?.status, .stale)
+        XCTAssertEqual(
+            ProjectOnboardingPresentation(project: imported, configuration: state).steps.last?
+                .status,
+            .stale)
 
-        let saving = Task { await configuration.saveDraft(projectId: imported.id, writeToRepository: false) }
+        let saving = Task {
+            await configuration.saveDraft(projectId: imported.id, writeToRepository: false)
+        }
         for _ in 0..<100 where !configuration.state(for: imported.id).isSaving {
             await Task.yield()
         }
-        XCTAssertTrue(configuration.state(for: imported.id).isSaving, "the real save must be in flight before editing")
+        XCTAssertTrue(
+            configuration.state(for: imported.id).isSaving,
+            "the real save must be in flight before editing")
         configuration.editDraft(projectId: imported.id) { $0.name = "Edited while saving" }
         let saved = await saving.value
         XCTAssertEqual(saved?.project.name, "Unsaved review edit")
         state = configuration.state(for: imported.id)
         XCTAssertEqual(state.draft?.name, "Edited while saving")
         XCTAssertEqual(state.saveStatus, "Modifications à enregistrer")
-        XCTAssertNotEqual(state.compositionReview?.compositionGuide.startingPoints.first?.template?.metadata.name,
-                          "Unsaved review edit", "the saved snapshot must not certify the newer edit")
+        XCTAssertNotEqual(
+            state.compositionReview?.compositionGuide.startingPoints.first?.template?.metadata.name,
+            "Unsaved review edit", "the saved snapshot must not certify the newer edit")
 
         projects.releaseRepositoryAccess()
         await session.shutdown()
         await configuration.refresh(projectId: imported.id)
         state = configuration.state(for: imported.id)
         XCTAssertNotNil(state.detail, "a lost connection keeps the last repository snapshot")
-        XCTAssertEqual(ProjectOnboardingPresentation(project: imported, configuration: state).steps.first?.status, .stale)
+        XCTAssertEqual(
+            ProjectOnboardingPresentation(project: imported, configuration: state).steps.first?
+                .status,
+            .stale)
     }
 
     private func schemaFixturePackage(
@@ -1344,9 +1304,7 @@ final class ProjectConfigurationTests: XCTestCase {
             "kind": "Project",
             "metadata": ["id": projectId, "name": "Swift Config"],
             "repositories": [
-                [
-                    "id": "main", "root": ".", "defaultBranch": "main", "remote": "origin",
-                ]
+                ["id": "main", "root": "."]
             ],
             "slots": [
                 "sourceControl": [
@@ -1354,18 +1312,6 @@ final class ProjectConfigurationTests: XCTestCase {
                     "optional": true,
                     "description": "Primary source control",
                 ]
-            ],
-            "commands": [:],
-            "git": [
-                "branchPattern": "agent/{workItemId}-{slug}",
-                "commitStrategy": "conventional",
-                "pushRemote": "origin",
-                "allowForcePush": false,
-            ],
-            "workspace": [
-                "strategy": "git-worktree",
-                "maxConcurrentExecutions": 1,
-                "retainOnFailureDays": 7,
             ],
             "modules": [
                 [
@@ -1404,20 +1350,21 @@ final class ProjectConfigurationTests: XCTestCase {
     }
 
     private func validationReportFixture(valid: Bool = false) throws -> ProjectValidationReport {
-        let findings = valid
+        let findings =
+            valid
             ? "[]"
             : """
-              [{
-                "code":"project.request-orphaned",
-                "severity":"error",
-                "message":"No consumer is available.",
-                "target":{
-                  "kind":"request-edge",
-                  "contract":{"type":"deploy.requested","version":1,"kind":"request"},
-                  "producer":{"instanceId":"automation","moduleId":"jarvis.module.automation-rules"}
-                }
-              }]
-              """
+            [{
+              "code":"project.request-orphaned",
+              "severity":"error",
+              "message":"No consumer is available.",
+              "target":{
+                "kind":"request-edge",
+                "contract":{"type":"deploy.requested","version":1,"kind":"request"},
+                "producer":{"instanceId":"automation","moduleId":"jarvis.module.automation-rules"}
+              }
+            }]
+            """
         let data = Data(
             """
             {

@@ -464,7 +464,7 @@ final class ProjectImportTests: XCTestCase {
     }
 
     @MainActor
-    func testNonGitFolderRemainsActionableWithoutCreatingAPartialDraft() async throws {
+    func testNonGitFolderCanReachDraftConfirmation() async throws {
         let folder = temporaryDirectory(prefix: "jarvis-not-a-repository")
         let projects = ProjectsModel(
             session: EngineSessionModel(supervisor: EngineSupervisor(resources: .developmentBuild())),
@@ -474,11 +474,11 @@ final class ProjectImportTests: XCTestCase {
 
         await projects.inspect(at: folder)
 
-        guard case .failed(let message) = projects.importState else {
-            return XCTFail("a non-Git folder must not reach draft confirmation")
+        guard case .confirm(let inspection) = projects.importState else {
+            return XCTFail("a non-Git folder must reach draft confirmation")
         }
-        XCTAssertTrue(message.contains("not a Git repository"))
-        XCTAssertTrue(message.contains("Choose another folder"))
+        XCTAssertFalse(inspection.isGitRepository)
+        XCTAssertEqual(projects.importName, folder.lastPathComponent)
         XCTAssertTrue(projects.projects.isEmpty)
     }
 

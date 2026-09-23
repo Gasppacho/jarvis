@@ -1,8 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { parse as parseYaml } from "yaml";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   startReferenceWorkflowFixture,
@@ -28,16 +25,18 @@ describe("reference workflow Application Harness", () => {
       fixture.initialCommitSha,
     );
 
-    const configuration = parseYaml(
-      readFileSync(join(fixture.repositoryRoot, ".jarvis/project.yaml"), "utf8"),
-    ) as {
-      readonly modules: readonly {
-        readonly instanceId: string;
-        readonly bindings?: Readonly<Record<string, string>>;
-        readonly configuration?: Readonly<Record<string, unknown>>;
-      }[];
+    const configuration = (await (
+      await fixture.engine.call(`/v1/projects/${fixture.projectId}`)
+    ).json()) as {
+      readonly portableConfig: {
+        readonly modules: readonly {
+          readonly instanceId: string;
+          readonly bindings?: Readonly<Record<string, string>>;
+          readonly configuration?: Readonly<Record<string, unknown>>;
+        }[];
+      };
     };
-    expect(configuration.modules.map(({ instanceId }) => instanceId)).toEqual([
+    expect(configuration.portableConfig.modules.map(({ instanceId }) => instanceId)).toEqual([
       "github",
       "development",
     ]);

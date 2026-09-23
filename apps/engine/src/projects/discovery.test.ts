@@ -167,45 +167,16 @@ describe("discoverRepository", () => {
     expect(discoverRepository(broken).scripts).toEqual({});
   });
 
-  it("suggests commands only for scripts the project actually declares", () => {
+  it("keeps technical execution policy out of the project draft", () => {
     const root = fixture({
       lockfile: "pnpm-lock.yaml",
       packageJson: { scripts: { test: "vitest", lint: "eslint ." } },
     });
-    const suggested = discoverRepository(root).suggested as {
-      commands: Record<string, string>;
-    };
-    expect(suggested.commands).toEqual({
-      install: "pnpm install --frozen-lockfile",
-      lint: "pnpm lint",
-      test: "pnpm test",
-    });
-  });
-
-  it("uses valid npm commands for detected scripts", () => {
-    const root = fixture({
-      lockfile: "package-lock.json",
-      packageJson: { name: "x", scripts: { test: "node --test", lint: "eslint ." } },
-    });
-    const suggested = discoverRepository(root).suggested as {
-      commands: Record<string, string>;
-    };
-    expect(suggested.commands).toEqual({
-      install: "npm ci",
-      lint: "npm run lint",
-      test: "npm run test",
-    });
-  });
-
-  it("proposes the repository verify script without approving it", () => {
-    const root = fixture({
-      lockfile: "pnpm-lock.yaml",
-      packageJson: { scripts: { verify: "pnpm test && pnpm build", test: "vitest" } },
-    });
-    expect(discoverRepository(root).suggested.commands).toMatchObject({
-      verify: "pnpm verify",
-      install: "pnpm install --frozen-lockfile",
-    });
+    const suggested = discoverRepository(root).suggested as unknown as Record<string, unknown>;
+    expect(suggested).not.toHaveProperty("commands");
+    expect(suggested).not.toHaveProperty("git");
+    expect(suggested).not.toHaveProperty("workspace");
+    expect(suggested["repositories"]).toEqual([{ id: "main", root: "." }]);
   });
 
   it("never suggests an absolute path as a repository root", () => {

@@ -488,40 +488,44 @@ function buildSteps(input: {
           ? "L’agent répare la modification après l’échec des vérifications."
           : "L’agent développe l’issue."
         : validation || commit
-          ? "L’agent a remis sa modification au validateur."
+          ? "L’agent a terminé sa modification."
           : agent
             ? "Le résultat de l’agent reste à confirmer."
             : notStarted,
     ),
-    result(
-      "checks",
-      fromCheckpoint(validation, validation?.checkpoint.type !== "validation.started"),
-      checksPassed
-        ? "proved"
-        : validationCancelled
-          ? "cancelled"
-          : agentActive && failedCheck
-            ? "repairing"
-            : validation?.checkpoint.type === "validation.started" &&
-                active?.id === validation.execution.id
-              ? "active"
+    ...(validation !== undefined || input.checks.length > 0
+      ? [
+          result(
+            "checks",
+            fromCheckpoint(validation, validation?.checkpoint.type !== "validation.started"),
+            checksPassed
+              ? "proved"
+              : validationCancelled
+                ? "cancelled"
+                : agentActive && failedCheck
+                  ? "repairing"
+                  : validation?.checkpoint.type === "validation.started" &&
+                      active?.id === validation.execution.id
+                    ? "active"
+                    : failedCheck
+                      ? "failed"
+                      : validation
+                        ? cancelled
+                          ? "cancelled"
+                          : "unavailable"
+                        : "not-started",
+            checksPassed
+              ? "Toutes les commandes de cette tentative ont réussi."
               : failedCheck
-                ? "failed"
-                : validation
-                  ? cancelled
-                    ? "cancelled"
-                    : "unavailable"
-                  : "not-started",
-      checksPassed
-        ? "Toutes les commandes de cette tentative ont réussi."
-        : failedCheck
-          ? `Tentative ${failedCheck.attempt} : ${failedCheck.name} a échoué. ${agentActive ? "Réparation en cours ; le résultat reste à vérifier." : "Le résultat reste visible dans l’historique des vérifications."}`
-          : validation?.checkpoint.type === "validation.started"
-            ? "Les commandes du projet sont en cours de vérification."
-            : validation
-              ? "Résultat non confirmé."
-              : notStarted,
-    ),
+                ? `Tentative ${failedCheck.attempt} : ${failedCheck.name} a échoué. ${agentActive ? "Réparation en cours ; le résultat reste à vérifier." : "Le résultat reste visible dans l’historique des vérifications."}`
+                : validation?.checkpoint.type === "validation.started"
+                  ? "Les commandes du projet sont en cours de vérification."
+                  : validation
+                    ? "Résultat non confirmé."
+                    : notStarted,
+          ),
+        ]
+      : []),
     result(
       "commit-push",
       fromCheckpoint(pushed ?? commit, pushed !== undefined),

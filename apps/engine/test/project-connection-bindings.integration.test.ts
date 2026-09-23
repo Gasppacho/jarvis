@@ -1,9 +1,17 @@
 import Database from "better-sqlite3";
-import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { parse as parseYaml } from "yaml";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ConnectionDescriptorStore,
@@ -89,10 +97,6 @@ describe("project connection bindings", () => {
 
     const projectA = await createProject(engine, "project-a");
     const projectB = await createProject(engine, "project-b");
-    const configFiles = [
-      readFileSync(join(projectA.repositoryPath, ".jarvis", "project.yaml"), "utf8"),
-      readFileSync(join(projectB.repositoryPath, ".jarvis", "project.yaml"), "utf8"),
-    ];
 
     const bound = await Promise.all([
       replaceConnectionBinding(engine, projectA.id, connectionA),
@@ -126,16 +130,68 @@ describe("project connection bindings", () => {
     expect(Object.keys(replaced.slots)).toEqual(["sourceControl"]);
     expect(JSON.stringify(replaced)).not.toContain(connectionA);
 
-    for (const [index, project] of [projectA, projectB].entries()) {
-      const configuration = readFileSync(
-        join(project.repositoryPath, ".jarvis", "project.yaml"),
-        "utf8",
-      );
-      expect(configuration).toBe(configFiles[index]);
-      expect(configuration).not.toContain(connectionA);
-      expect(configuration).not.toContain(connectionB);
-      expect(configuration).not.toContain(replacement);
-    }
+    for (const project of [projectA, projectB])
+      expect(existsSync(join(project.repositoryPath, ".jarvis", "project.yaml"))).toBe(false);
+  });
+
+  it("atomically replaces configuration and a revoked GitHub account", async () => {
+    const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-atomic-connection-replacement-"));
+    roots.push(dataRoot);
+    const oldConnection = "connection/github-old";
+    const newConnection = "connection/github-new";
+    const engine = await start(dataRoot);
+    seedConnection(dataRoot, oldConnection);
+    seedConnection(dataRoot, newConnection);
+    const project = await createProject(engine, "project-atomic-replacement");
+    expect((await replaceConnectionBinding(engine, project.id, oldConnection)).status).toBe(200);
+
+    seedConnection(dataRoot, oldConnection, "revoked");
+    const bindings = await readBindings(engine, project.id);
+    const configuration = portableConfiguration(project.id);
+    (configuration["metadata"] as Record<string, unknown>)["name"] = "Replacement saved";
+    const response = await replaceConfigurationAndBindings(engine, project.id, configuration, {
+      ...bindings,
+      slots: { ...bindings.slots, sourceControl: { kind: "connection", ref: newConnection } },
+    });
+
+    expect(response.status, await response.clone().text()).toBe(200);
+    expect((await response.json()) as { name: string }).toMatchObject({
+      name: "Replacement saved",
+    });
+    expect((await readBindings(engine, project.id)).slots).toEqual({
+      sourceControl: { kind: "connection", ref: newConnection },
+    });
+  });
+
+  it("rolls configuration back when the atomic bindings write fails", async () => {
+    const dataRoot = mkdtempSync(join(tmpdir(), "jarvis-atomic-connection-rollback-"));
+    roots.push(dataRoot);
+    const connection = "connection/github-main";
+    const engine = await start(dataRoot);
+    seedConnection(dataRoot, connection);
+    const project = await createProject(engine, "project-atomic-rollback");
+    const bindings = await readBindings(engine, project.id);
+    const configuration = portableConfiguration(project.id);
+    (configuration["metadata"] as Record<string, unknown>)["name"] = "Must roll back";
+
+    const database = new Database(join(dataRoot, "jarvis.sqlite"));
+    database.exec(`CREATE TRIGGER fail_atomic_binding_update
+      BEFORE UPDATE ON project_bindings
+      BEGIN SELECT RAISE(ABORT, 'forced binding failure'); END`);
+    database.close();
+
+    const response = await replaceConfigurationAndBindings(engine, project.id, configuration, {
+      ...bindings,
+      slots: { ...bindings.slots, sourceControl: { kind: "connection", ref: connection } },
+    });
+
+    expect(response.status).toBe(500);
+    const detail = await engine.call(`/v1/projects/${project.id}`);
+    expect(detail.status).toBe(200);
+    expect((await detail.json()) as { name: string }).toMatchObject({
+      name: "project-atomic-rollback",
+    });
+    expect((await readBindings(engine, project.id)).slots).toEqual({});
   });
 
   it("binds separately the accounts discovered from local gh", async () => {
@@ -354,7 +410,7 @@ async function createProject(
   configuration: Record<string, unknown> = portableConfiguration(id),
 ): Promise<{ id: string; repositoryPath: string }> {
   const repositoryPath = makeNodeRepositoryFixture({
-    projectYaml: stringifyYaml(configuration),
+    packageJson: { name: id },
   });
   repositories.push(repositoryPath);
   const response = await engine.call("/v1/projects", {
@@ -365,6 +421,12 @@ async function createProject(
   const body = (await response.json()) as { id?: string; error?: unknown };
   expect(response.status, JSON.stringify(body)).toBe(201);
   expect(body.id).toBe(id);
+  const configured = await engine.call(`/v1/projects/${body.id}/configuration`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ portableConfig: configuration, writeToRepository: false }),
+  });
+  expect(configured.status, await configured.clone().text()).toBe(200);
   return { id: body.id!, repositoryPath };
 }
 
@@ -390,6 +452,19 @@ async function replaceConnectionBinding(
   });
 }
 
+async function replaceConfigurationAndBindings(
+  engine: Harness,
+  projectId: string,
+  portableConfig: Record<string, unknown>,
+  bindings: ProjectBindings,
+): Promise<Response> {
+  return engine.call(`/v1/projects/${projectId}/configuration`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ portableConfig, writeToRepository: false, bindings }),
+  });
+}
+
 function portableConfiguration(id: string): Record<string, unknown> {
   const configuration = parseYaml(
     readFileSync(join(ROOT, "examples/project/.jarvis/project.yaml"), "utf8"),
@@ -400,10 +475,6 @@ function portableConfiguration(id: string): Record<string, unknown> {
 
 function githubOnlyConfiguration(id: string): Record<string, unknown> {
   const configuration = portableConfiguration(id);
-  configuration["workspace"] = {
-    ...(configuration["workspace"] as Record<string, unknown>),
-    maxConcurrentExecutions: 1,
-  };
   configuration["slots"] = {
     sourceControl: { requires: "scm.change-request.manage" },
     tickets: { requires: "work-items.read" },
@@ -468,9 +539,16 @@ async function bindGitHubProject(
 async function activate(
   engine: Harness,
   projectId: string,
-  compositionFingerprint: string,
+  _compositionFingerprint: string,
 ): Promise<void> {
-  const response = await engine.call(`/v1/projects/${projectId}/activate`, {
+  const verified = await engine.call(`/v1/projects/${projectId}/preflight`, {
+    method: "POST",
+  });
+  expect(verified.status, await verified.clone().text()).toBe(200);
+  const { compositionFingerprint } = (await verified.json()) as {
+    compositionFingerprint: string;
+  };
+  const response = await engine.call(`/v1/projects/${projectId}/preflight-activate`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ compositionFingerprint }),

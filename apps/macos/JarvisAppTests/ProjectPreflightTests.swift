@@ -6,6 +6,52 @@ import XCTest
 @testable import JarvisCore
 
 final class ProjectPreflightTests: XCTestCase {
+    func testThreeScreenVerificationStatesAndActivationLabels() throws {
+        let draft = Project(
+            id: "project", name: "Project", status: .draft, moduleCount: 0,
+            activeExecutions: nil)
+        var state = ProjectConfigurationState()
+        state.isDraftSaved = true
+
+        var presentation = ProjectVerificationPresentation(
+            project: draft, configuration: state)
+        XCTAssertEqual(presentation.status, .unchecked)
+        XCTAssertEqual(presentation.actionTitle, "Créer le projet")
+        XCTAssertFalse(presentation.canActivate)
+
+        state.preflight = .loading
+        presentation = ProjectVerificationPresentation(project: draft, configuration: state)
+        XCTAssertEqual(presentation.status, .checking)
+        XCTAssertFalse(presentation.canActivate)
+
+        state.preflight = .current(try fixture(valid: false))
+        presentation = ProjectVerificationPresentation(project: draft, configuration: state)
+        XCTAssertEqual(presentation.status, .failed)
+        XCTAssertEqual(presentation.checks.count, 4)
+        XCTAssertEqual(presentation.checks.map(\.passed), [false, true, true, true])
+        XCTAssertFalse(presentation.checks[0].detail.isEmpty)
+        XCTAssertTrue(presentation.checks[1].detail.isEmpty)
+        XCTAssertFalse(presentation.canActivate)
+
+        state.preflight = .current(try fixture(empty: true))
+        presentation = ProjectVerificationPresentation(project: draft, configuration: state)
+        XCTAssertEqual(presentation.status, .succeeded)
+        XCTAssertEqual(presentation.checks.count, 4)
+        XCTAssertTrue(presentation.checks.allSatisfy(\.passed))
+        XCTAssertTrue(presentation.canActivate)
+
+        let active = Project(
+            id: "project", name: "Project", status: .active, moduleCount: 0,
+            activeExecutions: 0)
+        XCTAssertEqual(
+            ProjectVerificationPresentation(project: active, configuration: state).actionTitle,
+            "Appliquer la configuration")
+        state.activation = .succeeded
+        XCTAssertTrue(
+            ProjectVerificationPresentation(project: active, configuration: state).canActivate,
+            "réappliquer la même configuration ou un nouveau label reste idempotent")
+    }
+
     func testReadinessStatesEmptyCandidatesBlockersAndRepairDestinations() throws {
         let empty = try fixture(empty: true)
         XCTAssertTrue(ProjectPreflightState.current(empty).canActivate)
@@ -19,7 +65,9 @@ final class ProjectPreflightTests: XCTestCase {
         let eligible = try fixture()
         XCTAssertEqual(eligible.candidateEligibility.items.first?.status, .eligible)
         XCTAssertEqual(eligible.candidateEligibility.items.first?.openDependencyCount, 0)
-        XCTAssertEqual(eligible.checks.map(ProjectPreflightState.repairStep), [.repository, .workflow, .connections])
+        XCTAssertEqual(
+            eligible.checks.map(ProjectPreflightState.repairStep),
+            [.repository, .repository, .connections, .connections])
         for state: ProjectPreflightState in [.unchecked, .loading, .stale(empty), .failed("offline"), .current(try fixture(valid: false))] {
             XCTAssertFalse(state.canActivate)
             XCTAssertFalse(state.title.isEmpty)
@@ -49,26 +97,25 @@ final class ProjectPreflightTests: XCTestCase {
             return check
         }
         let groups = ProjectPreflightState.repairGroups(failedReport)
-        XCTAssertEqual(groups.map(\.id), ["repository:repository", "workflow:workflow", "connections:runtime"])
-        XCTAssertTrue(ProjectPreflightState.userFacingImpact(groups[1].checks[0]).contains("configuration"))
+        XCTAssertEqual(
+            groups.map(\.id),
+            [
+                "repository:git-repository", "repository:github-repository",
+                "connections:github-account", "connections:agent-cli",
+            ])
+        XCTAssertEqual(ProjectPreflightState.userFacingImpact(groups[1].checks[0]), "GitHub")
         XCTAssertEqual(
             ProjectPreflightState.repairTarget(failedReport.checks[0]),
             .init(step: .repository, controlID: "project.repository-access"))
         XCTAssertEqual(
-            ProjectPreflightState.repairTarget(failedReport.checks[2]),
-            .init(step: .connections, controlID: "project.runtime.refresh"))
-        var validation = failedReport.checks[1]
-        validation.id = "validation:verify"
-        XCTAssertEqual(
-            ProjectPreflightState.repairTarget(validation),
-            .init(step: .workflow, controlID: "workflow.validation.verify"))
+            ProjectPreflightState.repairTarget(failedReport.checks[3]),
+            .init(step: .connections, controlID: "project.settings.development.refresh-runtime"))
 
         var sameStep = failedReport
-        sameStep.checks[0].repairStep = .Connections
         sameStep.checks.append(sameStep.checks[0])
-        let connectionGroups = ProjectPreflightState.repairGroups(sameStep).filter { $0.step == .connections }
-        XCTAssertEqual(connectionGroups.count, 2, "distinct causes on one step stay separately actionable")
-        XCTAssertEqual(connectionGroups[0].checks.count, 2, "duplicate checks share one repair group")
+        let repositoryGroups = ProjectPreflightState.repairGroups(sameStep).filter { $0.step == .repository }
+        XCTAssertEqual(repositoryGroups.count, 2, "distinct causes on one step stay separately actionable")
+        XCTAssertEqual(repositoryGroups[0].checks.count, 2, "duplicate checks share one repair group")
         XCTAssertEqual(report.candidateStatusLabel, "1 issue(s) prête(s) sur 1 examinée(s)")
 
         var unavailable = report
@@ -207,7 +254,7 @@ final class ProjectPreflightTests: XCTestCase {
         {"apiVersion":"jarvis.dev/project-preflight/v1","kind":"ProjectPreflight","projectId":"project","compositionFingerprint":"\(String(repeating: "a", count: 64))","valid":\(valid),"configurationReady":\(valid),
         "validation":{"apiVersion":"jarvis.dev/project-validation/v1","kind":"ProjectValidationReport","projectId":"project","valid":\(valid),"compositionFingerprint":"\(String(repeating: "a", count: 64))","requestRoutes":[],"satisfiedCapabilities":[],"findings":[]},
         "runtime":{"required":true,"items":[],"readiness":{"status":"ready","checkedAt":null,"detail":"Ready"}},
-        "checks":[{"id":"repository","title":"Repository","status":"passed","impact":"Access","repairStep":"Repository"},{"id":"workflow","title":"Workflow","status":"passed","impact":"Label","repairStep":"Workflow"},{"id":"runtime","title":"Runtime","status":"passed","impact":"Agent","repairStep":"Connections"}],
+        "checks":[{"id":"git-repository","title":"Dépôt Git initialisé","status":"\(valid ? "passed" : "failed")","impact":"Git","repairStep":"Repository"},{"id":"github-repository","title":"Dépôt GitHub identifié","status":"passed","impact":"GitHub","repairStep":"Repository"},{"id":"github-account","title":"Compte GitHub","status":"passed","impact":"Compte","repairStep":"Connections"},{"id":"agent-cli","title":"CLI d’agent","status":"passed","impact":"Agent","repairStep":"Connections"}],
         \(trigger)
         "candidateEligibility":{"status":"\(empty ? "empty" : "available")","items":[\(empty ? "" : candidate)]}}
         """

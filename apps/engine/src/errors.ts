@@ -16,8 +16,6 @@ export type ErrorCode =
   | "project.already-imported"
   | "project.config-invalid"
   | "project.bindings-invalid"
-  | "project.repository-write-failed"
-  | "project.repository-compensation-failed"
   | "project.not-found"
   | "project.active"
   | "project.activation-not-validated"

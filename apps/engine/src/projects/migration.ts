@@ -8,28 +8,19 @@ export interface MigrationReason {
   readonly code: string;
   readonly message: string;
 }
-export type GuidedMigrationScope =
-  { readonly kind: "all" } | { readonly kind: "issue"; readonly workItemRef: string };
 export interface GuidedMigrationPlan {
   readonly preserved: {
     readonly projectId: string;
     readonly moduleInstanceIds: readonly string[];
     readonly repositoryIds: readonly string[];
-    readonly remotes: Readonly<Record<string, string | null>>;
-    readonly branches: Readonly<Record<string, string | null>>;
-    readonly commands: Readonly<Record<string, string>>;
-    readonly git: PortableProjectConfiguration["git"] | StoredPortableProjectConfiguration["git"];
-    readonly workspace: PortableProjectConfiguration["workspace"];
     readonly bindings: ProjectBindings;
     readonly readyLabel: string;
-    readonly scope: GuidedMigrationScope;
   };
   readonly removedModule: "jarvis.module.automation-rules";
   readonly destination: {
     readonly modules: readonly ["jarvis.module.github", "jarvis.module.development"];
     readonly compositionMode: "fixed-modules";
     readonly readyLabel: string;
-    readonly scope: GuidedMigrationScope;
   };
 }
 
@@ -159,10 +150,6 @@ export function classifyGuidedMigration(
     });
   if (reasons.length > 0) return { reasons };
   const label = readyLabel as string;
-  const scope: GuidedMigrationScope =
-    typeof workItemRef === "string"
-      ? { kind: "issue", workItemRef: workItemRef.trim() }
-      : { kind: "all" };
   return {
     reasons,
     plan: {
@@ -170,31 +157,14 @@ export function classifyGuidedMigration(
         projectId: configuration.metadata.id,
         moduleInstanceIds: configuration.modules.map((module) => module.instanceId),
         repositoryIds: configuration.repositories.map((repository) => repository.id),
-        remotes: Object.fromEntries(
-          configuration.repositories.map((repository) => [
-            repository.id,
-            repository.remote ?? null,
-          ]),
-        ),
-        branches: Object.fromEntries(
-          configuration.repositories.map((repository) => [
-            repository.id,
-            repository.defaultBranch ?? null,
-          ]),
-        ),
-        commands: configuration.commands,
-        git: configuration.git,
-        workspace: configuration.workspace,
         bindings,
         readyLabel: label,
-        scope,
       },
       removedModule: "jarvis.module.automation-rules",
       destination: {
         modules: ["jarvis.module.github", "jarvis.module.development"],
         compositionMode: "fixed-modules",
         readyLabel: label,
-        scope,
       },
     },
   };
@@ -212,8 +182,12 @@ export function migratedConfiguration(
   )!;
   const { readyLabel: _legacyReadyLabel, ...githubConfiguration } = github.configuration ?? {};
   return {
-    ...configuration,
+    apiVersion: configuration.apiVersion,
+    kind: configuration.kind,
+    metadata: configuration.metadata,
+    repositories: configuration.repositories.map(({ id, root }) => ({ id, root })),
     compositionMode: "fixed-modules",
+    slots: configuration.slots,
     modules: [
       { ...github, configuration: githubConfiguration },
       {
@@ -221,7 +195,6 @@ export function migratedConfiguration(
         configuration: {
           ...development.configuration,
           readyLabel: plan.destination.readyLabel,
-          scope: plan.destination.scope,
         },
       },
     ],

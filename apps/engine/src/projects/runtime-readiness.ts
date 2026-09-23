@@ -1,9 +1,5 @@
 import { constants, accessSync, statSync } from "node:fs";
 import { access, stat } from "node:fs/promises";
-import {
-  filteredEnvironment,
-  secretEnvironmentValues,
-} from "../../../../packages/agent-runtime/src/request-builder.js";
 import type { LocalAgentRuntimeRegistry } from "./resource-grants.js";
 import type { RuntimeDescriptor } from "../../../../packages/agent-runtime/src/types.js";
 import type {
@@ -13,89 +9,8 @@ import type {
   StoredPortableProjectConfiguration,
 } from "../../../../packages/project-runtime/src/project-types.js";
 import type { ProjectRow } from "./store.js";
-import { discoverRepository } from "./discovery.js";
-import { check } from "./preflight.js";
 import { projectCommandEnvironment } from "../executions/project-command.js";
-import { delimiter, isAbsolute, join } from "node:path";
-
-/** File inspection only: package-manager --version may execute repository code. */
-export function checkProjectTools(project: ProjectRow) {
-  let discovery;
-  try {
-    discovery = discoverRepository(project.repositoryPath);
-  } catch {
-    return [
-      check(
-        "tools:repository",
-        "Outils du projet",
-        false,
-        "Le dossier du projet n’est plus accessible. Autorisez à nouveau son accès.",
-        "Repository",
-      ),
-    ];
-  }
-  const selected = new Set<string>();
-  for (const module of project.portableConfig.modules) {
-    if (!module.enabled || module.moduleId !== "jarvis.module.development") continue;
-    const order = module.configuration?.["validationOrder"];
-    if (Array.isArray(order))
-      for (const name of order) if (typeof name === "string") selected.add(name);
-    if (module.configuration?.["preparation"] === "install") selected.add("install");
-  }
-  const commands = [...selected].flatMap((name) => {
-    const command =
-      project.portableConfig.commands[name as keyof typeof project.portableConfig.commands];
-    return command ? [command] : [];
-  });
-  const scripts = discovery.scripts ?? {};
-  const visited = new Set<string>();
-  // ponytail: follows literal package-script calls; arbitrary shell logic is checked only during execution.
-  for (let index = 0; index < commands.length; index++) {
-    for (const match of commands[index]!.matchAll(
-      /\b(?:npm|pnpm|yarn|bun)\s+(?:(?:run|run-script)\s+)?([A-Za-z0-9:_-]+)/g,
-    )) {
-      const name = match[1]!;
-      if (!visited.has(name) && Object.hasOwn(scripts, name) && typeof scripts[name] === "string") {
-        visited.add(name);
-        commands.push(scripts[name]);
-      }
-    }
-  }
-  const text = commands.join("\n");
-  const tools = new Set(["git"]);
-  if (/\b(node|npm|pnpm|yarn)\b/.test(text)) tools.add("node");
-  for (const manager of ["npm", "pnpm", "yarn", "bun"]) {
-    if (new RegExp(`\\b${manager}\\b`).test(text)) tools.add(manager);
-  }
-  if (/\b(swift|xcodebuild|xcrun)\b/.test(text)) {
-    tools.add("swift");
-    tools.add("xcrun");
-  }
-  const directories = (projectCommandEnvironment()["PATH"] ?? "")
-    .split(delimiter)
-    .filter(isAbsolute);
-  return [...tools].map((tool) => {
-    let denied = false;
-    const executable = directories.some((directory) => {
-      try {
-        const path = join(directory, tool);
-        if (!statSync(path).isFile()) return false;
-        accessSync(path, constants.X_OK);
-        return true;
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        denied ||= code === "EPERM" || code === "EACCES";
-        return false;
-      }
-    });
-    const remedy = executable
-      ? "Exécutable présent et autorisé dans le profil du validateur. Sa version et le résultat des commandes restent à vérifier pendant l’exécution."
-      : denied
-        ? `L’exécution de ${tool} est refusée. Corrigez ses autorisations locales puis vérifiez à nouveau.`
-        : `Installez ou réparez ${tool === "swift" || tool === "xcrun" ? "Swift et les outils de développement Xcode" : tool}, puis relancez la vérification. Le validateur ne trouve pas cet outil.`;
-    return check(`tool:${tool}`, `Outil : ${tool}`, executable, remedy, "Connections");
-  });
-}
+import { delimiter, isAbsolute } from "node:path";
 
 export function runtimeReadiness(
   status: ProjectRuntimeReadiness["status"],
@@ -114,6 +29,52 @@ export function runtimeSlots(
       (instance) => instance.enabled && instance.runtimeSlot === slot.slotId,
     ),
   );
+}
+
+/** Minimal Project Wizard check: the selected CLI is supported and executable. */
+export function checkSelectedAgentCli(
+  project: ProjectRow,
+  slots: readonly ProjectResourceBindingChoice[],
+  runtimes: LocalAgentRuntimeRegistry,
+  now: () => Date = () => new Date(),
+  executableStatus: (path: string) => "executable" | "missing" | "denied" = nativeExecutableStatus,
+): ProjectRuntimeReadiness {
+  const checkedAt = now().toISOString();
+  const result = (status: ProjectRuntimeReadiness["status"], detail: string) =>
+    runtimeReadiness(status, detail, checkedAt);
+  const required = runtimeSlots(project.portableConfig, slots);
+  if (required.length === 0) return result("unchecked", "Aucune CLI n’est requise.");
+  for (const slot of required) {
+    const binding = project.slotBindings[slot.slotId];
+    if (binding?.kind !== "runtime")
+      return result("absent", "Aucune CLI d’agent n’est sélectionnée.");
+    const descriptor = runtimes.descriptor(project.id, binding.ref);
+    if (descriptor?.provider === "fake" && descriptor.status === "available") continue;
+    if (descriptor?.provider !== "codex")
+      return result("incompatible", "La CLI d’agent sélectionnée n’est pas prise en charge.");
+    if (descriptor.status !== "available" || descriptor.executablePath === null)
+      return result("absent", "La CLI d’agent sélectionnée n’est pas disponible.");
+    if (
+      !slot.requiredCapabilities.every((capability) => descriptor.capabilities.includes(capability))
+    )
+      return result("incompatible", "La CLI d’agent sélectionnée n’est pas compatible.");
+    const status = executableStatus(descriptor.executablePath);
+    if (status === "missing")
+      return result("absent", "La CLI d’agent sélectionnée est introuvable.");
+    if (status === "denied")
+      return result("access-denied", "La CLI d’agent sélectionnée n’est pas exécutable.");
+  }
+  return result("ready", "La CLI d’agent sélectionnée est disponible.");
+}
+
+function nativeExecutableStatus(path: string): "executable" | "missing" | "denied" {
+  try {
+    if (!statSync(path).isFile()) return "missing";
+    accessSync(path, constants.X_OK);
+    return "executable";
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "denied";
+  }
 }
 
 export function projectAgentRuntimeChoices(
@@ -152,7 +113,7 @@ export function projectAgentRuntimeChoices(
             project.slotBindings[slot.slotId]?.kind === "runtime" &&
             project.slotBindings[slot.slotId]?.ref === descriptor.id,
         ),
-        selectable: requiredSlots.length > 0 && compatible && descriptor.status === "available",
+        selectable: requiredSlots.length > 0 && compatible,
         readiness: runtimeReadiness(
           status,
           missingCapabilities.length > 0
@@ -267,15 +228,7 @@ export async function checkProjectRuntimeReadiness(
         "Configurez le workflow utilisant ce runtime avant de vérifier son profil.",
       );
     for (const instance of consumers) {
-      const raw = instance.configuration?.["environmentAllowlist"];
-      const allowlist = Array.isArray(raw)
-        ? raw.filter((name): name is string => typeof name === "string")
-        : [];
-      const environment = filteredEnvironment(
-        binding.environment ?? {},
-        allowlist,
-        secretEnvironmentValues(process.env),
-      );
+      const environment = binding.environment ?? {};
       if (!environment["PATH"]?.trim())
         return result(
           "access-denied",

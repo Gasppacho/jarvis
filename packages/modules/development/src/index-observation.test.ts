@@ -21,7 +21,6 @@ function candidate(
     workItemRef: "github://Gasppacho/jarvis/issues/222",
     observation,
     readyLabel: " ready-to-dev ",
-    scope: { kind: "all" } as const,
     alreadyStarted: false,
     ...overrides,
   };
@@ -39,20 +38,15 @@ describe("Development observation admission", () => {
       "open blocker",
       { ...baseObservation, dependencies: { status: "complete", openWorkItemRefs: ["blocker"] } },
     ],
-    ["issue scope mismatch", baseObservation],
     ["unauthorized repository", baseObservation],
     ["already started", baseObservation],
   ] as const)("rejects %s without an admission", (reason, observation) => {
     const input =
-      reason === "issue scope mismatch"
-        ? candidate(observation, {
-            scope: { kind: "issue", workItemRef: "github://Gasppacho/jarvis/issues/999" },
-          })
-        : reason === "unauthorized repository"
-          ? candidate(observation, { authorizedRepositoryId: undefined })
-          : reason === "already started"
-            ? candidate(observation, { alreadyStarted: true })
-            : candidate(observation);
+      reason === "unauthorized repository"
+        ? candidate(observation, { authorizedRepositoryId: undefined })
+        : reason === "already started"
+          ? candidate(observation, { alreadyStarted: true })
+          : candidate(observation);
     expect(isDevelopmentEligible(input)).toBe(false);
     expect(assessDevelopmentEligibility(input).eligible).toBe(false);
   });

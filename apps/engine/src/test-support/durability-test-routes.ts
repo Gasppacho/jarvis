@@ -1,11 +1,15 @@
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type Database from "better-sqlite3";
 import type { FastifyInstance } from "fastify";
-import type {
-  PortableProjectConfiguration,
-  StoredPortableProjectConfiguration,
-} from "../../../../packages/project-runtime/src/project-types.js";
+import type { PortableProjectConfiguration } from "../../../../packages/project-runtime/src/project-types.js";
 import type { ClaimedDelivery } from "../executions/delivery-consumer.js";
 import { SAMPLE_PROBE_MODULE_ID } from "../executions/sample-probe-module.js";
 import { EventPublisher, type PublishEventInput } from "../events/publisher.js";
@@ -26,6 +30,11 @@ export interface DurabilityTestHooks {
   readonly workspace: WorkspaceManager;
   readonly testRepositoryRoot: string;
 }
+
+const TEST_WORKSPACE_PROJECT: WorkspaceProjectConfiguration = {
+  git: { branchPattern: "agent/{workItemId}-{slug}" },
+  workspace: { maxConcurrentExecutions: 1, retainOnFailureDays: 7 },
+};
 
 /**
  * Ticket #58's "wiring decision": the smallest honest inbound trigger for a
@@ -61,19 +70,31 @@ export function registerDurabilityTestRoutes(
       mkdirSync(join(repositoryPath, ".git"));
     }
     const canonicalRepositoryPath = realpathSync(repositoryPath);
+    const packageJsonPath = join(canonicalRepositoryPath, "package.json");
+    const originalPackageJson = existsSync(packageJsonPath)
+      ? readFileSync(packageJsonPath, "utf8")
+      : undefined;
+    writeFileSync(packageJsonPath, `${JSON.stringify({ name: body.id }, null, 2)}\n`, "utf8");
     const created = hooks.projects.importProject({
       repositoryPath: canonicalRepositoryPath,
-      portableConfig: config,
+      portableConfig: undefined,
     });
-    const report = hooks.projects.validateProject(created.id);
-    if (!report.valid || typeof report.compositionFingerprint !== "string") {
+    if (originalPackageJson === undefined) unlinkSync(packageJsonPath);
+    else writeFileSync(packageJsonPath, originalPackageJson, "utf8");
+    hooks.projects.replaceProjectConfiguration({
+      projectId: created.id,
+      portableConfig: config,
+      writeToRepository: false,
+    });
+    const report = await hooks.projects.preflightProject(created.id);
+    if (!report.valid) {
       throw new EngineError(
         "project.activation-not-validated",
         409,
         `Test fixture Project ${created.id} did not produce a valid activation report.`,
       );
     }
-    hooks.projects.activateProject({
+    await hooks.projects.activatePreflightProject({
       projectId: created.id,
       compositionFingerprint: report.compositionFingerprint,
     });
@@ -85,10 +106,9 @@ export function registerDurabilityTestRoutes(
 
   app.post("/test/workspaces/allocate", async (request, reply) => {
     const body = readTestWorkspaceRequest(request.body);
-    const project = workspaceProject(hooks.projects.getProject(body.projectId).portableConfig);
     const allocation = await hooks.workspace.allocate({
       ...body,
-      project,
+      project: TEST_WORKSPACE_PROJECT,
       repositoryId: body.repositoryId ?? "main",
     });
     void reply.code(201).send(allocation);
@@ -96,8 +116,7 @@ export function registerDurabilityTestRoutes(
 
   app.post("/test/workspaces/release", async (request, reply) => {
     const body = readTestWorkspaceReleaseRequest(request.body);
-    const project = workspaceProject(hooks.projects.getProject(body.projectId).portableConfig);
-    const released = await hooks.workspace.release({ ...body, project });
+    const released = await hooks.workspace.release({ ...body, project: TEST_WORKSPACE_PROJECT });
     void reply.code(200).send(released);
   });
 
@@ -144,16 +163,8 @@ function baseProjectConfig(
     apiVersion: "jarvis.dev/project/v1",
     kind: "Project",
     metadata: { id, name: id },
-    repositories: [{ id: "main", root: ".", defaultBranch: "main", remote: "origin" }],
+    repositories: [{ id: "main", root: "." }],
     slots,
-    commands: {},
-    git: {
-      branchPattern: "agent/{workItemId}-{slug}",
-      commitStrategy: "conventional",
-      pushRemote: "origin",
-      allowForcePush: false,
-    },
-    workspace: { strategy: "git-worktree", maxConcurrentExecutions: 1, retainOnFailureDays: 7 },
     modules: [],
   };
 }
@@ -244,28 +255,6 @@ function readTestWorkspaceReleaseRequest(value: unknown): {
     executionId: readRequiredString(value["executionId"], "executionId"),
     repositoryPath,
     outcome: outcome as "success" | "failure" | "cancelled",
-  };
-}
-
-function workspaceProject(
-  value: StoredPortableProjectConfiguration,
-): WorkspaceProjectConfiguration {
-  if (
-    !isRecord(value) ||
-    !isRecord(value["git"]) ||
-    typeof value["git"]["branchPattern"] !== "string" ||
-    !isRecord(value["workspace"]) ||
-    typeof value["workspace"]["maxConcurrentExecutions"] !== "number" ||
-    typeof value["workspace"]["retainOnFailureDays"] !== "number"
-  ) {
-    invalidTestRequest("The test Project has no complete workspace configuration.");
-  }
-  return {
-    git: { branchPattern: value["git"]["branchPattern"] },
-    workspace: {
-      maxConcurrentExecutions: value["workspace"]["maxConcurrentExecutions"],
-      retainOnFailureDays: value["workspace"]["retainOnFailureDays"],
-    },
   };
 }
 

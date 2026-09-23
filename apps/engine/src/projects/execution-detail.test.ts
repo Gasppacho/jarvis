@@ -38,7 +38,7 @@ describe("buildExecutionDetail", () => {
     expect(detail.failure?.stepId).toBeNull();
   });
 
-  it("keeps cancellation and retry evidence explicit across all seven steps", () => {
+  it("keeps cancellation and retry evidence explicit across the workflow", () => {
     const detail = buildExecutionDetail({
       projectId,
       correlationId: "corr-cancelled",
@@ -57,13 +57,12 @@ describe("buildExecutionDetail", () => {
       retryDeliveryId: "delivery-retry",
     });
 
-    expect(detail.steps).toHaveLength(7);
+    expect(detail.steps).toHaveLength(6);
     expect(detail.steps.map((step) => step.label)).toEqual([
       "Issue reçue",
       "Éligibilité confirmée",
       "Préparation du projet",
       "Développement",
-      "Vérifications",
       "Commit et push",
       "Création de la Pull Request",
     ]);
@@ -135,7 +134,7 @@ describe("buildExecutionDetail", () => {
     expect(detail.technical.events[0]?.payloadExcerpt).not.toContain("ghp_should-not-leak");
     expect(detail.technical.events[0]?.payloadExcerpt).not.toContain("ghp_secret_key");
     expect(detail.technical.events[0]?.payloadExcerpt).not.toContain("field-999");
-    expect(detail.steps).toHaveLength(7);
+    expect(detail.steps).toHaveLength(6);
   });
 
   it("shows the final correlated result instead of an earlier failed attempt", () => {

@@ -30,14 +30,10 @@ describe("reference workflow pull request", () => {
       "jarvis.module.github",
       "jarvis.module.development",
     ]);
-    expect(draft.workspace.maxConcurrentExecutions).toBe(1);
-    expect(draft.repositories).toEqual([
-      { id: "main", root: ".", remote: "github", defaultBranch: "main" },
-    ]);
-    expect(draft.git.pushRemote).toBe("origin");
+    expect(draft.repositories).toEqual([{ id: "main", root: "." }]);
     expect(draft.modules[0]?.configuration?.["repositories"]).toEqual(["main"]);
-    expect(draft.modules[1]?.configuration?.["validationOrder"]).toEqual(["test"]);
-    expect(draft.modules[1]?.configuration?.["preparation"]).toBe("none");
+    expect(draft.modules[1]?.configuration).not.toHaveProperty("validationOrder");
+    expect(Object.keys(draft.modules[1]?.configuration ?? {})).toEqual(["readyLabel"]);
     expect(JSON.stringify(draft)).not.toMatch(
       /agent:ready|merge-requested|Gasppacho|QServices|\/Users\//,
     );
@@ -77,17 +73,11 @@ describe("reference workflow pull request", () => {
 
     const configuration: PortableProjectConfiguration = {
       ...draft,
-      commands: { verify: "node --test" },
       modules: draft.modules.map((module) =>
         module.instanceId === "development"
           ? {
               ...module,
-              configuration: {
-                ...module.configuration,
-                preparation: "none",
-                validationOrder: ["verify"],
-                environmentAllowlist: ["JARVIS_FAKE_COUNTER_PATH"],
-              },
+              configuration: { readyLabel: "ready-to-dev" },
             }
           : module,
       ),
@@ -135,11 +125,12 @@ describe("reference workflow pull request", () => {
         )
         .all(fixture.projectId) as { envelope: string }[];
       expect(rows).toHaveLength(1);
-      expect(JSON.parse(rows[0]!.envelope).payload).toMatchObject({
+      const payload = JSON.parse(rows[0]!.envelope).payload;
+      expect(payload).toMatchObject({
         workItemRef: selectedWorkItemRef,
         headCommit: pushed,
-        validation: { passed: true, commands: [{ name: "verify", status: "passed" }] },
       });
+      expect(payload).not.toHaveProperty("validation");
     } finally {
       database.close();
     }

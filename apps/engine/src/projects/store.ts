@@ -8,6 +8,7 @@ import type {
   StoredPortableProjectConfiguration,
 } from "../../../../packages/project-runtime/src/project-types.js";
 import type { ProjectStatus } from "./types.js";
+import type { ProjectPreflight } from "./preflight-types.js";
 
 /**
  * The immutable Resolved Project (ticket #53): the frozen composition, its
@@ -57,6 +58,12 @@ export interface NewProject {
   readonly portableConfig: StoredPortableProjectConfiguration;
   readonly repositoryPath: string;
   readonly bookmarkRef?: string | null;
+}
+
+export interface StoredProjectVerification {
+  readonly fingerprint: string;
+  readonly report: ProjectPreflight;
+  readonly verifiedAt: string;
 }
 
 interface ProjectRecord {
@@ -236,6 +243,7 @@ export class ProjectStore {
           JSON.stringify(configuration),
           projectId,
         );
+      this.deleteProjectVerification(projectId);
       return this.findById(projectId);
     })();
   }
@@ -305,6 +313,41 @@ export class ProjectStore {
       : (JSON.parse(record.resolved_project) as ResolvedProjectSnapshot);
   }
 
+  getProjectVerification(projectId: string): StoredProjectVerification | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT verification_fingerprint, report, verified_at
+         FROM project_verifications WHERE project_id = ?`,
+      )
+      .get(projectId) as
+      { verification_fingerprint: string; report: string; verified_at: string } | undefined;
+    return row === undefined
+      ? undefined
+      : {
+          fingerprint: row.verification_fingerprint,
+          report: parseProjectPreflight(row.report),
+          verifiedAt: row.verified_at,
+        };
+  }
+
+  saveProjectVerification(projectId: string, fingerprint: string, report: ProjectPreflight): void {
+    this.db
+      .prepare(
+        `INSERT INTO project_verifications
+           (project_id, verification_fingerprint, report, verified_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(project_id) DO UPDATE SET
+           verification_fingerprint = excluded.verification_fingerprint,
+           report = excluded.report,
+           verified_at = excluded.verified_at`,
+      )
+      .run(projectId, fingerprint, JSON.stringify(report), this.clock.now().toISOString());
+  }
+
+  deleteProjectVerification(projectId: string): void {
+    this.db.prepare("DELETE FROM project_verifications WHERE project_id = ?").run(projectId);
+  }
+
   replaceConfiguration(
     projectId: string,
     configuration: StoredPortableProjectConfiguration,
@@ -314,7 +357,7 @@ export class ProjectStore {
     const result = this.db
       .prepare(
         `UPDATE projects
-       SET portable_config = ?, name = ?, status = 'draft', updated_at = ?
+       SET portable_config = ?, name = ?, updated_at = ?
        WHERE id = ?`,
       )
       .run(JSON.stringify(configuration), name, now, projectId);
@@ -350,6 +393,31 @@ export class ProjectStore {
       .all() as (ProjectRecord & BindingRecord)[];
     return records.map(toRow);
   }
+}
+
+function parseProjectPreflight(serialized: string): ProjectPreflight {
+  const value: unknown = JSON.parse(serialized);
+  if (
+    !isRecord(value) ||
+    value["apiVersion"] !== "jarvis.dev/project-preflight/v1" ||
+    value["kind"] !== "ProjectPreflight" ||
+    typeof value["projectId"] !== "string" ||
+    typeof value["compositionFingerprint"] !== "string" ||
+    typeof value["valid"] !== "boolean" ||
+    typeof value["configurationReady"] !== "boolean" ||
+    !Array.isArray(value["checks"]) ||
+    !value["checks"].every(isRecord) ||
+    !isRecord(value["validation"]) ||
+    !isRecord(value["runtime"]) ||
+    !isRecord(value["candidateEligibility"])
+  ) {
+    throw new Error("Stored Project verification is invalid.");
+  }
+  return value as ProjectPreflight;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function toRow(record: ProjectRecord & BindingRecord): ProjectRow {

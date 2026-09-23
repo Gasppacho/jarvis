@@ -30,6 +30,8 @@ interface ResourceChoicesBody {
       readonly displayName: string;
       readonly version: string | null;
       readonly bound: boolean;
+      readonly selectable: boolean;
+      readonly readiness: { readonly status: string };
     }[];
     readonly readiness: { readonly status: string };
   };
@@ -141,6 +143,78 @@ else process.exit(99);
       items: [expect.objectContaining({ bound: true })],
       readiness: { status: "unchecked" },
     });
+  });
+
+  it("persists an unavailable CLI choice and an empty Development label", async () => {
+    const dataRoot = await mkdtemp(join(tmpdir(), "jarvis-runtime-draft-choice-"));
+    roots.push(dataRoot);
+    const engine = await startEngine({ dataRoot });
+    engines.push(engine);
+    seedRuntime(dataRoot, {
+      id: "runtime/codex-missing",
+      provider: "codex",
+      displayName: "Codex indisponible",
+      executablePath: null,
+      version: null,
+      capabilities: ["agent.execute"],
+      status: "unavailable",
+    });
+    const project = await createProject(engine);
+    const configuration = portableConfiguration();
+    const development = (configuration["modules"] as Record<string, unknown>[]).find(
+      (module) => module["moduleId"] === "jarvis.module.development",
+    )!;
+    development["configuration"] = {
+      ...(development["configuration"] as Record<string, unknown>),
+      readyLabel: "",
+    };
+    const save = await engine.call(`/v1/projects/${project.id}/configuration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ portableConfig: configuration, writeToRepository: false }),
+    });
+    expect(save.status, await save.clone().text()).toBe(200);
+
+    const choices = await json<ResourceChoicesBody>(
+      engine,
+      `/v1/projects/${project.id}/binding-candidates`,
+    );
+    expect(choices.agentRuntimes?.items).toEqual([
+      expect.objectContaining({
+        ref: "runtime/codex-missing",
+        selectable: true,
+        readiness: expect.objectContaining({ status: "absent" }),
+      }),
+    ]);
+    const selection = await engine.call(`/v1/projects/${project.id}/runtime-binding`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ref: "runtime/codex-missing", approveEnvironment: true }),
+    });
+    expect(selection.status, await selection.clone().text()).toBe(200);
+    expect((await json<BindingsBody>(engine, `/v1/projects/${project.id}/bindings`)).slots).toEqual(
+      {
+        agentRuntime: expect.objectContaining({ ref: "runtime/codex-missing" }),
+      },
+    );
+
+    await engine.dispose();
+    engines.splice(engines.indexOf(engine), 1);
+    const reopened = await startEngine({ dataRoot });
+    engines.push(reopened);
+    expect(
+      (await json<BindingsBody>(reopened, `/v1/projects/${project.id}/bindings`)).slots,
+    ).toEqual({
+      agentRuntime: expect.objectContaining({ ref: "runtime/codex-missing" }),
+    });
+    const detail = await json<{
+      portableConfig: { modules: { moduleId: string; configuration?: { readyLabel?: string } }[] };
+    }>(reopened, `/v1/projects/${project.id}`);
+    expect(
+      detail.portableConfig.modules.find(
+        (module) => module.moduleId === "jarvis.module.development",
+      )?.configuration?.readyLabel,
+    ).toBe("");
   });
 
   it("distinguishes absence, permission, authentication, incompatible output and bounded probe failure", async () => {
@@ -419,10 +493,16 @@ async function createProject(engine: Harness): Promise<{ id: string; repositoryP
   const response = await engine.call("/v1/projects", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ repositoryPath, portableConfig: portableConfiguration() }),
+    body: JSON.stringify({ repositoryPath }),
   });
   const body = (await response.json()) as { id?: string; error?: unknown };
   expect(response.status, JSON.stringify(body)).toBe(201);
+  const configuration = await engine.call(`/v1/projects/${body.id!}/configuration`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ portableConfig: portableConfiguration(), writeToRepository: false }),
+  });
+  expect(configuration.status, await configuration.clone().text()).toBe(200);
   return { id: body.id!, repositoryPath };
 }
 
@@ -485,13 +565,7 @@ function portableConfiguration(): Record<string, unknown> {
       runtimeSlot: "agentRuntime",
       bindings: { repository: "main" },
       configuration: {
-        preparation: "none",
-        validationOrder: ["test"],
-        maxRepairCycles: 0,
-        retainWorkspaceOnSuccess: false,
-        timeoutMs: 300000,
-        outputLimitBytes: 1048576,
-        environmentAllowlist: ["PATH", "HOME"],
+        readyLabel: "ready-to-dev",
       },
     },
   ];

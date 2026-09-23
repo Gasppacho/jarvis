@@ -58,8 +58,6 @@ Load work item context
 Allocate workspace
 Create branch
 Invoke agent
-Run validation commands
-Ask agent to repair failures (bounded)
 Commit
 Push
 Publish outputs
@@ -94,14 +92,13 @@ preparation.started
 preparation.completed
 preparation.failed
 agent.started
-agent.repair-started
 agent.message
-validation.started
-validation.completed
-validation.failed
 commit.created
 branch.pushed
 ```
+
+Les anciens journaux peuvent encore contenir `agent.repair-started` et les
+checkpoints `validation.*`; ils restent lisibles mais ne sont plus produits.
 
 Ces progrès ne sont pas des événements intermodules sauf s'ils représentent un fait d'intégration déclaré. Le flux temps réel peut être perdu sans compromettre la vérité durable.
 Une préparation `install` possède des checkpoints durables : une reprise ne la
@@ -196,11 +193,9 @@ checkpointée conserve l'Execution et sa Delivery sous
 ## Recovery after a Development push
 
 Before pushing, Development persists `commit.created` with the expected branch
-and SHA, the successful Validation Plan snapshot (ordered check names, results,
-durations and a SHA-256 fingerprint of command configuration/push remote), and
-the sanitized Work Item title. No raw command environment or remote credentials
-are added to this snapshot. This additive checkpoint payload uses the existing
-Execution Ledger; it is not a new workflow journal or event contract.
+and SHA and the sanitized Work Item title. No raw command environment or remote
+credentials are added to this snapshot. This additive checkpoint payload uses
+the existing Execution Ledger; it is not a new workflow journal or event contract.
 
 Recovery reads checkpoints for the original input Event, Project and Module
 Instance, including earlier failed attempts. It runs before allocation, work-item
@@ -212,8 +207,7 @@ transaction. Correlation, causation and the PR idempotency key remain unchanged.
 After cleanup but before that transaction, another crash can recover through
 the released lease and retained repository branch.
 
-A missing or mismatched validation snapshot, local changes or remote divergence
-stops recovery for operator inspection. An unavailable remote/branch follows the
+Local changes or remote divergence stop recovery for operator inspection. An unavailable remote/branch follows the
 existing bounded Delivery retries; exhaustion allows explicit Dead Letter replay
 once access/evidence is restored. No recovery path calls the agent, pushes,
 resets, or creates a worktree. Failure messages remain visible through the

@@ -70,9 +70,24 @@ describe("Development Work Item context", () => {
     expect(prompt).toContain("Body:");
     expect(prompt).toContain("[Work Item content truncated by Jarvis]");
     expect(prompt).toContain("push remote");
-    expect(prompt).toContain("Do not rerun the full project gate inside Codex");
-    expect(prompt).toContain("report unrelated failures instead");
+    expect(prompt).toContain("Do not commit or push");
+    expect(prompt).toContain("Change only files needed for the requested issue");
     expect(prompt).not.toContain(body);
+  });
+
+  it("publishes without a second validation phase", async () => {
+    const shellOrder: string[] = [];
+    const result = await runDevelopment({
+      runtime: new CapturingRuntime(),
+      workItem: openWorkItem(),
+      shellOrder,
+    });
+
+    expect(shellOrder).toEqual([]);
+    const completed = result.published.find(
+      ({ type }) => type === "development.implementation.completed",
+    );
+    expect(completed?.payload).not.toHaveProperty("validation");
   });
 
   it("does not allocate a workspace or start an agent when the Work Item read fails", async () => {
@@ -195,31 +210,26 @@ describe("Development Work Item context", () => {
     expect(first.branchContext.slug).not.toBe(second.branchContext.slug);
   });
 
-  it("prepares the allocated worktree exactly once before starting the agent and validation", async () => {
+  it("prepares the allocated worktree exactly once before starting the agent", async () => {
     const order: string[] = [];
     await runDevelopment({
       runtime: new CapturingRuntime(order),
       workItem: openWorkItem(),
       preparation: "install",
-      commands: { install: "prepare", test: "validate" },
       shellOrder: order,
     });
 
-    expect(order).toEqual(["prepare", "agent", "validate"]);
+    expect(order).toEqual(["pnpm install --frozen-lockfile", "agent"]);
   });
 
-  it("stops after allocation without starting the agent when preparation is not confirmed", async () => {
+  it("starts the agent without preparation when the repository has no lockfile", async () => {
     const runtime = new CapturingRuntime();
     const allocations: number[] = [];
 
-    await expect(
-      runDevelopment({ runtime, workItem: openWorkItem(), preparation: "missing", allocations }),
-    ).rejects.toMatchObject({
-      code: "project.preparation-unconfigured",
-    });
+    await runDevelopment({ runtime, workItem: openWorkItem(), allocations });
 
     expect(allocations).toEqual([1]);
-    expect(runtime.requests).toEqual([]);
+    expect(runtime.requests).toHaveLength(1);
   });
 
   it("does not start an unavailable runtime after preparation", async () => {
@@ -231,12 +241,11 @@ describe("Development Work Item context", () => {
         runtime,
         workItem: openWorkItem(),
         preparation: "install",
-        commands: { install: "prepare", test: "true" },
         shellOrder,
       }),
     ).rejects.toMatchObject({ code: "agent.runtime-preflight-failed", retryable: true });
 
-    expect(shellOrder).toEqual(["prepare"]);
+    expect(shellOrder).toEqual(["pnpm install --frozen-lockfile"]);
     expect(runtime.requests).toEqual([]);
   });
 
@@ -249,13 +258,12 @@ describe("Development Work Item context", () => {
         runtime,
         workItem: openWorkItem(),
         preparation: "install",
-        commands: { install: "prepare", test: "true" },
-        failCommand: "prepare",
+        failCommand: "pnpm install --frozen-lockfile",
         shellOrder,
       }),
     ).rejects.toMatchObject({ code: "project.preparation-failed", retryable: true });
 
-    expect(shellOrder).toEqual(["prepare"]);
+    expect(shellOrder).toEqual(["pnpm install --frozen-lockfile"]);
     expect(runtime.requests).toEqual([]);
   });
 
@@ -268,7 +276,6 @@ describe("Development Work Item context", () => {
         runtime,
         workItem: openWorkItem(),
         preparation: "install",
-        commands: { install: "prepare", test: "true" },
         shellOrder,
         preparationCheckpoints: new Set(["preparation.started"]),
       }),
@@ -297,7 +304,6 @@ describe("Development Work Item context", () => {
     await runDevelopment({
       runtime,
       workItem: openWorkItem(),
-      environmentAllowlist: ["RUNTIME_PROFILE"],
       projectBindings: {
         projectId: "work-item-test",
         runtimeSlot: "agentRuntime",
@@ -388,12 +394,10 @@ async function runDevelopment(input: {
   readonly checkpoints?: string[];
   readonly allocations?: number[];
   readonly preparation?: "install" | "none" | "missing";
-  readonly commands?: { readonly install?: string; readonly test?: string };
   readonly shellOrder?: string[];
   readonly failCommand?: string;
   readonly preparationCheckpoints?: ReadonlySet<string>;
   readonly revalidateRuntime?: ModuleHandlerContext["capabilities"]["revalidateAgentRuntime"];
-  readonly environmentAllowlist?: string[];
   readonly projectBindings?: NonNullable<ModuleHandlerContext["capabilities"]["projectBindings"]>;
 }): Promise<{
   readonly published: readonly ModuleHandlerPublishInput[];
@@ -402,6 +406,7 @@ async function runDevelopment(input: {
 }> {
   const repository = makeRealGitRepositoryFixture();
   repositories.push(repository);
+  if (input.preparation === "install") writeFileSync(`${repository.root}/pnpm-lock.yaml`, "");
   const baseRevisionSha = execFileSync("git", ["rev-parse", "main"], {
     cwd: repository.root,
     encoding: "utf8",
@@ -439,14 +444,7 @@ async function runDevelopment(input: {
     repositoryId: event.repositoryId,
     repositoryDefaultBranch: "main",
     event,
-    configuration: {
-      validationOrder: ["test"],
-      maxRepairCycles: 0,
-      timeoutMs: 30_000,
-      outputLimitBytes: 1_048_576,
-      environmentAllowlist: input.environmentAllowlist ?? [],
-      ...(input.preparation === "missing" ? {} : { preparation: input.preparation ?? "none" }),
-    },
+    configuration: {},
     signal: new AbortController().signal,
     capabilities: {
       agentRuntime: input.runtime,
@@ -454,15 +452,6 @@ async function runDevelopment(input: {
         ? {}
         : { revalidateAgentRuntime: input.revalidateRuntime }),
       projectBindings: input.projectBindings ?? { projectId: event.projectId, slots: {} },
-      projectCommands: {
-        commands: input.commands ?? { test: "true" },
-        git: {
-          branchPattern: "agent/{workItemId}-{slug}",
-          commitStrategy: "conventional",
-          pushRemote: "origin",
-          allowForcePush: false,
-        },
-      },
       shell: {
         run: async ({ command }) => {
           input.shellOrder?.push(command);

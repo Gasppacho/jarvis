@@ -1,6 +1,9 @@
 import { cpSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { PortableProjectConfiguration } from "../../../packages/project-runtime/src/project-types.js";
+import type {
+  PortableProjectConfiguration,
+  ProjectBindings,
+} from "../../../packages/project-runtime/src/project-types.js";
 import { afterEach, expect, it } from "vitest";
 import type { ProjectOverview } from "../src/projects/types.js";
 import { explain, localApiValidator } from "./contract.js";
@@ -112,7 +115,7 @@ it("omits the Rules stage for the fixed composition", async () => {
   ]);
 });
 
-it("keeps GitHub-only projects observational", async () => {
+it("keeps the operational overview on the active snapshot while a GitHub-only edit is staged", async () => {
   const fixture = await startReferenceWorkflowFixture("overview-github-only");
   fixtures.push(fixture);
   seedIssue(fixture, 245, true);
@@ -146,14 +149,13 @@ it("keeps GitHub-only projects observational", async () => {
   expect(saved.status, await saved.clone().text()).toBe(200);
 
   const body = await overview(fixture);
-  expect(body.workflow.nextStep).toContain("configuration");
-  expect(body.workflow.nextStep).not.toContain("prendra en charge");
-  expect(body.readinessHelp).toContain("sans les admettre");
+  expect(body.workflow.nextStep).toContain("Reprenez");
+  expect(body.readinessHelp).toContain("ready-to-dev");
   expect(body.workflow.stages.find(({ id }) => id === "development")).toMatchObject({
     status: "waiting",
   });
   expect(body.issues).toEqual([
-    expect.objectContaining({ status: "ineligible", reason: "development-not-selected" }),
+    expect.objectContaining({ status: "blocked", reason: "open-dependencies" }),
   ]);
 });
 
@@ -184,30 +186,43 @@ it("pauses new admissions durably while keeping Resume explicit", async () => {
 });
 
 it("keeps the failed work linked after label removal and Engine restart", async () => {
-  const fixture = await startReferenceWorkflowFixture("overview-validation-failure");
+  const fixture = await startReferenceWorkflowFixture(
+    "overview-agent-failure",
+    {
+      JARVIS_FAKE_SCENARIO: "failure",
+    },
+    false,
+    true,
+    false,
+  );
   fixtures.push(fixture);
   const path = `/v1/projects/${fixture.projectId}`;
-  const detail = (await (await fixture.engine.call(path)).json()) as {
-    portableConfig: PortableProjectConfiguration;
-  };
-  const save = await fixture.engine.call(`${path}/configuration`, {
+  const bindings = (await (
+    await fixture.engine.call(`${path}/bindings`)
+  ).json()) as ProjectBindings;
+  const runtime = bindings.slots["agentRuntime"];
+  expect(runtime?.kind).toBe("runtime");
+  const savedBindings = await fixture.engine.call(`${path}/bindings`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      portableConfig: {
-        ...detail.portableConfig,
-        commands: { ...detail.portableConfig.commands, test: 'node -e "process.exit(7)"' },
+      ...bindings,
+      slots: {
+        ...bindings.slots,
+        agentRuntime: {
+          ...runtime,
+          environment: { ...runtime?.environment, JARVIS_FAKE_SCENARIO: "failure" },
+        },
       },
-      writeToRepository: false,
     }),
   });
-  expect(save.status).toBe(200);
+  expect(savedBindings.status).toBe(200);
   await fixture.activate();
   fixture.fakeGitHub.appendLabeledIssueEvent({
     owner: "Gasppacho",
     repository: "jarvis",
     issueNumber: 16,
-    issueTitle: "Keep this validation failure visible",
+    issueTitle: "Keep this agent failure visible",
     issueBody: "A bounded fixture",
     label: "ready-to-dev",
     actor: "reference-user",
@@ -241,12 +256,12 @@ it("keeps the failed work linked after label removal and Engine restart", async 
       ).json()) as { failure: { code: string } };
       return failureDetail.failure.code;
     })
-    .toBe("git.validation-failed");
+    .toBe("agent.run-failed");
   const failureDetail = (await (
     await fixture.engine.call(`${path}/executions/${issue!.executionId}/detail`)
   ).json()) as { failure: { message: string; nextAction: string } };
-  expect(failureDetail.failure.message).toMatch(/La commande .+ a échoué/);
-  expect(failureDetail.failure.nextAction).toContain("corriger la cause avant de relancer");
+  expect(failureDetail.failure.message).not.toBe("");
+  expect(failureDetail.failure.nextAction).not.toBe("");
   await fixture.restart();
   expect((await overview(fixture)).issues.find((item) => item.issueNumber === 16)).toMatchObject({
     executionId: issue!.executionId,

@@ -211,9 +211,8 @@ public struct EngineClient: Sendable {
         }
     }
 
-    /// Saves a `draft` project for the repository at `repositoryPath`. A
-    /// committed `.jarvis/project.yaml` is adopted; otherwise the engine infers
-    /// the draft from discovery. Returns 409 `project.already-imported` for a
+    /// Saves a `draft` project for the repository at `repositoryPath`. The engine
+    /// infers the draft from discovery. Returns 409 `project.already-imported` for a
     /// repository this installation already imported.
     public func importProject(repositoryPath: String, name: String? = nil) async throws -> ProjectDetail {
         let operation = "POST /v1/projects"
@@ -570,6 +569,22 @@ public struct EngineClient: Sendable {
         }
     }
 
+    public func currentProjectPreflight(projectId: String) async throws
+        -> Components.Schemas.ProjectPreflightV1?
+    {
+        let operation = "getProjectPreflight"
+        let output = try await preflightUnderlying.getProjectPreflight(
+            .init(path: .init(projectId: projectId)))
+        switch output {
+        case .ok(let ok): return try ok.body.json
+        case .unauthorized: throw EngineClientError.unauthorized(operation: operation)
+        case .forbidden: throw EngineClientError.hostNotAllowed(operation: operation)
+        case .`default`(let status, let error):
+            if status == 404 { return nil }
+            throw try mappedEngineError(operation: operation, payload: error.body.json)
+        }
+    }
+
     public func scopePreflightProject(projectId: String, fingerprint: String, workItemRef: String?) async throws -> Components.Schemas.PortableProjectConfiguration {
         let operation = "scopePreflightProject"
         let output = try await underlying.scopePreflightProject(.init(path: .init(projectId: projectId), body: .json(.init(compositionFingerprint: fingerprint, scope: workItemRef == nil ? .all : .issue, workItemRef: workItemRef))))
@@ -669,7 +684,8 @@ public struct EngineClient: Sendable {
     public func replaceProjectConfiguration(
         projectId: String,
         portableConfig: Components.Schemas.PortableProjectConfiguration,
-        writeToRepository: Bool
+        writeToRepository: Bool,
+        bindings: Components.Schemas.ProjectBindings? = nil
     ) async throws -> ProjectDetail {
         let operation = "PUT /v1/projects/\(projectId)/configuration"
         let output = try await underlying.replaceProjectConfiguration(
@@ -677,7 +693,8 @@ public struct EngineClient: Sendable {
                 path: .init(projectId: projectId),
                 body: .json(.init(
                     portableConfig: .PortableProjectConfiguration(portableConfig),
-                    writeToRepository: writeToRepository
+                    writeToRepository: writeToRepository,
+                    bindings: bindings
                 ))
             ))
         switch output {

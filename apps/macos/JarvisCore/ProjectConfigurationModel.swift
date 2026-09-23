@@ -25,11 +25,17 @@ public struct ProjectConfigurationState: Sendable, Equatable {
     public var preflightReceivedAt: Date?
     public var trialWorkItemRef: String?
     public var pendingScopeDescription: String?
-    public var canRestoreTrial: Bool { trialWorkItemRef != nil && trialWorkItemRef == preflight.report?.configuredWorkItemRef }
+    public var canRestoreTrial: Bool {
+        trialWorkItemRef != nil && trialWorkItemRef == preflight.report?.configuredWorkItemRef
+    }
 
     public var validation: ProjectValidationState = .unvalidated
     public var activation: ProjectActivationState = .idle
     public var draft: ProjectConfigurationDraft?
+    /// Slots whose persisted Local Bindings must be deleted by the next Draft save.
+    /// Re-adding a module does not cancel this explicit removal.
+    public var removedBindingSlots: Set<String> = []
+    public var hasPendingBindingEdits = false
     public var isDraftSaved = false
     public var isLoading = false
     public var loadFailed = false
@@ -51,7 +57,8 @@ public struct ProjectConfigurationState: Sendable, Equatable {
         ProjectRuntimePresentation(choices: agentRuntimes, isBusy: isRuntimeBusy)
     }
     public var runtimeAllowsActivation: Bool {
-        !runtimeMetadataUnavailable && !isRuntimeBusy && (agentRuntimes?.required != true || agentRuntimes?.readiness.status == .ready)
+        !runtimeMetadataUnavailable && !isRuntimeBusy
+            && (agentRuntimes?.required != true || agentRuntimes?.readiness.status == .ready)
     }
 }
 
@@ -62,7 +69,8 @@ public struct ProjectConfigurationState: Sendable, Equatable {
 public final class ProjectConfigurationModel {
     public private(set) var states: [String: ProjectConfigurationState] = [:]
 
-    typealias ValidationReportProvider = @Sendable (String) async throws
+    typealias ValidationReportProvider =
+        @Sendable (String) async throws
         -> ProjectValidationReport
     typealias ActivationProvider = @Sendable (String, String) async throws -> Project
 
@@ -124,7 +132,8 @@ public final class ProjectConfigurationModel {
     public func state(for projectId: String) -> ProjectConfigurationState {
         if let state = states[projectId] { return state }
         var state = ProjectConfigurationState()
-        state.trialWorkItemRef = UserDefaults.standard.string(forKey: "\(projects.preferenceNamespace)dev.jarvis.project-trial.v1.\(projectId)")
+        state.trialWorkItemRef = UserDefaults.standard.string(
+            forKey: "\(projects.preferenceNamespace)dev.jarvis.project-trial.v1.\(projectId)")
         return state
     }
 
@@ -140,6 +149,14 @@ public final class ProjectConfigurationModel {
         await refresh(projectId: projectId, packages: packages, preservingStaleValidation: true)
     }
 
+    public func refreshAfterConnectionManagement(
+        projectId: String,
+        packages: [ModulePackage] = []
+    ) async {
+        await refresh(projectId: projectId, packages: packages)
+        await refreshCompositionChoices(projectId: projectId)
+    }
+
     private func refresh(
         projectId: String,
         packages: [ModulePackage],
@@ -147,12 +164,18 @@ public final class ProjectConfigurationModel {
     ) async {
         markValidationStale(projectId: projectId)
         guard let client else {
-            update(projectId) { $0.loadFailed = true; $0.errorMessage = Self.engineUnavailable }
+            update(projectId) {
+                $0.loadFailed = true
+                $0.errorMessage = Self.engineUnavailable
+            }
             return
         }
         refreshRevisions[projectId, default: 0] += 1
         let refreshRevision = refreshRevisions[projectId, default: 0]
         let preservedDraft = state(for: projectId).isDraftSaved ? nil : state(for: projectId).draft
+        let preservedBindings =
+            state(for: projectId).hasPendingBindingEdits
+            ? state(for: projectId).localBindings : nil
         validationRevisions[projectId, default: 0] += 1
         if !preservingStaleValidation {
             lastValidationReports[projectId] = nil
@@ -187,7 +210,8 @@ public final class ProjectConfigurationModel {
             var migrationError: String?
             if shouldPreviewMigration, let migrationAPI {
                 do {
-                    migrationPreview = .current(try await migrationAPI.previewGuidedMigration(projectId: projectId))
+                    migrationPreview = .current(
+                        try await migrationAPI.previewGuidedMigration(projectId: projectId))
                     migrationError = nil
                 } catch {
                     migrationPreview = nil
@@ -200,6 +224,20 @@ public final class ProjectConfigurationModel {
             let compositionGraph = try? await client.fetchProjectCompositionGraph(
                 projectId: projectId,
                 portableConfig: previewConfiguration)
+            let persistedPreflight: Components.Schemas.ProjectPreflightV1?
+            var persistedPreflightError: String?
+            if let preflightAPI {
+                do {
+                    persistedPreflight = try await preflightAPI.currentProjectPreflight(
+                        projectId: projectId)
+                } catch {
+                    persistedPreflight = nil
+                    persistedPreflightError =
+                        "La configuration est chargée, mais sa dernière vérification n’a pas pu être rechargée. Vérifiez à nouveau avant de l’appliquer."
+                }
+            } else {
+                persistedPreflight = nil
+            }
             let draft: ProjectConfigurationDraft?
             if let configuration = detail.portableConfiguration {
                 draft = ProjectConfigurationDraft(configuration: configuration, packages: packages)
@@ -213,7 +251,7 @@ public final class ProjectConfigurationModel {
             guard refreshRevisions[projectId, default: 0] == refreshRevision else { return }
             update(projectId) {
                 $0.detail = detail
-                $0.localBindings = bindings
+                $0.localBindings = preservedBindings ?? bindings
                 $0.candidates = compositionReview.resourceChoices.candidates
                 $0.resourceChoices = compositionReview.resourceChoices.slots
                 $0.agentRuntimes = compositionReview.resourceChoices.agentRuntimes
@@ -221,18 +259,26 @@ public final class ProjectConfigurationModel {
                 $0.compositionGuide = compositionReview.compositionGuide
                 $0.compositionReview = compositionReview
                 $0.compositionGraph = compositionGraph
+                if let persistedPreflight {
+                    $0.preflight = .current(persistedPreflight)
+                    $0.preflightReceivedAt = nil
+                    $0.agentRuntimes = persistedPreflight.runtime
+                    $0.runtimeMetadataUnavailable = false
+                } else if let persistedPreflightError {
+                    $0.preflight = .failed(persistedPreflightError)
+                }
                 if let migrationPreview {
                     $0.migration = migrationPreview
                 } else if shouldPreviewMigration && $0.migration == .unchecked {
                     $0.migration = .failed(migrationError ?? Self.engineUnavailable)
-                } else if !shouldPreviewMigration { $0.migration = .unchecked }
+                } else if !shouldPreviewMigration {
+                    $0.migration = .unchecked
+                }
                 $0.draft = preservedDraft ?? draft
                 $0.isDraftSaved = preservedDraft == nil
                 if preservedDraft == nil { $0.saveFailed = false }
-                $0.errorMessage = nil
+                $0.errorMessage = persistedPreflightError
             }
-            await autoSelectUniqueConnection(projectId: projectId)
-            await autoSelectUniqueRuntime(projectId: projectId)
         } catch {
             guard refreshRevisions[projectId, default: 0] == refreshRevision else { return }
             update(projectId) {
@@ -244,6 +290,7 @@ public final class ProjectConfigurationModel {
 
     public func editDraft(
         projectId: String,
+        invalidatesVerification: Bool = true,
         _ edit: (inout ProjectConfigurationDraft) -> Void
     ) {
         refreshRevisions[projectId, default: 0] += 1
@@ -254,6 +301,7 @@ public final class ProjectConfigurationModel {
             edit(&draft)
             state.draft = draft
             state.compositionReview = nil
+            state.compositionGraph = nil
             state.isDraftSaved = false
             state.saveFailed = false
             state.errorMessage = nil
@@ -261,13 +309,11 @@ public final class ProjectConfigurationModel {
         }
         guard didEdit else { return }
         compositionRevisions[projectId, default: 0] += 1
-        markValidationStale(projectId: projectId)
+        if invalidatesVerification { markValidationStale(projectId: projectId) }
         Task { await refreshCompositionChoices(projectId: projectId) }
     }
 
-    /// Applies an Engine-proposed repository reference replacement to the
-    /// in-memory Draft only. Writing `.jarvis/project.yaml` remains the
-    /// separate explicit `saveRepository` action.
+    /// Applies an Engine-proposed repository reference replacement to the in-memory Draft.
     public func applyRepositoryReferenceReplacement(
         projectId: String,
         moduleInstanceID: String,
@@ -275,9 +321,10 @@ public final class ProjectConfigurationModel {
     ) {
         guard replacement.field == "/configuration/repositories" else { return }
         editDraft(projectId: projectId) { draft in
-            guard let index = draft.modules.firstIndex(where: {
-                $0.instanceId == moduleInstanceID
-            }),
+            guard
+                let index = draft.modules.firstIndex(where: {
+                    $0.instanceId == moduleInstanceID
+                }),
                 let raw = draft.modules[index].configurationValues["repositories"],
                 let data = raw.data(using: .utf8),
                 var values = try? JSONDecoder().decode([String].self, from: data),
@@ -290,11 +337,14 @@ public final class ProjectConfigurationModel {
         }
     }
 
-    public func chooseStartingPoint(projectId: String, startingPointId: String, confirmedReplacement: Bool = false) {
+    public func chooseStartingPoint(
+        projectId: String, startingPointId: String, confirmedReplacement: Bool = false
+    ) {
         // Custom means keeping the current composition editable, never erasing it.
         if startingPointId == "custom" { return }
         if !confirmedReplacement, let current = state(for: projectId).draft,
-            !current.modules.isEmpty || !current.slotRequirements.isEmpty {
+            !current.modules.isEmpty || !current.slotRequirements.isEmpty
+        {
             update(projectId) { $0.pendingStartingPointID = startingPointId }
             return
         }
@@ -304,11 +354,11 @@ public final class ProjectConfigurationModel {
         if let template = startingPoint.template {
             update(projectId) {
                 $0.pendingStartingPointID = nil
-                var replacement = ProjectConfigurationDraft(configuration: template, packages: guide.modulePackages)
+                var replacement = ProjectConfigurationDraft(
+                    configuration: template, packages: guide.modulePackages)
                 // The proposal may precede the most recent edit. Keep user-owned project data.
                 if let current = $0.draft {
                     replacement.name = current.name
-                    replacement.commands = current.commands
                 }
                 $0.draft = replacement
                 $0.compositionReview = nil
@@ -350,7 +400,10 @@ public final class ProjectConfigurationModel {
             await refresh(projectId: projectId, packages: packages)
             update(projectId) { $0.migration = .applied(result) }
         } catch {
-            update(projectId) { $0.migration = .current(preview); $0.errorMessage = ProjectsModel.describe(error) }
+            update(projectId) {
+                $0.migration = .current(preview)
+                $0.errorMessage = ProjectsModel.describe(error)
+            }
         }
     }
 
@@ -384,55 +437,81 @@ public final class ProjectConfigurationModel {
     private func projectIsQuiescentForMigration(projectId: String) -> Bool {
         guard let preview = state(for: projectId).migration.preview else { return false }
         return state(for: projectId).detail?.project.status == .paused
-            && !preview.reasons.contains { $0.code == "project-active" || $0.code == "work-pending" }
+            && !preview.reasons.contains {
+                $0.code == "project-active" || $0.code == "work-pending"
+            }
     }
 
     public func setReadyLabel(projectId: String, label: String, moduleID: UUID? = nil) {
-        editDraft(projectId: projectId) { draft in
-            guard let development = draft.modules.firstIndex(where: { $0.moduleId == "jarvis.module.development" && (moduleID == nil || $0.id == moduleID) })
+        editDraft(projectId: projectId, invalidatesVerification: false) { draft in
+            guard
+                let development = draft.modules.firstIndex(where: {
+                    $0.moduleId == "jarvis.module.development"
+                        && (moduleID == nil || $0.id == moduleID)
+                })
             else { return }
             draft.modules[development].configurationValues["readyLabel"] = label
         }
     }
 
+    public func stageGitHubConnection(projectId: String, connectionID: String) {
+        let current = state(for: projectId)
+        guard
+            let module = current.draft?.modules.first(where: {
+                $0.enabled && $0.moduleId == "jarvis.module.github"
+            })
+        else { return }
+        let slots = Set(module.bindings.values)
+        guard
+            current.resourceChoices
+                .filter({ slots.contains($0.slotId) })
+                .flatMap(\.candidates)
+                .contains(where: { $0.kind == .connection && $0.ref == connectionID })
+        else { return }
+        stageBinding(projectId: projectId, slots: slots, kind: .connection, ref: connectionID)
+    }
+
+    public func stageRuntime(projectId: String, ref: String) {
+        let current = state(for: projectId)
+        guard
+            let slot = current.draft?.modules.first(where: {
+                $0.enabled && $0.moduleId == "jarvis.module.development"
+            })?.runtimeSlot,
+            !slot.isEmpty,
+            current.agentRuntimes?.items.contains(where: { $0.ref == ref && $0.selectable }) == true
+        else { return }
+        stageBinding(projectId: projectId, slots: [slot], kind: .runtime, ref: ref)
+    }
+
+    private func stageBinding(
+        projectId: String,
+        slots: Set<String>,
+        kind: ProjectResourceKind,
+        ref: String
+    ) {
+        guard !state(for: projectId).isSaving,
+            var payload = state(for: projectId).localBindings?.wirePayload
+        else { return }
+        for slot in slots {
+            payload.slots.additionalProperties[slot] = .init(kind: kind.payload, ref: ref)
+        }
+        update(projectId) {
+            $0.localBindings = LocalProjectBindings(payload: payload)
+            $0.removedBindingSlots.subtract(slots)
+            $0.hasPendingBindingEdits = true
+            $0.isDraftSaved = false
+            $0.saveFailed = false
+            $0.errorMessage = nil
+        }
+        markValidationStale(projectId: projectId)
+    }
+
     public func setGuidedReadyLabel(projectId: String, label: String) {
-        editDraft(projectId: projectId) { draft in
-            for index in draft.modules.indices where draft.modules[index].moduleId == "jarvis.module.development" {
+        editDraft(projectId: projectId, invalidatesVerification: false) { draft in
+            for index in draft.modules.indices
+            where draft.modules[index].moduleId == "jarvis.module.development" {
                 draft.modules[index].configurationValues["readyLabel"] = label
             }
-        }
-    }
-
-    public func setCommand(projectId: String, name: String, command: String) {
-        let value = command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : command
-        guard state(for: projectId).draft?.commands[name] != value else { return }
-        editDraft(projectId: projectId) { draft in
-            draft.commands[name] = value
-            for index in draft.modules.indices where draft.modules[index].moduleId == "jarvis.module.development" {
-                if name == "install", draft.modules[index].configurationValues["preparation"] == "install" {
-                    draft.modules[index].configurationValues["preparation"] = ""
-                } else if draft.modules[index].validationOrder.contains(name) {
-                    draft.modules[index].validationOrder.removeAll { $0 == name }
-                }
-            }
-        }
-    }
-
-    public func setRepositoryDefaultBranch(projectId: String, repositoryID: String, branch: String) {
-        let value = branch.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return }
-        editDraft(projectId: projectId) { draft in
-            guard let index = draft.repositories.firstIndex(where: { $0.id == repositoryID }) else { return }
-            draft.repositories[index].defaultBranch = value
-        }
-    }
-
-    public func selectValidationCommand(projectId: String, moduleID: UUID, name: String, selected: Bool) {
-        editModule(projectId: projectId, moduleId: moduleID) { module in
-            var order = module.validationOrder
-            order.removeAll { $0 == name }
-            if selected { order.append(name) }
-            module.validationOrder = order
         }
     }
 
@@ -460,6 +539,7 @@ public final class ProjectConfigurationModel {
         } catch {
             guard revision == compositionRevisions[projectId, default: 0] else { return }
             update(projectId) {
+                $0.compositionGraph = nil
                 $0.errorMessage =
                     "Impossible d’actualiser les choix du parcours. Votre brouillon est conservé. Réessayez cette modification ou rouvrez le projet."
             }
@@ -469,23 +549,26 @@ public final class ProjectConfigurationModel {
     public func addModule(projectId: String, package: ModulePackage) {
         let current = state(for: projectId)
         guard let draft = current.draft else { return }
+        guard !draft.modules.contains(where: { $0.moduleId == package.moduleId }) else { return }
         if draft.isFixedComposition || (draft.modules.isEmpty && draft.slotRequirements.isEmpty),
             let guide = current.compositionGuide,
-            let template = guide.startingPoints.first(where: { $0.id == "github-development" })?.template,
-            let proposed = template.modules.first(where: { $0.moduleId == package.moduleId }) {
-            guard !draft.modules.contains(where: { $0.moduleId == package.moduleId }) else { return }
+            let template = guide.startingPoints.first(where: { $0.id == "github-development" })?
+                .template,
+            let proposed = template.modules.first(where: { $0.moduleId == package.moduleId })
+        {
             editDraft(projectId: projectId) { draft in
                 if !draft.isFixedComposition {
-                    var fixed = ProjectConfigurationDraft(configuration: template, packages: guide.modulePackages)
+                    var fixed = ProjectConfigurationDraft(
+                        configuration: template, packages: guide.modulePackages)
                     fixed.name = draft.name
-                    fixed.commands = draft.commands
                     fixed.repositories = draft.repositories
                     fixed.modules = []
                     fixed.slotRequirements = [:]
                     draft = fixed
                 }
                 draft.modules.append(ProjectModuleDraft(payload: proposed, package: package))
-                let slots = Array(proposed.bindings?.additionalProperties.values ?? [:].values)
+                let slots =
+                    Array(proposed.bindings?.additionalProperties.values ?? [:].values)
                     + [proposed.runtimeSlot].compactMap { $0 }
                 for slot in slots where draft.slotRequirements[slot] == nil {
                     if let requirement = template.slots.additionalProperties[slot] {
@@ -499,7 +582,28 @@ public final class ProjectConfigurationModel {
     }
 
     public func removeModule(projectId: String, moduleId: UUID) {
-        editDraft(projectId: projectId) { $0.modules.removeAll { $0.id == moduleId } }
+        guard let currentDraft = state(for: projectId).draft,
+            let removed = currentDraft.modules.first(where: { $0.id == moduleId })
+        else { return }
+        let retainedSlots = Set(
+            currentDraft.modules.filter { $0.id != moduleId }.flatMap { module in
+                [module.runtimeSlot] + Array(module.bindings.values)
+            })
+        let removedSlots = Set(
+            ([removed.runtimeSlot] + Array(removed.bindings.values)).filter {
+                !$0.isEmpty && !retainedSlots.contains($0)
+            })
+        editDraft(projectId: projectId) { draft in
+            draft.modules.removeAll { $0.id == moduleId }
+            for slot in removedSlots { draft.slotRequirements[slot] = nil }
+        }
+        update(projectId) { state in
+            state.removedBindingSlots.formUnion(removedSlots)
+            guard var payload = state.localBindings?.wirePayload else { return }
+            for slot in removedSlots { payload.slots.additionalProperties[slot] = nil }
+            state.localBindings = LocalProjectBindings(payload: payload)
+            state.resourceChoices.removeAll { removedSlots.contains($0.slotId) }
+        }
     }
 
     public func addSlot(projectId: String, name: String, requirement: String) {
@@ -558,8 +662,6 @@ public final class ProjectConfigurationModel {
         switch edit.operation {
         case .setProjectName(let name):
             editDraft(projectId: projectId) { $0.name = name }
-        case .setRepositoryDefaultBranch(let repositoryID, let branch):
-            setRepositoryDefaultBranch(projectId: projectId, repositoryID: repositoryID, branch: branch)
         case .chooseStartingPoint(let id):
             chooseStartingPoint(projectId: projectId, startingPointId: id)
         case .addSlot(let name, let requirement):
@@ -614,7 +716,10 @@ public final class ProjectConfigurationModel {
         case .setModuleBinding(let moduleId, let key, let value):
             editModule(projectId: projectId, moduleId: moduleId) { $0.bindings[key] = value }
         case .setModuleConfiguration(let moduleId, let key, let value):
-            if key == "readyLabel", state(for: projectId).draft?.modules.first(where: { $0.id == moduleId })?.moduleId == "jarvis.module.development" {
+            if key == "readyLabel",
+                state(for: projectId).draft?.modules.first(where: { $0.id == moduleId })?.moduleId
+                    == "jarvis.module.development"
+            {
                 setReadyLabel(projectId: projectId, label: value, moduleID: moduleId)
                 return
             }
@@ -639,8 +744,6 @@ public final class ProjectConfigurationModel {
                 projectId: projectId, slotId: slotId, candidate: candidate)
         case .saveLocal:
             _ = await saveDraft(projectId: projectId, writeToRepository: false)
-        case .saveRepository:
-            _ = await saveDraft(projectId: projectId, writeToRepository: true)
         case .validate:
             await validate(projectId: projectId)
         case .activate:
@@ -653,7 +756,10 @@ public final class ProjectConfigurationModel {
     public func preflight(projectId: String) async {
         guard state(for: projectId).preflight != .loading else { return }
         guard state(for: projectId).draft == nil || state(for: projectId).isDraftSaved else {
-            update(projectId) { $0.preflight = .stale($0.preflight.report); $0.errorMessage = "Enregistrez le brouillon avant de vérifier la configuration." }
+            update(projectId) {
+                $0.preflight = .stale($0.preflight.report)
+                $0.errorMessage = "Enregistrez le brouillon avant de vérifier la configuration."
+            }
             return
         }
         guard let api = preflightAPI else {
@@ -661,11 +767,18 @@ public final class ProjectConfigurationModel {
             return
         }
         let revision = validationRevisions[projectId, default: 0]
-        update(projectId) { $0.preflight = .loading; $0.activation = .idle; $0.validation = .validating }
+        update(projectId) {
+            $0.preflight = .loading
+            $0.activation = .idle
+            $0.validation = .validating
+        }
         do {
             let report = try await api.preflightProject(projectId: projectId)
             guard revision == validationRevisions[projectId, default: 0] else { return }
-            guard report.projectId == projectId else { throw EngineClientError.unexpectedResponse("Le préflight appartient à un autre projet.") }
+            guard report.projectId == projectId else {
+                throw EngineClientError.unexpectedResponse(
+                    "Le préflight appartient à un autre projet.")
+            }
             let validation = try ProjectValidationReport(payload: report.validation)
             lastValidationReports[projectId] = validation
             update(projectId) {
@@ -679,54 +792,83 @@ public final class ProjectConfigurationModel {
             }
         } catch {
             guard revision == validationRevisions[projectId, default: 0] else { return }
-            update(projectId) { $0.preflight = .failed(ProjectsModel.describe(error)); $0.validation = .failed(ProjectsModel.describe(error)) }
+            update(projectId) {
+                $0.preflight = .failed(ProjectsModel.describe(error))
+                $0.validation = .failed(ProjectsModel.describe(error))
+            }
         }
     }
 
-    public func scopeWorkflow(projectId: String, workItemRef: String?, packages: [ModulePackage] = []) async {
+    public func scopeWorkflow(
+        projectId: String, workItemRef: String?, packages: [ModulePackage] = []
+    )
+        async
+    {
         guard case .current(let report) = state(for: projectId).preflight,
-              state(for: projectId).isDraftSaved, let api = preflightAPI else { return }
+            state(for: projectId).isDraftSaved, let api = preflightAPI
+        else { return }
         guard workItemRef != nil || state(for: projectId).canRestoreTrial else { return }
         guard report.configuredWorkItemRef == nil || state(for: projectId).canRestoreTrial else {
-            update(projectId) { $0.errorMessage = "La portée possède déjà un filtre exact. Relancez la vérification pour modifier le périmètre." }
+            update(projectId) {
+                $0.errorMessage =
+                    "La portée possède déjà un filtre exact. Relancez la vérification pour modifier le périmètre."
+            }
             return
         }
         let revision = validationRevisions[projectId, default: 0]
         guard state(for: projectId).activation != .activating else { return }
-        update(projectId) { $0.preflight = .loading; $0.activation = .idle }
+        update(projectId) {
+            $0.preflight = .loading
+            $0.activation = .idle
+        }
         do {
-            let configuration = try await api.scopePreflightProject(projectId: projectId, fingerprint: report.compositionFingerprint, workItemRef: workItemRef)
+            let configuration = try await api.scopePreflightProject(
+                projectId: projectId, fingerprint: report.compositionFingerprint,
+                workItemRef: workItemRef)
             guard revision == validationRevisions[projectId, default: 0] else { return }
             markValidationStale(projectId: projectId)
             update(projectId) {
-                $0.draft = ProjectConfigurationDraft(configuration: configuration, packages: packages)
+                $0.draft = ProjectConfigurationDraft(
+                    configuration: configuration, packages: packages)
                 $0.isDraftSaved = false
             }
             // The Engine returned a scoped fixed-module configuration. Saving it
             // withdraws the old active composition; activation remains explicit.
-            guard await saveDraft(projectId: projectId, writeToRepository: false) != nil else { return }
-            UserDefaults.standard.set(workItemRef, forKey: "\(projects.preferenceNamespace)dev.jarvis.project-trial.v1.\(projectId)")
+            guard await saveDraft(projectId: projectId, writeToRepository: false) != nil else {
+                return
+            }
+            UserDefaults.standard.set(
+                workItemRef,
+                forKey: "\(projects.preferenceNamespace)dev.jarvis.project-trial.v1.\(projectId)")
             update(projectId) {
                 $0.trialWorkItemRef = workItemRef
-                $0.pendingScopeDescription = workItemRef.map { "Essai limité à \(ProjectPreflightState.issueLabel($0))" } ?? "Surveillance des issues prêtes — vérifiez à nouveau, puis activez explicitement."
+                $0.pendingScopeDescription =
+                    workItemRef.map { "Essai limité à \(ProjectPreflightState.issueLabel($0))" }
+                    ?? "Surveillance des issues prêtes — vérifiez à nouveau, puis activez explicitement."
                 $0.preflight = .stale(nil)
             }
             await projects.refresh()
             if workItemRef != nil { await preflight(projectId: projectId) }
         } catch {
             guard revision == validationRevisions[projectId, default: 0] else { return }
-            update(projectId) { $0.preflight = .failed(ProjectsModel.describe(error)); $0.errorMessage = ProjectsModel.describe(error) }
+            update(projectId) {
+                $0.preflight = .failed(ProjectsModel.describe(error))
+                $0.errorMessage = ProjectsModel.describe(error)
+            }
         }
     }
 
     public func activateWorkflow(projectId: String) async {
         guard case .current(let report) = state(for: projectId).preflight,
-              report.projectId == projectId, state(for: projectId).preflight.canStartWorkflow,
-              (state(for: projectId).draft == nil || state(for: projectId).isDraftSaved),
-              state(for: projectId).activation != .activating, state(for: projectId).runtimeAllowsActivation, let api = preflightAPI else { return }
+            report.projectId == projectId, state(for: projectId).preflight.canStartWorkflow,
+            state(for: projectId).draft == nil || state(for: projectId).isDraftSaved,
+            state(for: projectId).activation != .activating,
+            state(for: projectId).runtimeAllowsActivation, let api = preflightAPI
+        else { return }
         update(projectId) { $0.activation = .activating }
         do {
-            _ = try await api.activatePreflightProject(projectId: projectId, fingerprint: report.compositionFingerprint)
+            _ = try await api.activatePreflightProject(
+                projectId: projectId, fingerprint: report.compositionFingerprint)
             update(projectId) { $0.activation = .succeeded }
             await projects.refresh()
         } catch let EngineClientError.engineError(_, code, message) {
@@ -760,7 +902,8 @@ public final class ProjectConfigurationModel {
             guard report.projectId == projectId else {
                 update(projectId) {
                     $0.validation = .failed(
-                        "The validation response belongs to a different Project. Reload this Project and validate again.")
+                        "The validation response belongs to a different Project. Reload this Project and validate again."
+                    )
                 }
                 return
             }
@@ -776,7 +919,8 @@ public final class ProjectConfigurationModel {
             let cause = ProjectsModel.describe(error)
             update(projectId) {
                 $0.validation = .failed(
-                    "Validation report is unavailable, so Project readiness cannot be determined. \(cause) Retry validation after correcting the problem.")
+                    "Validation report is unavailable, so Project readiness cannot be determined. \(cause) Retry validation after correcting the problem."
+                )
                 $0.errorMessage = nil
             }
         }
@@ -790,7 +934,13 @@ public final class ProjectConfigurationModel {
     /// this method only reflects and forwards its answer.
     public func activate(projectId: String) async {
         guard state(for: projectId).runtimeAllowsActivation else {
-            update(projectId) { $0.activation = .rejected(code: nil, message: "Development ne peut pas démarrer. Vérifiez le runtime du projet avant d’activer le workflow.") }
+            update(projectId) {
+                $0.activation = .rejected(
+                    code: nil,
+                    message:
+                        "Development ne peut pas démarrer. Vérifiez le runtime du projet avant d’activer le workflow."
+                )
+            }
             return
         }
         guard case .valid(let report) = state(for: projectId).validation,
@@ -800,7 +950,8 @@ public final class ProjectConfigurationModel {
                 $0.activation = .rejected(
                     code: nil,
                     message:
-                        "No current successful validation report is displayed for this Project. Validate again before activating.")
+                        "No current successful validation report is displayed for this Project. Validate again before activating."
+                )
             }
             return
         }
@@ -809,7 +960,8 @@ public final class ProjectConfigurationModel {
                 $0.activation = .rejected(
                     code: nil,
                     message:
-                        "The displayed validation report carries no composition fingerprint, so activation was refused rather than guessed. Validate again.")
+                        "The displayed validation report carries no composition fingerprint, so activation was refused rather than guessed. Validate again."
+                )
             }
             return
         }
@@ -817,7 +969,9 @@ public final class ProjectConfigurationModel {
         if let activationProvider {
             provider = activationProvider
         } else if let client {
-            provider = { try await client.activateProject(projectId: $0, compositionFingerprint: $1) }
+            provider = {
+                try await client.activateProject(projectId: $0, compositionFingerprint: $1)
+            }
         } else {
             update(projectId) { $0.activation = .transportFailure(Self.engineUnavailable) }
             return
@@ -865,7 +1019,10 @@ public final class ProjectConfigurationModel {
                 portableConfig: try draft.payload(),
                 writeToRepository: writeToRepository)
         } catch {
-            update(projectId) { $0.saveFailed = true; $0.errorMessage = error.localizedDescription }
+            update(projectId) {
+                $0.saveFailed = true
+                $0.errorMessage = error.localizedDescription
+            }
             return nil
         }
     }
@@ -878,18 +1035,58 @@ public final class ProjectConfigurationModel {
     ) async -> ProjectDetail? {
         guard !state(for: projectId).isSaving else { return nil }
         guard let client else {
-            update(projectId) { $0.saveFailed = true; $0.errorMessage = Self.engineUnavailable }
+            update(projectId) {
+                $0.saveFailed = true
+                $0.errorMessage = Self.engineUnavailable
+            }
             return nil
         }
         let draftAtSaveStart = state(for: projectId).draft
-        update(projectId) { $0.isSaving = true; $0.saveFailed = false }
+        let removedBindingSlots = state(for: projectId).removedBindingSlots
+        var stagedBindings: Components.Schemas.ProjectBindings?
+        if state(for: projectId).hasPendingBindingEdits || !removedBindingSlots.isEmpty {
+            stagedBindings = state(for: projectId).localBindings?.wirePayload
+            for slot in removedBindingSlots {
+                stagedBindings?.slots.additionalProperties[slot] = nil
+            }
+        }
+        update(projectId) {
+            $0.isSaving = true
+            $0.saveFailed = false
+        }
         defer { update(projectId) { $0.isSaving = false } }
         do {
             let detail = try await client.replaceProjectConfiguration(
                 projectId: projectId,
                 portableConfig: portableConfig,
-                writeToRepository: writeToRepository)
-            markValidationStale(projectId: projectId)
+                writeToRepository: writeToRepository,
+                bindings: stagedBindings)
+            var reloadErrors: [String] = []
+            let persistedPreflight: Components.Schemas.ProjectPreflightV1?
+            if let preflightAPI {
+                do {
+                    persistedPreflight = try await preflightAPI.currentProjectPreflight(
+                        projectId: projectId)
+                } catch {
+                    persistedPreflight = nil
+                    reloadErrors.append(
+                        "Le brouillon est enregistré, mais sa vérification n’a pas pu être rechargée. Vérifiez à nouveau avant de l’appliquer.")
+                }
+            } else {
+                persistedPreflight = nil
+            }
+            let bindings: LocalProjectBindings?
+            if let stagedBindings {
+                bindings = LocalProjectBindings(payload: stagedBindings)
+            } else {
+                do {
+                    bindings = try await client.getProjectBindings(projectId: projectId)
+                } catch {
+                    bindings = state(for: projectId).localBindings
+                    reloadErrors.append(
+                        "Le brouillon est enregistré, mais ses autorisations locales n’ont pas pu être rechargées. Rechargez ce projet avant de continuer.")
+                }
+            }
             let review: ProjectCompositionReview?
             let reviewError: String?
             do {
@@ -897,11 +1094,13 @@ public final class ProjectConfigurationModel {
                 reviewError = nil
             } catch {
                 review = nil
-                reviewError =
+                let message =
                     "The Draft was saved, but its Engine review could not be refreshed. Reload this Project before validation."
+                reviewError = message
+                reloadErrors.append(message)
             }
-            let bindings = try? await client.getProjectBindings(projectId: projectId)
-            let graph = try? await client.fetchProjectCompositionGraph(projectId: projectId, portableConfig: nil)
+            let graph = try? await client.fetchProjectCompositionGraph(
+                projectId: projectId, portableConfig: nil)
             update(projectId) {
                 $0.detail = detail
                 $0.saveFailed = false
@@ -910,9 +1109,12 @@ public final class ProjectConfigurationModel {
                     return
                 }
                 let savedSlots = detail.portableConfiguration?.slots.additionalProperties ?? [:]
-                let retainedSlots = $0.draft?.slotRequirements.filter { savedSlots[$0.key] != nil } ?? [:]
+                let retainedSlots =
+                    $0.draft?.slotRequirements.filter { savedSlots[$0.key] != nil } ?? [:]
                 $0.draft?.slotRequirements = retainedSlots
                 $0.localBindings = bindings
+                $0.removedBindingSlots.subtract(removedBindingSlots)
+                $0.hasPendingBindingEdits = false
                 $0.compositionGraph = graph
                 $0.compositionGuide = review?.compositionGuide ?? $0.compositionGuide
                 $0.compositionReview = review
@@ -920,40 +1122,64 @@ public final class ProjectConfigurationModel {
                 $0.resourceChoices = review?.resourceChoices.slots ?? []
                 $0.runtimeMetadataUnavailable = review?.resourceChoices.agentRuntimes == nil
                 $0.agentRuntimes = review?.resourceChoices.agentRuntimes ?? $0.agentRuntimes
+                if let persistedPreflight {
+                    $0.preflight = .current(persistedPreflight)
+                    $0.agentRuntimes = persistedPreflight.runtime
+                    $0.runtimeMetadataUnavailable = false
+                }
                 $0.isDraftSaved = true
-                $0.errorMessage = reviewError
+                $0.errorMessage = reloadErrors.isEmpty ? reviewError : reloadErrors.joined(separator: " ")
             }
             update(projectId) { $0.isSaving = false }
-            await autoSelectUniqueConnection(projectId: projectId)
-            await autoSelectUniqueRuntime(projectId: projectId)
             await projects.refresh()
             return detail
         } catch {
-            update(projectId) { $0.saveFailed = true; $0.errorMessage = ProjectsModel.describe(error) }
+            update(projectId) {
+                $0.saveFailed = true
+                $0.errorMessage = ProjectsModel.describe(error)
+            }
             return nil
         }
     }
 
-    public func refreshRuntimeCandidates(projectId: String, discover: Bool = false) async {
+    public func refreshRuntimeCandidates(
+        projectId: String,
+        discover: Bool = false,
+        autoSelectUnique: Bool = true
+    ) async {
+        let hasUnsavedDraft =
+            state(for: projectId).draft != nil
+            && !state(for: projectId).isDraftSaved
         await runtimeOperation(projectId: projectId) { api in
             if discover { try await api.discoverProjectRuntimes() }
-            guard let choices = try await api.listProjectBindingCandidates(projectId: projectId).agentRuntimes else {
+            guard
+                let choices = try await api.listProjectBindingCandidates(projectId: projectId)
+                    .agentRuntimes
+            else {
                 throw EngineClientError.unexpectedResponse("Runtime resources are unavailable")
             }
             return choices
         }
-        let choices = state(for: projectId).agentRuntimes
-        await autoSelectUniqueRuntime(
-            projectId: projectId,
-            choices: choices,
-            requiresSavedDraft: false)
+        if hasUnsavedDraft {
+            await refreshCompositionChoices(projectId: projectId)
+        }
+        if autoSelectUnique {
+            let choices = state(for: projectId).agentRuntimes
+            await autoSelectUniqueRuntime(
+                projectId: projectId,
+                choices: choices,
+                requiresSavedDraft: false)
+        }
     }
 
     private func autoSelectUniqueConnection(projectId: String) async {
         guard state(for: projectId).isDraftSaved, !state(for: projectId).isSaving else { return }
-        guard let choice = state(for: projectId).resourceChoices.first(where: {
-            $0.status == .available && $0.candidates.count == 1 && $0.candidates[0].kind == .connection
-        }), let candidate = choice.candidates.first else { return }
+        guard
+            let choice = state(for: projectId).resourceChoices.first(where: {
+                $0.status == .available && $0.candidates.count == 1
+                    && $0.candidates[0].kind == .connection
+            }), let candidate = choice.candidates.first
+        else { return }
         _ = await bindGitHubConnection(projectId: projectId, connectionID: candidate.ref)
     }
 
@@ -962,7 +1188,9 @@ public final class ProjectConfigurationModel {
         choices: Components.Schemas.ProjectAgentRuntimeChoices? = nil,
         requiresSavedDraft: Bool = true
     ) async {
-        guard (!requiresSavedDraft || state(for: projectId).isDraftSaved), !state(for: projectId).isSaving else { return }
+        guard !requiresSavedDraft || state(for: projectId).isDraftSaved,
+            !state(for: projectId).isSaving
+        else { return }
         let choices = choices ?? state(for: projectId).agentRuntimes
         let selectable = choices?.items.filter(\.selectable) ?? []
         guard choices?.required == true,
@@ -974,11 +1202,15 @@ public final class ProjectConfigurationModel {
     }
 
     public func chooseRuntime(projectId: String, ref: String) async {
-        guard !state(for: projectId).isRuntimeBusy && !state(for: projectId).isSaving else { return }
+        guard !state(for: projectId).isRuntimeBusy && !state(for: projectId).isSaving else {
+            return
+        }
         // Choosing also confirms the displayed local tool/login profile. The
         // server resolves slots and values; Swift never invents execution policy.
         if state(for: projectId).draft != nil && !state(for: projectId).isDraftSaved {
-            guard await saveDraft(projectId: projectId, writeToRepository: false) != nil else { return }
+            guard await saveDraft(projectId: projectId, writeToRepository: false) != nil else {
+                return
+            }
         }
         markValidationStale(projectId: projectId)
         update(projectId) { $0.isSaving = true }
@@ -994,7 +1226,8 @@ public final class ProjectConfigurationModel {
                 invalidateRuntime(projectId: projectId)
                 update(projectId) {
                     $0.localBindings = nil
-                    $0.errorMessage = "Le choix local n’a pas pu être rechargé. Rechargez le projet avant de continuer."
+                    $0.errorMessage =
+                        "Le choix local n’a pas pu être rechargé. Rechargez le projet avant de continuer."
                 }
                 return
             }
@@ -1008,7 +1241,8 @@ public final class ProjectConfigurationModel {
         guard state(for: projectId).draft == nil || state(for: projectId).isDraftSaved else {
             invalidateRuntime(projectId: projectId)
             update(projectId) {
-                $0.agentRuntimes?.readiness.detail = "Enregistrez le brouillon avant de vérifier son profil d’exécution."
+                $0.agentRuntimes?.readiness.detail =
+                    "Enregistrez le brouillon avant de vérifier son profil d’exécution."
             }
             return
         }
@@ -1019,29 +1253,47 @@ public final class ProjectConfigurationModel {
 
     private func runtimeOperation(
         projectId: String,
-        operation: (any ProjectRuntimeAPI) async throws -> Components.Schemas.ProjectAgentRuntimeChoices
+        operation: (any ProjectRuntimeAPI) async throws ->
+            Components.Schemas.ProjectAgentRuntimeChoices
     ) async {
         guard !state(for: projectId).isRuntimeBusy else { return }
         runtimeRevisions[projectId, default: 0] += 1
         let revision = runtimeRevisions[projectId, default: 0]
         update(projectId) {
             $0.isRuntimeBusy = true
-            $0.agentRuntimes?.readiness = .init(status: .checking, checkedAt: nil, detail: "Vérification en cours. Development ne peut pas démarrer.")
+            $0.agentRuntimes?.readiness = .init(
+                status: .checking, checkedAt: nil,
+                detail: "Vérification en cours. Development ne peut pas démarrer.")
         }
         defer {
-            if revision == runtimeRevisions[projectId, default: 0] { update(projectId) { $0.isRuntimeBusy = false } }
+            if revision == runtimeRevisions[projectId, default: 0] {
+                update(projectId) { $0.isRuntimeBusy = false }
+            }
         }
         do {
-            guard let runtimeAPI else { throw EngineClientError.unexpectedResponse("Engine unavailable") }
+            guard let runtimeAPI else {
+                throw EngineClientError.unexpectedResponse("Engine unavailable")
+            }
             let choices = try await operation(runtimeAPI)
             guard revision == runtimeRevisions[projectId, default: 0] else { return }
-            update(projectId) { $0.agentRuntimes = choices; $0.runtimeMetadataUnavailable = false }
+            update(projectId) {
+                $0.agentRuntimes = choices
+                $0.runtimeMetadataUnavailable = false
+            }
         } catch {
             guard revision == runtimeRevisions[projectId, default: 0] else { return }
             update(projectId) {
-                var choices = $0.agentRuntimes ?? .init(required: true, items: [], readiness: .init(status: .unchecked, checkedAt: nil, detail: ""))
+                var choices =
+                    $0.agentRuntimes
+                    ?? .init(
+                        required: true, items: [],
+                        readiness: .init(status: .unchecked, checkedAt: nil, detail: ""))
                 // Transport/provider errors may contain paths or credentials.
-                choices.readiness = .init(status: .engine_hyphen_error, checkedAt: nil, detail: "Le moteur ne peut pas vérifier le runtime. Development ne peut pas démarrer. Rétablissez la connexion au moteur, puis réessayez.")
+                choices.readiness = .init(
+                    status: .engine_hyphen_error, checkedAt: nil,
+                    detail:
+                        "Le moteur ne peut pas vérifier le runtime. Development ne peut pas démarrer. Rétablissez la connexion au moteur, puis réessayez."
+                )
                 $0.agentRuntimes = choices
             }
         }
@@ -1051,7 +1303,9 @@ public final class ProjectConfigurationModel {
         runtimeRevisions[projectId, default: 0] += 1
         update(projectId) {
             $0.isRuntimeBusy = false
-            $0.agentRuntimes?.readiness = .init(status: .unchecked, checkedAt: nil, detail: "Le projet a changé ou a été rechargé. Vérifiez à nouveau le runtime.")
+            $0.agentRuntimes?.readiness = .init(
+                status: .unchecked, checkedAt: nil,
+                detail: "Le projet a changé ou a été rechargé. Vérifiez à nouveau le runtime.")
         }
     }
 
@@ -1084,7 +1338,9 @@ public final class ProjectConfigurationModel {
     ) async -> LocalProjectBindings? {
         guard !state(for: projectId).isSaving else { return nil }
         if state(for: projectId).draft != nil && !state(for: projectId).isDraftSaved {
-            guard await saveDraft(projectId: projectId, writeToRepository: false) != nil else { return nil }
+            guard await saveDraft(projectId: projectId, writeToRepository: false) != nil else {
+                return nil
+            }
         }
         let current = state(for: projectId)
         guard var payload = current.localBindings?.wirePayload else {
@@ -1094,9 +1350,11 @@ public final class ProjectConfigurationModel {
             }
             return nil
         }
-        guard let candidate = current.candidates.first(where: {
-            $0.kind == .connection && $0.ref == connectionID
-        }) else {
+        guard
+            let candidate = current.candidates.first(where: {
+                $0.kind == .connection && $0.ref == connectionID
+            })
+        else {
             update(projectId) {
                 $0.errorMessage =
                     "This GitHub account is not available to the current Project. Refresh the accounts and try again."
@@ -1162,8 +1420,8 @@ public final class ProjectConfigurationModel {
                 update(projectId) {
                     $0.candidates = review.resourceChoices.candidates
                     $0.resourceChoices = review.resourceChoices.slots
-                $0.agentRuntimes = review.resourceChoices.agentRuntimes
-                $0.runtimeMetadataUnavailable = $0.agentRuntimes == nil
+                    $0.agentRuntimes = review.resourceChoices.agentRuntimes
+                    $0.runtimeMetadataUnavailable = $0.agentRuntimes == nil
                     $0.compositionGuide = review.compositionGuide
                     $0.compositionReview = review
                 }
@@ -1197,9 +1455,15 @@ public final class ProjectConfigurationModel {
         }
         if let report {
             lastValidationReports[projectId] = report
-            update(projectId) { $0.validation = .stale(report); $0.activation = .idle }
+            update(projectId) {
+                $0.validation = .stale(report)
+                $0.activation = .idle
+            }
         } else {
-            update(projectId) { $0.validation = .unvalidated; $0.activation = .idle }
+            update(projectId) {
+                $0.validation = .unvalidated
+                $0.activation = .idle
+            }
         }
     }
 

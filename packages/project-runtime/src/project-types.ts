@@ -116,21 +116,7 @@ export interface SuggestedProjectConfig {
     readonly id: "main";
     /** Relative: Portable Configuration is committed to the repository. */
     readonly root: ".";
-    readonly defaultBranch?: string;
-    readonly remote?: string;
   }[];
-  readonly commands: Readonly<Record<string, string>>;
-  readonly git: {
-    readonly branchPattern: string;
-    readonly commitStrategy: "conventional";
-    readonly pushRemote: string;
-    readonly allowForcePush: false;
-  };
-  readonly workspace: {
-    readonly strategy: "git-worktree";
-    readonly maxConcurrentExecutions: number;
-    readonly retainOnFailureDays: number;
-  };
   /** Composition starts empty, but the engine still owns the complete editable draft. */
   readonly slots: Readonly<Record<string, never>>;
   readonly modules: readonly [];
@@ -148,8 +134,6 @@ export interface ProjectMetadata {
 export interface ProjectRepositoryConfiguration {
   readonly id: string;
   readonly root: ".";
-  readonly defaultBranch: string;
-  readonly remote: string;
 }
 
 export interface ProjectSlotRequirement {
@@ -174,20 +158,6 @@ export interface PortableProjectConfiguration {
   readonly metadata: ProjectMetadata;
   readonly repositories: readonly ProjectRepositoryConfiguration[];
   readonly slots: Readonly<Record<string, ProjectSlotRequirement>>;
-  readonly commands: Readonly<
-    Partial<Record<"install" | "lint" | "typecheck" | "test" | "build" | "verify", string>>
-  >;
-  readonly git: {
-    readonly branchPattern: string;
-    readonly commitStrategy: "conventional" | "ticket-prefix" | "freeform";
-    readonly pushRemote: string;
-    readonly allowForcePush?: false;
-  };
-  readonly workspace: {
-    readonly strategy: "git-worktree";
-    readonly maxConcurrentExecutions: number;
-    readonly retainOnFailureDays: number;
-  };
   readonly modules: readonly ProjectModuleInstanceConfiguration[];
 }
 
@@ -464,6 +434,8 @@ export interface BindingStatus {
     readonly path: string;
     readonly accessible: boolean;
     readonly bookmarkRef: string | null;
+    readonly isGitRepository: boolean;
+    readonly isGitHubRepository: boolean;
     readonly remoteUrl?: string | null;
   };
 }

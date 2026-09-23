@@ -3,16 +3,13 @@ import type {
   WorkItemReadinessStore,
 } from "../../../../packages/modules/github/src/work-item-readiness.js";
 import {
-  preflightGitHub,
   developmentTrigger,
   check,
   isGitHubDevelopmentFlow,
+  type PreflightCheck,
   type ProjectPreflight,
 } from "./preflight.js";
 import type { GitHubApi } from "../../../../packages/module-sdk/src/index.js";
-import { readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
-import { parse as parseYaml } from "yaml";
 import {
   RequestRoutingError,
   resolveConsumers,
@@ -55,8 +52,6 @@ import type {
 import { EngineError } from "../errors.js";
 import {
   discoverRepository,
-  readRepositoryRemotes,
-  publicRemoteUrl,
   RepositoryPathError,
   requireRepositoryDirectory,
   slugify,
@@ -67,7 +62,6 @@ import {
   requireProjectBindings,
   validatePortableConfig,
 } from "./contracts.js";
-import type { ProjectConfigurationWriter } from "./repository-config-writer.js";
 import type { RepositoryAccessibilityPort } from "./repository-accessibility.js";
 import type { ProjectRow, ProjectStore, ResolvedProjectSnapshot } from "./store.js";
 import { ProjectRepositoryResolver } from "./repository-resolution.js";
@@ -101,12 +95,12 @@ import type { ProjectResourceGrant, ProjectResourceGrantDetailsPort } from "./re
 
 import {
   checkProjectRuntimeReadiness,
+  checkSelectedAgentCli,
   runtimeSlots,
-  checkProjectTools,
   projectAgentRuntimeChoices,
 } from "./runtime-readiness.js";
 import { detectedRuntimeEnvironment } from "../runtimes/registry.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   classifyGuidedMigration,
   migratedConfiguration,
@@ -116,8 +110,6 @@ import type { ProjectMigrationState } from "./store.js";
 import type { ProjectAgentRuntimeChoices } from "../../../../packages/project-runtime/src/project-types.js";
 import type { LocalAgentRuntimeRegistry } from "./resource-grants.js";
 
-const PROJECT_YAML = join(".jarvis", "project.yaml");
-const MAX_PROJECT_YAML_BYTES = 512 * 1024;
 const LEGACY_AUTOMATION_RULES_MODULE_ID = "jarvis.module.automation-rules";
 
 function isHistoricalAutomationRulesConfiguration(value: unknown): boolean {
@@ -152,18 +144,7 @@ export class RepositoryDiscoveryService implements RepositoryDiscoveryPort<Repos
   discoverRepository(root: unknown): RepositoryDiscovery {
     try {
       const path = requireRepositoryDirectory(root);
-      const committed = readCommittedConfig(path);
-      const discovery = discoverRepository(path, committed?.repositories[0]?.remote);
-      return committed === undefined
-        ? discovery
-        : {
-            ...discovery,
-            suggested: {
-              ...discovery.suggested,
-              metadata: committed.metadata,
-              repositories: committed.repositories,
-            },
-          };
+      return discoverRepository(path);
     } catch (error) {
       throw repositoryPathError(error);
     }
@@ -179,7 +160,6 @@ export class ProjectService implements ProjectRegistry<
   constructor(
     private readonly store: ProjectStore,
     private readonly modules: ModuleHost,
-    private readonly repositoryWriter: ProjectConfigurationWriter,
     private readonly resourceGrants: ProjectResourceGrantPort,
     private readonly compositionValidator: ProjectCompositionValidationPort,
     private readonly repositoryAccessibility: RepositoryAccessibilityPort,
@@ -195,6 +175,7 @@ export class ProjectService implements ProjectRegistry<
     private readonly pollingStatus?: Pick<GitHubPollingStatusStore, "read">,
     private readonly checkpoints?: Pick<ExecutionCheckpointStore, "listForDetail">,
     private readonly workspaceLeases?: Pick<WorkspaceLeaseRepository, "findByExecution">,
+    private readonly repositoryDiscovery: typeof discoverRepository = discoverRepository,
   ) {}
 
   importProject(request: ImportProjectRequest): ProjectDetail {
@@ -214,14 +195,7 @@ export class ProjectService implements ProjectRegistry<
       );
     }
 
-    const discovery = discoverRepository(repositoryPath);
-    if (!discovery.isGitRepository) {
-      throw new EngineError(
-        "repository.not-git",
-        400,
-        `The directory "${repositoryPath}" is not a Git repository.`,
-      );
-    }
+    const discovery = this.repositoryDiscovery(repositoryPath);
     const resolved = resolvePortableConfig(repositoryPath, request.portableConfig, discovery);
     let portableConfig = resolved.configuration;
     if (request.name !== undefined) {
@@ -264,9 +238,15 @@ export class ProjectService implements ProjectRegistry<
 
   getProjectOverview(id: unknown): ProjectOverview {
     const project = this.requireProject(id);
-    const legacy = project.portableConfig.compositionMode !== "fixed-modules";
+    const resolved =
+      project.status === "active" || project.status === "paused"
+        ? this.store.getResolvedProject(project.id)
+        : undefined;
+    const operationalProject =
+      resolved === undefined ? project : { ...project, portableConfig: resolved.composition };
+    const legacy = operationalProject.portableConfig.compositionMode !== "fixed-modules";
     const readiness = this.readiness?.list?.(project.id) ?? [];
-    const hasDevelopment = project.portableConfig.modules.some(
+    const hasDevelopment = operationalProject.portableConfig.modules.some(
       (module) => module.enabled && module.moduleId === "jarvis.module.development",
     );
     const admission = this.developmentAdmissions?.read(project.id) ?? {
@@ -274,7 +254,7 @@ export class ProjectService implements ProjectRegistry<
       items: [],
     };
     const paused = project.status === "paused" || admission.suspended;
-    const fallbackReadinessLabel = project.portableConfig.modules.find(
+    const fallbackReadinessLabel = operationalProject.portableConfig.modules.find(
       (module) => module.moduleId === "jarvis.module.development",
     )?.configuration?.["readyLabel"];
     const activeExecutions = this.executionLedger.listActive(project.id);
@@ -352,8 +332,8 @@ export class ProjectService implements ProjectRegistry<
       legacy,
     );
     let selectedWorkItemRef: string | null = null;
-    if (project.portableConfig.compositionMode === "fixed-modules") {
-      const scope = project.portableConfig.modules.find(
+    if (operationalProject.portableConfig.compositionMode === "fixed-modules") {
+      const scope = operationalProject.portableConfig.modules.find(
         (module) => module.enabled && module.moduleId === "jarvis.module.development",
       )?.configuration?.["scope"];
       if (
@@ -402,7 +382,7 @@ export class ProjectService implements ProjectRegistry<
       issues,
       activeExecutionCount: activeExecutions.length,
       activeWorkItemRefs: [...activeRefs].sort(),
-      readinessHelp: readinessHelp(project, readiness, legacy),
+      readinessHelp: readinessHelp(operationalProject, readiness, legacy),
     };
   }
 
@@ -431,9 +411,10 @@ export class ProjectService implements ProjectRegistry<
         `Project "${project.id}" must be active or paused before it can resume.`,
       );
     }
-    return this.activateProject({
+    const verification = this.currentProjectVerification(project);
+    return this.activatePreflightProject({
       projectId: project.id,
-      compositionFingerprint: this.validateProject(project.id).compositionFingerprint,
+      compositionFingerprint: verification?.compositionFingerprint,
     });
   }
 
@@ -445,60 +426,92 @@ export class ProjectService implements ProjectRegistry<
     const revision = (this.preflightRevisions.get(project.id) ?? 0) + 1;
     this.preflightRevisions.set(project.id, revision);
     this.preflights.delete(project.id);
+    const fingerprint = verificationFingerprint(project);
     const { validation, repositoryIdentities } = this.validateComposition(project, undefined);
-    const runtime = await this.checkProjectRuntime(project.id);
-    const github = await preflightGitHub({
-      configuration: project.portableConfig,
-      repositories: repositoryIdentities,
-      now: Date.now,
-      wasAdmitted: (repositoryId, ref) =>
-        this.readiness?.wasAdmitted(project.id, repositoryId, ref) ?? false,
-      apiFor: (slot) => {
-        const binding = project.slotBindings[slot];
-        if (
-          binding?.kind !== "connection" ||
-          !this.resourceGrants
-            .grantedToProject(project.id)
-            .some((r) => r.kind === "connection" && r.ref === binding.ref)
-        )
-          return undefined;
-        return this.preflightApi?.(binding.ref);
-      },
-    });
-    const checks = [
-      ...validation.findings.map((finding, index) =>
+    const choices = this.getProjectResourceChoices(project.id);
+    const development = enabledModule(project, "jarvis.module.development");
+    const runtimeReadiness =
+      development === undefined
+        ? { status: "unchecked" as const, checkedAt: null, detail: "Aucune CLI n’est requise." }
+        : this.agentRuntimes === undefined || choices.agentRuntimes === undefined
+          ? {
+              status: "engine-error" as const,
+              checkedAt: null,
+              detail: "La CLI d’agent ne peut pas être vérifiée.",
+            }
+          : checkSelectedAgentCli(project, choices.slots, this.agentRuntimes);
+    const runtime = {
+      ...(choices.agentRuntimes ?? { required: false, items: [] }),
+      readiness: runtimeReadiness,
+    };
+    const checks: PreflightCheck[] = [];
+    const github = enabledModule(project, "jarvis.module.github");
+    if (github !== undefined) {
+      let discovery: ReturnType<typeof discoverRepository> | undefined;
+      try {
+        discovery = this.repositoryDiscovery(project.repositoryPath);
+      } catch {
+        // The two explicit checks below identify the missing dependency.
+      }
+      checks.push(
         check(
-          `composition:${index}`,
-          finding.message,
-          finding.severity !== "error",
-          finding.message,
-          finding.target.kind === "slot" || finding.target.kind === "capability"
-            ? "Connections"
-            : finding.code.startsWith("repository.")
-              ? "Repository"
-              : "Workflow",
+          "git-repository",
+          "Dépôt Git initialisé",
+          discovery?.isGitRepository === true,
+          "Le dossier du projet n’est pas un dépôt Git initialisé.",
+          "Repository",
         ),
-      ),
-      check(
-        "composition",
-        "Composition et routage exact",
-        validation.valid,
-        "Chaque Request doit avoir un unique consumer actif et ses ressources requises.",
-        "Workflow",
-      ),
-      check(
-        "runtime",
-        "Runtime agentique",
-        !runtime.required || runtime.readiness.status === "ready",
-        runtime.readiness.detail,
-        "Connections",
-      ),
-      ...github.checks,
-      ...checkProjectTools(project),
-    ];
+        check(
+          "github-repository",
+          "Dépôt GitHub identifié",
+          repositoryIdentities.length > 0,
+          "Aucun dépôt GitHub ne peut être identifié depuis le remote Git.",
+          "Repository",
+        ),
+      );
+      const account = [...new Set(Object.values(github.bindings ?? {}))]
+        .map((slot) => project.slotBindings[slot])
+        .find((binding) => binding?.kind === "connection");
+      const granted =
+        account?.kind === "connection" &&
+        this.resourceGrants
+          .grantedToProject(project.id)
+          .some((resource) => resource.kind === "connection" && resource.ref === account.ref);
+      let accessible = false;
+      if (granted && account?.kind === "connection" && repositoryIdentities[0] !== undefined) {
+        const repository = repositoryIdentities[0];
+        try {
+          const response = await this.preflightApi?.(account.ref)?.get(
+            `/repos/${repository.owner}/${repository.name}`,
+          );
+          accessible = response?.status === 200;
+        } catch {
+          accessible = false;
+        }
+      }
+      checks.push(
+        check(
+          "github-account",
+          "Compte GitHub",
+          accessible,
+          "Le compte GitHub sélectionné ne peut pas accéder au dépôt.",
+          "Connections",
+        ),
+      );
+    }
+    if (development !== undefined)
+      checks.push(
+        check(
+          "agent-cli",
+          "CLI d’agent",
+          runtimeReadiness.status === "ready",
+          runtimeReadiness.detail,
+          "Connections",
+        ),
+      );
     if (
       this.preflightRevisions.get(project.id) !== revision ||
-      this.validateProject(project.id).compositionFingerprint !== validation.compositionFingerprint
+      verificationFingerprint(this.requireProject(project.id)) !== fingerprint
     ) {
       throw activationRejected(
         "project.activation-report-stale",
@@ -506,60 +519,60 @@ export class ProjectService implements ProjectRegistry<
         "changed during preflight",
       );
     }
-    const valid = validation.valid && checks.every((c) => c.status === "passed");
+    const valid = checks.every((item) => item.status === "passed");
     const report: ProjectPreflight = {
       apiVersion: "jarvis.dev/project-preflight/v1",
       kind: "ProjectPreflight",
       projectId: project.id,
-      compositionFingerprint: validation.compositionFingerprint!,
+      compositionFingerprint: fingerprint,
       valid,
       configurationReady: valid,
-      validation: toWireValidationReport(validation),
+      validation: toWireValidationReport({
+        ...validation,
+        valid,
+        findings: [],
+        compositionFingerprint: fingerprint,
+      }),
       runtime,
-      ...github,
       checks,
+      candidateEligibility: { status: "empty", items: [] },
     };
     this.preflights.set(project.id, report);
+    this.store.saveProjectVerification(project.id, fingerprint, report);
     return report;
   }
 
-  async activatePreflightProject(request: ActivateProjectRequest): Promise<ProjectSummary> {
-    this.requireCurrentPreflight(request);
-    return this.activateProject(request);
+  getProjectPreflight(id: unknown): ProjectPreflight | undefined {
+    return this.currentProjectVerification(this.requireProject(id));
   }
 
-  private requireCurrentPreflight(request: ActivateProjectRequest): void {
+  async activatePreflightProject(request: ActivateProjectRequest): Promise<ProjectSummary> {
     const project = this.requireProject(request.projectId);
-    const report = this.preflights.get(project.id);
-    const scope = report?.trigger?.scope;
-    const previous = this.store.getResolvedProject(project.id);
-    const previousScope = previous && developmentTrigger(previous.composition)?.scope;
-    const continuingTrial =
-      (project.status === "active" || project.status === "paused") &&
-      scope?.kind === "issue" &&
-      previousScope?.kind === "issue" &&
-      scope.workItemRef === previousScope.workItemRef;
-    const selected =
-      scope?.kind === "issue"
-        ? report?.candidateEligibility.items.find((item) => item.workItemRef === scope.workItemRef)
-        : undefined;
-    if (
-      project.portableConfig.compositionMode === "fixed-modules" &&
-      scope?.kind === "issue" &&
-      !continuingTrial &&
-      selected?.status !== "eligible"
-    )
-      throw activationRejected(
-        "project.activation-not-validated",
-        project.id,
-        "the selected fixed-modules candidate is not currently eligible",
-      );
-    if (!report?.valid || report.compositionFingerprint !== request.compositionFingerprint)
+    const report = this.requireCurrentPreflight(request);
+    return this.activateVerifiedProject(project, report.compositionFingerprint);
+  }
+
+  private requireCurrentPreflight(request: ActivateProjectRequest): ProjectPreflight {
+    const project = this.requireProject(request.projectId);
+    const report = this.currentProjectVerification(project);
+    if (!report?.valid)
       throw activationRejected(
         "project.activation-not-validated",
         project.id,
         "requires a current successful preflight",
       );
+    if (report.compositionFingerprint !== request.compositionFingerprint)
+      throw activationRejected(
+        "project.activation-report-stale",
+        project.id,
+        "changed since the supplied preflight",
+      );
+    return report;
+  }
+
+  private currentProjectVerification(project: ProjectRow): ProjectPreflight | undefined {
+    const stored = this.store.getProjectVerification(project.id);
+    return stored?.fingerprint === verificationFingerprint(project) ? stored.report : undefined;
   }
 
   scopePreflightProject(id: unknown, request: unknown): PortableProjectConfiguration {
@@ -728,39 +741,23 @@ export class ProjectService implements ProjectRegistry<
     const plan = state.plan as GuidedMigrationPlan;
     const configuration = migratedConfiguration(project.portableConfig, plan);
     requirePortableProjectConfiguration(configuration, this.modules);
-    const compensation = request.writeToRepository
-      ? this.repositoryWriter.write(project.repositoryPath, configuration)
-      : undefined;
     const bindings = toBindings(project);
     const historyId = randomUUID();
-    try {
-      const updated = this.store.applyMigration(
-        project.id,
-        request.compositionFingerprint,
-        configuration,
-        bindings,
-        historyId,
+    const updated = this.store.applyMigration(
+      project.id,
+      request.compositionFingerprint,
+      configuration,
+      bindings,
+      historyId,
+    );
+    if (updated === undefined)
+      throw new EngineError(
+        "project.activation-report-stale",
+        409,
+        "The migration preview is stale; request a new preview.",
       );
-      if (updated === undefined)
-        throw new EngineError(
-          "project.activation-report-stale",
-          409,
-          "The migration preview is stale; request a new preview.",
-        );
-      const nextState = this.store.getMigrationState(project.id)!;
-      return migrationResult(updated, nextState);
-    } catch (error) {
-      try {
-        compensation?.restore();
-      } catch {
-        throw new EngineError(
-          "project.repository-compensation-failed",
-          500,
-          "The previous portable configuration could not be restored.",
-        );
-      }
-      throw error;
-    }
+    const nextState = this.store.getMigrationState(project.id)!;
+    return migrationResult(updated, nextState);
   }
 
   /**
@@ -773,6 +770,10 @@ export class ProjectService implements ProjectRegistry<
    */
   async activateProject(request: ActivateProjectRequest): Promise<ProjectSummary> {
     const project = this.requireProject(request.projectId);
+    if (project.portableConfig.compositionMode === "fixed-modules") {
+      const report = this.requireCurrentPreflight(request);
+      return this.activateVerifiedProject(project, report.compositionFingerprint);
+    }
     const { validation: report, repositoryIdentities } = this.validateComposition(
       project,
       undefined,
@@ -812,11 +813,6 @@ export class ProjectService implements ProjectRegistry<
       );
     }
 
-    if (project.portableConfig.compositionMode === "fixed-modules") {
-      await this.preflightProject(project.id);
-      this.requireCurrentPreflight(request);
-    }
-
     const configuration = project.portableConfig;
     const snapshot: ResolvedProjectSnapshot = {
       composition: configuration,
@@ -829,6 +825,26 @@ export class ProjectService implements ProjectRegistry<
       ...(repositoryIdentities.length === 0 ? {} : { repositoryIdentities }),
     };
     const updated = this.store.activateProject(project.id, currentFingerprint, snapshot);
+    if (updated === undefined) throw notFound(project.id);
+    return toSummary(updated);
+  }
+
+  private activateVerifiedProject(
+    project: ProjectRow,
+    verificationFingerprint: string,
+  ): ProjectSummary {
+    const { validation, repositoryIdentities } = this.validateComposition(project, undefined);
+    const snapshot: ResolvedProjectSnapshot = {
+      composition: project.portableConfig,
+      moduleInstances: project.portableConfig.modules,
+      bindings: {
+        slots: project.slotBindings,
+        repository: { path: project.repositoryPath, bookmarkRef: project.bookmarkRef },
+      },
+      requestRoutes: validation.requestRoutes,
+      ...(repositoryIdentities.length === 0 ? {} : { repositoryIdentities }),
+    };
+    const updated = this.store.activateProject(project.id, verificationFingerprint, snapshot);
     if (updated === undefined) throw notFound(project.id);
     return toSummary(updated);
   }
@@ -996,7 +1012,7 @@ export class ProjectService implements ProjectRegistry<
           identity === undefined
             ? "GitHub identity unresolved"
             : `GitHub ${identity.owner}/${identity.name}`;
-        return `Repository ${repository.id} → ${provider}; identity remote ${repository.remote ?? "origin"}; push remote ${configuration.git.pushRemote}; target branch ${repository.defaultBranch ?? "main"}.`;
+        return `Repository ${repository.id} → ${provider}.`;
       }),
     });
     return {
@@ -1293,19 +1309,21 @@ export class ProjectService implements ProjectRegistry<
     this.store.transaction(() => {
       const project = this.store.findById(projectId);
       if (project === undefined) throw notFound(projectId || "(empty)");
-      if (project.status === "active") {
+      if (this.executionLedger.hasNonTerminalWork(projectId)) {
         throw new EngineError(
           "project.active",
           409,
-          `Project "${projectId}" is active and cannot be deleted. Pause it before deleting it.`,
+          `Project "${projectId}" has active work and cannot be deleted.`,
         );
       }
+      if (project.status === "active") this.store.setStatus(projectId, "paused");
       if (!this.store.deleteById(projectId)) throw notFound(projectId || "(empty)");
     });
   }
 
   replaceProjectConfiguration(request: ReplaceProjectConfigurationRequest): ProjectDetail {
     const current = this.requireProject(request.projectId);
+    const currentVerificationFingerprint = verificationFingerprint(current);
     if (typeof request.writeToRepository !== "boolean") {
       throw new EngineError("api.invalid-request", 400, "writeToRepository must be a boolean.");
     }
@@ -1318,16 +1336,6 @@ export class ProjectService implements ProjectRegistry<
       Object.keys(supplied.slots).length === 0
         ? requirePortableProjectDraft(request.portableConfig)
         : requireProjectConfigurationForPersistence(request.portableConfig, this.modules);
-    if (
-      structuralCompositionChanged(current.portableConfig, configuration) &&
-      (current.status === "active" || this.executionLedger.hasNonTerminalWork(current.id))
-    ) {
-      throw new EngineError(
-        "project.active",
-        409,
-        `Project "${current.id}" must be paused and quiescent before its module composition can change.`,
-      );
-    }
     const removedSlots = new Set<string>();
     if (
       current.portableConfig.compositionMode === "fixed-modules" &&
@@ -1356,8 +1364,19 @@ export class ProjectService implements ProjectRegistry<
           ? requirePortableProjectDraft(cleaned)
           : requireProjectConfigurationForPersistence(cleaned, this.modules);
     }
+    const suppliedBindings =
+      request.bindings === undefined ? undefined : requireProjectBindings(request.bindings);
+    if (suppliedBindings !== undefined && suppliedBindings.projectId !== current.id) {
+      throw new EngineError(
+        "project.bindings-invalid",
+        400,
+        "/projectId must match the Project selected by the URL.",
+      );
+    }
     const slotBindings = Object.fromEntries(
-      Object.entries(current.slotBindings).filter(([slot]) => !removedSlots.has(slot)),
+      Object.entries(suppliedBindings?.slots ?? current.slotBindings).filter(
+        ([slot]) => !removedSlots.has(slot),
+      ),
     );
     for (const slot of Object.keys(slotBindings)) {
       if (!(slot in configuration.slots)) {
@@ -1368,48 +1387,43 @@ export class ProjectService implements ProjectRegistry<
         );
       }
     }
+    if (suppliedBindings !== undefined) {
+      validateBindingEnvironmentProfiles(slotBindings);
+      validateRepositoryBindings(configuration, suppliedBindings, current);
+    }
     validateSlotBindings(
       configuration,
       slotBindings,
-      eligibleCandidates(current.id, configuration, this.modules, this.resourceGrants),
+      persistableCandidates(current.id, configuration, this.modules, this.resourceGrants),
       this.modules,
-      "project.config-invalid",
+      suppliedBindings === undefined ? "project.config-invalid" : "project.bindings-invalid",
     );
 
-    // Filesystem + SQLite cannot share a transaction. The repository write happens
-    // first, then is compensated if SQLite refuses the replacement.
-    const compensation = request.writeToRepository
-      ? this.repositoryWriter.write(current.repositoryPath, configuration)
-      : undefined;
-    try {
-      const updated = this.store.transaction(() => {
-        if (removedSlots.size > 0)
-          this.store.replaceBindings(
-            current.id,
-            current.repositoryPath,
-            current.bookmarkRef,
-            slotBindings,
-          );
-        return this.store.replaceConfiguration(
-          current.id,
-          configuration,
-          configuration.metadata.name,
-        );
-      });
-      if (updated === undefined) throw notFound(current.id);
-      return toDetail(updated, this.repositoryAccessibility);
-    } catch (error) {
-      try {
-        compensation?.restore();
-      } catch {
-        throw new EngineError(
-          "project.repository-compensation-failed",
-          500,
-          "SQLite rejected the configuration and the previous repository file could not be restored. Reload the Project and inspect .jarvis/project.yaml before retrying.",
-        );
-      }
-      throw error;
-    }
+    const updated = this.store.transaction(() => {
+      const configured = this.store.replaceConfiguration(
+        current.id,
+        configuration,
+        configuration.metadata.name,
+      );
+      if (configured === undefined) return undefined;
+      const updated =
+        suppliedBindings !== undefined || removedSlots.size > 0
+          ? this.store.replaceBindings(
+              current.id,
+              current.repositoryPath,
+              current.bookmarkRef,
+              slotBindings,
+            )
+          : configured;
+      if (
+        updated !== undefined &&
+        verificationFingerprint(updated) !== currentVerificationFingerprint
+      )
+        this.store.deleteProjectVerification(current.id);
+      return updated;
+    });
+    if (updated === undefined) throw notFound(current.id);
+    return toDetail(updated, this.repositoryAccessibility);
   }
 
   getProjectBindings(projectId: unknown): ProjectBindings {
@@ -1528,6 +1542,7 @@ export class ProjectService implements ProjectRegistry<
 
   replaceProjectBindings(request: ReplaceProjectBindingsRequest): ProjectBindings {
     const current = this.requireProject(request.projectId);
+    const currentVerificationFingerprint = verificationFingerprint(current);
     const bindings = requireProjectBindings(request.bindings);
     if (bindings.projectId !== current.id) {
       throw new EngineError(
@@ -1539,40 +1554,28 @@ export class ProjectService implements ProjectRegistry<
     validateBindingReferences(
       current,
       bindings,
-      eligibleCandidates(current.id, current.portableConfig, this.modules, this.resourceGrants),
+      persistableCandidates(current.id, current.portableConfig, this.modules, this.resourceGrants),
       this.modules,
     );
-    const repositoryIds = current.portableConfig.repositories.map((repository) => repository.id);
-    const suppliedIds = Object.keys(bindings.repositories);
-    const complete =
-      suppliedIds.length === repositoryIds.length &&
-      repositoryIds.every((repositoryId) => {
-        const supplied = bindings.repositories[repositoryId];
-        return (
-          supplied !== undefined &&
-          supplied.path === current.repositoryPath &&
-          supplied.bookmarkRef === current.bookmarkRef
-        );
-      });
-    if (!complete || suppliedIds.some((repositoryId) => !repositoryIds.includes(repositoryId))) {
-      throw new EngineError(
-        "project.bindings-invalid",
-        400,
-        "/repositories must contain exactly the declared repositories and preserve their Local Bindings.",
-      );
-    }
+    validateRepositoryBindings(current.portableConfig, bindings, current);
 
     // Generic Local Bindings replacement cannot establish or replace the shell-owned
     // Repository Grant. Only the dedicated repository binding operation may do that.
 
-    const updated = this.store.transaction(() =>
-      this.store.replaceBindings(
+    const updated = this.store.transaction(() => {
+      const replaced = this.store.replaceBindings(
         current.id,
         current.repositoryPath,
         current.bookmarkRef,
         bindings.slots,
-      ),
-    );
+      );
+      if (
+        replaced !== undefined &&
+        verificationFingerprint(replaced) !== currentVerificationFingerprint
+      )
+        this.store.deleteProjectVerification(current.id);
+      return replaced;
+    });
     if (updated === undefined) throw notFound(current.id);
     return toBindings(updated);
   }
@@ -1611,28 +1614,6 @@ export class ProjectService implements ProjectRegistry<
     if (row === undefined) throw notFound(projectId || "(empty)");
     return row;
   }
-}
-
-function structuralCompositionChanged(
-  current: StoredPortableProjectConfiguration,
-  proposed: StoredPortableProjectConfiguration,
-): boolean {
-  const instances = (configuration: StoredPortableProjectConfiguration) =>
-    configuration.modules.map(({ configuration: _moduleConfiguration, ...instance }) => instance);
-  return (
-    JSON.stringify({
-      compositionMode: current.compositionMode,
-      repositories: current.repositories,
-      slots: current.slots,
-      modules: instances(current),
-    }) !==
-    JSON.stringify({
-      compositionMode: proposed.compositionMode,
-      repositories: proposed.repositories,
-      slots: proposed.slots,
-      modules: instances(proposed),
-    })
-  );
 }
 
 type OverviewAdmission = ReturnType<DevelopmentAdmissions["read"]>["items"][number];
@@ -2017,6 +1998,32 @@ function validateBindingReferences(
   );
 }
 
+function validateRepositoryBindings(
+  configuration: StoredPortableProjectConfiguration,
+  bindings: ProjectBindings,
+  project: Pick<ProjectRow, "repositoryPath" | "bookmarkRef">,
+): void {
+  const repositoryIds = configuration.repositories.map((repository) => repository.id);
+  const suppliedIds = Object.keys(bindings.repositories);
+  const complete =
+    suppliedIds.length === repositoryIds.length &&
+    repositoryIds.every((repositoryId) => {
+      const supplied = bindings.repositories[repositoryId];
+      return (
+        supplied !== undefined &&
+        supplied.path === project.repositoryPath &&
+        supplied.bookmarkRef === project.bookmarkRef
+      );
+    });
+  if (!complete || suppliedIds.some((repositoryId) => !repositoryIds.includes(repositoryId))) {
+    throw new EngineError(
+      "project.bindings-invalid",
+      400,
+      "/repositories must contain exactly the declared repositories and preserve their Local Bindings.",
+    );
+  }
+}
+
 const SENSITIVE_ENVIRONMENT_NAME =
   /(?:secret|token|password|passwd|credential|private[_-]?key|api[_-]?key)/i;
 const SENSITIVE_ENVIRONMENT_VALUE =
@@ -2084,6 +2091,18 @@ function eligibleCandidates(
   grants: ProjectResourceGrantPort,
 ): readonly ProjectResourceCandidate[] {
   return projectResourceCandidates(configuration, modules, grants.grantedToProject(projectId));
+}
+
+function persistableCandidates(
+  projectId: string,
+  configuration: StoredPortableProjectConfiguration,
+  modules: ModuleHost,
+  grants: ProjectResourceGrantPort,
+): readonly ProjectResourceCandidate[] {
+  const candidates = resourceGrantDetails(grants, projectId)
+    .filter(({ candidate, status }) => status === "available" || candidate.kind === "runtime")
+    .map(({ candidate }) => candidate);
+  return projectResourceCandidates(configuration, modules, candidates);
 }
 
 function resourceChoices(
@@ -2303,49 +2322,13 @@ function compareResourceCandidate(
 }
 
 function resolvePortableConfig(
-  repositoryPath: string,
-  supplied: unknown,
+  _repositoryPath: string,
+  _supplied: unknown,
   discovery: ReturnType<typeof discoverRepository>,
 ): { configuration: StoredPortableProjectConfiguration; isDiscoveredDraft: boolean } {
-  const committed = readCommittedConfig(repositoryPath);
-  if (committed !== undefined) {
-    return { configuration: committed, isDiscoveredDraft: false };
-  }
-  if (supplied !== undefined) {
-    validatePortableConfig(supplied);
-    return {
-      configuration: supplied as PortableProjectConfiguration,
-      isDiscoveredDraft: false,
-    };
-  }
+  // Import always starts from a fresh local Draft. The compatibility field is
+  // intentionally ignored and repository-owned configuration is never restored.
   return { configuration: discovery.suggested, isDiscoveredDraft: true };
-}
-
-function readCommittedConfig(
-  repositoryPath: string,
-): StoredPortableProjectConfiguration | undefined {
-  const file = join(repositoryPath, PROJECT_YAML);
-  let stats;
-  try {
-    stats = statSync(file);
-  } catch {
-    return undefined;
-  }
-  if (!stats.isFile())
-    throw configInvalid(".jarvis/project.yaml exists but is not a regular file.");
-  if (stats.size > MAX_PROJECT_YAML_BYTES) {
-    throw configInvalid(
-      `.jarvis/project.yaml is ${stats.size} bytes; the engine reads at most ${MAX_PROJECT_YAML_BYTES}. Trim it and import again.`,
-    );
-  }
-  let document: unknown;
-  try {
-    document = parseYaml(readFileSync(file, "utf8"));
-  } catch {
-    throw configInvalid(".jarvis/project.yaml could not be read as valid YAML.");
-  }
-  validatePortableConfig(document);
-  return document as StoredPortableProjectConfiguration;
 }
 
 function configInvalid(reason: string): EngineError {
@@ -2378,6 +2361,40 @@ function toWireValidationReport(report: ProjectValidationReport): ProjectValidat
   return wire;
 }
 
+function enabledModule(project: ProjectRow, moduleId: string) {
+  return project.portableConfig.modules.find(
+    (module) => module.enabled && module.moduleId === moduleId,
+  );
+}
+
+/** Stable identity of the only values that invalidate Project Wizard verification. */
+function verificationFingerprint(project: ProjectRow): string {
+  const modules = project.portableConfig.modules
+    .filter((module) => module.enabled)
+    .map((module) => ({
+      instanceId: module.instanceId,
+      moduleId: module.moduleId,
+      account:
+        module.moduleId === "jarvis.module.github"
+          ? [...new Set(Object.values(module.bindings ?? {}))]
+              .map((slot) => project.slotBindings[slot])
+              .filter((binding) => binding?.kind === "connection")
+              .map((binding) => binding!.ref)
+              .sort()
+          : undefined,
+      cli:
+        module.moduleId === "jarvis.module.development" && module.runtimeSlot !== undefined
+          ? project.slotBindings[module.runtimeSlot]?.kind === "runtime"
+            ? project.slotBindings[module.runtimeSlot]?.ref
+            : undefined
+          : undefined,
+    }))
+    .sort((left, right) =>
+      `${left.moduleId}/${left.instanceId}`.localeCompare(`${right.moduleId}/${right.instanceId}`),
+    );
+  return createHash("sha256").update(JSON.stringify(modules)).digest("hex");
+}
+
 function repositoryPathError(error: unknown): EngineError {
   if (error instanceof RepositoryPathError) {
     return new EngineError("repository.path-invalid", 400, error.message);
@@ -2402,7 +2419,7 @@ function activationRejected(
   return new EngineError(
     code,
     409,
-    `Project "${projectId}" ${reason}. Request a fresh POST /v1/projects/${projectId}/validation-report and retry activation with its compositionFingerprint.`,
+    `Project "${projectId}" ${reason}. Verify the Project again and retry activation with its current compositionFingerprint.`,
   );
 }
 
@@ -2421,22 +2438,23 @@ function toDetail(
   repositoryAccessibility: RepositoryAccessibilityPort,
 ): ProjectDetail {
   const accessible = repositoryAccessibility.isAccessibleDirectory(row.repositoryPath);
-  let remotes: ReturnType<typeof readRepositoryRemotes> = [];
-  try {
-    if (accessible) remotes = readRepositoryRemotes(row.repositoryPath);
-  } catch {
-    // A removed or inaccessible checkout has no current remote to display.
-  }
   const bindingStatus: BindingStatus = Object.fromEntries(
     row.portableConfig.repositories.map((repository) => {
-      const url = remotes.find((remote) => remote.name === repository.remote)?.url;
+      let discovery: RepositoryDiscovery | undefined;
+      try {
+        if (accessible) discovery = discoverRepository(row.repositoryPath);
+      } catch {
+        // A removed or inaccessible checkout has no current Git state to display.
+      }
       return [
         repository.id,
         {
           path: row.repositoryPath,
           accessible,
           bookmarkRef: row.bookmarkRef,
-          remoteUrl: url === undefined ? null : publicRemoteUrl(url),
+          isGitRepository: discovery?.isGitRepository ?? false,
+          isGitHubRepository: discovery?.provider === "github",
+          remoteUrl: discovery?.remoteUrl ?? null,
         },
       ];
     }),

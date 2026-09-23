@@ -87,22 +87,14 @@ describe("runtime isolation acceptance", () => {
     seedCodexRuntime(dataRoot, fakeCodexPath);
     seedGitHubConnection(dataRoot);
 
-    await activateProject(
-      engine,
-      projectA,
-      fixtureA,
-      FAKE_RUNTIME_REF,
-      ["JARVIS_FAKE_SCENARIO", "JARVIS_PROJECT_A_ONLY"],
-      { JARVIS_FAKE_SCENARIO: "inspect", JARVIS_PROJECT_A_ONLY: projectAOnly },
-    );
-    await activateProject(
-      engine,
-      projectB,
-      fixtureB,
-      CODEX_RUNTIME_REF,
-      ["PATH", "JARVIS_PROJECT_B_ONLY"],
-      { PATH: projectBPath, JARVIS_PROJECT_B_ONLY: projectBOnly },
-    );
+    await activateProject(engine, projectA, fixtureA, FAKE_RUNTIME_REF, {
+      JARVIS_FAKE_SCENARIO: "inspect",
+      JARVIS_PROJECT_A_ONLY: projectAOnly,
+    });
+    await activateProject(engine, projectB, fixtureB, CODEX_RUNTIME_REF, {
+      PATH: projectBPath,
+      JARVIS_PROJECT_B_ONLY: projectBOnly,
+    });
 
     const [bindingsA, bindingsB] = await Promise.all([
       readBindings(engine, projectA),
@@ -228,44 +220,43 @@ async function activateProject(
   projectId: string,
   fixture: RealGitRepositoryFixture,
   runtimeRef: string,
-  environmentAllowlist: readonly string[],
   runtimeEnvironment: Readonly<Record<string, string>>,
 ): Promise<void> {
   const fixed = fixedProjectConfiguration(projectId);
   const portableConfig: PortableProjectConfiguration = {
     ...fixed,
-    repositories: fixed.repositories.map((repository) => ({
-      ...repository,
-      remote: "github",
-    })),
-    workspace: {
-      ...fixed.workspace,
-      maxConcurrentExecutions: 2,
-    },
     modules: fixed.modules.map((module) =>
       module.instanceId === "development"
         ? {
             ...module,
             configuration: {
               ...module.configuration,
-              validationOrder: ["test"],
-              maxRepairCycles: 0,
-              preparation: "none",
-              retainWorkspaceOnSuccess: true,
-              timeoutMs: 300_000,
-              outputLimitBytes: 1_048_576,
-              environmentAllowlist: [...environmentAllowlist],
+              readyLabel: "ready-to-dev",
             },
           }
         : module,
     ),
   };
+  const packageJsonPath = join(fixture.root, "package.json");
+  const originalPackageJson = readFileSync(packageJsonPath, "utf8");
+  const packageJson = JSON.parse(originalPackageJson) as Record<string, unknown>;
+  writeFileSync(
+    packageJsonPath,
+    `${JSON.stringify({ ...packageJson, name: projectId }, null, 2)}\n`,
+  );
   const imported = await engine.call("/v1/projects", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ repositoryPath: fixture.root, portableConfig }),
+    body: JSON.stringify({ repositoryPath: fixture.root }),
   });
+  writeFileSync(packageJsonPath, originalPackageJson);
   expect(imported.status, await imported.clone().text()).toBe(201);
+  const saved = await engine.call(`/v1/projects/${projectId}/configuration`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ portableConfig, writeToRepository: false }),
+  });
+  expect(saved.status, await saved.clone().text()).toBe(200);
 
   const repositoryBinding = await engine.call(
     `/v1/projects/${projectId}/repositories/main/binding`,

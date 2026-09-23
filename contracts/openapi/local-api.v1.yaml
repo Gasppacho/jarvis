@@ -94,6 +94,8 @@ paths:
                   description: Optional display name, limited to 120 characters before trimming. Leading and trailing whitespace is removed; a blank result is rejected. Applied atomically to the imported configuration, preserving other discovered or committed values.
                 portableConfig:
                   $ref: "#/components/schemas/PortableProjectConfiguration"
+                  deprecated: true
+                  description: Deprecated compatibility field. Import ignores this value and always creates an empty local Draft.
       responses:
         "201":
           description: Imported draft project.
@@ -724,6 +726,24 @@ paths:
         default:
           $ref: "#/components/responses/Error"
   /v1/projects/{projectId}/preflight:
+    get:
+      operationId: getProjectPreflight
+      description: Returns the persisted verification only while its workflow, GitHub account and agent CLI still match the saved Project.
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: Current persisted Project verification.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectPreflightV1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        default:
+          $ref: '#/components/responses/Error'
     post:
       operationId: preflightProject
       parameters:
@@ -903,6 +923,11 @@ paths:
                     - $ref: "#/components/schemas/PortableProjectConfiguration"
                 writeToRepository:
                   type: boolean
+                  deprecated: true
+                  description: Deprecated compatibility field. Ignored; configuration is stored locally and no repository file is written.
+                bindings:
+                  $ref: "#/components/schemas/ProjectBindings"
+                  description: Optional full replacement of Local Bindings, committed atomically with the configuration.
       responses:
         "200":
           description: Updated draft Project.
@@ -945,7 +970,10 @@ paths:
               required: [compositionFingerprint, writeToRepository]
               properties:
                 compositionFingerprint: { type: string, pattern: "^[0-9a-f]{64}$" }
-                writeToRepository: { type: boolean, description: Explicit confirmation to update .jarvis/project.yaml. }
+                writeToRepository:
+                  type: boolean
+                  deprecated: true
+                  description: Deprecated compatibility field. Ignored; migration updates local state only and never writes .jarvis/project.yaml.
       responses:
         "200":
           description: Idempotent migration result with exportable local backup.
@@ -1360,7 +1388,7 @@ components:
           additionalProperties:
             type: object
             additionalProperties: false
-            required: [path, accessible, bookmarkRef]
+            required: [path, accessible, bookmarkRef, isGitRepository, isGitHubRepository]
             properties:
               path:
                 type: string
@@ -1369,6 +1397,12 @@ components:
               bookmarkRef:
                 type: [string, "null"]
                 description: Opaque reference to bookmark bytes owned by the macOS Shell.
+              isGitRepository:
+                type: boolean
+                description: Whether the current folder contains a readable Git worktree.
+              isGitHubRepository:
+                type: boolean
+                description: Whether the configured Git remote currently identifies GitHub.
               remoteUrl:
                 type: [string, "null"]
                 description: Current remote selected by the saved project configuration, with credentials and query metadata removed. Null when unavailable or ambiguous; no origin fallback.
@@ -1785,7 +1819,7 @@ components:
           description: Engine-owned readiness for the supplied or saved Portable Configuration and current Local Bindings.
         githubDevelopmentFlow:
           type: boolean
-          description: Additive configuration-only projection. True when the Engine recognizes one readiness admission rule, matching GitHub label, resolved Development and PR routes, concurrency one and no merge request. Does not certify access or commands. Absent means unconfirmed.
+          description: Additive configuration-only projection. True when the Engine recognizes the fixed GitHub-to-Development route and no merge-request route. Does not certify access or execute commands. Absent means unconfirmed.
         composition:
           $ref: "#/components/schemas/ProjectCompositionChoicesV1"
         validation:
@@ -2427,7 +2461,7 @@ components:
             $ref: "#/components/schemas/ExecutionDetailExecution"
         steps:
           type: array
-          minItems: 7
+          minItems: 6
           maxItems: 7
           items:
             $ref: "#/components/schemas/ExecutionDetailStep"
@@ -2766,7 +2800,7 @@ components:
     ProjectRepositoryConfiguration:
       type: object
       additionalProperties: false
-      required: [id, root, defaultBranch, remote]
+      required: [id, root]
       properties:
         id:
           type: string
@@ -2774,14 +2808,6 @@ components:
         root:
           type: string
           const: "."
-        defaultBranch:
-          type: string
-          minLength: 1
-          maxLength: 200
-        remote:
-          type: string
-          minLength: 1
-          maxLength: 100
     ProjectSlotRequirement:
       type: object
       additionalProperties: false
@@ -2794,47 +2820,6 @@ components:
           type: boolean
         description:
           type: string
-    ProjectCommands:
-      type: object
-      additionalProperties: false
-      properties:
-        install: { type: string, minLength: 1 }
-        lint: { type: string, minLength: 1 }
-        typecheck: { type: string, minLength: 1 }
-        test: { type: string, minLength: 1 }
-        build: { type: string, minLength: 1 }
-        verify: { type: string, minLength: 1 }
-    ProjectGitConfiguration:
-      type: object
-      additionalProperties: false
-      required: [branchPattern, commitStrategy, pushRemote]
-      properties:
-        branchPattern:
-          type: string
-          minLength: 1
-          maxLength: 200
-        commitStrategy:
-          enum: [conventional, ticket-prefix, freeform]
-        pushRemote:
-          type: string
-          minLength: 1
-        allowForcePush:
-          const: false
-    ProjectWorkspaceConfiguration:
-      type: object
-      additionalProperties: false
-      required: [strategy, maxConcurrentExecutions, retainOnFailureDays]
-      properties:
-        strategy:
-          const: git-worktree
-        maxConcurrentExecutions:
-          type: integer
-          minimum: 1
-          maximum: 16
-        retainOnFailureDays:
-          type: integer
-          minimum: 0
-          maximum: 90
     ModuleInstanceConfiguration:
       type: object
       additionalProperties: false
@@ -2863,7 +2848,7 @@ components:
       description: Engine-discovered editable Project draft with empty user composition.
       type: object
       additionalProperties: false
-      required: [apiVersion, kind, metadata, repositories, slots, commands, git, workspace, modules]
+      required: [apiVersion, kind, metadata, repositories, slots, modules]
       properties:
         apiVersion:
           const: jarvis.dev/project/v1
@@ -2877,19 +2862,13 @@ components:
         repositories:
           type: array
           minItems: 1
-          maxItems: 16
+          maxItems: 1
           items:
             $ref: "#/components/schemas/ProjectRepositoryConfiguration"
         slots:
           type: object
           maxProperties: 0
           additionalProperties: false
-        commands:
-          $ref: "#/components/schemas/ProjectCommands"
-        git:
-          $ref: "#/components/schemas/ProjectGitConfiguration"
-        workspace:
-          $ref: "#/components/schemas/ProjectWorkspaceConfiguration"
         modules:
           type: array
           maxItems: 0
@@ -2898,7 +2877,7 @@ components:
     PortableProjectConfiguration:
       type: object
       additionalProperties: false
-      required: [apiVersion, kind, metadata, repositories, slots, commands, git, workspace, modules]
+      required: [apiVersion, kind, metadata, repositories, slots, modules]
       properties:
         apiVersion:
           const: jarvis.dev/project/v1
@@ -2912,7 +2891,7 @@ components:
         repositories:
           type: array
           minItems: 1
-          maxItems: 16
+          maxItems: 1
           items:
             $ref: "#/components/schemas/ProjectRepositoryConfiguration"
         slots:
@@ -2920,12 +2899,6 @@ components:
           minProperties: 1
           additionalProperties:
             $ref: "#/components/schemas/ProjectSlotRequirement"
-        commands:
-          $ref: "#/components/schemas/ProjectCommands"
-        git:
-          $ref: "#/components/schemas/ProjectGitConfiguration"
-        workspace:
-          $ref: "#/components/schemas/ProjectWorkspaceConfiguration"
         modules:
           type: array
           minItems: 1

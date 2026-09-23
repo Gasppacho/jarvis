@@ -143,18 +143,6 @@ function draft(name: string): StoredPortableProjectConfiguration {
     kind: "Project",
     metadata: { id: "project", name },
     repositories: [{ id: "main", root: "." }],
-    commands: {},
-    git: {
-      branchPattern: "agent/{workItemId}-{slug}",
-      commitStrategy: "conventional",
-      pushRemote: "origin",
-      allowForcePush: false,
-    },
-    workspace: {
-      strategy: "git-worktree",
-      maxConcurrentExecutions: 1,
-      retainOnFailureDays: 7,
-    },
     slots: {},
     modules: [],
   };

@@ -1,5 +1,8 @@
 # Plan d'exécution — rendre Jarvis fiable et simple
 
+> Plan historique exécuté puis remplacé. Le parcours canonique courant est défini par
+> l'ADR 0020 et `docs/product/UX.md`.
+
 ## Résultat attendu
 
 Un utilisateur qui ignore la configuration de Jarvis choisit son dépôt, le scénario « Développer une issue GitHub », son compte GitHub et son agent, confirme les commandes proposées, comprend ce qui va démarrer, puis suit une issue jusqu'à une PR. Le chemin recommandé ne nécessite ni JSON, ni identifiant de module, ni slot, ni contrat d'événement, ni terminal.

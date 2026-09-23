@@ -39,7 +39,6 @@ interface Declaration {
 }
 
 const FIXED_MODULE_IDS = new Set(["jarvis.module.github", "jarvis.module.development"]);
-const GUIDED_VALIDATION_ORDER = ["verify", "lint", "typecheck", "test", "build"] as const;
 
 export function previewProjectCompositionChoices(
   modules: ProjectCompositionChoicePackagePort,
@@ -112,7 +111,7 @@ function startingPoints(
       id: "github-development" as const,
       displayName: "GitHub Development",
       description:
-        "GitHub confirms a ready issue has no open blocker, then requests Development. After validation and push, Development requests one PR. Review and merge stay manual. " +
+        "GitHub confirms a ready issue has no open blocker, then requests Development. After push, Development requests one PR. Review and merge stay manual. " +
         repositoryMappings.join(" "),
       template: githubDevelopmentTemplate(configuration),
     },
@@ -128,22 +127,9 @@ function githubDevelopmentTemplate(
   base: StoredPortableProjectConfiguration,
 ): PortableProjectConfiguration {
   const repository = base.repositories[0];
-  const hasCommand = (name: "install" | (typeof GUIDED_VALIDATION_ORDER)[number]) => {
-    const command = base.commands[name];
-    return typeof command === "string" && command.trim() !== "";
-  };
-  const validationOrder = hasCommand("verify")
-    ? ["verify"]
-    : GUIDED_VALIDATION_ORDER.filter((name) => name !== "verify" && hasCommand(name));
   return {
     ...base,
     compositionMode: "fixed-modules",
-    repositories: base.repositories.map((item) => ({
-      ...item,
-      defaultBranch: item.defaultBranch ?? "main",
-      remote: item.remote ?? "origin",
-    })),
-    workspace: { ...base.workspace, maxConcurrentExecutions: 1 },
     slots: {
       agentRuntime: { requires: "agent.execute" },
       sourceControl: { requires: "scm.change-request.manage" },
@@ -170,13 +156,6 @@ function githubDevelopmentTemplate(
         },
         configuration: {
           readyLabel: "ready-to-dev",
-          preparation: hasCommand("install") ? "install" : "none",
-          validationOrder: [...validationOrder],
-          maxRepairCycles: 2,
-          retainWorkspaceOnSuccess: false,
-          timeoutMs: 300000,
-          outputLimitBytes: 1048576,
-          environmentAllowlist: ["PATH", "HOME", "CODEX_HOME"],
         },
       },
     ],

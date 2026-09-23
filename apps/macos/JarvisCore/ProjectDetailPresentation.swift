@@ -163,7 +163,6 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         public struct Edit: Sendable, Equatable, Hashable {
             public enum Operation: Sendable, Equatable, Hashable {
                 case setProjectName(String)
-                case setRepositoryDefaultBranch(String, String)
                 case chooseStartingPoint(String)
                 case addSlot(String, String)
                 case removeSlot(String)
@@ -194,10 +193,6 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
 
             public static func setProjectName(_ name: String) -> Self {
                 Self(.setProjectName(name), label: "Set project name")
-            }
-
-            public static func setRepositoryDefaultBranch(_ repositoryID: String, _ branch: String) -> Self {
-                Self(.setRepositoryDefaultBranch(repositoryID, branch), label: "Modifier la branche cible")
             }
 
             public static func chooseStartingPoint(_ id: String, displayName: String) -> Self {
@@ -294,7 +289,6 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             public enum Operation: Sendable, Equatable, Hashable {
                 case setLocalBinding(String, String?)
                 case saveLocal
-                case saveRepository
                 case validate
                 case activate
                 case confirmProjectDeletion
@@ -313,9 +307,6 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
             }
 
             public static let saveLocal = Self(.saveLocal, label: "Save locally")
-            public static let saveRepository = Self(
-                .saveRepository,
-                label: "Save and write .jarvis/project.yaml")
             public static let validate = Self(.validate, label: "Validate Project")
             public static let activate = Self(.activate, label: "Activate")
             public static let confirmProjectDeletion = Self(
@@ -519,9 +510,6 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         if let name = state.draft?.name {
             inventory.append(.edit(.setProjectName(name)))
         }
-        for repository in state.draft?.repositories ?? [] {
-            inventory.append(.edit(.setRepositoryDefaultBranch(repository.id, repository.defaultBranch)))
-        }
         inventory.append(contentsOf: startingPoints.map { .edit($0.action) })
         inventory.append(.edit(.addSlot(name: "", requirement: "")))
         inventory.append(contentsOf: packages.map { .edit(.addModule($0.moduleId)) })
@@ -559,7 +547,6 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         inventory.append(
             contentsOf: [
                 .asynchronous(.saveLocal),
-                .asynchronous(.saveRepository),
                 .asynchronous(.validate),
                 .asynchronous(.activate),
                 .confirmation(.deleteProject),
@@ -580,7 +567,7 @@ public struct ProjectDetailPresentation: Sendable, Equatable {
         deletionConfirmation = DeletionConfirmation(
             title: "Delete “\(project.name)”?",
             message:
-                "This removes the Project Registry record, project-scoped engine state, Local Bindings, and the Repository Grant from this Mac. Repository files, including .jarvis/project.yaml, remain untouched.",
+                "This removes the Project Registry record, project-scoped engine state, Local Bindings, and the Repository Grant from this Mac. Repository files remain untouched.",
             isEnabled: project.status != .active && !isDeleting,
             confirmAction: .confirmProjectDeletion,
             cancelAction: .cancelProjectDeletion

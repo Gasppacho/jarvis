@@ -31,7 +31,7 @@
 
 - Workspace Manager et worktrees.
 - Fake Agent Runtime puis adapter Codex CLI.
-- Development Module : changement, validations, commit et push.
+- Development Module : changement, commit et push.
 - GitHub connection, polling entrant et création de Pull Request.
 - Démonstration historique `agent:ready → PR`, conservée pour l'archive de migration.
 

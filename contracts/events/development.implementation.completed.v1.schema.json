@@ -8,8 +8,7 @@
     "workItemRef",
     "repositoryId",
     "headBranch",
-    "headCommit",
-    "validation"
+    "headCommit"
   ],
   "properties": {
     "workItemRef": {
@@ -39,6 +38,8 @@
       "pattern": "^[0-9a-fA-F]+$"
     },
     "validation": {
+      "description": "Legacy validation evidence retained for previously recorded events. New Development executions do not run validation commands or emit this property.",
+      "deprecated": true,
       "type": "object",
       "additionalProperties": false,
       "required": [

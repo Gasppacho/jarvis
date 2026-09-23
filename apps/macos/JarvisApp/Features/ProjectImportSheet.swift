@@ -111,7 +111,7 @@ struct ProjectImportSheet: View {
                     if let provider = inspection.provider {
                         row("Hébergeur", provider)
                     }
-                    if let branch = inspection.suggested?.repositories?.first?.defaultBranch ?? inspection.defaultBranch {
+                    if let branch = inspection.defaultBranch {
                         row("Branche de base", branch)
                     }
                     if let packageManager = inspection.packageManager {
@@ -119,27 +119,6 @@ struct ProjectImportSheet: View {
                     }
                 }
                 .font(.callout)
-            }
-
-            if inspection.suggested?.commands?.isEmpty == false || inspection.suggested?.git?.branchPattern != nil {
-                DisclosureGroup("Détails de l’inspection") {
-                    if let commands = inspection.suggested?.commands, !commands.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Commandes proposées")
-                        .font(.callout.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    ForEach(commands.sorted { $0.key < $1.key }, id: \.key) { name, command in
-                        Text("\(name): \(command)")
-                            .font(.callout.monospaced())
-                    }
-                }
-                    }
-                    if let branchPattern = inspection.suggested?.git?.branchPattern {
-                        Text("Branches: \(branchPattern)")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                }
             }
 
             HStack {

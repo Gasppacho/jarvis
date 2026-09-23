@@ -13,7 +13,7 @@ afterEach(async () => {
 });
 
 describe("reference workflow pushed branch", () => {
-  it("turns one ready label into one validated pushed branch", async () => {
+  it("turns one ready label into one pushed branch", async () => {
     const fixture = await startReferenceWorkflowFixture("reference-pushed-branch");
     fixtures.push(fixture);
     const before = repositoryState(fixture.repositoryRoot);

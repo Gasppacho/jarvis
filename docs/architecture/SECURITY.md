@@ -33,7 +33,7 @@ Jarvis exécute du code et des agents sur des repositories potentiellement non f
   `gh` à chaque requête et ne conserve pas le token en mémoire durable.
 - Aucun secret dans event, prompt, artifact, log, crash report ou project config.
 - Redaction centralisée sur patterns et clés connues avant persistence.
-- Rotation sans modifier la configuration portable.
+- Rotation sans modifier la configuration locale du Project.
 
 ## Project capability grants
 

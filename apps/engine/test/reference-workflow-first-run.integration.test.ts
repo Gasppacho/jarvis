@@ -34,35 +34,23 @@ it("proves the first guided workflow from native blocker to one PR", async () =>
 
   const draft = await readProject(fixture);
   expect(draft.status).toBe("draft");
-  expect(draft.portableConfig.repositories).toEqual([
-    { id: "main", root: ".", remote: "github", defaultBranch: "main" },
-  ]);
-  expect(draft.portableConfig.workspace.maxConcurrentExecutions).toBe(1);
+  expect(draft.portableConfig.repositories).toEqual([{ id: "main", root: "." }]);
   expect(draft.portableConfig.modules.map((module) => module.instanceId)).toEqual([
     "github",
     "development",
   ]);
+  expect(
+    draft.portableConfig.modules.find((module) => module.instanceId === "development")
+      ?.configuration,
+  ).not.toHaveProperty("validationOrder");
+  expect(
+    draft.portableConfig.modules.find((module) => module.instanceId === "development")
+      ?.configuration,
+  ).not.toHaveProperty("maxRepairCycles");
   expect(JSON.stringify(draft.portableConfig)).not.toMatch(
     /agent:ready|merge-requested|Gasppacho|QServices|\/Users\//,
   );
-  const configuration: PortableProjectConfiguration = {
-    ...draft.portableConfig,
-    commands: { verify: "node --test" },
-    modules: draft.portableConfig.modules.map((module) =>
-      module.instanceId === "development"
-        ? {
-            ...module,
-            configuration: {
-              ...module.configuration,
-              preparation: "none",
-              validationOrder: ["verify"],
-              maxRepairCycles: 0,
-              environmentAllowlist: ["JARVIS_FAKE_COUNTER_PATH"],
-            },
-          }
-        : module,
-    ),
-  };
+  const configuration: PortableProjectConfiguration = draft.portableConfig;
   const saved = await fixture.engine.call(`${endpoint}/configuration`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
@@ -92,20 +80,12 @@ it("proves the first guided workflow from native blocker to one PR", async () =>
   scriptPreflightRoutes(fixture);
   const blockedPreflight = await preflight(fixture, endpoint);
   expect(validatePreflight(blockedPreflight), explain(validatePreflight)).toBe(true);
-  expect(blockedPreflight.candidateEligibility.status).toBe("available");
-  expect(blockedPreflight.candidateEligibility.items).toEqual([
-    expect.objectContaining({
-      workItemRef: issueRef,
-      status: "ineligible",
-      openDependencyCount: 1,
-      blockerRefs: [blockerRef],
-    }),
-  ]);
+  expect(blockedPreflight.candidateEligibility).toEqual({ status: "empty", items: [] });
 
-  const activated = await fixture.engine.call(`${endpoint}/activate`, {
+  const activated = await fixture.engine.call(`${endpoint}/preflight-activate`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ compositionFingerprint: validation.compositionFingerprint }),
+    body: JSON.stringify({ compositionFingerprint: blockedPreflight.compositionFingerprint }),
   });
   expect(activated.status, await activated.clone().text()).toBe(200);
 
@@ -141,15 +121,7 @@ it("proves the first guided workflow from native blocker to one PR", async () =>
 
   seedIssue(fixture, "closed");
   const eligiblePreflight = await preflight(fixture, endpoint);
-  expect(eligiblePreflight.candidateEligibility.status).toBe("available");
-  expect(eligiblePreflight.candidateEligibility.items).toEqual([
-    expect.objectContaining({
-      workItemRef: issueRef,
-      status: "eligible",
-      openDependencyCount: 0,
-      blockerRefs: [],
-    }),
-  ]);
+  expect(eligiblePreflight.candidateEligibility).toEqual({ status: "empty", items: [] });
   await waitForReadiness(fixture, issueRef, "ready");
   const eligibleReadiness = readReadiness(fixture);
   expect(eligibleReadiness).toMatchObject({ status: "ready", blockerRefs: "[]" });
@@ -244,11 +216,10 @@ it("proves the first guided workflow from native blocker to one PR", async () =>
     ["eligibility-confirmed", "proved"],
     ["workspace-prepared", "proved"],
     ["agent-running", "proved"],
-    ["checks", "proved"],
     ["commit-push", "proved"],
     ["pull-request", "proved"],
   ]);
-  expect(detail.checks).toEqual([expect.objectContaining({ name: "verify", status: "passed" })]);
+  expect(detail.checks).toEqual([]);
   expect(detail.pullRequest).toMatchObject({
     number: 1,
     url: fixture.fakeGitHub.pullRequests[0]!.htmlUrl,
@@ -537,6 +508,7 @@ type ProjectDetail = {
   readonly portableConfig: PortableProjectConfiguration;
 };
 type ProjectPreflight = {
+  readonly compositionFingerprint: string;
   readonly candidateEligibility: {
     readonly status: string;
     readonly items: readonly {

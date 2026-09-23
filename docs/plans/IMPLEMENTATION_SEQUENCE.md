@@ -52,9 +52,9 @@ Valide la chorégraphie : un module transforme un fact en request sans appel dir
 
 Traverse module → runtime → workspace → stream → résultat sans dépendance externe.
 
-### Ticket 11 — Development produces a validated pushed branch
+### Ticket 11 — Development produces a pushed branch
 
-Implémente branche, changement, validations, commit, push et événements de sortie avec remote Git local.
+Implémente branche, changement, commit, push et événements de sortie avec remote Git local.
 
 ### Ticket 12 — Detect and bind a real Codex runtime per project
 

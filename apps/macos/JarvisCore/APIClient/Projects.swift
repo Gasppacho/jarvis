@@ -80,6 +80,8 @@ public struct ProjectBinding: Sendable, Equatable, Identifiable {
     public let path: String
     public let accessible: Bool
     public let bookmarkRef: String?
+    public let isGitRepository: Bool
+    public let isGitHubRepository: Bool
     public var remoteUrl: String? = nil
 
     public var id: String { repositoryId }
@@ -262,6 +264,7 @@ public struct ProjectResourceChoices: Sendable, Equatable {
 }
 
 public struct ProjectCompositionStartingPoint: Identifiable, Sendable, Equatable {
+    public var moduleIDs: [String] { template?.modules.map(\.moduleId) ?? [] }
     public let id: String
     public let displayName: String
     public let description: String
@@ -798,8 +801,8 @@ public struct ProjectDetail: Sendable, Equatable {
     public let project: Project
     public let bindings: [ProjectBinding]
     /// The portable config exactly as the engine stored it, as JSON. It is
-    /// committed to the user's repository, so it must never carry the machine's
-    /// absolute path (docs/architecture/PROJECTS.md) — tests assert that.
+    /// stored locally, so it must never carry the machine's absolute path
+    /// (docs/architecture/PROJECTS.md) — tests assert that.
     public let portableConfigJSON: Data?
     public let portableConfiguration: Components.Schemas.PortableProjectConfiguration?
     public let partialPortableConfiguration: Components.Schemas.PortableProjectDraft?
@@ -831,9 +834,8 @@ public struct RepositoryInspection: Sendable, Equatable {
     public let defaultBranch: String?
     public let packageManager: String?
     public let scripts: [String: String]
-    /// The draft configuration the engine proposes (`.jarvis/project.yaml` shape,
-    /// minus the wizard's `slots`/`modules` — tickets 03+); `nil` if the engine
-    /// omits or the shell cannot decode it.
+    /// The local draft configuration proposed by the engine; `nil` if the engine
+    /// omits it or the shell cannot decode it.
     public let suggested: SuggestedProjectConfig?
 
     /// Test and preview seam for the Local API's read-only discovery response.
@@ -867,8 +869,7 @@ public struct RepositoryInspection: Sendable, Equatable {
     }
 }
 
-/// The draft portable configuration discovery proposes (`.jarvis/project.yaml`,
-/// minus the wizard's `slots`/`modules`). The contract types `suggested` as a
+/// The portable configuration proposed for the local draft. The contract types `suggested` as a
 /// plain object, so the shell decodes its own shape from the JSON bytes.
 public struct SuggestedProjectConfig: Sendable, Equatable, Decodable {
     public struct Metadata: Sendable, Equatable, Decodable {
@@ -878,22 +879,10 @@ public struct SuggestedProjectConfig: Sendable, Equatable, Decodable {
     public struct Repository: Sendable, Equatable, Decodable {
         public let id: String?
         public let root: String?
-        public let defaultBranch: String?
-        public let remote: String?
-    }
-    public struct Git: Sendable, Equatable, Decodable {
-        public let branchPattern: String?
-        public let pushRemote: String?
-    }
-    public struct Workspace: Sendable, Equatable, Decodable {
-        public let maxConcurrentExecutions: Int?
     }
 
     public let metadata: Metadata?
     public let repositories: [Repository]?
-    public let commands: [String: String]?
-    public let git: Git?
-    public let workspace: Workspace?
 
     init?(container: OpenAPIObjectContainer) {
         guard let data = container.jsonData else { return nil }
@@ -916,6 +905,8 @@ private extension ProjectDetail {
                     path: entry.path,
                     accessible: entry.accessible,
                     bookmarkRef: entry.bookmarkRef,
+                    isGitRepository: entry.isGitRepository,
+                    isGitHubRepository: entry.isGitHubRepository,
                     remoteUrl: entry.remoteUrl
                 )
             }

@@ -1,13 +1,5 @@
 import Database from "better-sqlite3";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,10 +15,6 @@ import {
   type ModulePackageRegistry,
 } from "../../../../packages/kernel/src/module-host.js";
 import type { PortableProjectConfiguration } from "../../../../packages/project-runtime/src/project-types.js";
-import {
-  AtomicProjectConfigurationWriter,
-  type ProjectConfigurationWriter,
-} from "./repository-config-writer.js";
 import { EmptyProjectResourceGrants } from "./resource-grants.js";
 import { ProjectService } from "./service.js";
 import { ProjectStore } from "./store.js";
@@ -44,7 +32,7 @@ afterEach(() => {
 });
 
 describe("Project configuration replacement", () => {
-  it("refuses structural changes while the Project is active and preserves its saved config", () => {
+  it("saves structural changes while preserving an active Project status", () => {
     const repository = mkdtempSync(join(tmpdir(), "jarvis-active-composition-"));
     roots.push(repository);
     const db = projectDatabase();
@@ -61,7 +49,6 @@ describe("Project configuration replacement", () => {
     const service = new ProjectService(
       store,
       moduleHost(),
-      new AtomicProjectConfigurationWriter(),
       new EmptyProjectResourceGrants(),
       new SavedProjectCompositionValidator(moduleHost()),
       new LocalRepositoryAccessibility(),
@@ -73,28 +60,15 @@ describe("Project configuration replacement", () => {
       modules: configuration.modules.slice(1),
     };
 
-    expect(() =>
-      service.replaceProjectConfiguration({
-        projectId: "active-project",
-        portableConfig: proposed,
-        writeToRepository: false,
-      }),
-    ).toThrowError(expect.objectContaining({ code: "project.active" }));
-    expect(store.findById("active-project")?.portableConfig).toEqual(configuration);
-  });
-
-  it("rejects a symlinked destination before reading or replacing it", () => {
-    const repository = mkdtempSync(join(tmpdir(), "jarvis-symlinked-config-"));
-    roots.push(repository);
-    mkdirSync(join(repository, ".jarvis"));
-    const outside = join(repository, "outside.yaml");
-    writeFileSync(outside, "outside\n");
-    symlinkSync(outside, join(repository, ".jarvis", "project.yaml"));
-
-    expect(() =>
-      new AtomicProjectConfigurationWriter().write(repository, exampleConfiguration()),
-    ).toThrowError(expect.objectContaining({ code: "project.repository-write-failed" }));
-    expect(readFileSync(outside, "utf8")).toBe("outside\n");
+    service.replaceProjectConfiguration({
+      projectId: "active-project",
+      portableConfig: proposed,
+      writeToRepository: false,
+    });
+    expect(store.findById("active-project")).toMatchObject({
+      status: "active",
+      portableConfig: proposed,
+    });
   });
 
   it("accepts only an explicitly granted external candidate with the required capability", () => {
@@ -134,7 +108,6 @@ describe("Project configuration replacement", () => {
     const service = new ProjectService(
       store,
       moduleHost(),
-      new AtomicProjectConfigurationWriter(),
       grants,
       new SavedProjectCompositionValidator(moduleHost()),
       new LocalRepositoryAccessibility(),
@@ -194,7 +167,7 @@ describe("Project configuration replacement", () => {
     );
   });
 
-  it("removes a first repository file when SQLite fails after writing it", () => {
+  it("never creates a repository file when the local save fails", () => {
     const repository = mkdtempSync(join(tmpdir(), "jarvis-first-write-compensation-"));
     roots.push(repository);
     const projectFile = join(repository, ".jarvis", "project.yaml");
@@ -214,7 +187,6 @@ describe("Project configuration replacement", () => {
     const service = new ProjectService(
       store,
       moduleHost(),
-      new AtomicProjectConfigurationWriter(),
       new EmptyProjectResourceGrants(),
       new SavedProjectCompositionValidator(moduleHost()),
       new LocalRepositoryAccessibility(),
@@ -232,126 +204,35 @@ describe("Project configuration replacement", () => {
     expect(existsSync(projectFile)).toBe(false);
     expect(store.findById("token-warehouse")?.name).toBe("Before");
   });
+});
 
-  it("reports a stable compensation error when a first-file cleanup fails", () => {
-    const repository = mkdtempSync(join(tmpdir(), "jarvis-first-cleanup-failure-"));
-    roots.push(repository);
-    const projectFile = join(repository, ".jarvis", "project.yaml");
+describe("Project verification persistence", () => {
+  it("rejects a stored report that does not satisfy the preflight boundary", () => {
     const db = projectDatabase();
     databases.push(db);
     const store = new ProjectStore(db, clock);
     const configuration = exampleConfiguration();
     store.createProject({
-      id: "token-warehouse",
-      name: "Before",
+      id: "invalid-verification",
+      name: "Invalid verification",
       status: "draft",
-      portableConfig: { ...configuration, metadata: { ...configuration.metadata, name: "Before" } },
-      repositoryPath: repository,
+      portableConfig: configuration,
+      repositoryPath: "/tmp/invalid-verification",
     });
-    db.exec(`CREATE TRIGGER fail_cleanup_project_update BEFORE UPDATE ON projects
-      BEGIN SELECT RAISE(ABORT, 'injected SQLite failure'); END`);
-    const atomic = new AtomicProjectConfigurationWriter();
-    const cleanupFailure: ProjectConfigurationWriter = {
-      write: (path, next) => {
-        const compensation = atomic.write(path, next);
-        rmSync(projectFile);
-        mkdirSync(projectFile);
-        return compensation;
-      },
-    };
-    const service = new ProjectService(
-      store,
-      moduleHost(),
-      cleanupFailure,
-      new EmptyProjectResourceGrants(),
-      new SavedProjectCompositionValidator(moduleHost()),
-      new LocalRepositoryAccessibility(),
-      new EventJournalReader(db),
-      new ExecutionLedgerReader(db),
+    db.prepare(
+      `INSERT INTO project_verifications
+         (project_id, verification_fingerprint, report, verified_at)
+       VALUES (?, ?, ?, ?)`,
+    ).run("invalid-verification", "fingerprint", "{}", clock.now().toISOString());
+
+    expect(() => store.getProjectVerification("invalid-verification")).toThrow(
+      "Stored Project verification is invalid.",
     );
-
-    expect(() =>
-      service.replaceProjectConfiguration({
-        projectId: "token-warehouse",
-        portableConfig: configuration,
-        writeToRepository: true,
-      }),
-    ).toThrowError(expect.objectContaining({ code: "project.repository-compensation-failed" }));
-    expect(store.findById("token-warehouse")?.name).toBe("Before");
-  });
-
-  it("restores the repository file when SQLite fails after the file replacement", () => {
-    const repository = mkdtempSync(join(tmpdir(), "jarvis-compensation-"));
-    roots.push(repository);
-    mkdirSync(join(repository, ".jarvis"));
-    const projectFile = join(repository, ".jarvis", "project.yaml");
-    const previousFile = "# last durable configuration\n";
-    writeFileSync(projectFile, previousFile);
-
-    const db = projectDatabase();
-    databases.push(db);
-    const store = new ProjectStore(db, clock);
-    const configuration = exampleConfiguration();
-    store.createProject({
-      id: "token-warehouse",
-      name: "Before",
-      status: "draft",
-      portableConfig: { ...configuration, metadata: { ...configuration.metadata, name: "Before" } },
-      repositoryPath: repository,
-    });
-    db.exec(`CREATE TRIGGER fail_project_update BEFORE UPDATE ON projects
-      BEGIN SELECT RAISE(ABORT, 'injected SQLite failure'); END`);
-    const service = new ProjectService(
-      store,
-      moduleHost(),
-      new AtomicProjectConfigurationWriter(),
-      new EmptyProjectResourceGrants(),
-      new SavedProjectCompositionValidator(moduleHost()),
-      new LocalRepositoryAccessibility(),
-      new EventJournalReader(db),
-      new ExecutionLedgerReader(db),
-    );
-
-    expect(() =>
-      service.replaceProjectConfiguration({
-        projectId: "token-warehouse",
-        portableConfig: configuration,
-        writeToRepository: true,
-      }),
-    ).toThrow("injected SQLite failure");
-
-    expect(readFileSync(projectFile, "utf8")).toBe(previousFile);
-    expect(store.findById("token-warehouse")?.name).toBe("Before");
-
-    const failedCompensation: ProjectConfigurationWriter = {
-      write: () => ({
-        restore: () => {
-          throw new Error("injected restoration failure");
-        },
-      }),
-    };
-    const unsafeService = new ProjectService(
-      store,
-      moduleHost(),
-      failedCompensation,
-      new EmptyProjectResourceGrants(),
-      new SavedProjectCompositionValidator(moduleHost()),
-      new LocalRepositoryAccessibility(),
-      new EventJournalReader(db),
-      new ExecutionLedgerReader(db),
-    );
-    expect(() =>
-      unsafeService.replaceProjectConfiguration({
-        projectId: "token-warehouse",
-        portableConfig: configuration,
-        writeToRepository: true,
-      }),
-    ).toThrowError(expect.objectContaining({ code: "project.repository-compensation-failed" }));
   });
 });
 
 describe("Project deletion", () => {
-  it("owns status validation and deletion inside one service transaction", () => {
+  it("auto-pauses idle Projects and blocks active work", () => {
     const db = projectDatabase();
     databases.push(db);
     const store = new ProjectStore(db, clock);
@@ -368,7 +249,6 @@ describe("Project deletion", () => {
     const service = new ProjectService(
       store,
       moduleHost(),
-      new AtomicProjectConfigurationWriter(),
       new EmptyProjectResourceGrants(),
       new SavedProjectCompositionValidator(moduleHost()),
       new LocalRepositoryAccessibility(),
@@ -376,17 +256,26 @@ describe("Project deletion", () => {
       new ExecutionLedgerReader(db),
     );
 
-    expect(() => service.deleteProject("active-project")).toThrowError(
-      expect.objectContaining({ code: "project.active" }),
-    );
-    expect(store.findById("active-project")).toBeDefined();
+    service.deleteProject("active-project");
+    expect(store.findById("active-project")).toBeUndefined();
     expect(() => service.deleteProject("unknown")).toThrowError(
       expect.objectContaining({ code: "project.not-found" }),
     );
 
-    db.prepare("UPDATE projects SET status = 'paused' WHERE id = ?").run("active-project");
-    service.deleteProject("active-project");
-    expect(store.findById("active-project")).toBeUndefined();
+    store.createProject({
+      id: "busy-project",
+      name: "Busy",
+      status: "active",
+      portableConfig: configuration,
+      repositoryPath: `${repository}-busy`,
+    });
+    db.prepare("INSERT INTO executions (project_id, status) VALUES (?, 'running')").run(
+      "busy-project",
+    );
+    expect(() => service.deleteProject("busy-project")).toThrowError(
+      expect.objectContaining({ code: "project.active" }),
+    );
+    expect(store.findById("busy-project")).toBeDefined();
     expect(
       db.prepare("SELECT 1 FROM project_bindings WHERE project_id = ?").get("active-project"),
     ).toBeUndefined();
@@ -463,7 +352,6 @@ describe("Granted-but-ineligible resource disclosure (ADR 0014)", () => {
     const service = new ProjectService(
       store,
       moduleHost(),
-      new AtomicProjectConfigurationWriter(),
       grants,
       new SavedProjectCompositionValidator(moduleHost()),
       new LocalRepositoryAccessibility(),
@@ -553,6 +441,18 @@ function projectDatabase(): Database.Database {
     CREATE TABLE project_bindings (
       project_id TEXT PRIMARY KEY REFERENCES projects (id) ON DELETE CASCADE, repository_path TEXT NOT NULL,
       bookmark_ref TEXT, slot_bindings TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(slot_bindings))
+    ) STRICT;
+    CREATE TABLE project_verifications (
+      project_id TEXT PRIMARY KEY REFERENCES projects (id) ON DELETE CASCADE,
+      verification_fingerprint TEXT NOT NULL, report TEXT NOT NULL, verified_at TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE executions (
+      project_id TEXT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+      status TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE deliveries (
+      project_id TEXT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+      consumed_at TEXT
     ) STRICT;
   `);
   return db;

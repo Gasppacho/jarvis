@@ -1,5 +1,8 @@
 # Mission : exécuter intégralement le plan de fiabilité et UX Jarvis
 
+> Prompt d'exécution historique, conservé comme preuve. Il ne décrit plus le parcours
+> produit courant depuis l'ADR 0020.
+
 L'utilisateur demande une application macOS la plus simple et graphique possible, permettant à un débutant de configurer Jarvis pour développer ses propres issues GitHub. Il a demandé un audit réel, un plan détaillé puis le lancement d'une nouvelle session Codex pour exécuter ce plan. L'audit est terminé ; cette session est la session d'implémentation autorisée. Agis maintenant, ne te limite pas à reformuler le plan et ne redemande pas l'autorisation de commencer.
 
 ## Documents et environnement
