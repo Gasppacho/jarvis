@@ -4,5 +4,7 @@ dist/
 .DS_Store
 *.tsbuildinfo
 .vitest/
+.scratch/
+.claude/
 apps/macos/.swiftpm/
 graft/
