@@ -43,7 +43,7 @@ struct ProjectOverviewView: View {
     private func overviewContent(_ overview: ProjectOverview, wide: Bool) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             header(overview)
-            workflowCard(overview)
+            workflowCard(overview, wide: wide)
             if let issue = ProjectOverviewPresentation.focusedIssue(overview) {
                 focusedWork(issue)
             }
@@ -116,53 +116,51 @@ struct ProjectOverviewView: View {
                 .disabled(model.state(for: projectId).isLoading)
             }
         }
-        .padding(16)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
         .accessibilityElement(children: .contain)
     }
 
-    private func workflowCard(_ overview: ProjectOverview) -> some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 8) {
-                    ForEach(Array(overview.stages.enumerated()), id: \.element.id) { index, stage in
-                        if index > 0 {
-                            Image(systemName: "chevron.right")
-                                .foregroundStyle(.secondary)
-                                .accessibilityHidden(true)
-                        }
-                        VStack(spacing: 4) {
-                            Image(systemName: stageSymbol(stage))
-                                .foregroundStyle(stageColor(stage))
-                            Text(stage.id == .development ? "Développement" : stage.label)
-                                .font(.caption.weight(.medium))
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text(stage.id == .development ? "Une issue à la fois" : stage.id == .pullRequest ? "Après le développement" : stage.detail)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                            Text(stageStatus(stage))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(14)
-                        .background(stageColor(stage).opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel("\(stage.label): \(stageStatus(stage)). \(stage.detail)")
-                    }
-                }
-                Text(overview.nextStep)
-                    .font(.callout)
-                    .fixedSize(horizontal: false, vertical: true)
+    private func workflowCard(_ overview: ProjectOverview, wide: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Workflow", systemImage: "arrow.triangle.branch")
+                    .font(.headline)
+                Spacer()
                 if let onOpenComposition {
-                    Button("Configurer") { onOpenComposition() }
+                    Button("Configurer", action: onOpenComposition)
                         .accessibilityIdentifier("project.overview.open-composition")
                 }
             }
-        } label: {
-            Label("Workflow", systemImage: "arrow.triangle.branch")
+            let layout = wide
+                ? AnyLayout(HStackLayout(alignment: .top, spacing: 8))
+                : AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            layout {
+                ForEach(Array(overview.stages.enumerated()), id: \.element.id) { index, stage in
+                    if index > 0, wide {
+                        Image(systemName: "chevron.right")
+                            .foregroundStyle(.tertiary)
+                            .padding(.top, 2)
+                            .accessibilityHidden(true)
+                    }
+                    VStack(alignment: wide ? .center : .leading, spacing: 4) {
+                        Label(stage.id == .development ? "Développement" : stage.label,
+                              systemImage: stageSymbol(stage))
+                            .labelStyle(.titleAndIcon)
+                            .font(.callout.weight(.medium))
+                            .foregroundStyle(stageColor(stage))
+                        Text(stage.id == .development ? "Une issue à la fois" : stage.id == .pullRequest ? "Après le développement" : stage.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Label(stageStatus(stage), systemImage: stageStatusSymbol(stage))
+                            .font(.caption)
+                            .foregroundStyle(stageColor(stage))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: wide ? .center : .leading)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(stage.label): \(stageStatus(stage)). \(stage.detail)")
+                }
+            }
         }
     }
 
@@ -200,7 +198,9 @@ struct ProjectOverviewView: View {
     }
 
     private func focusedWork(_ issue: ProjectOverview.Issue) -> some View {
-        GroupBox(issue.status == .inProgress ? "Travail en cours" : "Dernier travail") {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(issue.status == .inProgress ? "Travail en cours" : "Dernier travail")
+                .font(.headline)
             VStack(alignment: .leading, spacing: 10) {
                 Text("#\(issue.issueNumber) — \(issue.title)").font(.title3.bold())
                 Label(ProjectOverviewPresentation.workStatusLabel(issue), systemImage: issue.reason == "execution-failed" ? "exclamationmark.triangle.fill" : "clock")
@@ -236,7 +236,8 @@ struct ProjectOverviewView: View {
                         .accessibilityIdentifier("project.overview.open-work")
                         .accessibilityHint("Voir les étapes, le résultat et l’annulation de l’issue \(issue.issueNumber)")
                 }
-            }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .task(id: "\(projectId):\(issue.executionId ?? "")") {
             if let id = issue.executionId { await executionDetail.watch(projectId: projectId, executionId: id) }
@@ -251,9 +252,6 @@ struct ProjectOverviewView: View {
             HStack {
                 Text("Issues suivies").font(.title2.bold())
                 Spacer()
-                if let onOpenComposition {
-                    Button("Configurer", action: onOpenComposition)
-                }
             }
             Text(overview.readinessHelp).font(.callout).foregroundStyle(.secondary)
             TextField("Filtrer par titre ou numéro", text: $issueFilter)
@@ -370,6 +368,16 @@ struct ProjectOverviewView: View {
         case "waiting": "En attente"
         case "complete": "Terminé"
         default: "Indisponible"
+        }
+    }
+
+    private func stageStatusSymbol(_ stage: ProjectOverview.Stage) -> String {
+        switch stage.status {
+        case "ready": "checkmark.circle"
+        case "active": "play.circle.fill"
+        case "waiting": "clock"
+        case "complete": "checkmark.circle.fill"
+        default: "exclamationmark.triangle"
         }
     }
 

@@ -62,22 +62,17 @@ struct ProjectOnboardingView: View {
                         .accessibilityIdentifier("project.reload")
                     }
 
-                    HStack(spacing: 8) {
+                    Picker("Étape de configuration", selection: $step) {
                         ForEach(presentation.steps) { item in
-                            Button { step = item.id } label: {
-                                Text(item.title)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 8)
-                                    .background(
-                                        step == item.id
-                                            ? Color.accentColor.opacity(0.14) : Color.clear,
-                                        in: RoundedRectangle(cornerRadius: 8))
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityAddTraits(step == item.id ? .isSelected : [])
-                            .accessibilityIdentifier("project.step.\(item.id.rawValue)")
+                            Text(item.title)
+                                .tag(item.id)
+                                .accessibilityIdentifier("project.step.\(item.id.rawValue)")
                         }
                     }
+                    .pickerStyle(.menu)
+                    .controlSize(.large)
+                    .frame(maxWidth: 320, alignment: .leading)
+                    .accessibilityIdentifier("project.step.\(step.rawValue)")
 
                     switch step {
                     case .workflow:
@@ -183,7 +178,8 @@ struct ProjectOnboardingView: View {
 
     private func header(_ state: ProjectConfigurationState) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(state.draft?.name ?? project.name).font(.title.bold())
+            Text(state.draft?.name ?? project.name)
+                .font(.largeTitle.weight(.semibold))
             if let remote = state.detail?.bindings.first?.remoteUrl {
                 Label(remote, systemImage: "externaldrive.connected.to.line.below")
                     .foregroundStyle(.secondary)
@@ -194,7 +190,7 @@ struct ProjectOnboardingView: View {
                     systemImage: "folder")
                     .foregroundStyle(.secondary)
             }
-            Text("Composez, paramétrez puis vérifiez votre projet.")
+            Text("Workflow, Paramétrage et Vérification")
                 .foregroundStyle(.secondary)
         }
     }
@@ -257,8 +253,20 @@ private struct ProjectVerificationView: View {
                 Task { await model.activateWorkflow(projectId: project.id) }
             }
             .buttonStyle(.borderedProminent)
-            .disabled(!presentation.canActivate)
+            .disabled(!presentation.canActivate || !state.runtimeAllowsActivation)
             .accessibilityIdentifier("project.verification.activate")
+            if !state.isDraftSaved {
+                Text("Enregistrez les modifications avant de créer ou d’appliquer le projet.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            if !state.runtimeAllowsActivation {
+                Label(
+                    "\(state.runtimePresentation.status) : \(state.runtimePresentation.detail)",
+                    systemImage: state.runtimePresentation.icon)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
 
             switch state.activation {
             case .activating: ProgressView("Activation en cours…")
@@ -326,12 +334,16 @@ private struct ProjectSettingsView: View {
             if let development = settings.development {
                 GroupBox("Développeur") {
                     VStack(alignment: .leading, spacing: 14) {
-                        TextField(
-                            "Label d’issue",
-                            text: Binding(
-                                get: { development.readyLabel },
-                                set: { model.setReadyLabel(projectId: projectId, label: $0) }))
-                            .accessibilityIdentifier("project.settings.development.label")
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Label d’issue")
+                                .font(.callout.weight(.medium))
+                            TextField(
+                                "Ex. ready-to-dev",
+                                text: Binding(
+                                    get: { development.readyLabel },
+                                    set: { model.setReadyLabel(projectId: projectId, label: $0) }))
+                                .accessibilityIdentifier("project.settings.development.label")
+                        }
                         if development.runtimes.isEmpty {
                             Text("Aucune CLI d’agent détectée.")
                                 .foregroundStyle(.secondary)
@@ -362,6 +374,14 @@ private struct ProjectSettingsView: View {
                                 .disabled(state.isRuntimeBusy || state.isSaving)
                                 .accessibilityIdentifier("project.settings.development.confirm-runtime")
                             }
+                        }
+                        if !state.runtimeAllowsActivation {
+                            Label(
+                                "\(state.runtimePresentation.status) : \(state.runtimePresentation.detail)",
+                                systemImage: state.runtimePresentation.icon)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
                         }
                         Button("Actualiser les CLI") {
                             Task {

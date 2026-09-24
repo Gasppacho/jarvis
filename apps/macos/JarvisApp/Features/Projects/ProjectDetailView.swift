@@ -55,47 +55,17 @@ public struct ProjectDetailView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 16) {
-                Picker("Parcours du projet", selection: Binding<Tab>(
-                    get: {
-                        switch selectedTab {
-                        case .graph, .deadLetters: .overview
-                        case .timeline: .execution
-                        default: selectedTab
-                        }
-                    },
-                    set: { destination in
-                        if destination == .execution, selectedExecutionID == nil,
-                           let snapshot = overview.state(for: project.id).overview,
-                           let id = ProjectOverviewPresentation.focusedIssue(snapshot)?.executionId {
-                            selectedExecutionID = id
-                            executionOrigin = .overview
-                        }
-                        selectedTab = destination
-                    }
-                )) {
-                    Text("Configurer").tag(Tab.configuration)
-                    Text("Superviser").tag(Tab.overview)
-                    Text("Suivre").tag(Tab.execution)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(maxWidth: 480)
-                .accessibilityIdentifier("project.journeys")
-                Spacer(minLength: 0)
-                Menu {
-                    Button("Schéma des événements") { selectedTab = .graph }
-                    Button("Historique des événements") { selectedTab = .timeline }
-                    Button("Livraisons en échec") { selectedTab = .deadLetters }
-                } label: {
-                    Label("Diagnostics", systemImage: "ellipsis.circle")
-                }
-                .fixedSize()
-                .accessibilityIdentifier("project.diagnostics")
+            if selectedTab != .configuration,
+               let repositoryPath = projectConfiguration.state(for: project.id).detail?.bindings.first?.path {
+                Label(
+                    "Dépôt local · \(URL(fileURLWithPath: repositoryPath).lastPathComponent)",
+                    systemImage: "externaldrive.connected.to.line.below")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 10)
             }
-            .padding([.horizontal, .top], 24)
-            .padding(.bottom, 12)
-
             switch selectedTab {
             case .configuration:
                 ProjectOnboardingView(
@@ -145,6 +115,47 @@ public struct ProjectDetailView: View {
                 Button("Retour à la supervision") { selectedTab = .overview }
                     .padding(.bottom, 8)
                 ProjectDeadLettersView(model: deadLetters, projectId: project.id)
+            }
+        }
+        .navigationTitle(project.name)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("Parcours du projet", selection: Binding<Tab>(
+                    get: {
+                        switch selectedTab {
+                        case .graph, .deadLetters: .overview
+                        case .timeline: .execution
+                        default: selectedTab
+                        }
+                    },
+                    set: { destination in
+                        if destination == .execution, selectedExecutionID == nil,
+                           let snapshot = overview.state(for: project.id).overview,
+                           let id = ProjectOverviewPresentation.focusedIssue(snapshot)?.executionId {
+                            selectedExecutionID = id
+                            executionOrigin = .overview
+                        }
+                        selectedTab = destination
+                    }
+                )) {
+                    Text("Configurer").tag(Tab.configuration)
+                    Text("Superviser").tag(Tab.overview)
+                    Text("Suivre").tag(Tab.execution)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .accessibilityIdentifier("project.journeys")
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Button("Schéma des événements") { selectedTab = .graph }
+                    Button("Historique des événements") { selectedTab = .timeline }
+                    Button("Livraisons en échec") { selectedTab = .deadLetters }
+                } label: {
+                    Label("Diagnostics", systemImage: "ellipsis.circle")
+                }
+                .accessibilityIdentifier("project.diagnostics")
             }
         }
         .task(id: refreshID) {

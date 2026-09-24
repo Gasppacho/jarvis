@@ -80,14 +80,8 @@ struct RootView: View {
             set: { selection = $0 }
         )) {
             Section("Projets") {
-                Button(action: presentFolderPicker) {
-                    Label("Ajouter un projet", systemImage: "plus.circle")
-                }
-                .disabled(projects.isRefreshing || !importStateAllowsNewPicker)
-                .accessibilityIdentifier("project.add")
-                .keyboardShortcut("n", modifiers: .command)
                 ForEach(projects.projects) { project in
-                    ProjectRow(project: project, isSelected: selectedProjectID == project.id).tag(SidebarSelection.project(project.id))
+                    ProjectRow(project: project).tag(SidebarSelection.project(project.id))
                 }
                 if projects.projects.isEmpty {
                     ContentUnavailableView {
@@ -97,11 +91,21 @@ struct RootView: View {
                     }
                 }
             }
+            Button {
+                presentFolderPicker()
+            } label: {
+                Label("Ajouter un projet", systemImage: "folder.badge.plus")
+            }
+            .buttonStyle(.plain)
+            .disabled(projects.isRefreshing || !importStateAllowsNewPicker)
+            .accessibilityIdentifier("project.add")
+            .keyboardShortcut("n", modifiers: .command)
+
             Section("Bibliothèque") {
-                Label("Catalogue", systemImage: "shippingbox")
-                    .tag(SidebarSelection.moduleCatalog)
                 Label("Comptes et connexions", systemImage: "link")
                     .tag(SidebarSelection.connections)
+                Label("Catalogue", systemImage: "shippingbox")
+                    .tag(SidebarSelection.moduleCatalog)
             }
         }
         .overlay(alignment: .top) {
@@ -115,16 +119,6 @@ struct RootView: View {
             }
         }
         .navigationTitle("Jarvis")
-        .toolbar {
-            ToolbarItem {
-                Button {
-                    presentFolderPicker()
-                } label: {
-                    Label("Ajouter un projet", systemImage: "folder.badge.plus")
-                }
-                .disabled(projects.isRefreshing || !importStateAllowsNewPicker)
-            }
-        }
     }
 
     private func warning(_ message: String) -> some View {
@@ -215,10 +209,9 @@ private enum SidebarSelection: Hashable {
 
 private struct ProjectRow: View {
     let project: Project
-    let isSelected: Bool
 
     var body: some View {
-        HStack {
+        HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(project.name)
                 Text(project.status == .draft ? "Configuration à terminer" : "Projet")
@@ -226,12 +219,10 @@ private struct ProjectRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Text(statusTitle)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(isSelected ? Color.primary : statusColor)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 2)
-                .background((isSelected ? Color.primary : statusColor).opacity(0.15), in: Capsule())
+            Label(statusTitle, systemImage: statusSymbol)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .labelStyle(.titleAndIcon)
         }
     }
 
@@ -247,13 +238,14 @@ private struct ProjectRow: View {
         }
     }
 
-    private var statusColor: Color {
+    private var statusSymbol: String {
         switch project.status {
-        case .draft: .blue
-        case .valid, .active: .green
-        case .paused: .orange
-        case .invalid, .degraded: .red
-        case .archived: .secondary
+        case .draft: "pencil.circle"
+        case .valid: "checkmark.circle"
+        case .active: "play.circle"
+        case .paused: "pause.circle"
+        case .invalid, .degraded: "exclamationmark.circle"
+        case .archived: "archivebox"
         }
     }
 }

@@ -18,8 +18,13 @@ struct ProjectImportSheet: View {
             case .inspecting:
                 VStack(spacing: 12) {
                     ProgressView()
-                    Text("Inspection du dépôt…")
-                        .foregroundStyle(.secondary)
+                    VStack(spacing: 4) {
+                        Text("Inspection du dépôt…")
+                            .font(.headline)
+                        Text("Lecture seule : aucun fichier ne sera modifié.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .frame(width: 360, height: 120)
 
@@ -85,7 +90,7 @@ struct ProjectImportSheet: View {
     private func confirm(_ inspection: RepositoryInspection) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Ajouter un projet")
-                .font(.title3.bold())
+                .font(.title2.weight(.semibold))
 
             Text("Vérifiez le dépôt puis donnez un nom à votre projet. Aucun workflow ne démarre à l’import.")
                 .foregroundStyle(.secondary)

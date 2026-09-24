@@ -34,23 +34,23 @@ struct ProjectTimelineView: View {
             Group {
                 switch presentation.status {
                 case .loading:
-                    ProgressView("Loading Timeline…")
+                    ProgressView("Chargement de l’historique…")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case .failed(let message):
                     ContentUnavailableView {
-                        Label("Timeline unavailable", systemImage: "exclamationmark.triangle.fill")
+                        Label("Historique indisponible", systemImage: "exclamationmark.triangle.fill")
                     } description: {
                         Text(message)
                     } actions: {
-                        Button("Retry") { Task { await timeline.refresh(projectId: projectId) } }
+                        Button("Réessayer") { Task { await timeline.refresh(projectId: projectId) } }
                     }
                 case .empty:
                     ContentUnavailableView {
-                        Label("Nothing has happened yet", systemImage: "clock")
+                        Label("Aucune activité pour l’instant", systemImage: "clock")
                     } description: {
-                        Text("Events and Executions will appear here once this Project runs.")
+                        Text("Les événements et les exécutions apparaîtront ici quand le projet aura démarré.")
                     } actions: {
-                        Button("Refresh") { Task { await timeline.refresh(projectId: projectId) } }
+                        Button("Actualiser") { Task { await timeline.refresh(projectId: projectId) } }
                     }
                 case .loaded, .refreshing:
                     // `.refreshing` renders the same previous, complete snapshot
@@ -95,16 +95,16 @@ struct ProjectTimelineView: View {
                 if let staleMessage {
                     Label(staleMessage, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(.orange)
                 }
                 HStack(spacing: 8) {
-                    Button("Refresh Timeline") {
+                    Button("Actualiser l’historique", systemImage: "arrow.clockwise") {
                         Task { await timeline.refresh(projectId: projectId) }
                     }
                     .disabled(presentation.status == .refreshing)
                     if presentation.status == .refreshing {
                         ProgressView().controlSize(.small)
-                        Text("Refreshing…")
+                        Text("Actualisation…")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -114,6 +114,7 @@ struct ProjectTimelineView: View {
                     groupCard(group)
                 }
             }
+            .frame(maxWidth: 1040, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(24)
         }
@@ -127,14 +128,14 @@ struct ProjectTimelineView: View {
     private var connectionStateBadge: some View {
         let (label, symbol, color): (String, String, Color) =
             switch timeline.connectionState {
-            case .live: ("Live", "dot.radiowaves.left.and.right", .green)
-            case .reconnecting: ("Reconnecting…", "arrow.triangle.2.circlepath", .orange)
-            case .failed: ("Not connected", "exclamationmark.triangle.fill", .red)
-            }
+            case .live: ("En direct", "dot.radiowaves.left.and.right", .green)
+            case .reconnecting: ("Reconnexion…", "arrow.triangle.2.circlepath", .orange)
+            case .failed: ("Déconnecté", "exclamationmark.triangle.fill", .red)
+        }
         return Label(label, systemImage: symbol)
             .font(.caption.weight(.medium))
             .foregroundStyle(color)
-            .accessibilityLabel("Live updates: \(label)")
+            .accessibilityLabel("Mises à jour : \(label)")
     }
 
     private var presentation: ProjectTimelinePresentation {
@@ -149,96 +150,133 @@ struct ProjectTimelineView: View {
     }
 
     private func groupCard(_ group: ProjectTimelinePresentation.Group) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Nil for an orphan Execution's single-row chain: `group.id` is
-            // then only a synthesized internal key, never a real
-            // correlation id the engine reported — findings-review #61-5.
-            if let correlationId = group.correlationId {
-                Text("Correlation \(correlationId)")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                // Correlation IDs are available on demand, while ordinary
+                // history remains readable without exposing engine identifiers.
+                if let correlationId = group.correlationId {
+                    DisclosureGroup("Détails techniques") {
+                        LabeledContent("ID de corrélation") {
+                            Text(correlationId)
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .font(.caption)
+                }
+                ForEach(group.rows) { row in
+                    rowView(row)
+                }
             }
-            ForEach(group.rows) { row in
-                rowView(row)
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(12)
-        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private func rowView(_ row: ProjectTimelinePresentation.Row) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: symbol(for: row.kind))
-                .foregroundStyle(color(for: row))
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(row.title).font(.body.weight(.medium))
-                    if let executionStatus = row.executionStatus {
-                        statusPill(executionStatus)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: symbol(for: row.kind))
+                    .font(.title3)
+                    .foregroundStyle(color(for: row))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 5) {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            rowTitle(row)
+                            Spacer(minLength: 8)
+                            if let executionStatus = row.executionStatus {
+                                statusLabel(executionStatus)
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            rowTitle(row)
+                            if let executionStatus = row.executionStatus {
+                                statusLabel(executionStatus)
+                            }
+                        }
                     }
-                }
-                Text(row.moduleInstance)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if let subject = row.subject {
-                    Text(subject)
+                    Text("Module · \(row.moduleInstance)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                }
-                if let attempt = row.attempt {
-                    Text("Attempt \(attempt)")
+                    if let subject = row.subject {
+                        Text("Sujet · \(subject)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let attempt = row.attempt {
+                        Text("Tentative \(attempt)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let completedAt = row.completedAt {
+                        Text("Terminée \(completedAt, format: .dateTime)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let causingEvent = row.causingEvent {
+                        Text("Déclenchée par · \(causingEvent.type)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let parentEvent = row.parentEvent {
+                        Text("Liée à · \(parentEvent.type)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("Survenu le \(row.occurredAt, format: .dateTime)")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                }
-                if let completedAt = row.completedAt {
-                    Text("Completed \(completedAt, format: .dateTime)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                if let causingEvent = row.causingEvent {
-                    Text("Caused by \(causingEvent.type)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                if let parentEvent = row.parentEvent {
-                    Text("Caused by \(parentEvent.type)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                Text(row.occurredAt, format: .dateTime)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                if let cancellationErrorMessage = row.cancellationErrorMessage {
-                    Label(cancellationErrorMessage, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(row.accessibilityLabel)
-            if row.executionStatus == .running {
-                Button(row.isCancellationPending ? "Cancelling…" : "Cancel") {
-                    Task {
-                        _ = await timeline.cancelExecution(
-                            projectId: projectId,
-                            executionId: String(row.id.dropFirst("execution:".count)))
+                    if let cancellationErrorMessage = row.cancellationErrorMessage {
+                        Label(cancellationErrorMessage, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.red)
                     }
                 }
-                .disabled(row.isCancellationPending)
-                .accessibilityLabel(
-                    row.isCancellationPending
-                        ? "Cancelling \(row.title) for \(row.moduleInstance)"
-                        : "Cancel \(row.title) for \(row.moduleInstance)")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(row.accessibilityLabel)
             }
-            if row.executionStatus != nil, let onOpenDetail {
-                Button("Open details") {
-                    onOpenDetail(String(row.id.dropFirst("execution:".count)))
+            if row.executionStatus == .running || (row.executionStatus != nil && onOpenDetail != nil) {
+                HStack(spacing: 8) {
+                    Spacer()
+                    if row.executionStatus == .running {
+                        Button(role: .destructive) {
+                            Task {
+                                _ = await timeline.cancelExecution(
+                                    projectId: projectId,
+                                    executionId: String(row.id.dropFirst("execution:".count)))
+                            }
+                        } label: {
+                            Label(
+                                row.isCancellationPending ? "Annulation…" : "Annuler",
+                                systemImage: "stop.circle")
+                        }
+                        .disabled(row.isCancellationPending)
+                        .accessibilityLabel(
+                            row.isCancellationPending
+                                ? "Annulation de \(row.title) pour \(row.moduleInstance)"
+                                : "Annuler \(row.title) pour \(row.moduleInstance)")
+                    }
+                    if row.executionStatus != nil, let onOpenDetail {
+                        Button {
+                            onOpenDetail(String(row.id.dropFirst("execution:".count)))
+                        } label: {
+                            Label("Ouvrir le suivi", systemImage: "arrow.right")
+                        }
+                        .accessibilityLabel("Ouvrir le suivi de \(row.title)")
+                    }
                 }
-                .accessibilityLabel("Open details for \(row.title)")
+                .buttonStyle(.borderless)
             }
-            Spacer()
         }
-        .padding(8)
+        .padding(.vertical, 8)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func rowTitle(_ row: ProjectTimelinePresentation.Row) -> some View {
+        Text(row.title)
+            .font(.body.weight(.medium))
+            .fixedSize(horizontal: false, vertical: true)
     }
 
     private func symbol(for kind: ProjectTimelinePresentation.Row.Kind) -> String {
@@ -263,16 +301,39 @@ struct ProjectTimelineView: View {
         case .failed, .timedOut: return .red
         case .cancelled, .cancelling: return .orange
         case .completed: return .green
-        case .running, .queued: return .secondary
+        case .running: return .accentColor
+        case .queued: return .secondary
         }
     }
 
-    private func statusPill(_ status: TimelineExecution.Status) -> some View {
-        Text(status.displayLabel)
-            .font(.caption.weight(.semibold))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .background(executionColor(status).opacity(0.15), in: Capsule())
+    private func statusLabel(_ status: TimelineExecution.Status) -> some View {
+        Label(statusText(status), systemImage: statusSymbol(status))
+            .font(.caption.weight(.medium))
             .foregroundStyle(executionColor(status))
     }
+
+    private func statusText(_ status: TimelineExecution.Status) -> String {
+        switch status {
+        case .queued: "En attente"
+        case .running: "En cours"
+        case .cancelling: "Annulation en cours"
+        case .completed: "Terminée"
+        case .failed: "Échouée"
+        case .cancelled: "Annulée"
+        case .timedOut: "Délai dépassé"
+        }
+    }
+
+    private func statusSymbol(_ status: TimelineExecution.Status) -> String {
+        let detailStatus: ProjectExecutionDetail.ExecutionStatus = switch status {
+        case .queued: .queued
+        case .running: .running
+        case .cancelling: .cancelling
+        case .completed: .completed
+        case .failed: .failed
+        case .cancelled: .cancelled
+        case .timedOut: .timedOut
+        }
+        return projectExecutionStatusSymbol(detailStatus)
+}
 }

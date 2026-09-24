@@ -7,26 +7,33 @@ struct ProjectDeadLettersView: View {
 
     var body: some View {
         let state = model.state(for: projectId)
-        VStack(spacing: 0) {
+        Group {
             switch stateView(for: state) {
             case .loading:
-                ProgressView("Loading Dead Letters…")
+                ProgressView("Chargement des livraisons en échec…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .error(let message):
                 ContentUnavailableView {
-                    Label("Dead Letters unavailable", systemImage: "exclamationmark.triangle.fill")
+                    Label("Livraisons en échec indisponibles", systemImage: "exclamationmark.triangle.fill")
                 } description: {
-                    Text(message)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Jarvis n’a pas pu charger les échecs définitifs de livraison.")
+                        DisclosureGroup("Détails de l’erreur") {
+                            Text(message)
+                                .textSelection(.enabled)
+                                .padding(.top, 6)
+                        }
+                    }
                 } actions: {
-                    Button("Retry") { Task { await model.refresh(projectId: projectId) } }
+                    Button("Réessayer") { Task { await model.refresh(projectId: projectId) } }
                 }
             case .empty:
                 ContentUnavailableView {
-                    Label("No Dead Letters", systemImage: "checkmark.circle")
+                    Label("Aucune livraison en échec", systemImage: "checkmark.circle")
                 } description: {
-                    Text("This Project has no definitive delivery failures.")
+                    Text("Les événements de ce projet ont tous été livrés ou restent en cours de traitement.")
                 } actions: {
-                    Button("Refresh") { Task { await model.refresh(projectId: projectId) } }
+                    Button("Actualiser") { Task { await model.refresh(projectId: projectId) } }
                 }
             case .list:
                 list(state)
@@ -35,6 +42,7 @@ struct ProjectDeadLettersView: View {
         .task(id: projectId) {
             await model.refresh(projectId: projectId)
         }
+        .navigationTitle("Livraisons en échec")
     }
 
     private enum StateView {
@@ -55,33 +63,91 @@ struct ProjectDeadLettersView: View {
 
     private func list(_ state: ProjectDeadLettersState) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Definitive delivery failures")
-                        .font(.headline)
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .center, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Livraisons en échec")
+                            .font(.largeTitle.weight(.semibold))
+                        Text("Événements qui n’ont pas pu être livrés après leurs tentatives prévues.")
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
-                    Button("Refresh") { Task { await model.refresh(projectId: projectId) } }
-                        .disabled(state.isLoading)
+                    Button {
+                        Task { await model.refresh(projectId: projectId) }
+                    } label: {
+                        Label("Actualiser", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(state.isLoading)
+                    .accessibilityIdentifier("dead-letters.refresh")
                 }
+
                 if let errorMessage = state.errorMessage {
-                    Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("Actualisation incomplète", systemImage: "exclamationmark.triangle.fill")
+                                .font(.headline)
+                            Text("Les données précédentes restent affichées. Réessayez pour obtenir l’état actuel.")
+                                .foregroundStyle(.secondary)
+                            DisclosureGroup("Détails de l’erreur") {
+                                Text(errorMessage)
+                                    .textSelection(.enabled)
+                                    .padding(.top, 6)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
+
                 ForEach(state.deadLetters) { deadLetter in
                     row(deadLetter, state: state)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(24)
+            .frame(maxWidth: 900, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .top)
+            .padding(28)
         }
     }
 
     private func row(_ deadLetter: DeadLetter, state: ProjectDeadLettersState) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Consumer: \(deadLetter.moduleInstanceId)")
-                    .font(.body.weight(.semibold))
+        let isReplaying = state.replayingDeliveryIDs.contains(deadLetter.deliveryId)
+
+        return GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(deadLetter.message ?? "Le module n’a fourni aucun détail sur cet échec.")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Label(
+                    "Échec le \(deadLetter.createdAt.formatted(date: .abbreviated, time: .shortened))",
+                    systemImage: "clock")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                DisclosureGroup("Détails techniques") {
+                    Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
+                        LabeledContent("Module destinataire", value: deadLetter.moduleInstanceId)
+                        LabeledContent("Identifiant de livraison", value: deadLetter.deliveryId)
+                        LabeledContent("Événement", value: deadLetter.eventId)
+                        LabeledContent("Code", value: deadLetter.code)
+                        LabeledContent("Tentatives", value: String(deadLetter.attempts))
+                    }
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .padding(.top, 8)
+                }
+
+                if let replayError = state.replayErrorMessages[deadLetter.deliveryId] {
+                    Label("La reprise a échoué", systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout.weight(.semibold))
+                    Text(replayError)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            HStack(spacing: 12) {
+                Label("Échec définitif de livraison", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+                    .font(.headline)
                 Spacer()
                 Button {
                     Task {
@@ -89,25 +155,16 @@ struct ProjectDeadLettersView: View {
                             projectId: projectId, deliveryId: deadLetter.deliveryId)
                     }
                 } label: {
-                    Label("Replay", systemImage: "arrow.clockwise")
+                    if isReplaying {
+                        Label("Reprise…", systemImage: "hourglass")
+                    } else {
+                        Label("Rejouer", systemImage: "arrow.clockwise")
+                    }
                 }
-                .disabled(state.replayingDeliveryIDs.contains(deadLetter.deliveryId))
-            }
-            LabeledContent("Event", value: deadLetter.eventId)
-            LabeledContent("Code", value: deadLetter.code)
-            LabeledContent("Attempts", value: String(deadLetter.attempts))
-            LabeledContent(
-                "Time",
-                value: deadLetter.createdAt.formatted(date: .abbreviated, time: .shortened))
-            Text(deadLetter.message ?? "No cleaned message was provided.")
-                .foregroundStyle(.secondary)
-            if let replayError = state.replayErrorMessages[deadLetter.deliveryId] {
-                Label(replayError, systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.red)
+                .disabled(isReplaying)
+                .accessibilityIdentifier("dead-letters.replay.\(deadLetter.deliveryId)")
             }
         }
-        .padding(14)
-        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityElement(children: .contain)
     }
 }

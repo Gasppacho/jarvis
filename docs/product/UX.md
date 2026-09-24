@@ -17,6 +17,34 @@ Le plan et les preuves de livraison sont suivis dans
 [`PROGRESS.md`](../../PROGRESS.md) ; les captures de la maquette d'audit représentent
 des données fictives, pas des résultats exécutés.
 
+## Direction visuelle native
+
+Jarvis suit les contrôles et matériaux fournis par SwiftUI et macOS : navigation,
+listes, formulaires, barres d'outils, menus, feuilles et boutons natifs. L'interface
+adopte la typographie, la couleur et l'apparence du système sans redessiner ses
+contrôles.
+
+Sur macOS 26 et les versions ultérieures, le rendu Liquid Glass fourni par les
+composants système présente la navigation et les commandes. Les fonds de contenu,
+formulaires, listes, issues, messages d'agent et diagnostics restent lisibles et
+opaques. Ne pas ajouter une simulation du verre. Les effets SwiftUI explicitement
+propres à Liquid Glass sont disponibles à partir de macOS 26 et doivent conserver
+une solution macOS 15 compatible sous garde de disponibilité.
+
+Les fenêtres et vues s'adaptent au thème clair ou sombre, à l'accent système, à la
+transparence réduite, au contraste renforcé et aux animations réduites. Les surfaces
+personnalisées respectent également ces réglages. Les états gardent un nom et un
+symbole afin que leur sens ne dépende pas de leur couleur.
+
+L'en-tête d'un projet l'identifie ; **Configurer**, **Superviser** et **Suivre** sont
+les trois parcours de premier niveau. Les commandes techniques restent sous
+**Diagnostics** ou **Détails techniques**. En supervision, les sections sont
+hiérarchisées par la typographie, l'espace et des séparateurs, sans encadrer chaque
+bloc de contenu. Les vues de suivi affichent les états réels fournis par l'Engine.
+
+La matrice de recette et la direction de référence détaillée sont dans
+[`le plan UI natif`](../plans/jarvis-native-ui-2026-09-24/PLAN.md).
+
 La sidebar native privilégie **Projets**, avec **Ajouter un projet**, puis la
 **Bibliothèque** (Comptes et connexions, Catalogue des modules). Le détail d'un
 projet contient un en-tête avec nom et dépôt. Le contenu reste aligné à gauche, avec une

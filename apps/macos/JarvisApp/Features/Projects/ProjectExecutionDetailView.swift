@@ -3,6 +3,17 @@ import AppKit
 import JarvisCore
 import SwiftUI
 
+func projectExecutionStatusSymbol(_ status: ProjectExecutionDetail.ExecutionStatus) -> String {
+    switch status {
+    case .queued: "clock"
+    case .running: "arrow.clockwise.circle"
+    case .cancelling: "stop.circle"
+    case .completed: "checkmark.circle"
+    case .failed, .timedOut: "exclamationmark.circle"
+    case .cancelled: "minus.circle"
+    }
+}
+
 /// Ticket #200: the nominal view is a readable stepper; identifiers, paths and
 /// redacted payload excerpts stay behind Technical details.
 struct ProjectExecutionDetailView: View {
@@ -130,6 +141,9 @@ struct ProjectExecutionDetailView: View {
                         executionsCard(detail.executions)
                         workspaceCard(detail)
                         artifactsCard(detail.artifacts)
+                        if !detail.checks.isEmpty {
+                            checksCard(detail.checks)
+                        }
                     }
                     technicalDetails(
                         detail.technical,
@@ -144,18 +158,14 @@ struct ProjectExecutionDetailView: View {
     }
 
     private func progressContent(_ detail: ProjectExecutionDetail) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            stepper(detail.steps)
-            checksCard(detail.checks)
-        }
+        stepper(detail.steps)
     }
 
     private func contextContent(_ detail: ProjectExecutionDetail) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             GroupBox("Contexte") {
                 VStack(alignment: .leading, spacing: 8) {
-                    if let workspace = detail.workspace {
-                        LabeledContent("Branche de travail", value: workspace.branch)
+                    if detail.workspace != nil {
                         Label("Travail dans une copie isolée", systemImage: "folder")
                     } else {
                         Text("Aucune copie de travail renseignée pour cette exécution.")
@@ -183,42 +193,71 @@ struct ProjectExecutionDetailView: View {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 if let workItem = detail.workItem {
                     Text(workItem.title ?? workItem.ref)
-                        .font(.title2.bold())
+                        .font(.title2.weight(.semibold))
                         .fixedSize(horizontal: false, vertical: true)
                     if let issueNumber = workItem.issueNumber {
                         Text("#\(issueNumber)")
-                            .font(.caption.monospaced())
+                            .font(.callout.monospaced())
                             .foregroundStyle(.secondary)
                     }
                 } else {
-                    Text("Exécution")
-                        .font(.title2.bold())
+                    Text("Suivi de l’exécution")
+                        .font(.title2.weight(.semibold))
                 }
-                Spacer()
+            }
+            VStack(alignment: .leading, spacing: 6) {
                 if let currentExecution {
-                    statusPill(currentExecution.status)
+                    Label(
+                        ProjectExecutionDetailPresentation.executionStatusLabel(currentExecution.status),
+                        systemImage: projectExecutionStatusSymbol(currentExecution.status))
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(executionColor(currentExecution.status))
+                    if let durationMs = currentExecution.durationMs {
+                        Label("Durée : \(formatDuration(durationMs))", systemImage: "stopwatch")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    } else if currentExecution.status == .running || currentExecution.status == .cancelling {
+                        Label {
+                            Text("Depuis \(currentExecution.createdAt, style: .relative)")
+                        } icon: {
+                            Image(systemName: "clock")
+                        }
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+                if let currentExecution,
+                   currentExecution.status == .running || currentExecution.status == .cancelling,
+                   let activeStep = detail.steps.first(where: {
+                       $0.status == .active || $0.status == .repairing
+                   }) {
+                    Label("Étape : \(activeStep.label)", systemImage: stepSymbol(activeStep.status))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                if let lastActivity = detail.lastActivityAt {
+                    Label {
+                        Text("Dernière activité : \(lastActivity, style: .relative)")
+                    } icon: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
                 }
             }
-            if let lastActivity = detail.lastActivityAt {
-                Label {
-                    Text("Dernière activité : \(lastActivity, format: .dateTime)")
-                    Text(lastActivity, style: .relative)
-                } icon: {
-                    Image(systemName: "clock")
-                }
-                .font(.callout)
-            }
-            HStack(spacing: 8) {
-                if let cancellableExecutionId,
-                   let execution = detail.executions.first(where: { $0.id == cancellableExecutionId }),
-                   execution.status == .running || execution.status == .cancelling {
-                    let detailState = model.state(for: projectId, executionId: executionId)
-                    let isCancelling = detailState.isCancelling || execution.status == .cancelling
-                    Button(
-                        isCancelling
-                            ? "Annulation…"
-                            : "Annuler") {
+            if let cancellableExecutionId,
+               let execution = detail.executions.first(where: { $0.id == cancellableExecutionId }),
+               execution.status == .running || execution.status == .cancelling {
+                let detailState = model.state(for: projectId, executionId: executionId)
+                let isCancelling = detailState.isCancelling || execution.status == .cancelling
+                HStack {
+                    Spacer()
+                    Button(role: .destructive) {
                         isCancelConfirmationPresented = true
+                    } label: {
+                        Label(
+                            isCancelling ? "Annulation…" : "Annuler le travail",
+                            systemImage: "stop.circle")
                     }
                     .disabled(isCancelling)
                     .accessibilityIdentifier("execution.cancel")
@@ -227,11 +266,9 @@ struct ProjectExecutionDetailView: View {
                             ? "Annulation de l’exécution"
                             : "Annuler l’exécution")
                 }
-                Spacer()
             }
         }
-        .padding(16)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
+        .padding(.vertical, 4)
         .accessibilityElement(children: .contain)
     }
 
@@ -275,35 +312,42 @@ struct ProjectExecutionDetailView: View {
 
     private func stepper(_ steps: [ProjectExecutionDetail.Step]) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Avancement").font(.title2.bold())
-            ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(spacing: 6) {
-                        Image(systemName: stepSymbol(step.status))
-                            .font(.title3).foregroundStyle(stepColor(step.status))
-                        if index < steps.count - 1 {
-                            Rectangle().fill(Color.secondary.opacity(0.25)).frame(width: 1)
+            Text("Avancement").font(.title2.weight(.semibold))
+            if steps.isEmpty {
+                Label("Aucune étape détaillée disponible.", systemImage: "list.number")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(spacing: 6) {
+                            Image(systemName: stepSymbol(step.status))
+                                .font(.title3).foregroundStyle(stepColor(step.status))
+                            if index < steps.count - 1 {
+                                Rectangle().fill(.quaternary).frame(width: 1)
+                            }
                         }
+                        .frame(width: 24)
+                        .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(step.label).font(.headline)
+                                Spacer(minLength: 8)
+                                Text(ProjectExecutionDetailPresentation.stepStatusLabel(step.status))
+                                    .font(.callout.weight(.medium))
+                                    .foregroundStyle(stepColor(step.status))
+                            }
+                            Text(step.detail).font(.callout).foregroundStyle(.secondary)
+                            if let date = step.occurredAt {
+                                Text(date, format: .dateTime).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 12)
+                        .accessibilityElement(children: .combine)
                     }
-                    .frame(width: 24)
-                    .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(step.label).font(.headline)
-                            Spacer()
-                            Text(ProjectExecutionDetailPresentation.stepStatusLabel(step.status))
-                                .font(.caption).foregroundStyle(stepColor(step.status))
-                        }
-                        Text(step.detail).font(.callout).foregroundStyle(.secondary)
-                        if let date = step.occurredAt {
-                            Text(date, format: .dateTime).font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.bottom, 12)
-                    .accessibilityElement(children: .combine)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
-                .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -318,6 +362,7 @@ struct ProjectExecutionDetailView: View {
                             .foregroundStyle(.secondary)
                         Text(excerpt.text)
                             .font(.callout.monospaced())
+                            .textSelection(.enabled)
                         if excerpt.truncated {
                             Text("Extrait tronqué")
                                 .font(.caption2)
@@ -363,7 +408,7 @@ struct ProjectExecutionDetailView: View {
                 }
             }
         } label: {
-            Label("Historique des vérifications", systemImage: "checkmark.shield")
+            Label("Vérifications rapportées", systemImage: "checkmark.shield")
         }
     }
 
@@ -517,15 +562,6 @@ struct ProjectExecutionDetailView: View {
         case .reconnecting: .orange
         case .failed: .secondary
         }
-    }
-
-    private func statusPill(_ status: ProjectExecutionDetail.ExecutionStatus) -> some View {
-        Text(ProjectExecutionDetailPresentation.executionStatusLabel(status))
-            .font(.caption.weight(.semibold))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .background(executionColor(status).opacity(0.15), in: Capsule())
-            .foregroundStyle(executionColor(status))
     }
 
     private func stepSymbol(_ status: ProjectExecutionDetail.Step.Status) -> String {

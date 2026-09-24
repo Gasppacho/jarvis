@@ -23,7 +23,26 @@ struct ProjectWorkflowView: View {
                     .foregroundStyle(.secondary)
             }
 
-            HStack(alignment: .top, spacing: 12) {
+            switch moduleCatalog.state {
+            case .failed(let message):
+                VStack(alignment: .leading, spacing: 8) {
+                    Label(message, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                    Button("Réessayer le catalogue") {
+                        Task { await moduleCatalog.refresh() }
+                    }
+                }
+            case .idle, .loading:
+                ProgressView("Chargement du catalogue…")
+            case .loaded:
+                EmptyView()
+            }
+
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 320), alignment: .top)],
+                alignment: .leading,
+                spacing: 12
+            ) {
                 ForEach(catalogue.items) { item in
                     moduleCard(item)
                 }
@@ -48,15 +67,6 @@ struct ProjectWorkflowView: View {
                     .frame(maxWidth: .infinity, minHeight: 220)
             }
 
-            switch moduleCatalog.state {
-            case .failed(let message):
-                Label(message, systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red)
-            case .idle, .loading:
-                ProgressView("Chargement du catalogue…")
-            case .loaded:
-                EmptyView()
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -70,8 +80,8 @@ struct ProjectWorkflowView: View {
             }
         } label: {
             VStack(alignment: .leading, spacing: 10) {
-                Image(systemName: item.systemImage).font(.title2)
-                Text(item.title).font(.headline)
+                Label(item.title, systemImage: item.systemImage)
+                    .font(.headline)
                 Text(item.description)
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -81,16 +91,11 @@ struct ProjectWorkflowView: View {
                     systemImage: item.isSelected ? "checkmark.circle.fill" : "plus.circle")
                     .font(.callout.weight(.medium))
             }
-            .frame(maxWidth: .infinity, minHeight: 140, alignment: .leading)
-            .padding(16)
-            .background(
-                item.isSelected ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.06),
-                in: RoundedRectangle(cornerRadius: 12))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(item.isSelected ? Color.accentColor : Color.secondary.opacity(0.25)))
+            .frame(maxWidth: .infinity, minHeight: 132, alignment: .leading)
+            .padding(12)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.bordered)
+        .controlSize(.large)
         .disabled(!item.isAvailable || state.draft == nil)
         .accessibilityAddTraits(item.isSelected ? .isSelected : [])
         .accessibilityIdentifier("workflow.catalogue.\(item.id)")

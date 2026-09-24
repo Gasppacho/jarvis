@@ -10,11 +10,11 @@ struct ModuleCatalogView: View {
         Group {
             switch moduleCatalog.state {
             case .idle, .loading:
-                ProgressView("Chargement des modules…")
+                ProgressView("Chargement du catalogue…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .failed(let message):
                 ContentUnavailableView {
-                    Label("Catalogue indisponible", systemImage: "exclamationmark.triangle")
+                    Label("Catalogue indisponible", systemImage: "exclamationmark.triangle.fill")
                 } description: {
                     Text(message)
                 } actions: {
@@ -22,47 +22,68 @@ struct ModuleCatalogView: View {
                         .accessibilityIdentifier("catalogue.retry")
                 }
             case .loaded:
-                catalogue
+                if moduleCatalog.packages.isEmpty {
+                    emptyCatalogue
+                } else {
+                    catalogue
+                }
             }
         }
-        .navigationTitle("Catalogue")
+        .navigationTitle("Catalogue des modules")
+    }
+
+    private var emptyCatalogue: some View {
+        ContentUnavailableView {
+            Label("Aucun module disponible", systemImage: "square.stack.3d.up")
+        } description: {
+            Text("Le catalogue ne contient aucun module pour le moment.")
+        } actions: {
+            Button("Actualiser") { Task { await moduleCatalog.refresh() } }
+        }
     }
 
     private var catalogue: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 16) {
-                Text("Catalogue").font(.title2.bold())
-                Text("Les modules disponibles composent vos workflows. Pour commencer, choisissez un projet puis l’étape Workflow.")
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Modules disponibles")
+                        .font(.largeTitle.weight(.semibold))
+                    Text("Les modules composent le workflow d’un projet. Choisissez un projet, puis ouvrez l’étape Workflow pour les sélectionner.")
+                        .foregroundStyle(.secondary)
+                }
+
                 ForEach(moduleCatalog.packages) { package in
-                    VStack(alignment: .leading, spacing: 12) {
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Text(description(for: package))
+                                .foregroundStyle(.secondary)
+
+                            DisclosureGroup("Détails techniques") {
+                                Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 8) {
+                                    ForEach(package.presentationFields) { field in
+                                        row(field.label, field.value)
+                                    }
+                                }
+                                .font(.callout)
+                                .padding(.top, 8)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } label: {
                         HStack(alignment: .firstTextBaseline) {
                             Text(package.displayName)
-                                .font(.title2.bold())
+                                .font(.headline)
                             Spacer()
-                            Text(package.version)
+                            Text("Version \(package.version)")
                                 .font(.callout.monospaced())
                                 .foregroundStyle(.secondary)
                         }
-                        Text(description(for: package))
-                            .foregroundStyle(.secondary)
-
-                        DisclosureGroup("Détails techniques") {
-                            Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 8) {
-                                ForEach(package.presentationFields) { field in
-                                    row(field.label, field.value)
-                                }
-                            }
-                            .font(.callout)
-                        }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(16)
-                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(24)
+            .frame(maxWidth: 900, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .top)
+            .padding(28)
         }
     }
 
