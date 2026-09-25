@@ -20,9 +20,14 @@ verified observation against the project label, scope, repository binding and
 durable admission identity, then emits one targeted Implementation Request.
 
 ### Implementation
-The local attempt that transforms a Work Item into a pushed branch.
+The local attempt that transforms a Work Item into a branch and commit pushed to
+the repository remote.
 
-_Avoid_: Pull Request; that resource is created later by an SCM provider.
+_Avoid_: Pull Request; Development reports its result for downstream preparation.
+
+### Implementation Completion
+The fact published when an Implementation has pushed its branch and commit. It
+lets downstream modules act on work that has completed successfully.
 
 ### Admission
 The project-scoped decision that allows a waiting Implementation Request to
@@ -30,7 +35,7 @@ start Development once capacity and current Work Item eligibility permit it.
 
 ### Admission Suspension
 A durable pause of new Development starts for one project. Running work and
-its Change Request creation continue; this is distinct from Cancellation.
+its completion facts continue; this is distinct from Cancellation.
 
 ### Worktree Preparation
 The package-manager install selected from the repository lockfile, or no command
@@ -45,6 +50,3 @@ required.
 
 ### Implementation Result
 The terminal domain outcome: completed, failed or cancelled.
-
-### Change Request Creation Request
-The provider-neutral request emitted after a Pushed Change is ready for review.

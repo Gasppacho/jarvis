@@ -97,9 +97,9 @@ fin de ce travail ; il peut ensuite être supprimé puis réimporté pour repart
 
 ## Workflow
 
-Le Catalogue contient exactement les deux Modules embarqués **GitHub** et
-**Développeur**. Chaque card sélectionne ou retire une unique instance. Un workflow
-vide, GitHub seul, Développeur seul ou les deux Modules sont tous enregistrables,
+Le Catalogue contient les trois Modules du workflow guidé : **GitHub**,
+**Développeur** et **Pull Request**. Chaque card sélectionne ou retire une unique instance. Un workflow
+vide, GitHub seul, Développeur seul ou une composition partielle sont tous enregistrables,
 vérifiables et activables, même lorsque la composition ne produira aucun travail.
 
 Le canvas read-only se reconstruit à chaque sélection depuis les événements déclarés
@@ -107,7 +107,7 @@ par les Modules :
 
 ```text
 GitHub → observation des issues → Développement
-GitHub ← demande de Pull Request ← Développement
+Développement → fin du travail → Pull Request → demande de création → GitHub
 ```
 
 Swift ne recalcule aucun routage. Les libellés sont métier, sans identifiants de
@@ -117,14 +117,17 @@ le réajouter repart de ses valeurs initiales.
 
 ## Paramétrage des Modules
 
-**GitHub** propose uniquement le compte à utiliser et affiche séparément **Dépôt Git
-initialisé** et **Dépôt GitHub identifié**. Le compte vient de **Comptes et connexions** ;
+**GitHub** et **Pull Request** partagent le compte à utiliser et affichent séparément
+**Dépôt Git initialisé** et **Dépôt GitHub identifié**. Le compte vient de **Comptes et connexions** ;
 si la liste est vide, **Configurer un compte GitHub** ouvre cette bibliothèque puis
 revient au brouillon.
 
 **Développeur** propose uniquement le label d'issue et la CLI d'agent. Le label peut
 être vide. Toutes les CLI prises en charge sont visibles avec leur disponibilité ;
 une CLI absente reste sélectionnable afin que la vérification explique le problème.
+
+**Pull Request** utilise le même compte GitHub et la même CLI que les autres
+modules sélectionnés. S'il est seul, Paramétrage affiche ces deux choix.
 
 Le nom de branche, la concurrence, les commandes, les validations, les worktrees et
 la stratégie d'exécution appartiennent au Module Développeur. Ils ne sont ni des
@@ -135,9 +138,10 @@ autre Module ou une modification de ce Module.
 
 L'écran contient une ligne par dépendance du workflow sélectionné :
 
-- **GitHub** vérifie que le dépôt local est initialisé, qu'un dépôt GitHub est identifié
-  et que le compte choisi peut y accéder ;
-- **Développeur** vérifie que la CLI choisie est installée, prise en charge et exécutable.
+- **GitHub** ou **Pull Request** vérifie que le dépôt local est initialisé, qu'un dépôt GitHub
+  est identifié et que le compte choisi peut y accéder ;
+- **Développeur** ou **Pull Request** vérifie que la CLI choisie est installée, prise en
+  charge et exécutable.
 
 Aucun Module sélectionné réussit immédiatement. La vérification ne contrôle ni le
 label, ni les issues, ni leurs dépendances, ni les commandes, ni les tests, ni la
@@ -274,7 +278,7 @@ Liste filtrable par projet, module, statut et corrélation. Une fiche affiche :
 Depuis une issue active de l'Overview ou une ligne d'exécution de la Timeline, l'utilisateur
 ouvre la fiche corrélée. Elle regroupe les exécutions finies et en cours autour de
 l’événement d’entrée : réception de l’issue, éligibilité, préparation du worktree,
-agent, commit et push, création de la Pull Request. Les étapes suivent
+agent, commit et push, préparation du contenu, puis création de la Pull Request. Les étapes suivent
 les résultats et tentatives réellement enregistrés par l’Engine.
 
 Chaque étape distingue **Pas encore commencé**, **En cours**, **Réussi**, **Échoué** et

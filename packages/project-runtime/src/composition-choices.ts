@@ -38,7 +38,11 @@ interface Declaration {
   readonly contract: ProjectModuleContractDescriptor;
 }
 
-const FIXED_MODULE_IDS = new Set(["jarvis.module.github", "jarvis.module.development"]);
+const FIXED_MODULE_IDS = new Set([
+  "jarvis.module.github",
+  "jarvis.module.development",
+  "jarvis.module.pull-request",
+]);
 
 export function previewProjectCompositionChoices(
   modules: ProjectCompositionChoicePackagePort,
@@ -111,7 +115,7 @@ function startingPoints(
       id: "github-development" as const,
       displayName: "GitHub Development",
       description:
-        "GitHub confirms a ready issue has no open blocker, then requests Development. After push, Development requests one PR. Review and merge stay manual. " +
+        "GitHub confirms a ready issue has no open blocker, then requests Development. Pull Request prepares one PR after the push. Review and merge stay manual. " +
         repositoryMappings.join(" "),
       template: githubDevelopmentTemplate(configuration),
     },
@@ -156,6 +160,16 @@ function githubDevelopmentTemplate(
         },
         configuration: {
           readyLabel: "ready-to-dev",
+        },
+      },
+      {
+        instanceId: "pull-request",
+        moduleId: "jarvis.module.pull-request",
+        enabled: true,
+        runtimeSlot: "agentRuntime",
+        bindings: {
+          repository: repository?.id ?? "main",
+          sourceControl: "sourceControl",
         },
       },
     ],

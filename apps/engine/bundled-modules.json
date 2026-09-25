@@ -1,5 +1,6 @@
 {
   "change-request-review": "../../packages/modules/change-request-review/src/index.ts",
   "development": "../../packages/modules/development/src/index.ts",
-  "github": "../../packages/modules/github/src/index.ts"
+  "github": "../../packages/modules/github/src/index.ts",
+  "pull-request": "../../packages/modules/pull-request/src/index.ts"
 }

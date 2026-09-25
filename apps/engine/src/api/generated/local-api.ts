@@ -900,7 +900,8 @@ export interface components {
                 /** @constant */
                 modules: [
                     "jarvis.module.github",
-                    "jarvis.module.development"
+                    "jarvis.module.development",
+                    "jarvis.module.pull-request"
                 ];
                 /** @constant */
                 compositionMode: "fixed-modules";
@@ -929,7 +930,8 @@ export interface components {
                     /** @constant */
                     modules: [
                         "jarvis.module.github",
-                        "jarvis.module.development"
+                        "jarvis.module.development",
+                        "jarvis.module.pull-request"
                     ];
                     /** @constant */
                     compositionMode: "fixed-modules";
@@ -1475,7 +1477,7 @@ export interface components {
                 impact: string;
                 nextAction: string;
                 /** @enum {string|null} */
-                stepId: "issue-received" | "eligibility-confirmed" | "workspace-prepared" | "agent-running" | "checks" | "commit-push" | "pull-request" | null;
+                stepId: "issue-received" | "eligibility-confirmed" | "workspace-prepared" | "agent-running" | "checks" | "commit-push" | "pull-request-preparation" | "pull-request" | null;
             } | null;
             retryDeliveryId: string | null;
             cancellableExecutionId: string | null;
@@ -1499,7 +1501,7 @@ export interface components {
         };
         ExecutionDetailStep: {
             /** @enum {string} */
-            id: "issue-received" | "eligibility-confirmed" | "workspace-prepared" | "agent-running" | "checks" | "commit-push" | "pull-request";
+            id: "issue-received" | "eligibility-confirmed" | "workspace-prepared" | "agent-running" | "checks" | "commit-push" | "pull-request-preparation" | "pull-request";
             label: string;
             /** @enum {string} */
             status: "proved" | "active" | "repairing" | "failed" | "cancelled" | "not-started" | "unavailable";

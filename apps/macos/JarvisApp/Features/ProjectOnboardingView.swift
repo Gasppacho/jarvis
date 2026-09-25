@@ -335,7 +335,8 @@ private struct ProjectSettingsView: View {
         let state = model.state(for: projectId)
         let settings = ProjectSettingsPresentation(configuration: state)
         VStack(alignment: .leading, spacing: 18) {
-            if settings.github == nil, settings.development == nil {
+            if settings.github == nil, settings.development == nil,
+                settings.pullRequestRuntimes == nil {
                 ContentUnavailableView(
                     "Aucun module à paramétrer",
                     systemImage: "slider.horizontal.3",
@@ -391,55 +392,7 @@ private struct ProjectSettingsView: View {
                                     set: { model.setReadyLabel(projectId: projectId, label: $0) }))
                                 .accessibilityIdentifier("project.settings.development.label")
                         }
-                        if development.runtimes.isEmpty {
-                            Text("Aucune CLI d’agent détectée.")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Picker(
-                                "CLI d’agent",
-                                selection: Binding(
-                                    get: {
-                                        development.runtimes.first(where: \.isSelected)?.id ?? ""
-                                    },
-                                    set: { model.stageRuntime(projectId: projectId, ref: $0) }
-                                )
-                            ) {
-                                Text("Choisir une CLI").tag("")
-                                ForEach(development.runtimes) { runtime in
-                                    Text("\(runtime.name) — \(runtime.status)")
-                                        .tag(runtime.id)
-                                        .disabled(!runtime.isSelectable)
-                                }
-                            }
-                            .accessibilityIdentifier("project.settings.development.runtime")
-                            if let selected = development.runtimes.first(where: \.isSelected),
-                                selected.isSelectable
-                            {
-                                Button("Confirmer la CLI sélectionnée") {
-                                    model.stageRuntime(projectId: projectId, ref: selected.id)
-                                }
-                                .disabled(state.isRuntimeBusy || state.isSaving)
-                                .accessibilityIdentifier("project.settings.development.confirm-runtime")
-                            }
-                        }
-                        if !state.runtimeAllowsActivation {
-                            Label(
-                                "\(state.runtimePresentation.status) : \(state.runtimePresentation.detail)",
-                                systemImage: state.runtimePresentation.icon)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
-                        }
-                        Button("Actualiser les CLI") {
-                            Task {
-                                await model.refreshRuntimeCandidates(
-                                    projectId: projectId,
-                                    discover: true,
-                                    autoSelectUnique: false)
-                            }
-                        }
-                        .disabled(state.isRuntimeBusy || state.isSaving)
-                        .accessibilityIdentifier("project.settings.development.refresh-runtime")
+                        runtimeSettings(development.runtimes, state: state, identifier: "development")
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 6)
@@ -452,6 +405,71 @@ private struct ProjectSettingsView: View {
                         autoSelectUnique: false)
                 }
             }
+            if let runtimes = settings.pullRequestRuntimes {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Pull Request").font(.title2.weight(.semibold))
+                    runtimeSettings(runtimes, state: state, identifier: "pull-request")
+                }
+                .jarvisSurface()
+                .task {
+                    await model.refreshRuntimeCandidates(
+                        projectId: projectId,
+                        discover: true,
+                        autoSelectUnique: false)
+                }
+            }
+        }
+    }
+
+    private func runtimeSettings(
+        _ runtimes: [ProjectSettingsPresentation.Choice],
+        state: ProjectConfigurationState,
+        identifier: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if runtimes.isEmpty {
+                Text("Aucune CLI d’agent détectée.").foregroundStyle(.secondary)
+            } else {
+                Picker(
+                    "CLI d’agent",
+                    selection: Binding(
+                        get: { runtimes.first(where: \.isSelected)?.id ?? "" },
+                        set: { model.stageRuntime(projectId: projectId, ref: $0) })
+                ) {
+                    Text("Choisir une CLI").tag("")
+                    ForEach(runtimes) { runtime in
+                        Text("\(runtime.name) — \(runtime.status)")
+                            .tag(runtime.id)
+                            .disabled(!runtime.isSelectable)
+                    }
+                }
+                .accessibilityIdentifier("project.settings.\(identifier).runtime")
+                if let selected = runtimes.first(where: \.isSelected), selected.isSelectable {
+                    Button("Confirmer la CLI sélectionnée") {
+                        model.stageRuntime(projectId: projectId, ref: selected.id)
+                    }
+                    .disabled(state.isRuntimeBusy || state.isSaving)
+                    .accessibilityIdentifier("project.settings.\(identifier).confirm-runtime")
+                }
+            }
+            if !state.runtimeAllowsActivation {
+                Label(
+                    "\(state.runtimePresentation.status) : \(state.runtimePresentation.detail)",
+                    systemImage: state.runtimePresentation.icon)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+            Button("Actualiser les CLI") {
+                Task {
+                    await model.refreshRuntimeCandidates(
+                        projectId: projectId,
+                        discover: true,
+                        autoSelectUnique: false)
+                }
+            }
+            .disabled(state.isRuntimeBusy || state.isSaving)
+            .accessibilityIdentifier("project.settings.\(identifier).refresh-runtime")
         }
     }
 

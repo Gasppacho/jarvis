@@ -148,6 +148,24 @@ process.stdin.on("end", async () => {
   const counterPath = process.env.JARVIS_FAKE_COUNTER_PATH;
   if (counterPath) fs.appendFileSync(counterPath, String(process.pid) + "\n");
   const emit = record => process.stdout.write(JSON.stringify(record) + "\n");
+  if (request.pullRequest) {
+    emit({ type: "message", message: "Prepared Pull Request title and description." });
+    if (request.pullRequestDirty) {
+      fs.writeFileSync(path.join(process.cwd(), "unexpected-pull-request-change.txt"), "changed\n");
+    }
+    emit({
+      type: "result",
+      status: "completed",
+      summary:
+        request.pullRequestSummary ||
+        JSON.stringify({
+          title: request.pullRequestTitle || "Prepared implementation Pull Request",
+          description: "Summarizes the implementation changes in this Pull Request.",
+        }),
+      changedFiles: [],
+    });
+    return;
+  }
   if (request.scenario === "await-signal") {
     await new Promise(resolve => {
       process.once("SIGUSR1", resolve);

@@ -1809,7 +1809,7 @@ capabilities:
       expect(await replaced.json()).toMatchObject({
         name: "Token Warehouse",
         status: "draft",
-        moduleCount: 2,
+        moduleCount: 3,
         portableConfig,
       });
       const localBindings = (await (
@@ -1836,7 +1836,7 @@ capabilities:
       started.push(second);
       expect(await (await second.call(`/v1/projects/${created.id}`)).json()).toMatchObject({
         portableConfig,
-        moduleCount: 2,
+        moduleCount: 3,
       });
       expect(await (await second.call(`/v1/projects/${created.id}/bindings`)).json()).toEqual(
         persistedBindings,
@@ -2742,6 +2742,7 @@ capabilities:
         expect(snapshot.moduleInstances.map((instance) => instance.instanceId).sort()).toEqual([
           "development",
           "github",
+          "pull-request",
         ]);
         expect(snapshot.requestRoutes).toEqual(report.requestRoutes);
         expect(snapshot.bindings.repository.bookmarkRef).toBe(`bookmark/${projectId}/main`);
@@ -2790,7 +2791,11 @@ capabilities:
 
       const firstGraph = await graph(projectId);
       expect(firstGraph).toMatchObject({ valid: true, issues: [] });
-      expect(firstGraph.nodes.map((node) => node.instanceId)).toEqual(["development", "github"]);
+      expect(firstGraph.nodes.map((node) => node.instanceId)).toEqual([
+        "development",
+        "github",
+        "pull-request",
+      ]);
       expect(firstGraph.nodes.every((node) => node.enabled)).toBe(true);
       expect(firstGraph.edges).toEqual(
         expect.arrayContaining([
@@ -2812,13 +2817,23 @@ capabilities:
             routing: expect.objectContaining({ status: "resolved" }),
           }),
           expect.objectContaining({
+            kind: "fact",
+            contract: {
+              type: "development.implementation.completed",
+              version: 1,
+              kind: "fact",
+            },
+            from: { instanceId: "development", moduleId: "jarvis.module.development" },
+            to: { instanceId: "pull-request", moduleId: "jarvis.module.pull-request" },
+          }),
+          expect.objectContaining({
             kind: "request",
             contract: {
               type: "scm.change-request.creation-requested",
               version: 1,
               kind: "request",
             },
-            from: { instanceId: "development", moduleId: "jarvis.module.development" },
+            from: { instanceId: "pull-request", moduleId: "jarvis.module.pull-request" },
             to: { instanceId: "github", moduleId: "jarvis.module.github" },
             routing: expect.objectContaining({ status: "resolved" }),
           }),
@@ -2826,7 +2841,11 @@ capabilities:
       );
 
       const secondGraph = await graph(other.projectId);
-      expect(secondGraph.nodes.map((node) => node.instanceId)).toEqual(["development", "github"]);
+      expect(secondGraph.nodes.map((node) => node.instanceId)).toEqual([
+        "development",
+        "github",
+        "pull-request",
+      ]);
       expect(firstGraph.nodes.map((node) => node.instanceId)).not.toContain("other-worker");
 
       const beforeConfig = (await (await engine.call(`/v1/projects/${projectId}`)).json()) as {
@@ -2877,6 +2896,7 @@ capabilities:
       expect((await graph(projectId)).nodes.map((node) => node.instanceId)).toEqual([
         "development",
         "github",
+        "pull-request",
       ]);
     });
 
@@ -3409,6 +3429,15 @@ capabilities:
               type: "scm.work-item.tags-change-requested",
               version: 1,
               kind: "request",
+            },
+          },
+          {
+            instanceId: "pull-request",
+            moduleId: "jarvis.module.pull-request",
+            contract: {
+              type: "development.implementation.completed",
+              version: 1,
+              kind: "fact",
             },
           },
         ]);

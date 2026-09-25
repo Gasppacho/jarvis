@@ -284,7 +284,7 @@ export function buildGitHubPullRequestBody(
     head: request.headBranch,
     base: request.baseBranch,
     draft: request.draft ?? false,
-    body: `${request.description}\n\nImplements Work Item ${request.workItemRef}.`,
+    body: request.description,
   };
 }
 

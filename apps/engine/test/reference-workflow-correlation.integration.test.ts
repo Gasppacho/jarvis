@@ -112,7 +112,7 @@ function expectChain(events: readonly WorkflowEvent[]): void {
   expect(observation.causationId).toBeNull();
   expect(implementation.causationId).toBe(observation.id);
   expect(completed.causationId).toBe(implementation.id);
-  expect(creation.causationId).toBe(implementation.id);
+  expect(creation.causationId).toBe(completed.id);
   expect(created.causationId).toBe(creation.id);
   expect(new Set(events.map((event) => event.correlationId))).toHaveLength(1);
 }
@@ -142,7 +142,7 @@ function expectExecutions(
   eventIds: ReadonlySet<string>,
 ): void {
   const related = executions.filter((execution) => eventIds.has(execution.inputEventId));
-  expect(related).toHaveLength(3);
+  expect(related).toHaveLength(4);
   expect(related.every((execution) => execution.correlationId === events[0]!.correlationId)).toBe(
     true,
   );
@@ -153,6 +153,7 @@ function expectExecutions(
           [
             "scm.work-item.observed",
             "development.implementation.requested",
+            "development.implementation.completed",
             "scm.change-request.creation-requested",
           ].includes(event.type),
         )

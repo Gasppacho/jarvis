@@ -130,12 +130,15 @@ public struct ProjectSettingsPresentation: Sendable, Equatable {
 
     public let github: GitHub?
     public let development: Development?
+    public let pullRequestRuntimes: [Choice]?
 
     public init(configuration state: ProjectConfigurationState) {
         let modules = state.draft?.modules.filter(\.enabled) ?? []
         let slotBindings = state.localBindings?.slots ?? []
-        if let module = modules.first(where: { $0.moduleId == "jarvis.module.github" }) {
-            let slots = Set(module.bindings.values)
+        if let module = modules.first(where: {
+            $0.moduleId == "jarvis.module.github" || $0.moduleId == "jarvis.module.pull-request"
+        }) {
+            let slots = Set([module.bindings["sourceControl"]].compactMap { $0 })
             let selected = slotBindings.first {
                 slots.contains($0.slotId) && $0.kind == .connection
             }?.ref
@@ -158,23 +161,28 @@ public struct ProjectSettingsPresentation: Sendable, Equatable {
             github = nil
         }
 
-        if let module = modules.first(where: { $0.moduleId == "jarvis.module.development" }) {
-            let selected = slotBindings.first {
-                $0.slotId == module.runtimeSlot && $0.kind == .runtime
-            }?.ref
+        let developmentModule = modules.first { $0.moduleId == "jarvis.module.development" }
+        let pullRequestModule = modules.first { $0.moduleId == "jarvis.module.pull-request" }
+        let runtimeModule = developmentModule ?? pullRequestModule
+        let selectedRuntime = slotBindings.first {
+            $0.slotId == runtimeModule?.runtimeSlot && $0.kind == .runtime
+        }?.ref
+        let runtimes = (state.agentRuntimes?.items ?? []).map {
+            Choice(
+                id: $0.ref,
+                name: $0.displayName,
+                status: Self.runtimeStatus($0.readiness.status),
+                isSelected: $0.ref == selectedRuntime,
+                isSelectable: $0.selectable)
+        }
+        if let module = developmentModule {
             development = Development(
                 readyLabel: module.configurationValues["readyLabel"] ?? "",
-                runtimes: (state.agentRuntimes?.items ?? []).map {
-                    Choice(
-                        id: $0.ref,
-                        name: $0.displayName,
-                        status: Self.runtimeStatus($0.readiness.status),
-                        isSelected: $0.ref == selected,
-                        isSelectable: $0.selectable)
-                })
+                runtimes: runtimes)
         } else {
             development = nil
         }
+        pullRequestRuntimes = developmentModule == nil && pullRequestModule != nil ? runtimes : nil
     }
 
     private static func runtimeStatus(

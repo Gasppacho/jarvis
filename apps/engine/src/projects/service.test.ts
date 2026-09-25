@@ -465,7 +465,7 @@ function exampleConfiguration(): PortableProjectConfiguration {
 }
 
 function moduleHost(): ModuleHost {
-  const names = ["github", "automation-rules", "development"];
+  const names = ["github", "automation-rules", "development", "pull-request"];
   const registry: ModulePackageRegistry = {
     discover: () =>
       names.map((packageName) => ({

@@ -135,8 +135,12 @@ Development (fixed-modules)
 Development
   → worktree → agent → commit → push
   → fact development.implementation.completed
+Pull Request
+  ← fact development.implementation.completed
+  → agent prepares title and description
   → request scm.change-request.creation-requested
 GitHub Action Handler
+  ← request scm.change-request.creation-requested
   → external Pull Request
   → fact scm.change-request.created
 ```
@@ -169,7 +173,8 @@ delivery.
 │       ├── github/
 │       ├── automation-rules/  (métadonnées historiques, hors bundle)
 │       ├── development/
-│       └── change-request-review/
+│       ├── change-request-review/
+│       └── pull-request/
 ├── contracts/
 ├── docs/
 └── .scratch/

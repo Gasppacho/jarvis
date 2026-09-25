@@ -67,6 +67,7 @@ final class ModuleCatalogTests: XCTestCase {
                 "jarvis.module.change-request-review@1.0.0",
                 "jarvis.module.development@1.0.0",
                 "jarvis.module.github@1.0.0",
+                "jarvis.module.pull-request@1.0.0",
             ])
 
         let expectedLabels = [
@@ -119,7 +120,6 @@ final class ModuleCatalogTests: XCTestCase {
                 "development.implementation.requested.v1",
                 "development.implementation.completed.v1",
                 "development.implementation.failed.v1",
-                "scm.change-request.creation-requested.v1",
             ])
         XCTAssertEqual(
             development.requires,
@@ -179,6 +179,20 @@ final class ModuleCatalogTests: XCTestCase {
         XCTAssertTrue(github.configurationSchema?.contains("GitHub Module Config v1") == true)
         XCTAssertFalse(github.configurationSchema?.contains("readyLabel") == true)
         XCTAssertTrue(development.configurationSchema?.contains("readyLabel") == true)
+
+        let pullRequest = try XCTUnwrap(
+            moduleCatalog.packages.first { $0.moduleId == "jarvis.module.pull-request" })
+        XCTAssertEqual(pullRequest.displayName, "Pull Request")
+        XCTAssertEqual(pullRequest.consumes, ["development.implementation.completed.v1"])
+        XCTAssertEqual(pullRequest.produces, ["scm.change-request.creation-requested.v1"])
+        XCTAssertEqual(
+            pullRequest.requires,
+            [
+                ModuleCapabilityRequirement(id: "repository.write", binding: "repository"),
+                ModuleCapabilityRequirement(id: "work-items.read", binding: "tickets"),
+                ModuleCapabilityRequirement(id: "github.api", binding: "sourceControl"),
+                ModuleCapabilityRequirement(id: "agent.execute", binding: "agentRuntime"),
+            ])
 
         // Ticket 48: the served, versioned capability meaning matches the
         // documented catalog (docs/contracts/CAPABILITY_CATALOG_V1.md).

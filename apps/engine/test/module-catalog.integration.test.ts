@@ -75,11 +75,12 @@ describe("bundled Module Package catalogue", () => {
     expect(body.items.map((item) => item.moduleId)).toEqual([
       "jarvis.module.change-request-review",
       "jarvis.module.development",
+      "jarvis.module.pull-request",
     ]);
   }
 
   it("exposes every official MVP Module Package through the Local API", async () => {
-    for (const name of ["change-request-review", "development", "github"]) {
+    for (const name of ["change-request-review", "development", "github", "pull-request"]) {
       expect(existsSync(join(REPO_ROOT, "dist/engine/modules", name, "module.manifest.yaml"))).toBe(
         true,
       );
@@ -96,7 +97,7 @@ describe("bundled Module Package catalogue", () => {
     expect(response.status).toBe(200);
 
     const body = (await response.json()) as { items: CatalogItem[] };
-    expect(body.items).toHaveLength(3);
+    expect(body.items).toHaveLength(4);
     for (const item of body.items) {
       expect(validatePackage(item), explain(validatePackage)).toBe(true);
     }
@@ -130,7 +131,6 @@ describe("bundled Module Package catalogue", () => {
           "development.implementation.requested.v1",
           "development.implementation.completed.v1",
           "development.implementation.failed.v1",
-          "scm.change-request.creation-requested.v1",
         ],
         requires: [
           { id: "repository.write", binding: "repository" },
@@ -168,6 +168,25 @@ describe("bundled Module Package catalogue", () => {
         provides: ["scm.change-request.manage", "work-items.read"],
         configurationSchemaRef: "contracts/module-config/github.v1.schema.json",
         configurationSchemaTitle: "GitHub Module Config v1",
+      },
+      {
+        moduleId: "jarvis.module.pull-request",
+        version: "1.0.0",
+        displayName: "Pull Request",
+        description:
+          "Prépare le titre et la description d’une Pull Request à partir du travail terminé.",
+        categories: ["agentic"],
+        consumes: ["development.implementation.completed.v1"],
+        produces: ["scm.change-request.creation-requested.v1"],
+        requires: [
+          { id: "repository.write", binding: "repository" },
+          { id: "work-items.read", binding: "tickets" },
+          { id: "github.api", binding: "sourceControl" },
+          { id: "agent.execute", binding: "agentRuntime" },
+        ],
+        provides: [],
+        configurationSchemaRef: null,
+        configurationSchemaTitle: null,
       },
     ]);
   });

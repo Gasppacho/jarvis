@@ -31,7 +31,7 @@ final class ProjectMigrationTests: XCTestCase {
             "preserved":{"name":"Project","history":"kept"},
             "removedModule":"jarvis.module.automation-rules",
             "destination":{
-              "modules":["jarvis.module.github","jarvis.module.development"],
+              "modules":["jarvis.module.github","jarvis.module.development","jarvis.module.pull-request"],
               "compositionMode":"fixed-modules",
               "readyLabel":"ready-to-dev",
               "scope":{"kind":"issue","workItemRef":"github://owner/repo/issues/7"}

@@ -50,6 +50,12 @@ export class FakeAgentRun extends ChildProcessAgentRun {
       request.systemInstructions.find((instruction) =>
         instruction.includes("Validation failure"),
       ) ?? "";
+    const pullRequest = request.objective.startsWith(
+      "Prepare a Pull Request for the supplied work item",
+    );
+    const ticketContent = request.systemInstructions.find((instruction) =>
+      instruction.startsWith("Ticket content ("),
+    );
     super({
       request,
       signal,
@@ -59,6 +65,12 @@ export class FakeAgentRun extends ChildProcessAgentRun {
         scenario: request.environment["JARVIS_FAKE_SCENARIO"],
         repair: repairContext !== "",
         repairContext,
+        pullRequest,
+        pullRequestTitle: pullRequest
+          ? /^Issue \d+: ([^\n]+)/m.exec(ticketContent ?? "")?.[1]
+          : undefined,
+        pullRequestSummary: request.environment["JARVIS_FAKE_PR_SUMMARY"],
+        pullRequestDirty: request.environment["JARVIS_FAKE_PR_DIRTY"] === "1",
       }),
       translator: new FakeRuntimeTranslator(request),
       displayName: "Fake Runtime",

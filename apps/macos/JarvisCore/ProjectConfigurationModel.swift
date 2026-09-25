@@ -458,10 +458,12 @@ public final class ProjectConfigurationModel {
         let current = state(for: projectId)
         guard
             let module = current.draft?.modules.first(where: {
-                $0.enabled && $0.moduleId == "jarvis.module.github"
-            })
+                $0.enabled && ($0.moduleId == "jarvis.module.github"
+                    || $0.moduleId == "jarvis.module.pull-request")
+            }),
+            let sourceControlSlot = module.bindings["sourceControl"]
         else { return }
-        let slots = Set(module.bindings.values)
+        let slots: Set<String> = [sourceControlSlot]
         guard
             current.resourceChoices
                 .filter({ slots.contains($0.slotId) })
@@ -475,7 +477,7 @@ public final class ProjectConfigurationModel {
         let current = state(for: projectId)
         guard
             let slot = current.draft?.modules.first(where: {
-                $0.enabled && $0.moduleId == "jarvis.module.development"
+                    $0.enabled && !$0.runtimeSlot.isEmpty
             })?.runtimeSlot,
             !slot.isEmpty,
             current.agentRuntimes?.items.contains(where: { $0.ref == ref && $0.selectable }) == true
@@ -1065,9 +1067,10 @@ public final class ProjectConfigurationModel {
                 writeToRepository: writeToRepository,
                 bindings: stagedBindings)
             // The settings picker stages a CLI choice; the Engine owns its local profile.
-            for module in portableConfig.modules where module.enabled {
-                guard let slot = module.runtimeSlot,
-                    let binding = stagedBindings?.slots.additionalProperties[slot],
+            let runtimeSlots = Set(
+                portableConfig.modules.filter(\.enabled).compactMap(\.runtimeSlot))
+            for slot in runtimeSlots.sorted() {
+                guard let binding = stagedBindings?.slots.additionalProperties[slot],
                     binding.kind == .runtime,
                     binding.environment?.additionalProperties["PATH"]?
                         .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false

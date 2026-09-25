@@ -16,10 +16,11 @@ Livrer une application native macOS autonome qui :
 6. exécute le module Development dans un Git worktree ;
 7. utilise le runtime agentique lié au projet ;
 8. commit et push la modification produite par l'agent ;
-9. publie `scm.change-request.creation-requested` ;
-10. demande au module GitHub de créer la Pull Request ;
-11. publie et affiche `scm.change-request.created` ;
-12. conserve une timeline durable reliant toutes les exécutions par corrélation.
+9. publie `development.implementation.completed` ;
+10. fait préparer le titre et la description par le module Pull Request, qui publie `scm.change-request.creation-requested` ;
+11. demande au module GitHub de créer la Pull Request ;
+12. publie et affiche `scm.change-request.created` ;
+13. conserve une timeline durable reliant toutes les exécutions par corrélation.
 
 ## User Stories
 
@@ -49,9 +50,9 @@ Livrer une application native macOS autonome qui :
 24. En tant qu'utilisateur, je veux voir la sortie du runtime agentique en direct afin de suivre l'avancement.
 25. En tant qu'utilisateur, je veux pouvoir annuler une exécution afin de reprendre la main.
 26. En tant qu'utilisateur, je veux qu'une exécution échouée conserve les informations utiles et le worktree selon la politique de Development afin de diagnostiquer.
-27. En tant qu'utilisateur, je veux que le module Development crée le commit et pousse la branche afin que la production du changement reste sa responsabilité.
-28. En tant qu'utilisateur, je veux qu'après le push il publie une demande de création de Change Request afin que le provider exécute le side effect externe.
-29. En tant qu'utilisateur, je veux que le module GitHub crée une Pull Request à partir de la branche déjà poussée afin de respecter les rôles.
+27. En tant qu'utilisateur, je veux que le module Development crée le commit, pousse la branche et publie le fait de fin afin que la production du changement reste sa responsabilité.
+28. En tant qu'utilisateur, je veux que le module Pull Request prépare un titre et une description depuis l'issue et le diff, puis lie l'issue à la PR lorsque la base est la branche par défaut.
+29. En tant qu'utilisateur, je veux que GitHub crée une Pull Request à partir de la demande préparée afin de respecter les rôles.
 30. En tant qu'utilisateur, je veux qu'une redélivrance de la demande ne crée pas deux Pull Requests afin de garantir l'idempotence.
 31. En tant qu'utilisateur, je veux voir l'URL et le numéro de la Pull Request afin d'ouvrir le résultat.
 32. En tant qu'utilisateur, je veux voir une timeline corrélée du label à la Pull Request afin de comprendre ce qui s'est produit.
@@ -90,7 +91,8 @@ Livrer une application native macOS autonome qui :
 
 - Un projet possède un repository principal pour le MVP.
 - Development alloue un Git worktree, crée la branche, lance l'agent, valide, commit et push.
-- GitHub ne crée que la Pull Request à partir d'une branche distante existante.
+- Pull Request prépare le contenu de la demande depuis l'issue et le commit poussé ; GitHub crée ensuite la Pull Request à partir de la branche distante existante.
+- La Pull Request cible la branche par défaut lue sur GitHub et sa description ajoute `Closes #N` pour fermer l'issue à la fusion.
 - Le runtime agentique est un port. Le MVP livre d'abord un Fake Runtime déterministe puis un adapter Codex CLI réel.
 - Les connexions, MCP et runtimes sont découverts globalement mais bindés au projet.
 
@@ -108,7 +110,8 @@ Le seam principal du MVP est un **Application Harness local** qui démarre une v
 
 Les responsabilités événementielles D01, D02, D03 et D05 de l'ADR 0019 restent
 normatives. ADR 0020 remplace sa transition portable : les projets utilisent une
-configuration locale composée librement de zéro, une ou deux instances fixes.
+configuration locale composée librement de zéro à trois instances fixes : GitHub,
+Développeur et Pull Request (ADR 0022).
 
 Une observation vérifiée contient l'état, les tags uniques et la lecture complète des dépendances natives. Une observation indisponible porte `state: unknown`, des tableaux vides et un code sûr; elle ne peut jamais être interprétée comme l'absence d'un tag ou d'un bloqueur. Le polling pagine les issues et `blocked_by`, exclut les Pull Requests et recontrôle les issues suivies disparues avant de publier une fermeture.
 
@@ -155,8 +158,10 @@ Tests complémentaires :
 
 ## Configuration du premier workflow
 
-Après l'import, l'utilisateur choisit librement GitHub, Développeur, les deux ou aucun.
-GitHub expose le compte et l'état Git du dépôt. Développeur expose le label et la CLI ;
+Après l'import, l'utilisateur choisit librement GitHub, Développeur, Pull Request
+ou une composition partielle. GitHub expose le compte et l'état Git du dépôt.
+Développeur expose le label et la CLI ; Pull Request partage le compte GitHub
+et la CLI lorsqu'ils sont déjà choisis, ou les expose s'il est seul ;
 ses branches, commandes, validations, concurrence et worktrees restent sa logique
 interne. L'activation vérifie uniquement l'accès GitHub du compte et la disponibilité
 de la CLI sélectionnée. Elle ne contrôle pas le label, les issues, les commandes ou le

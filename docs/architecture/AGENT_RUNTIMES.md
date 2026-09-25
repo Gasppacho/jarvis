@@ -93,7 +93,7 @@ Les MCP sont des connections/capabilities globalement connues mais projet-scopé
 - **MCP runtime** : tools/resources exposés à l'agent ;
 - **Provider adapter** : side effect déterministe exécuté par un module provider.
 
-Un Development Module peut lire des tickets via un MCP bindé. La création de Pull Request reste une request destinée au GitHub Module, même si l'agent possède techniquement un tool GitHub. Les prompts et permissions doivent interdire ce side effect direct.
+Development et Pull Request peuvent utiliser le runtime lié au projet. Pull Request lit le Work Item et le diff pour préparer le titre et la description, puis publie une request destinée au GitHub Module. La création de Pull Request reste un side effect du provider, même si l'agent possède techniquement un tool GitHub. Les prompts et permissions doivent interdire ce side effect direct.
 
 ## Output protocol
 

@@ -560,7 +560,7 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertEqual(
             state.compositionGuide?.startingPoints.map(\.displayName),
             ["GitHub Development", "Custom composition"])
-        XCTAssertEqual(state.compositionGuide?.modulePackages.count, 3)
+        XCTAssertEqual(state.compositionGuide?.modulePackages.count, 4)
         XCTAssertEqual(state.agentRuntimes?.required, false)
         XCTAssertEqual(state.runtimePresentation.status, "Choisissez d’abord un workflow")
 
@@ -607,7 +607,7 @@ final class ProjectConfigurationTests: XCTestCase {
         state = configuration.state(for: imported.id)
         XCTAssertEqual(
             state.draft?.modules.map(\.instanceId),
-            ["github", "development"])
+            ["github", "development", "pull-request"])
         XCTAssertEqual(state.localBindings?.slots, [])
         XCTAssertEqual(state.agentRuntimes?.required, true)
         await configuration.refreshRuntimeCandidates(
@@ -629,7 +629,11 @@ final class ProjectConfigurationTests: XCTestCase {
         let canvas = WorkflowCanvasPresentation(graph: try XCTUnwrap(state.compositionGraph))
         XCTAssertEqual(
             Set(canvas.connections.map(\.contractType)),
-            ["scm.work-item.observed", "scm.change-request.creation-requested"])
+            [
+                "scm.work-item.observed",
+                "development.implementation.completed",
+                "scm.change-request.creation-requested",
+            ])
         XCTAssertTrue(
             canvas.edges.contains {
                 $0.contractType == "development.implementation.requested" && $0.from == $0.to
@@ -660,7 +664,7 @@ final class ProjectConfigurationTests: XCTestCase {
             .incompatible)
         XCTAssertEqual(
             state.compositionGuide?.moduleInstances.map(\.displayName),
-            ["Development", "GitHub"])
+            ["Development", "GitHub", "Pull Request"])
         XCTAssertEqual(
             state.compositionGuide?.moduleInstances.first(where: {
                 $0.instanceId == "development"
@@ -693,6 +697,10 @@ final class ProjectConfigurationTests: XCTestCase {
         XCTAssertTrue(developmentCard.technicalDetails.contains("1.0.0"))
         XCTAssertTrue(
             developmentCard.technicalDetails.contains("development.implementation.requested.v1"))
+        let pullRequestCard = try XCTUnwrap(
+            presentation.moduleCards.first { $0.displayName == "Pull Request" })
+        XCTAssertTrue(pullRequestCard.eventSummary.contains("Implementation completed"))
+        XCTAssertTrue(pullRequestCard.requiredCapabilities.contains("agent.execute"))
 
         let savedIncomplete = await configuration.saveDraft(
             projectId: imported.id, writeToRepository: false)
@@ -839,6 +847,11 @@ final class ProjectConfigurationTests: XCTestCase {
             })?.configurationValue(for: "readyLabel"),
             "reviewed-work")
 
+        let pullRequest = try XCTUnwrap(
+            configuration.state(for: imported.id).draft?.modules.first {
+                $0.moduleId == "jarvis.module.pull-request"
+            })
+        configuration.removeModule(projectId: imported.id, moduleId: pullRequest.id)
         configuration.removeModule(projectId: imported.id, moduleId: development.id)
         XCTAssertNil(configuration.state(for: imported.id).draft?.slotRequirements["agentRuntime"])
         XCTAssertFalse(

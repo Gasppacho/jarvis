@@ -221,9 +221,24 @@ Le module Development :
 - invoque l'agent ;
 - exécute les commandes projet ;
 - commit et push ;
-- publie le résultat et demande la création de Change Request.
+- publie `development.implementation.completed` après le push réussi.
 
-Il ne crée pas la Pull Request par API provider et ne décide pas du merge.
+Il ne prépare pas le titre ou la description de la Change Request, n'émet pas
+sa demande de création et ne décide pas du merge.
+
+## Pull Request
+
+Le module Pull Request consomme le fait de fin de Development, récupère le
+Work Item et le diff du commit poussé dans son propre workspace, puis prépare
+le titre et la description de la Change Request. Il lit les métadonnées du
+dépôt GitHub pour choisir sa branche cible, puis émet
+`scm.change-request.creation-requested` vers le binding SCM du projet. Il
+n'appelle pas l'API provider pour créer la Pull Request et ne décide pas du
+merge; le module GitHub réalise la création idempotente.
+
+Le module GitHub conserve la création idempotente de la Pull Request. Le
+module Pull Request cible la branche par défaut lue sur GitHub et ajoute
+`Closes #N` à la description pour fermer l'issue à la fusion.
 
 ## Enforcement
 

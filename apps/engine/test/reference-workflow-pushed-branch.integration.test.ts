@@ -65,8 +65,8 @@ describe("reference workflow pushed branch", () => {
       expect(creationPayload.headCommit).toBe(completedPayload.headCommit);
       expect(repositoryState(fixture.repositoryRoot)).toEqual(before);
       expect(
-        executions.filter((execution) => execution.moduleInstanceId === "development"),
-      ).toHaveLength(2);
+        executions.filter((execution) => execution.moduleInstanceId === "pull-request"),
+      ).toHaveLength(1);
       expect(executions.every((execution) => execution.status === "completed")).toBe(true);
       const branches = gitDir(fixture.bareRemoteRoot, [
         "for-each-ref",

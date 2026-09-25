@@ -36,6 +36,7 @@ public struct ProjectExecutionDetail: Sendable, Equatable {
             case agentRunning = "agent-running"
             case checks
             case commitPush = "commit-push"
+            case pullRequestPreparation = "pull-request-preparation"
             case pullRequest = "pull-request"
         }
 
@@ -253,6 +254,7 @@ extension ProjectExecutionDetail.Step {
         case .agent_hyphen_running: .agentRunning
         case .checks: .checks
         case .commit_hyphen_push: .commitPush
+        case .pull_hyphen_request_hyphen_preparation: .pullRequestPreparation
         case .pull_hyphen_request: .pullRequest
         }
     }

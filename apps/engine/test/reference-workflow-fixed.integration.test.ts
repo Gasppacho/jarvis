@@ -149,7 +149,7 @@ describe("fixed GitHub to Development workflow", () => {
         events.filter((event) => event.type === "development.implementation.requested"),
       ).toHaveLength(1);
       expect(fixture.fakeGitHub.pullRequests).toHaveLength(1);
-      expect(readFileSync(fixture.runtimeCounterPath, "utf8").trim().split("\n")).toHaveLength(1);
+      expect(readFileSync(fixture.runtimeCounterPath, "utf8").trim().split("\n")).toHaveLength(2);
       expect(
         database
           .prepare(
@@ -157,7 +157,7 @@ describe("fixed GitHub to Development workflow", () => {
              WHERE project_id = ?`,
           )
           .get(fixture.projectId),
-      ).toEqual({ n: 1 });
+      ).toEqual({ n: 2 });
       expect(
         database
           .prepare(

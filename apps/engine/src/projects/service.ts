@@ -429,23 +429,26 @@ export class ProjectService implements ProjectRegistry<
     const fingerprint = verificationFingerprint(project);
     const { validation, repositoryIdentities } = this.validateComposition(project, undefined);
     const choices = this.getProjectResourceChoices(project.id);
-    const development = enabledModule(project, "jarvis.module.development");
-    const runtimeReadiness =
-      development === undefined
-        ? { status: "unchecked" as const, checkedAt: null, detail: "Aucune CLI n’est requise." }
-        : this.agentRuntimes === undefined || choices.agentRuntimes === undefined
-          ? {
-              status: "engine-error" as const,
-              checkedAt: null,
-              detail: "La CLI d’agent ne peut pas être vérifiée.",
-            }
-          : checkSelectedAgentCli(project, choices.slots, this.agentRuntimes);
+    const requiresAgentRuntime = project.portableConfig.modules.some(
+      (module) => module.enabled && module.runtimeSlot !== undefined,
+    );
+    const runtimeReadiness = !requiresAgentRuntime
+      ? { status: "unchecked" as const, checkedAt: null, detail: "Aucune CLI n’est requise." }
+      : this.agentRuntimes === undefined || choices.agentRuntimes === undefined
+        ? {
+            status: "engine-error" as const,
+            checkedAt: null,
+            detail: "La CLI d’agent ne peut pas être vérifiée.",
+          }
+        : checkSelectedAgentCli(project, choices.slots, this.agentRuntimes);
     const runtime = {
       ...(choices.agentRuntimes ?? { required: false, items: [] }),
       readiness: runtimeReadiness,
     };
     const checks: PreflightCheck[] = [];
-    const github = enabledModule(project, "jarvis.module.github");
+    const github =
+      enabledModule(project, "jarvis.module.github") ??
+      enabledModule(project, "jarvis.module.pull-request");
     if (github !== undefined) {
       let discovery: ReturnType<typeof discoverRepository> | undefined;
       try {
@@ -469,9 +472,9 @@ export class ProjectService implements ProjectRegistry<
           "Repository",
         ),
       );
-      const account = [...new Set(Object.values(github.bindings ?? {}))]
-        .map((slot) => project.slotBindings[slot])
-        .find((binding) => binding?.kind === "connection");
+      const sourceControlSlot = github.bindings?.["sourceControl"];
+      const account =
+        sourceControlSlot === undefined ? undefined : project.slotBindings[sourceControlSlot];
       const granted =
         account?.kind === "connection" &&
         this.resourceGrants
@@ -499,7 +502,7 @@ export class ProjectService implements ProjectRegistry<
         ),
       );
     }
-    if (development !== undefined)
+    if (requiresAgentRuntime)
       checks.push(
         check(
           "agent-cli",
@@ -2383,7 +2386,7 @@ function verificationFingerprint(project: ProjectRow): string {
               .sort()
           : undefined,
       cli:
-        module.moduleId === "jarvis.module.development" && module.runtimeSlot !== undefined
+        module.runtimeSlot !== undefined
           ? project.slotBindings[module.runtimeSlot]?.kind === "runtime"
             ? {
                 ref: project.slotBindings[module.runtimeSlot]?.ref,

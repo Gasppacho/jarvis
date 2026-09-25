@@ -34,6 +34,12 @@ modules:
     bindings:
       tickets: tickets
       repository: main
-      sourceControl: sourceControl
     configuration:
       readyLabel: ready-to-dev
+  - instanceId: pull-request
+    moduleId: jarvis.module.pull-request
+    enabled: true
+    runtimeSlot: agentRuntime
+    bindings:
+      repository: main
+      sourceControl: sourceControl

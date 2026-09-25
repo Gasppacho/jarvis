@@ -18,6 +18,7 @@ import {
   handleWorkItemObserved,
   handleImplementationRequested,
 } from "../../../packages/modules/development/src/index.js";
+import { handleImplementationCompleted } from "../../../packages/modules/pull-request/src/index.js";
 import { ConfigError, loadConfig } from "./config.js";
 import {
   openDatabase,
@@ -556,6 +557,7 @@ async function main(): Promise<void> {
             ? handleWorkItemTagsChangeRequested(ctx)
             : handleChangeRequestCreationRequested(ctx);
       }
+      if (moduleId === "jarvis.module.pull-request") return handleImplementationCompleted;
       if (
         fixtures !== undefined &&
         moduleId === fixtures.SAMPLE_PROBE_MODULE_ID &&

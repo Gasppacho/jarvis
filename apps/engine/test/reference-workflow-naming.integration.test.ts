@@ -48,8 +48,8 @@ describe("reference workflow Work Item naming", () => {
       };
       expect(event.payload).toMatchObject({
         headBranch: expect.stringMatching(/^agent\/21-add-a-health-endpoint-exec-[a-f0-9-]+$/),
-        title: "Implement Add a health endpoint",
-        description: "Implements Work Item github://Gasppacho/jarvis/issues/21.",
+        title: "Add a health endpoint",
+        description: expect.stringContaining("Closes #21"),
       });
       expect(
         git(fixture.bareRemoteRoot, ["show", "-s", "--format=%s", event.payload.headBranch]),

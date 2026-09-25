@@ -41,7 +41,7 @@ describe("execution detail", () => {
     const executions = (await readExecutions(fixture)).filter((execution) =>
       eventIds.has(execution.inputEventId),
     );
-    expect(executions).toHaveLength(3);
+    expect(executions).toHaveLength(4);
     const implementationEvent = events.find(
       (event) => event.type === "development.implementation.requested",
     );
@@ -62,7 +62,7 @@ describe("execution detail", () => {
       issueNumber: 16,
       title: "Execution detail acceptance",
     });
-    expect(detail.executions).toHaveLength(3);
+    expect(detail.executions).toHaveLength(4);
     expect(detail.executions.every((execution) => execution.status === "completed")).toBe(true);
     expect(detail.steps.map((step) => [step.id, step.status])).toEqual([
       ["issue-received", "proved"],
@@ -70,6 +70,7 @@ describe("execution detail", () => {
       ["workspace-prepared", "proved"],
       ["agent-running", "proved"],
       ["commit-push", "proved"],
+      ["pull-request-preparation", "proved"],
       ["pull-request", "proved"],
     ]);
     expect(detail.checks).toEqual([]);
@@ -78,7 +79,7 @@ describe("execution detail", () => {
     expect(detail.pullRequest).toMatchObject({
       ref: "github://Gasppacho/jarvis/pulls/1",
       number: 1,
-      title: expect.stringContaining("Implement"),
+      title: "Execution detail acceptance",
       url: fixture.fakeGitHub.pullRequests[0]!.htmlUrl,
     });
     const overview = (await (
@@ -94,7 +95,7 @@ describe("execution detail", () => {
       executionId: expect.any(String),
       lastExecutionStatus: "completed",
     });
-    expect(detail.technical.inputEventIds.length).toBe(3);
+    expect(detail.technical.inputEventIds.length).toBe(4);
     expect(detail.technical.events.length).toBeGreaterThanOrEqual(5);
     const publicText = JSON.stringify(detail);
     expect(publicText).not.toContain("ghs_reference_fixture");

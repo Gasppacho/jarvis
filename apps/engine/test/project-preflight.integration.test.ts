@@ -50,7 +50,7 @@ async function setup() {
   expect((await put(fixture, `${path}/bindings`, bindings)).status).toBe(200);
   fixture.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis", {
     status: 200,
-    body: { permissions: { pull: true, push: true } },
+    body: { default_branch: "main", permissions: { pull: true, push: true } },
   });
   return { fixture, path, config: detail.portableConfig, executable };
 }
@@ -106,6 +106,24 @@ it("fails when the remote is not GitHub or the selected account cannot access it
   expect(inaccessible.checks).toContainEqual(
     expect.objectContaining({ id: "github-account", status: "failed" }),
   );
+});
+
+it("checks repository and account access when Pull Request is the only module", async () => {
+  const { fixture, path, config } = await setup();
+  await save(fixture, path, {
+    ...config,
+    modules: config.modules.filter((module) => module.moduleId === "jarvis.module.pull-request"),
+  });
+  fixture.fakeGitHub.scriptRoute("GET", "/repos/Gasppacho/jarvis", { status: 403, body: {} });
+
+  const result = await report(fixture, path);
+  expect(result.checks).toMatchObject([
+    { id: "git-repository", status: "passed" },
+    { id: "github-repository", status: "passed" },
+    { id: "github-account", status: "failed" },
+    { id: "agent-cli", status: "passed" },
+  ]);
+  expect(result.valid).toBe(false);
 });
 
 it("invalidates verification when the same CLI loses its local environment", async () => {
@@ -247,7 +265,17 @@ it("keeps verification for a label edit and never resurrects it after workflow, 
   await report(fixture, path);
   const withoutGitHub = {
     ...config,
-    modules: config.modules.filter((module) => module.moduleId !== "jarvis.module.github"),
+    modules: config.modules
+      .filter(
+        (module) =>
+          module.moduleId !== "jarvis.module.github" &&
+          module.moduleId !== "jarvis.module.pull-request",
+      )
+      .map((module) =>
+        module.moduleId === "jarvis.module.development"
+          ? { ...module, bindings: { repository: "main" } }
+          : module,
+      ),
     slots: { agentRuntime: config.slots["agentRuntime"]! },
   };
   await save(fixture, path, withoutGitHub);
@@ -277,7 +305,16 @@ it("keeps an active snapshot operational until the verified configuration is app
   const updated = {
     ...config,
     modules: config.modules
-      .filter((module) => module.moduleId !== "jarvis.module.github")
+      .filter(
+        (module) =>
+          module.moduleId !== "jarvis.module.github" &&
+          module.moduleId !== "jarvis.module.pull-request",
+      )
+      .map((module) =>
+        module.moduleId === "jarvis.module.development"
+          ? { ...module, bindings: { repository: "main" } }
+          : module,
+      )
       .map((module) =>
         module.moduleId === "jarvis.module.development"
           ? { ...module, configuration: { ...module.configuration, readyLabel: "new-label" } }

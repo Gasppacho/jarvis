@@ -398,7 +398,10 @@ async function handleFakeGitHubRequest(
 
   const url = new URL(path, `http://${request.headers.host ?? "127.0.0.1"}`);
   if (method === "GET" && /^\/repos\/[^/]+\/[^/]+$/.test(url.pathname)) {
-    writeJson(response, 200, { permissions: { pull: true, push: true } });
+    writeJson(response, 200, {
+      default_branch: "main",
+      permissions: { pull: true, push: true },
+    });
     return;
   }
   const labelMatch = /^\/repos\/[^/]+\/[^/]+\/labels\/([^/]+)$/.exec(url.pathname);

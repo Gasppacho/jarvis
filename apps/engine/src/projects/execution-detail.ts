@@ -25,6 +25,7 @@ const STEP_LABELS = {
   "agent-running": "Développement",
   checks: "Vérifications",
   "commit-push": "Commit et push",
+  "pull-request-preparation": "Préparation de la Pull Request",
   "pull-request": "Création de la Pull Request",
 } as const;
 
@@ -74,15 +75,17 @@ export function buildExecutionDetail(input: ExecutionDetailInput): Detail {
         execution.id === failedExecution?.id && checkpoint.type !== "agent.message",
     )?.checkpoint.type;
     failure.stepId =
-      phase === "validation.started" || phase === "validation.failed"
-        ? "checks"
-        : phase === "preparation.started" || phase === "preparation.failed"
-          ? "workspace-prepared"
-          : phase === "commit.created"
-            ? "commit-push"
-            : phase?.startsWith("agent.")
-              ? "agent-running"
-              : null;
+      failedExecution?.moduleInstanceId === "pull-request"
+        ? "pull-request-preparation"
+        : phase === "validation.started" || phase === "validation.failed"
+          ? "checks"
+          : phase === "preparation.started" || phase === "preparation.failed"
+            ? "workspace-prepared"
+            : phase === "commit.created"
+              ? "commit-push"
+              : phase?.startsWith("agent.")
+                ? "agent-running"
+                : null;
   }
   const createdPullRequest = input.events.find(
     (event) => event.type === "scm.change-request.created",
@@ -361,6 +364,18 @@ function buildSteps(input: {
   const pushed = checkpoint("branch.pushed");
   const requested = event(["scm.change-request.creation-requested"]);
   const created = event(["scm.change-request.created"]);
+  const implementationCompleted = event(["development.implementation.completed"]);
+  const pullRequestExecution = implementationCompleted
+    ? input.executions.find(
+        (execution) =>
+          execution.moduleInstanceId === "pull-request" &&
+          execution.inputEventId === implementationCompleted.id,
+      )
+    : undefined;
+  const pullRequestAgent = input.checkpoints.findLast(
+    ({ execution, checkpoint: current }) =>
+      execution.id === pullRequestExecution?.id && current.type.startsWith("agent."),
+  );
   const after = (left: typeof agent, right: typeof agent) =>
     left !== undefined &&
     (right === undefined || input.checkpoints.indexOf(left) > input.checkpoints.indexOf(right));
@@ -535,6 +550,41 @@ function buildSteps(input: {
         : commit
           ? "Commit créé ; envoi en cours."
           : notStarted,
+    ),
+    result(
+      "pull-request-preparation",
+      requested
+        ? fromEvent(requested)
+        : pullRequestAgent !== undefined
+          ? evidence(pullRequestAgent.checkpoint.occurredAt, null, pullRequestAgent.execution.id)
+          : implementationCompleted
+            ? evidence(implementationCompleted.occurredAt, null, pullRequestExecution?.id ?? null)
+            : undefined,
+      requested
+        ? "proved"
+        : input.failure?.stepId === "pull-request-preparation" ||
+            pullRequestExecution?.status === "failed" ||
+            pullRequestExecution?.status === "timed-out"
+          ? "failed"
+          : pullRequestExecution?.status === "cancelled"
+            ? "cancelled"
+            : pullRequestExecution?.status === "queued" ||
+                pullRequestExecution?.status === "running" ||
+                pullRequestExecution?.status === "cancelling" ||
+                (implementationCompleted !== undefined && pullRequestExecution === undefined)
+              ? "active"
+              : pullRequestExecution?.status === "completed"
+                ? "unavailable"
+                : "not-started",
+      requested
+        ? "Le titre et la description de la Pull Request sont prêts."
+        : pullRequestExecution?.status === "failed" ||
+            pullRequestExecution?.status === "timed-out" ||
+            input.failure?.stepId === "pull-request-preparation"
+          ? "La préparation de la Pull Request a échoué. Consultez l’exécution pour corriger puis relancer."
+          : implementationCompleted
+            ? "Pull Request prépare le titre et la description à partir du commit poussé."
+            : notStarted,
     ),
     result(
       "pull-request",

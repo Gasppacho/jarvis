@@ -37,6 +37,7 @@ export async function startReferenceWorkflowFixture(
   guidedDraft = false,
   fixedModules = true,
   activateProject = true,
+  agentEnvironment: Readonly<Record<string, string>> = {},
 ): Promise<ReferenceWorkflowFixture> {
   const repository = makeRealGitRepositoryFixture({
     additionalRemotes: [{ name: "github", url: "git@github.com:Gasppacho/jarvis.git" }],
@@ -104,6 +105,7 @@ export async function startReferenceWorkflowFixture(
       runtimeCounterPath,
       !guidedDraft && activateProject,
       fixedModules,
+      agentEnvironment,
     );
     if (!guidedDraft && activateProject && fixedModules)
       await waitFor(
@@ -280,7 +282,10 @@ function legacyReferenceProjectConfiguration(projectId: string): PortableProject
   return {
     ...legacyConfiguration,
     metadata: { id: projectId, name: `Reference Workflow ${projectId}` },
-    modules: [...configuration.modules, historicalAutomationRules],
+    modules: [
+      ...configuration.modules.filter((module) => module.instanceId !== "pull-request"),
+      historicalAutomationRules,
+    ],
   };
 }
 
@@ -355,6 +360,7 @@ async function bindAndActivate(
   runtimeCounterPath: string,
   shouldActivate = true,
   fixedModules = false,
+  agentEnvironment: Readonly<Record<string, string>> = {},
 ): Promise<void> {
   const repositoryBinding = await engine.call(
     `/v1/projects/${encodeURIComponent(projectId)}/repositories/main/binding`,
@@ -377,7 +383,10 @@ async function bindAndActivate(
     agentRuntime: {
       kind: "runtime",
       ref: "runtime/fake-test",
-      environment: { JARVIS_FAKE_COUNTER_PATH: runtimeCounterPath },
+      environment: {
+        ...agentEnvironment,
+        JARVIS_FAKE_COUNTER_PATH: runtimeCounterPath,
+      },
     },
     ...(!fixedModules
       ? { tickets: { kind: "connection", ref: "connection/reference-github" } }

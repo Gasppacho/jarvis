@@ -1,0 +1,45 @@
+apiVersion: jarvis.dev/module/v1
+kind: Module
+metadata:
+  id: jarvis.module.pull-request
+  version: 1.0.0
+  displayName: Pull Request
+  description: Prépare le titre et la description d’une Pull Request à partir du travail terminé.
+  categories:
+    - agentic
+runtime:
+  entrypoint: dist/index.mjs
+  engineRange: ">=1.0.0 <2.0.0"
+  concurrency: 2
+  partitionBy: payload.repositoryId
+contracts:
+  consumes:
+    - type: development.implementation.completed
+      version: 1
+      kind: fact
+      schemaRef: contracts/events/development.implementation.completed.v1.schema.json
+      handler: handleImplementationCompleted
+  produces:
+    - type: scm.change-request.creation-requested
+      version: 1
+      kind: request
+      schemaRef: contracts/events/scm.change-request.creation-requested.v1.schema.json
+capabilities:
+  requires:
+    - id: repository.write
+      binding: repository
+      resolution:
+        kind: project-repository
+    - id: work-items.read
+      binding: tickets
+    - id: github.api
+      binding: sourceControl
+    - id: agent.execute
+      binding: agentRuntime
+  provides: []
+permissions:
+  emit:
+    - scm.change-request.creation-requested
+  filesystem:
+    - workspace-read
+    - workspace-write

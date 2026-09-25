@@ -122,6 +122,40 @@ final class ProjectOnboardingPresentationTests: XCTestCase {
         XCTAssertTrue(settings.development?.runtimes.first?.isSelected == true)
     }
 
+    func testPullRequestOnlyExposesRuntimeChoices() throws {
+        var state = ProjectConfigurationState()
+        state.draft = ProjectConfigurationDraft(
+            configuration: try configuration(module: "pull-request", readyLabel: nil),
+            packages: [])
+        state.localBindings = try localBindings(slot: "agentRuntime", kind: "runtime", ref: "runtime/codex")
+        let account = ProjectResourceCandidate(
+            payload: .init(
+                ref: "connection/github-me", kind: .connection, displayName: "me",
+                capabilities: ["github.api"]))
+        state.resourceChoices = [
+            ProjectResourceBindingChoice(
+                slotId: "sourceControl", requiredCapabilities: ["github.api"],
+                candidates: [account], status: .bound, impact: "", repairAction: ""),
+        ]
+        state.agentRuntimes = .init(
+            required: true,
+            items: [
+                .init(
+                    ref: "runtime/codex", displayName: "Codex", provider: "codex",
+                    version: nil, capabilities: ["agent.execute"], bound: true,
+                    selectable: true,
+                    readiness: .init(status: .ready, checkedAt: nil, detail: "")),
+            ],
+            readiness: .init(status: .ready, checkedAt: nil, detail: ""))
+
+        let settings = ProjectSettingsPresentation(configuration: state)
+
+        XCTAssertEqual(settings.github?.accounts.map(\.name), ["me"])
+        XCTAssertNil(settings.development)
+        XCTAssertEqual(settings.pullRequestRuntimes?.map(\.name), ["Codex"])
+        XCTAssertTrue(settings.pullRequestRuntimes?.first?.isSelected == true)
+    }
+
     func testGitHubSettingsExposeRepositoryStateAndSelectedAccount() throws {
         var state = ProjectConfigurationState()
         state.draft = ProjectConfigurationDraft(
@@ -163,6 +197,13 @@ final class ProjectOnboardingPresentationTests: XCTestCase {
                 "bindings": ["sourceControl": "sourceControl"], "configuration": [:],
             ]
             slots = ["sourceControl": ["requires": "scm.change-request.manage"]]
+        } else if module == "pull-request" {
+            modulePayload = [
+                "instanceId": "pull-request", "moduleId": "jarvis.module.pull-request",
+                "enabled": true, "runtimeSlot": "agentRuntime",
+                "bindings": ["repository": "main", "sourceControl": "sourceControl"],
+            ]
+            slots = ["agentRuntime": ["requires": "agent.execute"]]
         } else {
             modulePayload = [
                 "instanceId": "development", "moduleId": "jarvis.module.development",

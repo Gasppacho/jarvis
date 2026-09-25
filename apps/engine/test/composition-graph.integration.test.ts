@@ -162,8 +162,12 @@ describe("project composition graph", () => {
       projectId: project.id,
     });
 
-    // Nodes: the fixed composition contains only GitHub and Development.
-    expect(body.nodes.map((node) => node.instanceId)).toEqual(["development", "github"]);
+    // Nodes: the fixed composition contains GitHub, Development, and Pull Request.
+    expect(body.nodes.map((node) => node.instanceId)).toEqual([
+      "development",
+      "github",
+      "pull-request",
+    ]);
     expect(body.nodes.every((node) => node.enabled)).toBe(true);
     expect(body.nodes).toContainEqual(
       expect.objectContaining({
@@ -174,8 +178,8 @@ describe("project composition graph", () => {
       }),
     );
 
-    // Edges: fixed Development owns its internal request and GitHub observes work
-    // items for Development. Missing Local Bindings affect the rail, not routing.
+    // Development reports completion to Pull Request; GitHub observes work items
+    // for Development. Missing Local Bindings affect the rail, not routing.
     expect(body.edges).toContainEqual({
       kind: "request",
       contract: { type: "development.implementation.requested", version: 1, kind: "request" },
@@ -192,6 +196,13 @@ describe("project composition graph", () => {
       contract: { type: "scm.work-item.observed", version: 1, kind: "fact" },
       from: { instanceId: "github", moduleId: "jarvis.module.github" },
       to: { instanceId: "development", moduleId: "jarvis.module.development" },
+      findings: [],
+    });
+    expect(body.edges).toContainEqual({
+      kind: "fact",
+      contract: { type: "development.implementation.completed", version: 1, kind: "fact" },
+      from: { instanceId: "development", moduleId: "jarvis.module.development" },
+      to: { instanceId: "pull-request", moduleId: "jarvis.module.pull-request" },
       findings: [],
     });
 
@@ -280,7 +291,7 @@ describe("project composition graph", () => {
       expect.objectContaining({
         kind: "request",
         contract: { type: "scm.change-request.creation-requested", version: 1, kind: "request" },
-        from: { instanceId: "development", moduleId: "jarvis.module.development" },
+        from: { instanceId: "pull-request", moduleId: "jarvis.module.pull-request" },
         to: { instanceId: "github", moduleId: "jarvis.module.github" },
         routing: expect.objectContaining({ status: "resolved" }),
       }),
@@ -320,15 +331,19 @@ describe("project composition graph", () => {
     expect(body.nodes).toContainEqual(
       expect.objectContaining({ instanceId: "github", enabled: false }),
     );
-    expect(body.nodes.map((node) => node.instanceId)).toEqual(["development", "github"]);
+    expect(body.nodes.map((node) => node.instanceId)).toEqual([
+      "development",
+      "github",
+      "pull-request",
+    ]);
 
-    // The disabled GitHub produces no fact edge; Development's Change Request
-    // request is now orphaned because its only GitHub consumer is disabled.
+    // The disabled GitHub produces no fact edge; Pull Request's creation request
+    // is now orphaned because its only GitHub consumer is disabled.
     expect(body.edges).toHaveLength(4);
     expect(body.edges).toContainEqual({
       kind: "request",
       contract: { type: "scm.change-request.creation-requested", version: 1, kind: "request" },
-      from: { instanceId: "development", moduleId: "jarvis.module.development" },
+      from: { instanceId: "pull-request", moduleId: "jarvis.module.pull-request" },
       routing: { status: "orphaned" },
       findings: ["project.request-orphaned"],
     });
@@ -343,17 +358,23 @@ describe("project composition graph", () => {
       },
       findings: [],
     });
-    for (const type of [
-      "development.implementation.completed",
-      "development.implementation.failed",
-    ]) {
-      expect(body.edges).toContainEqual({
+    expect(body.edges).toContainEqual({
+      kind: "fact",
+      contract: {
+        type: "development.implementation.completed",
+        version: 1,
         kind: "fact",
-        contract: { type, version: 1, kind: "fact" },
-        from: { instanceId: "development", moduleId: "jarvis.module.development" },
-        findings: [],
-      });
-    }
+      },
+      from: { instanceId: "development", moduleId: "jarvis.module.development" },
+      to: { instanceId: "pull-request", moduleId: "jarvis.module.pull-request" },
+      findings: [],
+    });
+    expect(body.edges).toContainEqual({
+      kind: "fact",
+      contract: { type: "development.implementation.failed", version: 1, kind: "fact" },
+      from: { instanceId: "development", moduleId: "jarvis.module.development" },
+      findings: [],
+    });
     expect(body.findings.map((finding) => finding.code)).toContain("project.request-orphaned");
 
     await assertDeterministicAndUnmutated(engine, project.id, proposed, body);
@@ -387,7 +408,7 @@ describe("project composition graph", () => {
     );
     expect(ambiguous).toMatchObject({
       kind: "request",
-      from: { instanceId: "development" },
+      from: { instanceId: "pull-request" },
       routing: { status: "ambiguous" },
       findings: ["project.request-ambiguous"],
     });
@@ -395,8 +416,8 @@ describe("project composition graph", () => {
       ["github", "github-secondary"],
     );
 
-    // The direct-target request is untouched by the duplication; each github
-    // instance still publishes its historical fact contract without a Rules consumer.
+    // Development's direct-target request remains resolved; each GitHub instance
+    // still publishes its historical facts without a Rules consumer.
     expect(
       body.edges.find((edge) => edge.contract.type === "development.implementation.requested")
         ?.routing?.status,
@@ -463,7 +484,11 @@ describe("project composition graph", () => {
       findings: Array<unknown>;
     };
 
-    expect(body.nodes.map((node) => node["instanceId"])).toEqual(["development", "github"]);
+    expect(body.nodes.map((node) => node["instanceId"])).toEqual([
+      "development",
+      "github",
+      "pull-request",
+    ]);
     expect(
       body.nodes.every(
         (node) => node["enabled"] === true && (node["findings"] as unknown[]).length === 0,
@@ -474,6 +499,13 @@ describe("project composition graph", () => {
       contract: { type: "scm.work-item.observed", version: 1, kind: "fact" },
       from: { instanceId: "github", moduleId: "jarvis.module.github" },
       to: { instanceId: "development", moduleId: "jarvis.module.development" },
+      findings: [],
+    });
+    expect(body.edges).toContainEqual({
+      kind: "fact",
+      contract: { type: "development.implementation.completed", version: 1, kind: "fact" },
+      from: { instanceId: "development", moduleId: "jarvis.module.development" },
+      to: { instanceId: "pull-request", moduleId: "jarvis.module.pull-request" },
       findings: [],
     });
     expect(body.edges).toContainEqual({
@@ -490,7 +522,7 @@ describe("project composition graph", () => {
     expect(body.edges).toContainEqual({
       kind: "request",
       contract: { type: "scm.change-request.creation-requested", version: 1, kind: "request" },
-      from: { instanceId: "development", moduleId: "jarvis.module.development" },
+      from: { instanceId: "pull-request", moduleId: "jarvis.module.pull-request" },
       to: { instanceId: "github", moduleId: "jarvis.module.github" },
       routing: {
         status: "resolved",
