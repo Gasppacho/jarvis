@@ -75,49 +75,80 @@ struct RootView: View {
     }
 
     private var sidebar: some View {
-        List(selection: Binding(
-            get: { selection },
-            set: { selection = $0 }
-        )) {
-            Section("Projets") {
-                ForEach(projects.projects) { project in
-                    ProjectRow(project: project).tag(SidebarSelection.project(project.id))
+        VStack(spacing: 0) {
+            HStack(spacing: 11) {
+                Text("J")
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 32, height: 32)
+                    .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 9))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Jarvis").font(.headline)
+                    Text("Votre espace de travail")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
-                if projects.projects.isEmpty {
-                    ContentUnavailableView {
-                        Label("Aucun projet", systemImage: "tray")
-                    } description: {
-                        Text("Ajoutez un dépôt pour configurer votre premier projet.")
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 12)
+
+            List(selection: Binding(
+                get: { selection },
+                set: { selection = $0 }
+            )) {
+                Section("Projets") {
+                    ForEach(projects.projects) { project in
+                        ProjectRow(project: project).tag(SidebarSelection.project(project.id))
+                    }
+                    if projects.projects.isEmpty {
+                        Text("Aucun projet")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Button {
+                    presentFolderPicker()
+                } label: {
+                    Label("Ajouter un projet", systemImage: "plus")
+                }
+                .buttonStyle(.plain)
+                .disabled(projects.isRefreshing || !importStateAllowsNewPicker)
+                .accessibilityIdentifier("project.add")
+                .keyboardShortcut("n", modifiers: .command)
+
+                Section("Bibliothèque") {
+                    Label("Comptes et connexions", systemImage: "link")
+                        .tag(SidebarSelection.connections)
+                    Label("Modules", systemImage: "square.grid.2x2")
+                        .tag(SidebarSelection.moduleCatalog)
+                }
+            }
+            .overlay(alignment: .top) {
+                VStack(spacing: 0) {
+                    if let errorMessage = projects.errorMessage {
+                        warning(errorMessage)
+                    }
+                    if let deletionNotice = projects.deletionNotice {
+                        warning(deletionNotice)
                     }
                 }
             }
-            Button {
-                presentFolderPicker()
-            } label: {
-                Label("Ajouter un projet", systemImage: "folder.badge.plus")
+            Divider()
+            HStack(spacing: 8) {
+                Image(systemName: "circle.fill")
+                    .font(.system(size: 8))
+                    .foregroundStyle(.green)
+                Text("Moteur local disponible")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
             }
-            .buttonStyle(.plain)
-            .disabled(projects.isRefreshing || !importStateAllowsNewPicker)
-            .accessibilityIdentifier("project.add")
-            .keyboardShortcut("n", modifiers: .command)
-
-            Section("Bibliothèque") {
-                Label("Comptes et connexions", systemImage: "link")
-                    .tag(SidebarSelection.connections)
-                Label("Catalogue", systemImage: "shippingbox")
-                    .tag(SidebarSelection.moduleCatalog)
-            }
+            .padding(16)
         }
-        .overlay(alignment: .top) {
-            VStack(spacing: 0) {
-                if let errorMessage = projects.errorMessage {
-                    warning(errorMessage)
-                }
-                if let deletionNotice = projects.deletionNotice {
-                    warning(deletionNotice)
-                }
-            }
-        }
+        .background(Color(nsColor: .underPageBackgroundColor))
         .navigationTitle("Jarvis")
     }
 
@@ -211,18 +242,25 @@ private struct ProjectRow: View {
     let project: Project
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
+            Text(String(project.name.prefix(1)).uppercased())
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 28, height: 28)
+                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(project.name)
-                Text(project.status == .draft ? "Configuration à terminer" : "Projet")
+                    .lineLimit(1)
+                Text(statusTitle)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Label(statusTitle, systemImage: statusSymbol)
+            Image(systemName: statusSymbol)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .labelStyle(.titleAndIcon)
+                .accessibilityLabel(statusTitle)
         }
     }
 

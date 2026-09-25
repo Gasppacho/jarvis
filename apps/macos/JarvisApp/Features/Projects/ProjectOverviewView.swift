@@ -16,7 +16,7 @@ struct ProjectOverviewView: View {
         let presentation = ProjectOverviewPresentation(model.state(for: projectId))
         GeometryReader { geometry in
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 24) {
                     switch presentation.state {
                     case .loading:
                         ProgressView("Chargement de la supervision…")
@@ -30,10 +30,11 @@ struct ProjectOverviewView: View {
                         overviewContent(overview, wide: geometry.size.width >= 800)
                     }
                 }
-                .frame(maxWidth: 1000, alignment: .leading)
+                .frame(maxWidth: 1100, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(24)
+                .padding(32)
             }
+            .background(JarvisVisual.canvas)
         }
         .task(id: projectId) {
             await model.watch(projectId: projectId)
@@ -41,12 +42,12 @@ struct ProjectOverviewView: View {
     }
 
     private func overviewContent(_ overview: ProjectOverview, wide: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 24) {
             header(overview)
-            workflowCard(overview, wide: wide)
             if let issue = ProjectOverviewPresentation.focusedIssue(overview) {
                 focusedWork(issue)
             }
+            workflowCard(overview, wide: wide)
             issuesCard(overview, wide: wide)
             DisclosureGroup("Diagnostic technique du projet") {
                 pollingCard(overview)
@@ -55,34 +56,46 @@ struct ProjectOverviewView: View {
     }
 
     private func header(_ overview: ProjectOverview) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text(overview.name)
-                    .font(.title2.bold())
-                    .fixedSize(horizontal: false, vertical: true)
-                Label(
-                    ProjectOverviewPresentation.projectStatusLabel(overview.status),
-                    systemImage: statusSymbol(overview.status))
-                    .foregroundStyle(statusColor(overview.status))
-                    .font(.callout.weight(.medium))
+        VStack(alignment: .leading, spacing: 14) {
+            Text("SUPERVISION")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
+                .tracking(1.2)
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(overview.name)
+                        .font(.largeTitle.weight(.semibold))
+                        .tracking(-0.8)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(overview.nextStep)
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Spacer()
+                JarvisStatusBadge(
+                    title: ProjectOverviewPresentation.projectStatusLabel(overview.status),
+                    symbol: statusSymbol(overview.status),
+                    color: statusColor(overview.status))
             }
             if let ref = overview.selectedWorkItemRef {
-                Label("Essai limité à \(ProjectPreflightState.issueLabel(ref))", systemImage: "scope").font(.headline)
+                Label("Essai limité à \(ProjectPreflightState.issueLabel(ref))", systemImage: "scope")
+                    .font(.callout.weight(.medium))
             }
-            HStack {
-                Label(ProjectOverviewPresentation.pollingLabel(overview.polling.state), systemImage: pollingSymbol(overview.polling.state))
-                    .foregroundStyle(pollingColor(overview.polling.state))
+            HStack(spacing: 12) {
+                JarvisStatusBadge(
+                    title: ProjectOverviewPresentation.pollingLabel(overview.polling.state),
+                    symbol: pollingSymbol(overview.polling.state),
+                    color: pollingColor(overview.polling.state))
                 if let date = overview.polling.lastPollAt {
-                    Text("Dernier contrôle GitHub : \(date, format: .dateTime)").font(.caption)
+                    Text("Dernier contrôle : \(date, style: .relative)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             if overview.polling.state == .reconnecting || overview.polling.state == .failed {
                 Text("Les issues affichées viennent du dernier contrôle terminé. La connexion doit être rétablie.").foregroundStyle(.orange)
             }
-            Text(overview.nextStep)
-                .font(.body)
-                .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 switch overview.primaryAction {
                 case .pause:
@@ -113,6 +126,7 @@ struct ProjectOverviewView: View {
                 } label: {
                     Label("Actualiser", systemImage: "arrow.clockwise")
                 }
+                .buttonStyle(.bordered)
                 .disabled(model.state(for: projectId).isLoading)
             }
         }
@@ -120,19 +134,23 @@ struct ProjectOverviewView: View {
     }
 
     private func workflowCard(_ overview: ProjectOverview, wide: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack {
-                Label("Workflow", systemImage: "arrow.triangle.branch")
-                    .font(.headline)
+                Text("Votre workflow")
+                    .font(.title2.weight(.semibold))
                 Spacer()
                 if let onOpenComposition {
-                    Button("Configurer", action: onOpenComposition)
+                    Button("Configurer", systemImage: "slider.horizontal.3", action: onOpenComposition)
                         .accessibilityIdentifier("project.overview.open-composition")
                 }
             }
+            if overview.stages.isEmpty {
+                Text("Aucun module actif. Configurez ce projet pour construire son workflow.")
+                    .foregroundStyle(.secondary)
+            }
             let layout = wide
-                ? AnyLayout(HStackLayout(alignment: .top, spacing: 8))
-                : AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+                ? AnyLayout(HStackLayout(alignment: .center, spacing: 10))
+                : AnyLayout(VStackLayout(alignment: .leading, spacing: 10))
             layout {
                 ForEach(Array(overview.stages.enumerated()), id: \.element.id) { index, stage in
                     if index > 0, wide {
@@ -141,27 +159,30 @@ struct ProjectOverviewView: View {
                             .padding(.top, 2)
                             .accessibilityHidden(true)
                     }
-                    VStack(alignment: wide ? .center : .leading, spacing: 4) {
-                        Label(stage.id == .development ? "Développement" : stage.label,
-                              systemImage: stageSymbol(stage))
-                            .labelStyle(.titleAndIcon)
-                            .font(.callout.weight(.medium))
+                    VStack(alignment: .leading, spacing: 8) {
+                        Image(systemName: stageSymbol(stage))
+                            .font(.title3)
                             .foregroundStyle(stageColor(stage))
-                        Text(stage.id == .development ? "Une issue à la fois" : stage.id == .pullRequest ? "Après le développement" : stage.detail)
+                        Text(stage.id == .development ? "Développement" : stage.label)
+                            .font(.headline)
+                        Text(stage.detail)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
-                        Label(stageStatus(stage), systemImage: stageStatusSymbol(stage))
-                            .font(.caption)
-                            .foregroundStyle(stageColor(stage))
-                            .fixedSize(horizontal: false, vertical: true)
+                        JarvisStatusBadge(title: stageStatus(stage),
+                                          symbol: stageStatusSymbol(stage),
+                                          color: stageColor(stage))
                     }
-                    .frame(maxWidth: .infinity, alignment: wide ? .center : .leading)
+                    .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
+                    .padding(14)
+                    .background(JarvisVisual.surface, in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(JarvisVisual.border))
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("\(stage.label): \(stageStatus(stage)). \(stage.detail)")
                 }
             }
         }
+        .jarvisSurface()
     }
 
     private func pollingCard(_ overview: ProjectOverview) -> some View {
@@ -198,12 +219,23 @@ struct ProjectOverviewView: View {
     }
 
     private func focusedWork(_ issue: ProjectOverview.Issue) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(issue.status == .inProgress ? "Travail en cours" : "Dernier travail")
-                .font(.headline)
-            VStack(alignment: .leading, spacing: 10) {
-                Text("#\(issue.issueNumber) — \(issue.title)").font(.title3.bold())
-                Label(ProjectOverviewPresentation.workStatusLabel(issue), systemImage: issue.reason == "execution-failed" ? "exclamationmark.triangle.fill" : "clock")
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text(issue.status == .inProgress ? "Travail en cours" : "Dernier travail")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .textCase(.uppercase)
+                Spacer()
+                JarvisStatusBadge(
+                    title: ProjectOverviewPresentation.workStatusLabel(issue),
+                    symbol: issue.reason == "execution-failed" ? "exclamationmark.triangle.fill" : issueSymbol(issue.status),
+                    color: issueColor(issue.status))
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                Text(issue.title).font(.title2.weight(.semibold))
+                Text("Issue #\(issue.issueNumber)")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
                 if let id = issue.executionId {
                     let snapshot = executionDetail.state(for: projectId, executionId: id)
                     if let detail = snapshot.detail {
@@ -232,13 +264,14 @@ struct ProjectOverviewView: View {
                             } else { Text(start, style: .timer) }
                         }.font(.caption)
                     }
-                    Button("Ouvrir le travail") { onOpenExecution?(id) }
+                    Button("Suivre le travail", systemImage: "arrow.up.right") { onOpenExecution?(id) }
+                        .buttonStyle(.borderedProminent)
                         .accessibilityIdentifier("project.overview.open-work")
                         .accessibilityHint("Voir les étapes, le résultat et l’annulation de l’issue \(issue.issueNumber)")
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .jarvisSurface(highlighted: issue.status == .inProgress)
         .task(id: "\(projectId):\(issue.executionId ?? "")") {
             if let id = issue.executionId { await executionDetail.watch(projectId: projectId, executionId: id) }
         }
@@ -248,22 +281,36 @@ struct ProjectOverviewView: View {
         let issues = overview.issues.filter {
             issueFilter.isEmpty || "\($0.issueNumber) \($0.title)".localizedCaseInsensitiveContains(issueFilter)
         }
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text("Issues suivies").font(.title2.bold())
+                Text("Issues suivies").font(.title2.weight(.semibold))
                 Spacer()
             }
             Text(overview.readinessHelp).font(.callout).foregroundStyle(.secondary)
             TextField("Filtrer par titre ou numéro", text: $issueFilter)
                 .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 320)
                 .accessibilityIdentifier("project.overview.issue-filter")
             if issues.isEmpty {
                 Text(overview.issues.isEmpty ? "Aucune issue dans le dernier contrôle GitHub." : "Aucune issue ne correspond au filtre.")
                     .foregroundStyle(.secondary)
             }
-            ForEach(issues) { issue in
-                issueRow(issue, wide: wide)
+            if !issues.isEmpty {
+                if wide {
+                    HStack(spacing: 20) {
+                        Text("ISSUE").frame(maxWidth: .infinity, alignment: .leading)
+                        Text("SITUATION").frame(width: 150, alignment: .leading)
+                        Text("PROCHAINE ÉTAPE").frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 8)
+                }
                 Divider()
+                ForEach(issues) { issue in
+                    issueRow(issue, wide: wide)
+                    Divider()
+                }
             }
         }
     }

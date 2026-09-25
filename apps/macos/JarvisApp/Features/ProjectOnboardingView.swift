@@ -36,7 +36,7 @@ struct ProjectOnboardingView: View {
         let presentation = ProjectOnboardingPresentation(project: project, configuration: state)
         VStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 24) {
                     header(state)
                     if state.isLoading {
                         ProgressView("Chargement de la configuration…")
@@ -69,9 +69,9 @@ struct ProjectOnboardingView: View {
                                 .accessibilityIdentifier("project.step.\(item.id.rawValue)")
                         }
                     }
-                    .pickerStyle(.menu)
+                    .pickerStyle(.segmented)
                     .controlSize(.large)
-                    .frame(maxWidth: 320, alignment: .leading)
+                    .frame(maxWidth: 560, alignment: .leading)
                     .accessibilityIdentifier("project.step.\(step.rawValue)")
 
                     switch step {
@@ -93,10 +93,21 @@ struct ProjectOnboardingView: View {
                     case .repository:
                         EmptyView()
                     }
+                    if step == .workflow || step == .connections {
+                        HStack {
+                            Spacer()
+                            Button(step == .workflow ? "Continuer vers Paramétrage" : "Continuer vers Vérification") {
+                                step = step == .workflow ? .connections : .review
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(state.draft == nil)
+                        }
+                        .padding(.top, 8)
+                    }
                 }
-                .frame(maxWidth: 900, alignment: .leading)
+                .frame(maxWidth: 1000, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(24)
+                .padding(32)
             }
             Divider()
             HStack(spacing: 16) {
@@ -137,6 +148,7 @@ struct ProjectOnboardingView: View {
             .padding(16)
             .background(.bar)
         }
+        .background(JarvisVisual.canvas)
         .alert(
             project.status == .draft ? "Supprimer ce brouillon ?" : "Supprimer ce projet ?",
             isPresented: $isDeleteConfirmationPresented
@@ -177,21 +189,49 @@ struct ProjectOnboardingView: View {
     }
 
     private func header(_ state: ProjectConfigurationState) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 10) {
             Text(state.draft?.name ?? project.name)
-                .font(.largeTitle.weight(.semibold))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
+                .textCase(.uppercase)
             if let remote = state.detail?.bindings.first?.remoteUrl {
                 Label(remote, systemImage: "externaldrive.connected.to.line.below")
+                    .font(.callout)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             } else if let path = state.detail?.bindings.first?.path {
                 Label(
                     "Dépôt local : \(URL(fileURLWithPath: path).lastPathComponent)",
                     systemImage: "folder")
+                    .font(.callout)
                     .foregroundStyle(.secondary)
             }
-            Text("Workflow, Paramétrage et Vérification")
+            Text(stepTitle)
+                .font(.largeTitle.weight(.semibold))
+                .tracking(-0.8)
+                .padding(.top, 8)
+            Text(stepDescription)
+                .font(.body)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var stepTitle: String {
+        switch step {
+        case .workflow: "Composez votre workflow."
+        case .connections: "Reliez vos outils."
+        case .review: "Vérifiez, puis démarrez."
+        case .repository: "Choisissez votre dépôt."
+        }
+    }
+
+    private var stepDescription: String {
+        switch step {
+        case .workflow: "Sélectionnez les modules qui travailleront pour ce projet. Vous pouvez aussi commencer avec un workflow vide."
+        case .connections: "Choisissez le compte GitHub et l’agent seulement si vos modules en ont besoin."
+        case .review: "Jarvis contrôle les connexions nécessaires avant d’activer votre projet. Aucun travail ne démarre pendant cette vérification."
+        case .repository: "Choisissez un dépôt Git local pour créer votre projet."
         }
     }
 
@@ -206,20 +246,23 @@ private struct ProjectVerificationView: View {
         let presentation = ProjectVerificationPresentation(
             project: project, configuration: state)
         VStack(alignment: .leading, spacing: 18) {
-            GroupBox("Vérification") {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Connexions du projet")
+                    .font(.title2.weight(.semibold))
                 VStack(alignment: .leading, spacing: 12) {
                     if presentation.status == .checking {
                         ProgressView(presentation.title)
                     } else {
-                        Label(
-                            presentation.title,
-                            systemImage: presentation.status == .succeeded
+                        JarvisStatusBadge(
+                            title: presentation.title,
+                            symbol: presentation.status == .succeeded
                                 ? "checkmark.circle.fill"
                                 : presentation.status == .failed
-                                    ? "xmark.circle" : "checkmark.circle")
-                            .font(.headline)
+                                    ? "xmark.circle" : "clock",
+                            color: presentation.status == .succeeded ? .green : presentation.status == .failed ? .orange : .accentColor)
                     }
                     Text(presentation.detail).foregroundStyle(.secondary)
+                    if !presentation.checks.isEmpty { Divider() }
                     ForEach(presentation.checks) { check in
                         VStack(alignment: .leading, spacing: 3) {
                             Label(
@@ -248,6 +291,7 @@ private struct ProjectVerificationView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 6)
             }
+            .jarvisSurface()
 
             Button(presentation.actionTitle) {
                 Task { await model.activateWorkflow(projectId: project.id) }
@@ -299,7 +343,8 @@ private struct ProjectSettingsView: View {
                     .frame(minHeight: 260)
             }
             if let github = settings.github {
-                GroupBox("GitHub") {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("GitHub").font(.title2.weight(.semibold))
                     VStack(alignment: .leading, spacing: 14) {
                         repositoryState(
                             "Dépôt Git initialisé", value: github.isGitRepository)
@@ -330,9 +375,11 @@ private struct ProjectSettingsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 6)
                 }
+                .jarvisSurface()
             }
             if let development = settings.development {
-                GroupBox("Développeur") {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Développeur").font(.title2.weight(.semibold))
                     VStack(alignment: .leading, spacing: 14) {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Label d’issue")
@@ -397,6 +444,7 @@ private struct ProjectSettingsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 6)
                 }
+                .jarvisSurface()
                 .task {
                     await model.refreshRuntimeCandidates(
                         projectId: projectId,
@@ -418,16 +466,53 @@ struct FirstLaunchView: View {
     let importRepository: () -> Void
 
     var body: some View {
-        let presentation = ProjectOnboardingPresentation(project: nil)
-        ContentUnavailableView {
-            Label(presentation.emptyState?.title ?? "Jarvis", systemImage: "sparkles")
-        } description: {
-            Text(presentation.emptyState?.description ?? "")
-        } actions: {
-            Button(presentation.emptyState?.primaryAction ?? "Ajouter un projet") {
-                importRepository()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                Text("J")
+                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .frame(width: 64, height: 64)
+                    .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 18))
+                    .accessibilityHidden(true)
+                Text("Bienvenue dans Jarvis")
+                    .font(.largeTitle.weight(.semibold))
+                    .tracking(-0.8)
+                Text("Choisissez un dépôt, activez les modules utiles et suivez leur travail depuis ce Mac.")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Choisir un dépôt Git", systemImage: "folder.badge.plus") {
+                    importRepository()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .padding(.top, 6)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 160))], spacing: 12) {
+                    firstStep("1", "Choisir", "Jarvis utilise votre dépôt local.", symbol: "folder")
+                    firstStep("2", "Composer", "Ajoutez GitHub et Développeur selon vos besoins.", symbol: "square.grid.2x2")
+                    firstStep("3", "Suivre", "Voyez les issues, le travail et les Pull Requests.", symbol: "chart.bar.xaxis")
+                }
+                .padding(.top, 24)
             }
-            .buttonStyle(.borderedProminent)
+            .frame(maxWidth: 720, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(40)
         }
+        .background(JarvisVisual.canvas)
+    }
+
+    private func firstStep(_ number: String, _ title: String, _ detail: String, symbol: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Image(systemName: symbol)
+                .font(.title2)
+                .foregroundStyle(Color.accentColor)
+            Text("\(number). \(title)").font(.headline)
+            Text(detail)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, minHeight: 112, alignment: .topLeading)
+        .jarvisSurface()
     }
 }

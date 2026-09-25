@@ -34,7 +34,9 @@ struct ProjectExecutionDetailView: View {
             state, connection: timeline.connectionState)
         VStack(spacing: 0) {
             HStack {
-                Button(backLabel, action: close)
+                Button(backLabel, systemImage: "chevron.left", action: close)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
                     .accessibilityIdentifier("execution.back")
                 Spacer()
                 Label(
@@ -44,8 +46,8 @@ struct ProjectExecutionDetailView: View {
                     .font(.caption.weight(.medium))
                     .accessibilityLabel("Actualisation : \(presentation.connectionLabel)")
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 12)
+            .padding(.horizontal, 32)
+            .padding(.vertical, 16)
             Group {
                 switch presentation.state {
                 case .loading:
@@ -71,6 +73,7 @@ struct ProjectExecutionDetailView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .background(JarvisVisual.canvas)
         .task(id: "\(projectId):\(executionId)") {
             async let live: Void = timeline.watchLive(projectId: projectId)
             await model.watch(projectId: projectId, executionId: executionId)
@@ -110,7 +113,7 @@ struct ProjectExecutionDetailView: View {
     ) -> some View {
         GeometryReader { geometry in
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 24) {
                     if let staleMessage {
                         HStack {
                             Label(staleMessage, systemImage: "exclamationmark.triangle.fill")
@@ -152,29 +155,28 @@ struct ProjectExecutionDetailView: View {
                 }
                 .frame(maxWidth: 1100, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(24)
+                .padding(32)
             }
         }
     }
 
     private func progressContent(_ detail: ProjectExecutionDetail) -> some View {
-        stepper(detail.steps)
+        stepper(detail.steps).jarvisSurface()
     }
 
     private func contextContent(_ detail: ProjectExecutionDetail) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            GroupBox("Contexte") {
-                VStack(alignment: .leading, spacing: 8) {
-                    if detail.workspace != nil {
-                        Label("Travail dans une copie isolée", systemImage: "folder")
-                    } else {
-                        Text("Aucune copie de travail renseignée pour cette exécution.")
-                    }
-                    Label("Relecture et fusion manuelles", systemImage: "person.crop.circle")
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Contexte").font(.title2.weight(.semibold))
+                if detail.workspace != nil {
+                    Label("Travail dans une copie isolée", systemImage: "folder")
+                } else {
+                    Text("Aucune copie de travail renseignée pour cette exécution.")
                 }
-                .font(.callout)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                Label("Relecture et fusion manuelles", systemImage: "person.crop.circle")
             }
+            .font(.callout)
+            .jarvisSurface()
             if let latest = detail.agentExcerpts.last {
                 excerptsCard([latest])
                 if detail.agentExcerpts.count > 1 {
@@ -189,29 +191,31 @@ struct ProjectExecutionDetailView: View {
     }
 
     private func header(_ detail: ProjectExecutionDetail) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("SUIVI DU TRAVAIL")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
+                .tracking(1.2)
+            HStack(alignment: .top, spacing: 12) {
                 if let workItem = detail.workItem {
                     Text(workItem.title ?? workItem.ref)
-                        .font(.title2.weight(.semibold))
+                        .font(.largeTitle.weight(.semibold))
+                        .tracking(-0.8)
                         .fixedSize(horizontal: false, vertical: true)
                     if let issueNumber = workItem.issueNumber {
-                        Text("#\(issueNumber)")
-                            .font(.callout.monospaced())
-                            .foregroundStyle(.secondary)
+                        JarvisStatusBadge(title: "Issue #\(issueNumber)", symbol: "number", color: .accentColor)
                     }
                 } else {
                     Text("Suivi de l’exécution")
-                        .font(.title2.weight(.semibold))
+                        .font(.largeTitle.weight(.semibold))
                 }
             }
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 if let currentExecution {
-                    Label(
-                        ProjectExecutionDetailPresentation.executionStatusLabel(currentExecution.status),
-                        systemImage: projectExecutionStatusSymbol(currentExecution.status))
-                        .font(.callout.weight(.medium))
-                        .foregroundStyle(executionColor(currentExecution.status))
+                    JarvisStatusBadge(
+                        title: ProjectExecutionDetailPresentation.executionStatusLabel(currentExecution.status),
+                        symbol: projectExecutionStatusSymbol(currentExecution.status),
+                        color: executionColor(currentExecution.status))
                     if let durationMs = currentExecution.durationMs {
                         Label("Durée : \(formatDuration(durationMs))", systemImage: "stopwatch")
                             .font(.callout)
@@ -311,7 +315,7 @@ struct ProjectExecutionDetailView: View {
     }
 
     private func stepper(_ steps: [ProjectExecutionDetail.Step]) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 20) {
             Text("Avancement").font(.title2.weight(.semibold))
             if steps.isEmpty {
                 Label("Aucune étape détaillée disponible.", systemImage: "list.number")
@@ -319,23 +323,27 @@ struct ProjectExecutionDetailView: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
-                    HStack(alignment: .top, spacing: 12) {
-                        VStack(spacing: 6) {
+                    HStack(alignment: .top, spacing: 14) {
+                        VStack(spacing: 8) {
                             Image(systemName: stepSymbol(step.status))
-                                .font(.title3).foregroundStyle(stepColor(step.status))
+                                .font(.callout.weight(.bold))
+                                .foregroundStyle(stepColor(step.status))
+                                .frame(width: 30, height: 30)
+                                .background(stepColor(step.status).opacity(0.1), in: Circle())
                             if index < steps.count - 1 {
-                                Rectangle().fill(.quaternary).frame(width: 1)
+                                Rectangle().fill(JarvisVisual.border).frame(width: 1)
                             }
                         }
-                        .frame(width: 24)
+                        .frame(width: 30)
                         .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 6) {
-                            HStack(alignment: .firstTextBaseline) {
+                            HStack(alignment: .top) {
                                 Text(step.label).font(.headline)
                                 Spacer(minLength: 8)
-                                Text(ProjectExecutionDetailPresentation.stepStatusLabel(step.status))
-                                    .font(.callout.weight(.medium))
-                                    .foregroundStyle(stepColor(step.status))
+                                JarvisStatusBadge(
+                                    title: ProjectExecutionDetailPresentation.stepStatusLabel(step.status),
+                                    symbol: stepSymbol(step.status),
+                                    color: stepColor(step.status))
                             }
                             Text(step.detail).font(.callout).foregroundStyle(.secondary)
                             if let date = step.occurredAt {
@@ -343,7 +351,7 @@ struct ProjectExecutionDetailView: View {
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.bottom, 12)
+                        .padding(.bottom, 16)
                         .accessibilityElement(children: .combine)
                     }
                     .fixedSize(horizontal: false, vertical: true)

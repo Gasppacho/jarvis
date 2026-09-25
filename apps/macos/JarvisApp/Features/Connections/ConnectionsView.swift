@@ -38,6 +38,8 @@ public struct ConnectionsView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Saisissez une référence GitHub prise en charge, par exemple gh://Account.")
                             .foregroundStyle(.secondary)
+                        Text("Référence du compte")
+                            .font(.callout.weight(.medium))
                         HStack(spacing: 12) {
                             TextField("Référence du compte", text: $accountReference)
                                 .textFieldStyle(.roundedBorder)

@@ -16,10 +16,11 @@ struct ProjectWorkflowView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 24) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Catalogue").font(.title2.bold())
-                Text("Sélectionnez les modules du projet. Chaque module peut être ajouté une seule fois.")
+                Text("Choisissez vos modules")
+                    .font(.title2.weight(.semibold))
+                Text("Chaque module apporte une capacité au projet. Cliquez sur une carte pour l’ajouter ou la retirer.")
                     .foregroundStyle(.secondary)
             }
 
@@ -39,9 +40,9 @@ struct ProjectWorkflowView: View {
             }
 
             LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 320), alignment: .top)],
+                columns: [GridItem(.adaptive(minimum: 260), alignment: .top)],
                 alignment: .leading,
-                spacing: 12
+                spacing: 16
             ) {
                 ForEach(catalogue.items) { item in
                     moduleCard(item)
@@ -49,8 +50,9 @@ struct ProjectWorkflowView: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Workflow").font(.title2.bold())
-                Text("Le canvas est construit depuis les événements émis et consommés par les modules.")
+                Text("Aperçu du workflow")
+                    .font(.title2.weight(.semibold))
+                Text("Jarvis relie automatiquement les modules sélectionnés selon leurs événements.")
                     .foregroundStyle(.secondary)
             }
 
@@ -59,7 +61,8 @@ struct ProjectWorkflowView: View {
                     "Workflow vide",
                     systemImage: "square.dashed",
                     description: Text("Vous pouvez enregistrer et créer un projet sans module."))
-                    .frame(maxWidth: .infinity, minHeight: 220)
+                    .frame(maxWidth: .infinity, minHeight: 180)
+                    .jarvisSurface()
             } else if let graph = state.compositionGraph {
                 WorkflowCanvasView(presentation: WorkflowCanvasPresentation(graph: graph))
             } else {
@@ -79,23 +82,33 @@ struct ProjectWorkflowView: View {
                 model.addModule(projectId: project.id, package: package)
             }
         } label: {
-            VStack(alignment: .leading, spacing: 10) {
-                Label(item.title, systemImage: item.systemImage)
-                    .font(.headline)
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top) {
+                    Image(systemName: item.systemImage)
+                        .font(.title2)
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 42, height: 42)
+                        .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                    Spacer()
+                    if item.isSelected {
+                        JarvisStatusBadge(title: "Sélectionné", symbol: "checkmark", color: .green)
+                    }
+                }
+                Text(item.title)
+                    .font(.title3.weight(.semibold))
                 Text(item.description)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Label(
-                    item.isSelected ? "Sélectionné" : "Ajouter",
-                    systemImage: item.isSelected ? "checkmark.circle.fill" : "plus.circle")
+                Label(item.isSelected ? "Retirer du projet" : "Ajouter au projet",
+                      systemImage: item.isSelected ? "minus.circle" : "plus.circle")
                     .font(.callout.weight(.medium))
+                    .foregroundStyle(Color.accentColor)
             }
-            .frame(maxWidth: .infinity, minHeight: 132, alignment: .leading)
-            .padding(12)
+            .frame(maxWidth: .infinity, minHeight: 158, alignment: .leading)
+            .jarvisSurface(highlighted: item.isSelected)
         }
-        .buttonStyle(.bordered)
-        .controlSize(.large)
+        .buttonStyle(.plain)
         .disabled(!item.isAvailable || state.draft == nil)
         .accessibilityAddTraits(item.isSelected ? .isSelected : [])
         .accessibilityIdentifier("workflow.catalogue.\(item.id)")
